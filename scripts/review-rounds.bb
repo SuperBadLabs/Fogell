@@ -57,6 +57,10 @@
                        (or "")
                        str/trim))
         title-of (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
+        identity-of (fn [c]
+                      [(get c "path")
+                       (or (get c "line") (get c "original_line"))
+                       (full-title c)])
         rounds (->> comments
                     (group-by #(subs (get % "created_at") 0 16))
                     (sort-by key))
@@ -71,12 +75,16 @@
            seen #{}
            n 1]
       (when stamp
-        (let [titles (map full-title cs)
+        ;; REVIEW FIX (Codex, PR #14 round 8): identity was the full TITLE alone, so two
+        ;; findings with identical titles in different files collapsed and a round could
+        ;; still report "0 NEW" — which this script calls safe to skip. Third flaw of
+        ;; the class this tool prevents, found inside it. Identity is path + line + title.
+        (let [titles (map identity-of cs)
               fresh  (remove seen titles)]
           (println (format "\nround %d  %sZ  commit %s  (%d comment(s), %d NEW)"
                            n stamp (get shas stamp "?") (count cs) (count fresh)))
           (doseq [c cs
-                  :let [t (full-title c)]]
+                  :let [t (identity-of c)]]
             (println (format "  %-4s %-28s %s"
                              (if (seen t) "seen" "NEW")
                              (str (last (str/split (get c "path") #"/")) ":"

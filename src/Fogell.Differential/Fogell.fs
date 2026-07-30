@@ -84,19 +84,42 @@ module FogellSide =
             /// environment plus every earlier declaration, and a later scope wins.
             /// An unknown name expands to empty, matching Groovy's null-to-string.
             let interpolate (known: Map<string, string>) (value: string) =
+                // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
+                //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
+                //    The parser keeps the backslash so this pass can honour it and then
+                //    remove it, instead of expanding what Jenkins leaves alone.
+                //  * `"$env.BUILD_NUMBER"` and `"${env.BUILD_NUMBER}"` are the ordinary
+                //    Jenkins spellings. The old pattern matched only a bare identifier,
+                //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
+                //    while the braced dotted form was not matched at all.
+                let resolveName (name: string) =
+                    // `env.X` and `env['X']` are the same variable as a bare `X`.
+                    let bare =
+                        if name.StartsWith "env." then name.Substring 4
+                        else name
+
+                    match Map.tryFind bare known with
+                    | Some v -> v
+                    | None ->
+                        match Environment.GetEnvironmentVariable bare with
+                        | null -> ""
+                        | v -> v
+
+                let pattern =
+                    // escaped dollar | ${ dotted } | $dotted
+                    @"\\(\$)|\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+
                 Text.RegularExpressions.Regex.Replace(
                     value,
-                    @"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
+                    pattern,
                     fun m ->
-                        let name =
-                            if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value
-
-                        match Map.tryFind name known with
-                        | Some v -> v
-                        | None ->
-                            match Environment.GetEnvironmentVariable name with
-                            | null -> ""
-                            | v -> v)
+                        if m.Groups[1].Success then
+                            // escaped: emit a literal dollar, expand nothing
+                            "$"
+                        elif m.Groups[2].Success then
+                            resolveName m.Groups[2].Value
+                        else
+                            resolveName m.Groups[3].Value)
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the

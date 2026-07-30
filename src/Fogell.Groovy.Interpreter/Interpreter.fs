@@ -368,9 +368,15 @@ module Interpreter =
             let value = evalExpr st env v
             st.LastValue <- Some value
             Env.withVar n value env
+        // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
+        // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
+        // here and left LastValue absent or STALE — reported unevaluable, or worse
+        // reusing an earlier truthy value. Groovy assignments yield their RHS whatever
+        // the target shape is.
         | SAssign(target, v) ->
             evalExpr st env target |> ignore
-            evalExpr st env v |> ignore
+            let value = evalExpr st env v
+            st.LastValue <- Some value
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
         // returned TRUE, because `true` set the trailing value and the untaken `if`

@@ -256,6 +256,19 @@ let predicateValues =
               Expect.equal (run "true\ndef x").Returned (Some VNull) "uninitialised def is null"
           }
 
+          test "an assignment through a property or index target yields its RHS" {
+              // Round-7 finding: only the bare-variable form recorded a value, so
+              // `env.DEPLOY = false` or `values[0] = false` as the FINAL statement left
+              // LastValue absent or stale — reported unevaluable, or reusing an earlier
+              // truthy value. Groovy assignments yield their RHS whatever the target is.
+              Expect.equal (run "true\nenv.DEPLOY = false").Returned (Some(VBool false)) "property target"
+
+              // The INDEX form (`xs[0] = false`) is not asserted here because the
+              // Groovy parser cannot parse it at all yet — a separate gap, measured at
+              // 9 corpus files, tracked as FG-015b. Asserting it here would have made
+              // this test fail for a reason unrelated to what it is testing.
+          }
+
           test "a closure returns its trailing expression without `return`" {
               // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
               // block's value unless an explicit `return` appeared.

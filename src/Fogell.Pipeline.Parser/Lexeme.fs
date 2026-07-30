@@ -56,6 +56,33 @@ let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
 
+/// As [escapedChar], but an escaped $ keeps its backslash.
+///
+/// REVIEW FIX (Codex, PR #14 round 7): in a GString, "\$BUILD_NUMBER" is the
+/// literal text $BUILD_NUMBER — Groovy does not interpolate it. The backslash
+/// was stripped here, BEFORE the value was classified as interpolating, so the
+/// interpolation pass expanded it and the step ran with a different environment than
+/// Jenkins. The marker now survives to the interpolation pass, which honours it and
+/// then removes it.
+let private escapedCharKeepingDollar: P<string> =
+    skipChar '\\' >>. anyChar
+    |>> function
+        | 'n' -> "\n"
+        | 't' -> "\t"
+        | 'r' -> "\r"
+        | '$' -> "\\$"
+        | c -> string c
+
+/// Variants used where interpolation provenance matters, so \$ is preserved.
+let private quotedKeepingDollar (q: string) : P<string> =
+    between (skipString q) (skipString q) (
+        manyStrings (escapedCharKeepingDollar <|> (satisfy (fun c -> c <> q.[0] && c <> '\n') |>> string)))
+
+let private tripleQuotedKeepingDollar (q: string) : P<string> =
+    between (skipString q) (skipString q) (
+        manyTill (escapedCharKeepingDollar <|> (anyChar |>> string)) (lookAhead (skipString q))
+        |>> String.concat "")
+
 /// Any Groovy string form Jenkinsfiles use, including slashy strings.
 /// A string literal PLUS whether Groovy would interpolate it.
 ///
@@ -72,9 +99,9 @@ let stringLiteralWithKind: P<string * bool> =
     lexeme (
         choice
             [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
-              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
+              attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s, true)
               attempt (quoted "'" |>> fun s -> s, false)
-              attempt (quoted "\"" |>> fun s -> s, true)
+              attempt (quotedKeepingDollar "\"" |>> fun s -> s, true)
               // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
               // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
               // expand. Only single-quoted forms are literal.
