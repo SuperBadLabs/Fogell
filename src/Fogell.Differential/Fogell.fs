@@ -611,6 +611,28 @@ module FogellSide =
                 | PostCondition.NotBuilt -> 8
                 | PostCondition.Cleanup -> 9
 
+            /// FG-045. `options { timeout(...) }` at pipeline or stage level. MEASURED:
+            /// Jenkins ABORTS the build when it expires — `finished.txt` and the following
+            /// stage never appear. Fogell ignored options entirely, so such a pipeline ran
+            /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
+            ///
+            /// A nested deadline can only tighten an inherited one, never extend it.
+            let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+                let declared =
+                    options
+                    |> List.tryPick (fun o ->
+                        if o.Name = "timeout" then
+                            match timeoutMs o with
+                            | Ok ms -> Some(runClock.ElapsedMilliseconds + ms)
+                            | Error _ -> None
+                        else
+                            None)
+
+                match declared, inherited with
+                | Some d, Some i -> Some(min d i)
+                | Some d, None -> Some d
+                | None, i -> i
+
             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
                 if not (List.isEmpty stage.Post) then
                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
@@ -647,7 +669,10 @@ module FogellSide =
 
                             if postCtx.Failed.Value then ctx.Failed.Value <- true
 
-            and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+            and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
+                // A stage's own `options { timeout(...) }` tightens whatever it inherited.
+                let deadline = deadlineFromOptions stage.Options inherited
+
                 if not (halted ctx) then
                     // FG-048. The `when` gate, before anything else runs.
                     let gate =
@@ -682,7 +707,7 @@ module FogellSide =
                                     stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
                                     ctx.Sink st }
 
-                    runStageBody body cwd stage
+                    runStageBody body cwd deadline stage
 
                     if body.Failed.Value then ctx.Failed.Value <- true
 
@@ -1256,10 +1281,10 @@ module FogellSide =
 
                 | _ -> runStepInner ctx stage cwd step deadline
 
-            and runStageBody (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+            and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: int64 option) (stage: Stage) =
                     for step in stage.Steps do
                         if not (halted ctx) then
-                            runStepDispatch ctx cwd stage step None
+                            runStepDispatch ctx cwd stage step deadline
 
                     if stage.IsParallel && not (List.isEmpty stage.Nested) then
                         // JB-FAIL-006/007. Branches run concurrently and, by
@@ -1309,7 +1334,7 @@ module FogellSide =
 
                                 branchCtx,
                                 System.Threading.Tasks.Task.Run(fun () ->
-                                    runStage branchCtx cwd branch
+                                    runStage branchCtx cwd deadline branch
 
                                     if branchCtx.Failed.Value then
                                         siblingFailed.Cancel()))
@@ -1328,9 +1353,12 @@ module FogellSide =
                             ctx.Failed.Value <- true
                     else
                         for nested in stage.Nested do
-                            runStage ctx cwd nested
+                            runStage ctx cwd deadline nested
 
             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+
+            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
+            let pipelineDeadline = deadlineFromOptions pipeline.Options None
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then
@@ -1339,7 +1367,7 @@ module FogellSide =
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
-                    runStage root workspace stage
+                    runStage root workspace pipelineDeadline stage
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only
@@ -1352,6 +1380,7 @@ module FogellSide =
                       Environment = []
                       EnvironmentLiteralNames = Set.empty
                       Steps = []
+                      Options = []
                       When = None
                       Post = pipeline.Post
                       Nested = []

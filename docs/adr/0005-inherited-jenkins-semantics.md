@@ -70,6 +70,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   context-dependent `when` condition (`buildingTag`, `changeRequest`, `changeset`,
   `changelog`, `triggeredBy`, `isRestartedRun`) is **false** and its stage is skipped,
   with the build succeeding. (Proven: `when-context-conditions`.)
+- `options { timeout(...) }` at pipeline or stage level **aborts** the build when it
+  expires, exactly as the `timeout` step does; the following stage does not run.
+  (Proven: `options-timeout-pipeline`, `options-timeout-stage`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

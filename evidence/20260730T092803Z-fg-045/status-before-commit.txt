@@ -1,0 +1,10 @@
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Ir/Pipeline.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+?? differential/cases/options-timeout-pipeline.Jenkinsfile
+?? differential/cases/options-timeout-stage.Jenkinsfile
+?? differential/receipts/options-timeout-pipeline.receipt.txt
+?? differential/receipts/options-timeout-stage.receipt.txt
+?? evidence/20260730T092803Z-fg-045/

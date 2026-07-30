@@ -1,0 +1,6 @@
+ docs/EXECUTION_BOARD.md                      |  5 ++--
+ docs/adr/0005-inherited-jenkins-semantics.md |  3 ++
+ src/Fogell.Differential/Fogell.fs            | 43 +++++++++++++++++++++++-----
+ src/Fogell.Ir/Pipeline.fs                    |  3 ++
+ src/Fogell.Pipeline.Parser/Parser.fs         |  4 ++-
+ 5 files changed, 48 insertions(+), 10 deletions(-)

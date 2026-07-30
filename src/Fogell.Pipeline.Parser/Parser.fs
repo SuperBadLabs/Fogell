@@ -324,6 +324,7 @@ type private StageSection =
     | SecPost of (PostCondition * Step list) list
     | SecNested of Stage list * bool
     | SecFailFast of bool
+    | SecOptions of Step list
     | SecOther of string
 
 stageRef.Value <-
@@ -346,7 +347,7 @@ stageRef.Value <-
                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
-                      attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
+                      attempt (keyword "options" >>. stepBlock |>> SecOptions)
                       attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
@@ -365,6 +366,7 @@ stageRef.Value <-
                         | _ -> None))
                     Set.empty
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
+              Options = defaultArg (pick (function SecOptions o -> Some o | _ -> None)) []
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []

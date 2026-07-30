@@ -75,6 +75,9 @@ type Stage =
       /// produce a false differential match.
       EnvironmentLiteralNames: Set<string>
       Steps: Step list
+      /// FG-045. Stage-level `options { }`. Previously discarded outright, so a
+      /// `timeout` declared here bounded nothing and the stage ran unbounded.
+      Options: Step list
       When: WhenCondition option
       Post: (PostCondition * Step list) list
       /// Nested `stages { }` (sequential) and `parallel { }` children.
