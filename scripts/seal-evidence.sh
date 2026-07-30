@@ -19,7 +19,13 @@ mkdir -p "$DIR"
 # Normalised: `git ls-files` reports `x.log` while a caller naturally writes `./x.log`,
 # and an exemption that fails on a leading `./` is no exemption at all.
 EXTRAS=" $(for e in "$@"; do printf '%s ' "${e#./}"; done)"
+# The bundle THIS run is writing is also untracked while it is being written, so a second
+# seal tripped over its own output. Exclude the directory being created, and the extras.
 UNTRACKED="$(git ls-files --others --exclude-standard | while read -r f; do
+  # ALL of evidence/ is output, not input. Excluding only the current run's directory
+  # still tripped over the PREVIOUS bundle, which makes the check circular: you cannot
+  # seal until you stage the last seal. The check exists to catch untracked SOURCE.
+  case "$f" in evidence/*) continue ;; esac
   case "$EXTRAS" in *" $f "*) ;; *) printf '%s\n' "$f" ;; esac
 done)"
 if [ -n "$UNTRACKED" ]; then

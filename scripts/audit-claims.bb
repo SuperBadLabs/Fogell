@@ -44,7 +44,12 @@
                   v (vec lines)
                   start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
                   stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
-                  block (str/join " " (subvec v start (inc stop)))
+                  ;; COMMENT TEXT only. Including whole lines let a receipt named in
+                  ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
+                  ;; window, one layer down.
+                  block (->> (subvec v start (inc stop))
+                             (keep #(second (re-find #"^\s*(?://|///)\s?(.*)$" %)))
+                             (str/join " "))
                   named (filter #(str/includes? block %) receipts)]
             :when (empty? named)]
         {:file (str (fs/relativize root f)) :line (inc i)
