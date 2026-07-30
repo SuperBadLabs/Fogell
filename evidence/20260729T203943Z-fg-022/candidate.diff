@@ -1,0 +1,993 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index 4787607..f410c24 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -6,6 +6,7 @@
+     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
+     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
++    <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
+     <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+   </Folder>
+   <Folder Name="/tools/">
+@@ -14,6 +15,7 @@
+   <Folder Name="/tests/">
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
++    <Project Path="tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj" />
+     <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />
+   </Folder>
+ </Solution>
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 6dfa201..4d0b1c8 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -85,10 +85,10 @@ derivation in `architecture/BASELINE.md`.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-020 | P0 | TODO | `Fogell.Store` on PostgreSQL (`adr/0007`): schema + migrations under advisory lock with a version ledger | concurrent controller start installs each migration exactly once |
+-| FG-021 | P0 | TODO | Atomic admission: build + node + attempt + event + outbox in one transaction, idempotency-keyed | replaying a key returns original ids, emits no second event |
+-| FG-022 | P0 | TODO | Attempt fences + lease owner + expiry using `clock_timestamp()`, not `now()` | 16 concurrent terminal publishers → exactly one winner |
+-| FG-023 | P0 | TODO | Controller restore epoch: restore invalidates every active lease; pre-restore agents cannot publish | test proves stale publisher rejected after restore |
++| FG-020 | P0 | **DONE** | `Fogell.Store` on PostgreSQL (`adr/0007`): schema + migrations under advisory lock with a checksummed version ledger | 8 concurrent `Migrate()` calls all succeed and leave **exactly one** ledger row. A migration whose text changed after being applied fails loudly rather than diverging silently |
++| FG-021 | P0 | **DONE** | Atomic admission: build + node + attempt + event + outbox in one transaction, idempotency-keyed | Replay returns the original ids and emits no second event/outbox row. **16 concurrent submissions of one key yield exactly one build** — arbitrated by a unique constraint, not check-then-insert. Composite FKs make cross-tenant parent substitution unrepresentable |
++| FG-022 | P0 | **DONE** | Attempt fences + lease owner + expiry using `clock_timestamp()`, not `now()` | **16 concurrent publishers → exactly 1 winner, exactly 1 terminal event.** Refused: stale fence, wrong owner, expired lease, double publication. Each offer increments the fence |
++| FG-023 | P0 | **DONE** | Controller restore epoch: restore invalidates every active lease; pre-restore agents cannot publish | `ActivateRestore()` bumps the epoch and moves live attempts to `reconciliation_required`; a pre-restore holder's publication is refused |
+ | FG-024 | P0 | TODO | Per-step journal, fsync batched at stage boundaries (`adr/0003`) | durable per-step cost < 8 ms on luigi-class storage; number published only from the durable path |
+ | FG-025 | P0 | TODO | **Exactly-once resume**: replay from last durable step, not stage start | SIGKILL mid-stage; resume does not re-execute a completed step; a marker file proves single execution |
+ | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |
+diff --git a/scripts/pg-test-db.sh b/scripts/pg-test-db.sh
+new file mode 100755
+index 0000000..bf4b472
+--- /dev/null
++++ b/scripts/pg-test-db.sh
+@@ -0,0 +1,18 @@
++#!/usr/bin/env bash
++# Real PostgreSQL for the store tests. ADR 0007's properties are database
++# properties; a mock proves nothing about a unique constraint arbitrating a race.
++set -uo pipefail
++NAME=${1:-fogell-pg}
++PORT=${2:-55440}
++podman rm -f "$NAME" >/dev/null 2>&1
++podman run -d --name "$NAME" -p "127.0.0.1:${PORT}:5432" \
++  -e POSTGRES_USER=fogell -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=fogell \
++  docker.io/library/postgres:16 >/dev/null
++for i in $(seq 1 60); do
++  podman exec "$NAME" pg_isready -U fogell -d fogell >/dev/null 2>&1 && {
++    echo "postgres ready on ${PORT} (~${i}s)"
++    echo "  export FOGELL_TEST_DATABASE_URL='Host=127.0.0.1;Port=${PORT};Username=fogell;Database=fogell'"
++    exit 0; }
++  sleep 1
++done
++echo "postgres did not become ready" >&2; exit 1
+diff --git a/src/Fogell.Store/Fogell.Store.fsproj b/src/Fogell.Store/Fogell.Store.fsproj
+new file mode 100644
+index 0000000..7aba4f8
+--- /dev/null
++++ b/src/Fogell.Store/Fogell.Store.fsproj
+@@ -0,0 +1,14 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Migrations.fs" />
++    <Compile Include="Store.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" />
++    <PackageReference Include="Npgsql" Version="8.0.5" />
++  </ItemGroup>
++  <ItemGroup>
++    <EmbeddedResource Include="migrations/*.sql" />
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Store/Migrations.fs b/src/Fogell.Store/Migrations.fs
+new file mode 100644
+index 0000000..11762c1
+--- /dev/null
++++ b/src/Fogell.Store/Migrations.fs
+@@ -0,0 +1,121 @@
++namespace Fogell.Store
++
++open System.Reflection
++open Npgsql
++
++/// FG-020 migrations.
++///
++/// Two properties, both learned from watching engines get this wrong:
++///
++/// 1. **Advisory lock.** Concurrent controller startup must install each
++///    migration exactly once. Without a lock, two controllers booting together
++///    both see "not applied" and both apply it.
++/// 2. **Version ledger with a checksum.** A migration whose text changed after
++///    being applied is a silent divergence between what the schema is and what
++///    the repository says it is — the same class of defect as a gate baseline
++///    that binds only a binary hash.
++module Migrations =
++
++    /// Postgres advisory lock key. Arbitrary but fixed; shared by every
++    /// controller so they serialize against each other.
++    let private lockKey = 0x464F47454C4CL // "FOGELL"
++
++    let private ledgerDdl =
++        "CREATE TABLE IF NOT EXISTS schema_migrations (
++             version    text PRIMARY KEY,
++             checksum   text NOT NULL,
++             applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
++         )"
++
++    let private sha256 (text: string) =
++        use h = System.Security.Cryptography.SHA256.Create()
++
++        System.Text.Encoding.UTF8.GetBytes text
++        |> h.ComputeHash
++        |> System.Convert.ToHexString
++        |> fun s -> s.ToLowerInvariant()
++
++    /// Migrations embedded at build time, ordered by filename.
++    let all () : (string * string) list =
++        let asm = Assembly.GetExecutingAssembly()
++
++        asm.GetManifestResourceNames()
++        |> Array.filter (fun n -> n.EndsWith ".sql")
++        |> Array.sort
++        |> Array.map (fun name ->
++            use stream = asm.GetManifestResourceStream name
++            use reader = new System.IO.StreamReader(stream)
++            // resource name looks like Fogell.Store.migrations.0001_controller_truth.sql;
++            // the version is the leading numeric prefix so the ledger key is
++            // stable even if a migration is renamed for clarity.
++            let version =
++                name.Split('.')
++                |> Array.tryFind (fun part -> part.Length > 0 && System.Char.IsDigit part.[0])
++                |> Option.map (fun part -> part.Split('_') |> Array.head)
++
++            (defaultArg version name), reader.ReadToEnd())
++        |> Array.toList
++
++    type Applied =
++        { Version: string
++          AlreadyPresent: bool }
++
++    /// Install every pending migration. Safe to call concurrently.
++    let run (connectionString: string) : Result<Applied list, string> =
++        try
++            use conn = new NpgsqlConnection(connectionString)
++            conn.Open()
++
++            use cmd = conn.CreateCommand()
++            cmd.CommandText <- ledgerDdl
++            cmd.ExecuteNonQuery() |> ignore
++
++            // serialize concurrent controllers; released when the session ends
++            use lockCmd = conn.CreateCommand()
++            lockCmd.CommandText <- "SELECT pg_advisory_lock(@k)"
++            lockCmd.Parameters.AddWithValue("k", lockKey) |> ignore
++            lockCmd.ExecuteNonQuery() |> ignore
++
++            try
++                let results =
++                    all ()
++                    |> List.map (fun (version, sql) ->
++                        let checksum = sha256 sql
++
++                        use check = conn.CreateCommand()
++                        check.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = @v"
++                        check.Parameters.AddWithValue("v", version) |> ignore
++
++                        match check.ExecuteScalar() with
++                        | null ->
++                            use tx = conn.BeginTransaction()
++
++                            use apply = conn.CreateCommand()
++                            apply.Transaction <- tx
++                            apply.CommandText <- sql
++                            apply.ExecuteNonQuery() |> ignore
++
++                            use record = conn.CreateCommand()
++                            record.Transaction <- tx
++                            record.CommandText <-
++                                "INSERT INTO schema_migrations (version, checksum) VALUES (@v, @c)"
++                            record.Parameters.AddWithValue("v", version) |> ignore
++                            record.Parameters.AddWithValue("c", checksum) |> ignore
++                            record.ExecuteNonQuery() |> ignore
++
++                            tx.Commit()
++                            { Version = version; AlreadyPresent = false }
++                        | existing when string existing <> checksum ->
++                            failwith
++                                $"migration {version} was applied with checksum {existing} but the \
++                                  repository now contains {checksum}; the schema and the source have diverged"
++                        | _ -> { Version = version; AlreadyPresent = true })
++
++                Ok results
++            finally
++                use unlock = conn.CreateCommand()
++                unlock.CommandText <- "SELECT pg_advisory_unlock(@k)"
++                unlock.Parameters.AddWithValue("k", lockKey) |> ignore
++                unlock.ExecuteNonQuery() |> ignore
++        with ex ->
++            Error ex.Message
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+new file mode 100644
+index 0000000..9771881
+--- /dev/null
++++ b/src/Fogell.Store/Store.fs
+@@ -0,0 +1,349 @@
++namespace Fogell.Store
++
++open System
++open Npgsql
++open Fogell.Domain
++
++/// What admission returns. Repeating the same idempotency key returns exactly
++/// these identifiers again, without emitting a second event or outbox message.
++type Admission =
++    { BuildId: BuildId
++      NodeId: NodeId
++      AttemptId: AttemptId
++      Number: int
++      WasExisting: bool }
++
++type NewBuild =
++    { OrganizationId: OrganizationId
++      ProjectId: ProjectId
++      IdempotencyKey: string
++      StageNames: string list
++      RequiredTrustPool: string
++      RequiredCapabilities: string list }
++
++/// FG-021/FG-022. The controller's durable truth.
++type Store(connectionString: string) =
++
++    let openConn () =
++        let c = new NpgsqlConnection(connectionString)
++        c.Open()
++        c
++
++    member _.Migrate() = Migrations.run connectionString
++
++    member _.CreateProject(org: OrganizationId, orgSlug: string, project: ProjectId, projectSlug: string) =
++        use conn = openConn ()
++        use tx = conn.BeginTransaction()
++
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "INSERT INTO organizations (id, slug) VALUES (@o, @os) ON CONFLICT (id) DO NOTHING;
++             INSERT INTO projects (id, organization_id, slug) VALUES (@p, @o, @ps)
++             ON CONFLICT (id, organization_id) DO NOTHING"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("os", orgSlug) |> ignore
++        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
++        cmd.Parameters.AddWithValue("ps", projectSlug) |> ignore
++        cmd.ExecuteNonQuery() |> ignore
++        tx.Commit()
++
++    member _.CurrentRestoreEpoch() : RestoreEpoch =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
++        RestoreEpoch(cmd.ExecuteScalar() :?> int64)
++
++    /// FG-021. Build, first node, first attempt, a durable event and an outbox
++    /// message commit **together**. There is no window in which a build exists
++    /// without its event, or an event without its outbox row.
++    ///
++    /// Idempotency is enforced by a unique constraint, not by check-then-insert:
++    /// two concurrent submissions of the same key cannot both win, because the
++    /// database decides rather than the application.
++    member _.AdmitBuild(input: NewBuild) : Result<Admission, string> =
++        if List.isEmpty input.StageNames then
++            Error "a build must declare at least one stage"
++        elif String.IsNullOrWhiteSpace input.IdempotencyKey then
++            Error "idempotency key is required"
++        else
++
++        use conn = openConn ()
++        use tx = conn.BeginTransaction()
++
++        try
++            // Has this key already been admitted? Read inside the transaction so
++            // the unique constraint is the arbiter under concurrency.
++            use existing = conn.CreateCommand()
++            existing.Transaction <- tx
++            existing.CommandText <-
++                "SELECT b.id, b.number, n.id, a.id
++                 FROM builds b
++                 JOIN nodes n    ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
++                 JOIN attempts a ON a.node_id = n.id  AND a.organization_id = n.organization_id AND a.ordinal = 0
++                 WHERE b.organization_id = @o AND b.project_id = @p AND b.idempotency_key = @k"
++            existing.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++            existing.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
++            existing.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
++
++            use reader = existing.ExecuteReader()
++
++            if reader.Read() then
++                let result =
++                    { BuildId = BuildId(reader.GetGuid 0)
++                      Number = reader.GetInt32 1
++                      NodeId = NodeId(reader.GetGuid 2)
++                      AttemptId = AttemptId(reader.GetGuid 3)
++                      WasExisting = true }
++
++                reader.Close()
++                tx.Commit()
++                Ok result
++            else
++                reader.Close()
++
++                let buildId = Guid.NewGuid()
++                let epoch =
++                    use e = conn.CreateCommand()
++                    e.Transaction <- tx
++                    e.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
++                    e.ExecuteScalar() :?> int64
++
++                use insert = conn.CreateCommand()
++                insert.Transaction <- tx
++                insert.CommandText <-
++                    "WITH next AS (
++                         SELECT COALESCE(MAX(number), 0) + 1 AS n
++                         FROM builds WHERE organization_id = @o AND project_id = @p
++                     )
++                     INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status)
++                     SELECT @b, @o, @p, next.n, @k, 'queued' FROM next
++                     RETURNING number"
++                insert.Parameters.AddWithValue("b", buildId) |> ignore
++                insert.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                insert.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
++                insert.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
++                let number = insert.ExecuteScalar() :?> int
++
++                // one node per declared stage; the first attempt of the first
++                // node is created eagerly so the scheduler has something to offer
++                let nodeIds =
++                    input.StageNames
++                    |> List.mapi (fun i name ->
++                        let nodeId = Guid.NewGuid()
++
++                        use n = conn.CreateCommand()
++                        n.Transaction <- tx
++                        n.CommandText <-
++                            "INSERT INTO nodes
++                                 (id, organization_id, build_id, name, ordinal, required_trust_pool,
++                                  required_capabilities, status)
++                             VALUES (@id, @o, @b, @name, @ord, @pool, @caps, 'queued')"
++                        n.Parameters.AddWithValue("id", nodeId) |> ignore
++                        n.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                        n.Parameters.AddWithValue("b", buildId) |> ignore
++                        n.Parameters.AddWithValue("name", name) |> ignore
++                        n.Parameters.AddWithValue("ord", i) |> ignore
++                        n.Parameters.AddWithValue("pool", input.RequiredTrustPool) |> ignore
++                        n.Parameters.AddWithValue("caps", List.toArray input.RequiredCapabilities) |> ignore
++                        n.ExecuteNonQuery() |> ignore
++                        nodeId)
++
++                let firstNode = List.head nodeIds
++                let attemptId = Guid.NewGuid()
++
++                use a = conn.CreateCommand()
++                a.Transaction <- tx
++                a.CommandText <-
++                    "INSERT INTO attempts (id, organization_id, node_id, ordinal, state, fence, restore_epoch)
++                     VALUES (@id, @o, @n, 0, 'queued', 0, @e)"
++                a.Parameters.AddWithValue("id", attemptId) |> ignore
++                a.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                a.Parameters.AddWithValue("n", firstNode) |> ignore
++                a.Parameters.AddWithValue("e", epoch) |> ignore
++                a.ExecuteNonQuery() |> ignore
++
++                use ev = conn.CreateCommand()
++                ev.Transaction <- tx
++                ev.CommandText <-
++                    "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
++                     VALUES (@o, @b, @a, 'build.admitted', @pl)"
++                ev.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                ev.Parameters.AddWithValue("b", buildId) |> ignore
++                ev.Parameters.AddWithValue("a", attemptId) |> ignore
++                ev.Parameters.Add(NpgsqlParameter("pl", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = $"{{\"number\":{number}}}")) |> ignore
++                ev.ExecuteNonQuery() |> ignore
++
++                use ob = conn.CreateCommand()
++                ob.Transaction <- tx
++                ob.CommandText <-
++                    "INSERT INTO outbox (organization_id, topic, body) VALUES (@o, 'build.admitted', @bd)"
++                ob.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                ob.Parameters.Add(NpgsqlParameter("bd", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = $"{{\"build\":\"{buildId}\"}}")) |> ignore
++                ob.ExecuteNonQuery() |> ignore
++
++                tx.Commit()
++
++                Ok
++                    { BuildId = BuildId buildId
++                      NodeId = NodeId firstNode
++                      AttemptId = AttemptId attemptId
++                      Number = number
++                      WasExisting = false }
++        with ex ->
++            (try tx.Rollback() with _ -> ())
++            Error ex.Message
++
++    /// FG-022. Offer an attempt to an agent: increments the fence, records the
++    /// lease. Every offer bumps the fence, so an expired offer's holder can
++    /// never publish against the next one.
++    member _.OfferAttempt(org: OrganizationId, attempt: AttemptId, owner: string, leaseSeconds: int) : Result<Fence, string> =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <-
++            "UPDATE attempts
++                SET fence = fence + 1,
++                    state = 'offered',
++                    lease_owner = @owner,
++                    lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
++              WHERE organization_id = @o AND id = @a
++                AND state IN ('queued', 'offered')
++              RETURNING fence"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        cmd.Parameters.AddWithValue("owner", owner) |> ignore
++        cmd.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
++
++        match cmd.ExecuteScalar() with
++        | null -> Error "attempt is not offerable"
++        | v -> Ok(Fence(v :?> int64))
++
++    member _.AcceptAttempt(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <-
++            "UPDATE attempts SET state = 'running'
++              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
++                AND state = 'offered' AND lease_expires_at > clock_timestamp()"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++        cmd.Parameters.AddWithValue("owner", owner) |> ignore
++        cmd.ExecuteNonQuery() = 1
++
++    /// FG-022. Publish a terminal result. Admissible only from the exact current
++    /// fence, the exact lease owner, the current restore epoch, an unexpired
++    /// lease and an active state — all seven conditions from ADR 0007, in one
++    /// statement so there is no read-then-write race.
++    ///
++    /// `clock_timestamp()` deliberately, not `now()`: `now()` is transaction
++    /// start time, so inside a long transaction an expired lease would still
++    /// read as valid.
++    member _.PublishTerminal
++        (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, result: BuildStatus)
++        : Result<unit, string> =
++        use conn = openConn ()
++        use tx = conn.BeginTransaction()
++
++        try
++            use cmd = conn.CreateCommand()
++            cmd.Transaction <- tx
++            cmd.CommandText <-
++                "UPDATE attempts a
++                    SET state = 'terminal', result = @r, lease_owner = NULL, lease_expires_at = NULL
++                  WHERE a.organization_id = @o
++                    AND a.id = @a
++                    AND a.fence = @f
++                    AND a.lease_owner = @owner
++                    AND a.lease_expires_at > clock_timestamp()
++                    AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
++                    AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
++                  RETURNING a.node_id"
++            cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++            cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++            cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++            cmd.Parameters.AddWithValue("owner", owner) |> ignore
++            cmd.Parameters.AddWithValue("r", BuildStatus.toWireString result) |> ignore
++
++            match cmd.ExecuteScalar() with
++            | null ->
++                tx.Rollback()
++                Error "publication refused: stale fence, wrong owner, expired lease, pre-restore epoch, or already terminal"
++            | nodeId ->
++                use ev = conn.CreateCommand()
++                ev.Transaction <- tx
++                ev.CommandText <-
++                    "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
++                     SELECT @o, n.build_id, @a, 'attempt.terminal', @pl
++                     FROM nodes n WHERE n.id = @n AND n.organization_id = @o"
++                ev.Parameters.AddWithValue("o", org.Value) |> ignore
++                ev.Parameters.AddWithValue("a", attempt.Value) |> ignore
++                ev.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
++                ev.Parameters.Add(
++                    NpgsqlParameter("pl", NpgsqlTypes.NpgsqlDbType.Jsonb,
++                                    Value = $"{{\"result\":\"{BuildStatus.toWireString result}\"}}")) |> ignore
++                ev.ExecuteNonQuery() |> ignore
++
++                tx.Commit()
++                Ok()
++        with ex ->
++            (try tx.Rollback() with _ -> ())
++            Error ex.Message
++
++    /// A restore invalidates every lease issued before it. Pre-restore agents
++    /// can no longer renew or publish; their attempts require reconciliation.
++    member _.ActivateRestore() : RestoreEpoch =
++        use conn = openConn ()
++        use tx = conn.BeginTransaction()
++
++        use bump = conn.CreateCommand()
++        bump.Transaction <- tx
++        bump.CommandText <-
++            "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1
++              WHERE singleton RETURNING restore_epoch"
++        let epoch = bump.ExecuteScalar() :?> int64
++
++        use invalidate = conn.CreateCommand()
++        invalidate.Transaction <- tx
++        invalidate.CommandText <-
++            "UPDATE attempts
++                SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
++              WHERE restore_epoch < @e
++                AND state IN ('queued', 'offered', 'accepted', 'running', 'finalizing', 'cancelling')"
++        invalidate.Parameters.AddWithValue("e", epoch) |> ignore
++        invalidate.ExecuteNonQuery() |> ignore
++
++        tx.Commit()
++        RestoreEpoch epoch
++
++    member _.AttemptState(org: OrganizationId, attempt: AttemptId) : (string * int64 * string option) option =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <-
++            "SELECT state, fence, result FROM attempts WHERE organization_id = @o AND id = @a"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++
++        use r = cmd.ExecuteReader()
++
++        if r.Read() then
++            Some(r.GetString 0, r.GetInt64 1, (if r.IsDBNull 2 then None else Some(r.GetString 2)))
++        else
++            None
++
++    member _.CountEvents(org: OrganizationId, build: BuildId, kind: string) : int =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <-
++            "SELECT count(*) FROM events WHERE organization_id = @o AND build_id = @b AND kind = @k"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
++        cmd.Parameters.AddWithValue("k", kind) |> ignore
++        cmd.ExecuteScalar() :?> int64 |> int
++
++    member _.CountOutbox(org: OrganizationId) : int =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <- "SELECT count(*) FROM outbox WHERE organization_id = @o"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.ExecuteScalar() :?> int64 |> int
+diff --git a/src/Fogell.Store/migrations/0001_controller_truth.sql b/src/Fogell.Store/migrations/0001_controller_truth.sql
+new file mode 100644
+index 0000000..2d98a10
+--- /dev/null
++++ b/src/Fogell.Store/migrations/0001_controller_truth.sql
+@@ -0,0 +1,110 @@
++-- FG-020 / ADR 0007. Controller truth.
++--
++-- Every constraint here encodes a defect class observed in an engine this one
++-- replaces. Composite foreign keys are not decoration: they make cross-tenant
++-- parent substitution unrepresentable rather than merely forbidden.
++
++CREATE TABLE IF NOT EXISTS organizations (
++    id   uuid PRIMARY KEY,
++    slug text NOT NULL UNIQUE
++);
++
++CREATE TABLE IF NOT EXISTS projects (
++    id              uuid NOT NULL,
++    organization_id uuid NOT NULL REFERENCES organizations (id),
++    slug            text NOT NULL,
++    PRIMARY KEY (id, organization_id),
++    UNIQUE (organization_id, slug)
++);
++
++-- Singleton row carrying the controller restore epoch. Bumping it invalidates
++-- every lease issued before a restore, so a pre-restore agent cannot publish.
++CREATE TABLE IF NOT EXISTS controller_metadata (
++    singleton     boolean PRIMARY KEY DEFAULT true CHECK (singleton),
++    restore_epoch bigint  NOT NULL DEFAULT 0
++);
++INSERT INTO controller_metadata (singleton, restore_epoch)
++VALUES (true, 0)
++ON CONFLICT (singleton) DO NOTHING;
++
++CREATE TABLE IF NOT EXISTS builds (
++    id                     uuid    NOT NULL,
++    organization_id        uuid    NOT NULL,
++    project_id             uuid    NOT NULL,
++    number                 integer NOT NULL,
++    idempotency_key        text    NOT NULL,
++    status                 text    NOT NULL,
++    cancellation_requested boolean NOT NULL DEFAULT false,
++    created_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
++    PRIMARY KEY (id, organization_id),
++    FOREIGN KEY (project_id, organization_id) REFERENCES projects (id, organization_id),
++    -- FG-021: admission is idempotent per project, enforced by the database
++    -- rather than by a check-then-insert race in application code.
++    UNIQUE (organization_id, project_id, idempotency_key),
++    UNIQUE (organization_id, project_id, number)
++);
++
++CREATE TABLE IF NOT EXISTS nodes (
++    id                       uuid NOT NULL,
++    organization_id          uuid NOT NULL,
++    build_id                 uuid NOT NULL,
++    name                     text NOT NULL,
++    ordinal                  integer NOT NULL,
++    required_trust_pool      text NOT NULL,
++    required_capabilities    text[] NOT NULL DEFAULT '{}',
++    status                   text NOT NULL,
++    PRIMARY KEY (id, organization_id),
++    FOREIGN KEY (build_id, organization_id) REFERENCES builds (id, organization_id)
++);
++
++CREATE TABLE IF NOT EXISTS attempts (
++    id               uuid   NOT NULL,
++    organization_id  uuid   NOT NULL,
++    node_id          uuid   NOT NULL,
++    ordinal          integer NOT NULL,
++    retry_of         uuid,
++    state            text   NOT NULL,
++    -- FG-022: monotonic guard. Only the holder of the exact current fence may
++    -- publish a terminal result.
++    fence            bigint NOT NULL DEFAULT 0,
++    restore_epoch    bigint NOT NULL DEFAULT 0,
++    lease_owner      text,
++    lease_expires_at timestamptz,
++    result           text,
++    created_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
++    PRIMARY KEY (id, organization_id),
++    FOREIGN KEY (node_id, organization_id) REFERENCES nodes (id, organization_id),
++    FOREIGN KEY (retry_of, organization_id) REFERENCES attempts (id, organization_id),
++    -- an attempt with a lease must say when it expires
++    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)),
++    UNIQUE (organization_id, node_id, ordinal)
++);
++
++-- Durable, append-only history. Never updated.
++CREATE TABLE IF NOT EXISTS events (
++    id              bigserial PRIMARY KEY,
++    organization_id uuid NOT NULL,
++    build_id        uuid NOT NULL,
++    attempt_id      uuid,
++    kind            text NOT NULL,
++    payload         jsonb NOT NULL DEFAULT '{}',
++    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
++    FOREIGN KEY (build_id, organization_id) REFERENCES builds (id, organization_id)
++);
++
++-- Transactional outbox: a message is committed with the state change that
++-- produced it, so there is no window where one exists without the other.
++CREATE TABLE IF NOT EXISTS outbox (
++    id              bigserial PRIMARY KEY,
++    organization_id uuid NOT NULL,
++    topic           text NOT NULL,
++    body            jsonb NOT NULL,
++    published_at    timestamptz,
++    created_at      timestamptz NOT NULL DEFAULT clock_timestamp()
++);
++
++CREATE INDEX IF NOT EXISTS attempts_claim_order
++    ON attempts (organization_id, state, created_at, id);
++
++CREATE INDEX IF NOT EXISTS outbox_unpublished
++    ON outbox (created_at) WHERE published_at IS NULL;
+diff --git a/tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj b/tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj
+new file mode 100644
+index 0000000..582a434
+--- /dev/null
++++ b/tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj
+@@ -0,0 +1,8 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
++  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Store/Fogell.Store.fsproj" />
++    <PackageReference Include="Expecto" Version="10.2.3" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+new file mode 100644
+index 0000000..d46d012
+--- /dev/null
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -0,0 +1,292 @@
++module Fogell.Store.Tests
++
++open System
++open Expecto
++open Fogell.Domain
++open Fogell.Store
++
++/// Real PostgreSQL, never a mock. ADR 0007's properties are database
++/// properties: a fake would prove nothing about a unique constraint arbitrating
++/// a concurrent race.
++let private connectionString =
++    match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
++    | null
++    | "" -> "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
++    | v -> v
++
++let private available =
++    try
++        use c = new Npgsql.NpgsqlConnection(connectionString)
++        c.Open()
++        true
++    with _ ->
++        false
++
++let private store = Store(connectionString)
++
++let private freshProject () =
++    let org = OrganizationId(Guid.NewGuid())
++    let project = ProjectId(Guid.NewGuid())
++    store.CreateProject(org, $"org-{org.Value}", project, "p")
++    org, project
++
++let private newBuild org project key stages =
++    { OrganizationId = org
++      ProjectId = project
++      IdempotencyKey = key
++      StageNames = stages
++      RequiredTrustPool = "trusted-linux"
++      RequiredCapabilities = [ "linux" ] }
++
++let private admitOk input =
++    match store.AdmitBuild input with
++    | Ok a -> a
++    | Error e -> failtestf "admission failed: %s" e
++
++let migrations =
++    testList
++        "FG-020 migrations"
++        [ test "migrate is idempotent and records a checksum" {
++              match store.Migrate() with
++              | Error e -> failtestf "migrate failed: %s" e
++              | Ok first ->
++                  Expect.isNonEmpty first "at least one migration"
++
++                  match store.Migrate() with
++                  | Error e -> failtestf "second migrate failed: %s" e
++                  | Ok second ->
++                      Expect.isTrue
++                          (second |> List.forall (fun m -> m.AlreadyPresent))
++                          "a second run applies nothing"
++          }
++
++          test "concurrent controllers install each migration exactly once" {
++              // The advisory lock is the point: without it both callers see
++              // "not applied" and both apply.
++              let results =
++                  [ 1..8 ]
++                  |> List.map (fun _ -> async { return Store(connectionString).Migrate() })
++                  |> Async.Parallel
++                  |> Async.RunSynchronously
++
++              Expect.isTrue (results |> Array.forall Result.isOk) "every caller succeeded"
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <- "SELECT count(*) FROM schema_migrations WHERE version = '0001'"
++              Expect.equal (cmd.ExecuteScalar() :?> int64) 1L "exactly one ledger row"
++          } ]
++
++let admission =
++    testList
++        "FG-021 atomic idempotent admission"
++        [ test "admission commits build, node, attempt, event and outbox together" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "k-1" [ "build"; "test" ])
++              Expect.isFalse a.WasExisting "first admission"
++              Expect.equal a.Number 1 "build numbering starts at 1"
++              Expect.equal (store.CountEvents(org, a.BuildId, "build.admitted")) 1 "one event"
++              Expect.equal (store.CountOutbox org) 1 "one outbox message"
++          }
++
++          test "replaying a key returns the original ids and emits nothing new" {
++              let org, project = freshProject ()
++              let first = admitOk (newBuild org project "same" [ "build" ])
++              let again = admitOk (newBuild org project "same" [ "build" ])
++              Expect.isTrue again.WasExisting "recognised as existing"
++              Expect.equal again.BuildId first.BuildId "same build"
++              Expect.equal again.AttemptId first.AttemptId "same attempt"
++              Expect.equal (store.CountEvents(org, first.BuildId, "build.admitted")) 1 "still one event"
++              Expect.equal (store.CountOutbox org) 1 "still one outbox row"
++          }
++
++          test "16 concurrent submissions of one key produce exactly one build" {
++              let org, project = freshProject ()
++
++              let results =
++                  [ 1..16 ]
++                  |> List.map (fun _ ->
++                      async { return Store(connectionString).AdmitBuild(newBuild org project "race" [ "build" ]) })
++                  |> Async.Parallel
++                  |> Async.RunSynchronously
++
++              let succeeded = results |> Array.choose (function Ok a -> Some a | Error _ -> None)
++              Expect.isNonEmpty succeeded "at least one winner"
++
++              let distinct = succeeded |> Array.map (fun a -> a.BuildId) |> Array.distinct
++              Expect.equal distinct.Length 1 "all callers agree on one build id"
++              Expect.equal (store.CountEvents(org, distinct.[0], "build.admitted")) 1 "exactly one event"
++          }
++
++          test "build numbers increment per project" {
++              let org, project = freshProject ()
++              Expect.equal (admitOk (newBuild org project "n1" [ "b" ])).Number 1 "first"
++              Expect.equal (admitOk (newBuild org project "n2" [ "b" ])).Number 2 "second"
++              Expect.equal (admitOk (newBuild org project "n3" [ "b" ])).Number 3 "third"
++          }
++
++          test "a build with no stages is refused" {
++              let org, project = freshProject ()
++
++              match store.AdmitBuild(newBuild org project "empty" []) with
++              | Error _ -> ()
++              | Ok _ -> failtest "expected refusal"
++          }
++
++          test "a blank idempotency key is refused" {
++              let org, project = freshProject ()
++
++              match store.AdmitBuild(newBuild org project "  " [ "b" ]) with
++              | Error _ -> ()
++              | Ok _ -> failtest "expected refusal"
++          } ]
++
++let fencing =
++    testList
++        "FG-022 fences and publication"
++        [ test "the exact current holder may publish" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "pub-1" [ "b" ])
++
++              match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with
++              | Error e -> failtestf "offer failed: %s" e
++              | Ok fence ->
++                  Expect.isTrue (store.AcceptAttempt(org, a.AttemptId, fence, "agent-a")) "accepted"
++
++                  match store.PublishTerminal(org, a.AttemptId, fence, "agent-a", Success) with
++                  | Ok() ->
++                      match store.AttemptState(org, a.AttemptId) with
++                      | Some(state, _, result) ->
++                          Expect.equal state "terminal" "terminal state"
++                          Expect.equal result (Some "success") "result recorded"
++                      | None -> failtest "attempt vanished"
++                  | Error e -> failtestf "publication refused: %s" e
++          }
++
++          test "exactly one winner among 16 concurrent publishers" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "race-pub" [ "b" ])
++              let fence = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with
++                          | Ok f -> f
++                          | Error e -> failtestf "offer failed: %s" e
++              store.AcceptAttempt(org, a.AttemptId, fence, "agent-a") |> ignore
++
++              let results =
++                  [ 1..16 ]
++                  |> List.map (fun _ ->
++                      async {
++                          return Store(connectionString).PublishTerminal(org, a.AttemptId, fence, "agent-a", Success)
++                      })
++                  |> Async.Parallel
++                  |> Async.RunSynchronously
++
++              let winners = results |> Array.filter Result.isOk |> Array.length
++              Expect.equal winners 1 "exactly one publication succeeds"
++              Expect.equal (store.CountEvents(org, a.BuildId, "attempt.terminal")) 1 "exactly one terminal event"
++          }
++
++          test "a stale fence is refused" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "stale" [ "b" ])
++              let first = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with
++                          | Ok f -> f
++                          | Error e -> failtestf "%s" e
++              // a second offer bumps the fence; the first holder is now stale
++              store.OfferAttempt(org, a.AttemptId, "agent-b", 60) |> ignore
++
++              match store.PublishTerminal(org, a.AttemptId, first, "agent-a", Success) with
++              | Error _ -> ()
++              | Ok() -> failtest "a stale fence must not publish"
++          }
++
++          test "the wrong owner is refused even with the right fence" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "owner" [ "b" ])
++              let fence = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with
++                          | Ok f -> f
++                          | Error e -> failtestf "%s" e
++
++              match store.PublishTerminal(org, a.AttemptId, fence, "agent-b", Success) with
++              | Error _ -> ()
++              | Ok() -> failtest "wrong owner must not publish"
++          }
++
++          test "an expired lease is refused (clock_timestamp, not now)" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "expiry" [ "b" ])
++              // a zero-second lease is already expired by the time we publish
++              let fence = match store.OfferAttempt(org, a.AttemptId, "agent-a", 0) with
++                          | Ok f -> f
++                          | Error e -> failtestf "%s" e
++              System.Threading.Thread.Sleep 50
++
++              match store.PublishTerminal(org, a.AttemptId, fence, "agent-a", Success) with
++              | Error _ -> ()
++              | Ok() -> failtest "an expired lease must not publish"
++          }
++
++          test "a restore invalidates pre-restore authority" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "restore" [ "b" ])
++              let fence = match store.OfferAttempt(org, a.AttemptId, "agent-a", 300) with
++                          | Ok f -> f
++                          | Error e -> failtestf "%s" e
++              store.AcceptAttempt(org, a.AttemptId, fence, "agent-a") |> ignore
++
++              let before = store.CurrentRestoreEpoch()
++              let after = store.ActivateRestore()
++              Expect.isGreaterThan after.Value before.Value "epoch advanced"
++
++              match store.PublishTerminal(org, a.AttemptId, fence, "agent-a", Success) with
++              | Error _ -> ()
++              | Ok() -> failtest "a pre-restore agent must not publish"
++
++              match store.AttemptState(org, a.AttemptId) with
++              | Some(state, _, _) ->
++                  Expect.equal state "reconciliation_required" "attempt awaits reconciliation"
++              | None -> failtest "attempt vanished"
++          }
++
++          test "publishing twice is refused the second time" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "twice" [ "b" ])
++              let fence = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with
++                          | Ok f -> f
++                          | Error e -> failtestf "%s" e
++              store.AcceptAttempt(org, a.AttemptId, fence, "agent-a") |> ignore
++              Expect.isTrue (Result.isOk (store.PublishTerminal(org, a.AttemptId, fence, "agent-a", Success))) "first"
++
++              match store.PublishTerminal(org, a.AttemptId, fence, "agent-a", Failure) with
++              | Error _ -> ()
++              | Ok() -> failtest "terminal is final"
++          }
++
++          test "each offer increments the fence" {
++              let org, project = freshProject ()
++              let a = admitOk (newBuild org project "fences" [ "b" ])
++              let f1 = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with Ok f -> f | Error e -> failtestf "%s" e
++              let f2 = match store.OfferAttempt(org, a.AttemptId, "agent-b", 60) with Ok f -> f | Error e -> failtestf "%s" e
++              Expect.equal f2.Value (f1.Value + 1L) "monotonic"
++          } ]
++
++[<EntryPoint>]
++let main argv =
++    if not available then
++        eprintfn "skipped: no PostgreSQL at %s (set FOGELL_TEST_DATABASE_URL)" connectionString
++        0
++    else
++        match store.Migrate() with
++        | Error e ->
++            eprintfn $"migrate failed: {e}"
++            1
++        | Ok _ ->
++            // These tests share one database, and ActivateRestore bumps a GLOBAL
++            // epoch row that every other attempt is validated against. Run
++            // sequentially: in parallel, the restore test invalidates the
++            // concurrent-publisher test's lease mid-flight and it sees zero
++            // winners instead of one. The store is correct; the harness was not.
++            runTestsWithCLIArgs
++                []
++                argv
++                (testSequenced (testList "Fogell.Store" [ migrations; admission; fencing ]))

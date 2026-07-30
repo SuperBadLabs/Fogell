@@ -85,10 +85,10 @@ derivation in `architecture/BASELINE.md`.
 
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
-| FG-020 | P0 | TODO | `Fogell.Store` on PostgreSQL (`adr/0007`): schema + migrations under advisory lock with a version ledger | concurrent controller start installs each migration exactly once |
-| FG-021 | P0 | TODO | Atomic admission: build + node + attempt + event + outbox in one transaction, idempotency-keyed | replaying a key returns original ids, emits no second event |
-| FG-022 | P0 | TODO | Attempt fences + lease owner + expiry using `clock_timestamp()`, not `now()` | 16 concurrent terminal publishers → exactly one winner |
-| FG-023 | P0 | TODO | Controller restore epoch: restore invalidates every active lease; pre-restore agents cannot publish | test proves stale publisher rejected after restore |
+| FG-020 | P0 | **DONE** | `Fogell.Store` on PostgreSQL (`adr/0007`): schema + migrations under advisory lock with a checksummed version ledger | 8 concurrent `Migrate()` calls all succeed and leave **exactly one** ledger row. A migration whose text changed after being applied fails loudly rather than diverging silently |
+| FG-021 | P0 | **DONE** | Atomic admission: build + node + attempt + event + outbox in one transaction, idempotency-keyed | Replay returns the original ids and emits no second event/outbox row. **16 concurrent submissions of one key yield exactly one build** — arbitrated by a unique constraint, not check-then-insert. Composite FKs make cross-tenant parent substitution unrepresentable |
+| FG-022 | P0 | **DONE** | Attempt fences + lease owner + expiry using `clock_timestamp()`, not `now()` | **16 concurrent publishers → exactly 1 winner, exactly 1 terminal event.** Refused: stale fence, wrong owner, expired lease, double publication. Each offer increments the fence |
+| FG-023 | P0 | **DONE** | Controller restore epoch: restore invalidates every active lease; pre-restore agents cannot publish | `ActivateRestore()` bumps the epoch and moves live attempts to `reconciliation_required`; a pre-restore holder's publication is refused |
 | FG-024 | P0 | TODO | Per-step journal, fsync batched at stage boundaries (`adr/0003`) | durable per-step cost < 8 ms on luigi-class storage; number published only from the durable path |
 | FG-025 | P0 | TODO | **Exactly-once resume**: replay from last durable step, not stage start | SIGKILL mid-stage; resume does not re-execute a completed step; a marker file proves single execution |
 | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |

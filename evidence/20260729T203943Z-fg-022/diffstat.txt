@@ -1,0 +1,10 @@
+ Fogell.slnx                                        |   2 +
+ docs/EXECUTION_BOARD.md                            |   8 +-
+ scripts/pg-test-db.sh                              |  18 ++
+ src/Fogell.Store/Fogell.Store.fsproj               |  14 +
+ src/Fogell.Store/Migrations.fs                     | 121 +++++++
+ src/Fogell.Store/Store.fs                          | 349 +++++++++++++++++++++
+ .../migrations/0001_controller_truth.sql           | 110 +++++++
+ tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj |   8 +
+ tests/Fogell.Store.Tests/Tests.fs                  | 292 +++++++++++++++++
+ 9 files changed, 918 insertions(+), 4 deletions(-)
