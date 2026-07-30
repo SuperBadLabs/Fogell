@@ -1,0 +1,4 @@
+ docs/EXECUTION_BOARD.md               |  1 +
+ src/Fogell.Execution/Publish.fs       |  8 +++++++-
+ tests/Fogell.Execution.Tests/Tests.fs | 24 ++++++++++++++++++++++++
+ 3 files changed, 32 insertions(+), 1 deletion(-)

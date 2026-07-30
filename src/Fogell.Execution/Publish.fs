@@ -123,7 +123,13 @@ module Publish =
         : Result<int * int * int, JUnitProblem> =
         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
 
-        if List.isEmpty files then
+        // REVIEW FIX (Codex, PR #14 round 12): the mirror of the archive zero-match
+        // case. With no matching report the scan can still have been long, and an
+        // interrupt firing during it was reported as "no test report matched" — a
+        // pattern problem the user would go and debug — instead of an abort.
+        if abort () then
+            Error Interrupted
+        elif List.isEmpty files then
             Error(Unreadable "no test report matched the pattern")
         else
             let mutable total = 0

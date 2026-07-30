@@ -577,6 +577,30 @@ let externalInterrupt =
               // and archive timeouts select `post { aborted }`. Assert the exact status.
               Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
 
+              // Round-12 mirror: with NO matching report, an interrupt must still be an
+              // abort rather than "no test report matched the pattern" — which would
+              // send the user off debugging a glob that was fine.
+              let noMatch =
+                  Executor.runStep
+                      { Name = "junit"
+                        Script = None
+                        Workspace = ws
+                        Environment = []
+                        TimeoutMs = None
+                        Interrupt = None
+                        DeadlineExpired = Some(fun () -> true)
+                        Secrets = []
+                        OnLine = None
+                        Named = [ "testResults", "nothing-matches-*.xml" ]
+                        Artifacts = None
+                        BuildKey = "k" }
+
+              Expect.equal noMatch.Status Aborted "zero-match plus interrupt is an abort"
+
+              match noMatch.Diagnostic with
+              | Some d -> Expect.isFalse (d.Contains "no test report matched") $"not blamed on the pattern: {d}"
+              | None -> failtest "expected a diagnostic"
+
               match r.Diagnostic with
               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
               | None -> failtest "an aborted junit must carry a diagnostic"
