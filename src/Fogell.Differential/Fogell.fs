@@ -201,6 +201,21 @@ module FogellSide =
                 // the first `}` even when it belongs to a nested expression or a quoted
                 // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
                 // Groovy's boundary is the BALANCED brace, with quotes respected.
+                /// Does a `/` at this position OPEN a slashy string, or divide?
+                /// Groovy decides by what precedes it: a value (identifier, digit, closing
+                /// bracket) means division; anything else opens a literal.
+                let slashOpensLiteral (text: string) (idx: int) =
+                    let mutable j = idx - 1
+
+                    while j >= 0 && (text[j] = ' ' || text[j] = '\t') do
+                        j <- j - 1
+
+                    if j < 0 then
+                        true
+                    else
+                        let p = text[j]
+                        not (Char.IsLetterOrDigit p || p = '_' || p = ')' || p = ']' || p = '}')
+
                 let findClose (text: string) (openIdx: int) =
                     let mutable i = openIdx + 2 // past "${"
                     let mutable depth = 1
@@ -213,11 +228,14 @@ module FogellSide =
                         if quote <> '\000' then
                             if c = '\\' then i <- i + 1
                             elif c = quote then quote <- '\000'
-                        elif c = '\'' || c = '"' || c = '/' then
-                            // `/` opens a SLASHY string, which `Fogell.Groovy.Parser`
-                            // already accepts — `${/}/}` holds a slashy literal whose `}`
-                            // is content, not the placeholder's end. Omitting it made the
-                            // scanner disagree with the parser that consumes its output.
+                        elif c = '\'' || c = '"' then
+                            quote <- c
+                        elif c = '/' && slashOpensLiteral text i then
+                            // `/` opens a SLASHY string — `${/}/}` holds a literal whose
+                            // `}` is content — but it is also DIVISION. Groovy disambiguates
+                            // by what precedes it: after a value (identifier, number,
+                            // closing bracket) a slash is an operator, otherwise it opens a
+                            // literal. Treating every slash as a quote broke `${a / b}`.
                             quote <- c
                         elif c = '{' then
                             depth <- depth + 1
@@ -1354,17 +1372,22 @@ module FogellSide =
                             // bounded by 250 anyway.
                             let left = defaultArg (remainingMs deadline) 0L
 
-                            // The SIBLING is tested first. With expiry checked first, a
-                            // sibling that failed during the final sleep lost the race to
-                            // a deadline that expired in the same instant, and the build
-                            // reported `aborted` — Aborted outranks Failure, so it would
-                            // then select `post { aborted }` over the failure handler.
-                            // That is collateral-outranks-cause for the sixth time in this
-                            // project, now as an ordering race rather than a missing check.
-                            if interruptedBySibling () then
+                            // Record WHICH EVENT HAPPENED, not which branch is tested
+                            // first. Round 8 checked expiry first, so a sibling failing in
+                            // the final sleep lost; reordering merely swapped the bias, and
+                            // a deadline that genuinely expired first would then be
+                            // reported as a sibling interruption. Both are wrong for the
+                            // same reason — the priority of a test is not evidence about
+                            // the order of events.
+                            let siblingNow = interruptedBySibling ()
+                            let expiredNow = left <= 1L
+
+                            if siblingNow || expiredNow then
                                 stop <- true
-                                bySibling <- true
-                            elif left <= 1L then stop <- true
+                                // A deadline that had ALREADY passed on the previous wake
+                                // is the earlier event; a sibling seen first this wake wins
+                                // only when the deadline has not yet passed.
+                                bySibling <- siblingNow && not expiredNow
                             else
                                 System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
 

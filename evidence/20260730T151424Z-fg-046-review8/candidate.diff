@@ -1,0 +1,92 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index f31fa90..06bb32c 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **60/60 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **61/61 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 47a1985..0d0af31 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -201,6 +201,21 @@ module FogellSide =
+                 // the first `}` even when it belongs to a nested expression or a quoted
+                 // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
+                 // Groovy's boundary is the BALANCED brace, with quotes respected.
++                /// Does a `/` at this position OPEN a slashy string, or divide?
++                /// Groovy decides by what precedes it: a value (identifier, digit, closing
++                /// bracket) means division; anything else opens a literal.
++                let slashOpensLiteral (text: string) (idx: int) =
++                    let mutable j = idx - 1
++
++                    while j >= 0 && (text[j] = ' ' || text[j] = '\t') do
++                        j <- j - 1
++
++                    if j < 0 then
++                        true
++                    else
++                        let p = text[j]
++                        not (Char.IsLetterOrDigit p || p = '_' || p = ')' || p = ']' || p = '}')
++
+                 let findClose (text: string) (openIdx: int) =
+                     let mutable i = openIdx + 2 // past "${"
+                     let mutable depth = 1
+@@ -213,11 +228,14 @@ module FogellSide =
+                         if quote <> '\000' then
+                             if c = '\\' then i <- i + 1
+                             elif c = quote then quote <- '\000'
+-                        elif c = '\'' || c = '"' || c = '/' then
+-                            // `/` opens a SLASHY string, which `Fogell.Groovy.Parser`
+-                            // already accepts — `${/}/}` holds a slashy literal whose `}`
+-                            // is content, not the placeholder's end. Omitting it made the
+-                            // scanner disagree with the parser that consumes its output.
++                        elif c = '\'' || c = '"' then
++                            quote <- c
++                        elif c = '/' && slashOpensLiteral text i then
++                            // `/` opens a SLASHY string — `${/}/}` holds a literal whose
++                            // `}` is content — but it is also DIVISION. Groovy disambiguates
++                            // by what precedes it: after a value (identifier, number,
++                            // closing bracket) a slash is an operator, otherwise it opens a
++                            // literal. Treating every slash as a quote broke `${a / b}`.
+                             quote <- c
+                         elif c = '{' then
+                             depth <- depth + 1
+@@ -1354,17 +1372,22 @@ module FogellSide =
+                             // bounded by 250 anyway.
+                             let left = defaultArg (remainingMs deadline) 0L
+ 
+-                            // The SIBLING is tested first. With expiry checked first, a
+-                            // sibling that failed during the final sleep lost the race to
+-                            // a deadline that expired in the same instant, and the build
+-                            // reported `aborted` — Aborted outranks Failure, so it would
+-                            // then select `post { aborted }` over the failure handler.
+-                            // That is collateral-outranks-cause for the sixth time in this
+-                            // project, now as an ordering race rather than a missing check.
+-                            if interruptedBySibling () then
++                            // Record WHICH EVENT HAPPENED, not which branch is tested
++                            // first. Round 8 checked expiry first, so a sibling failing in
++                            // the final sleep lost; reordering merely swapped the bias, and
++                            // a deadline that genuinely expired first would then be
++                            // reported as a sibling interruption. Both are wrong for the
++                            // same reason — the priority of a test is not evidence about
++                            // the order of events.
++                            let siblingNow = interruptedBySibling ()
++                            let expiredNow = left <= 1L
++
++                            if siblingNow || expiredNow then
+                                 stop <- true
+-                                bySibling <- true
+-                            elif left <= 1L then stop <- true
++                                // A deadline that had ALREADY passed on the previous wake
++                                // is the earlier event; a sibling seen first this wake wins
++                                // only when the deadline has not yet passed.
++                                bySibling <- siblingNow && not expiredNow
+                             else
+                                 System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+ 
