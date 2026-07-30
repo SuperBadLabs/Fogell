@@ -38,9 +38,10 @@ Derived from 117 review findings across PRs #11–#17, counted rather than recal
 | what the PR touched | review rounds |
 |---|---:|
 | leaf concerns — process groups, signals, one step (#11, #12) | **2** |
-| the walker, `Fogell.Differential/Fogell.fs` (#13–#17) | **7–14** |
+| the walker, `Fogell.Differential/Fogell.fs` (#13–#17) | **5–14** |
 
-**55% of all findings (76 of 138 comments) landed in that one file.** Not because it
+**55% of all review COMMENTS (76 of 138) landed in that one file.** (138 comments carry
+117 distinct findings; the two counts are not interchangeable and are kept separate here.) Not because it
 is badly written, but because it is where the cross-cutting invariants live, and every
 new step rediscovers them one at a time.
 
@@ -179,7 +180,7 @@ converts that recurring cost into a one-time cost.
 
 | id | pri | status | scope | acceptance |
 |---|---|---|---|---|
-| FG-100 | **P0** | TODO | **One string model.** Literal / GString / expression provenance, escaped dollars, and the balanced placeholder scanner, decided in ONE place that every consumer routes through | **52 findings.** Today the rules are re-derived per consumer: `environment`, `withEnv`, `input`, `echo`, `equals`, `when` each learned them separately, and four PR #17 rounds were spent on it. Acceptance: a single module owns the model; `sh`/`bat` provably do NOT pre-expand (the shell expands, and doing it twice expands what the author escaped for the shell); a table test covers literal × GString × expression × escaped-dollar × slashy × division × nested-brace for EVERY consumer, so adding a consumer means adding a row, not rediscovering the rules |
+| FG-100 | **P0** | TODO | **One string model.** Literal / GString / expression provenance, escaped dollars, and the balanced placeholder scanner, decided in ONE place that every consumer routes through | **52 findings.** Today the rules are re-derived per consumer: `environment`, `withEnv`, `input`, `echo`, `equals`, `when` each learned them separately, and four PR #17 rounds were spent on it. Acceptance: a single module owns the model; **CORRECTED before this ticket was ever started.** My first draft said `sh`/`bat` "provably do NOT pre-expand". That is wrong, and `tests/Fogell.Groovy.Tests` already proves it: `sh "echo ${name}"` with a Groovy LOCAL must become `echo world` before execution, because the shell cannot see a Groovy local or call a Groovy function. The real rule is that **Groovy interpolates a GString for EVERY step, `sh` included**; what survives to the shell is an ESCAPED `\$` and anything inside a SINGLE-quoted string, which Groovy never touched. The declarative walker currently skips interpolation for `sh` and gets away with it only because the shell expands `$VAR` itself — that breaks the moment a `${…}` names something the shell cannot see; a table test covers literal × GString × expression × escaped-dollar × slashy × division × nested-brace for EVERY consumer, so adding a consumer means adding a row, not rediscovering the rules |
 | FG-101 | **P0** | TODO | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
 | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
 | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
@@ -197,7 +198,7 @@ harness that can…". Doing them together is one push instead of five stalls.
 | FG-111 | P2 | TODO | **SCM + multibranch lane**: a real repo, a `CHANGE_ID`, a populated changelog | Unblocks FG-048c (the context-PRESENT half of `when`; only the context-absent case is proven) and FG-052 (`checkout scm`, 15 files) |
 | FG-112 | P1 | TODO | **Restart lane**: SIGKILL the controller mid-build and resume | Unblocks FG-046b (durable `input` approval) and feeds FG-082 |
 | FG-113 | P2 | TODO | **Windows lane** (was FG-038b) | GitHub-hosted `windows-latest`; the CI Jenkins must be pinned to 2.568.1 with an identical plugin set or its receipts cannot be compared with the Linux lane's |
-| FG-002c | P2 | TODO | **`set -x` trace continuations** | Already forced rewriting two cases away from pipes; until fixed, any case whose command embeds a newline must carry its claim in the workspace hash |
+| FG-002c | P2 | see Wave 4 row | **`set -x` trace continuations** | Listed once, in Wave 4, to avoid two rows drifting apart. Grouped here for execution because it is harness work: it already forced rewriting two cases away from pipes |
 
 ## Wave 4 — Step coverage by measured demand
 
