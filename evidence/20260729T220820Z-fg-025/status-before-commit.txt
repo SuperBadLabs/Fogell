@@ -1,0 +1,11 @@
+M  Fogell.slnx
+M  docs/EXECUTION_BOARD.md
+A  src/Fogell.Journal/Fogell.Journal.fsproj
+A  src/Fogell.Journal/Journal.fs
+A  src/Fogell.Journal/Records.fs
+A  src/Fogell.Journal/Resume.fs
+A  tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj
+A  tests/Fogell.Journal.Tests/Tests.fs
+A  tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj
+A  tools/Fogell.Crash.Harness/Program.fs
+?? evidence/20260729T220820Z-fg-025/
