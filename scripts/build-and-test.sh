@@ -16,4 +16,21 @@ for p in tests/*/; do
   [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+# FG-104. Reports MEASURED claims that name no receipt. NOT blocking yet: 26 pre-date the
+# rule and are being annotated. Flip to --strict once that backlog is zero, so the check
+# fails a build rather than printing at it.
+if [ -x scripts/audit-claims.bb ]; then
+  echo "=== claim audit (FG-104, advisory) ==="
+  # No `| head`: piping into head can SIGPIPE babashka and mask its exit status, which
+  # would make an advisory check silently become a broken one.
+  # Status captured explicitly: without it a babashka that cannot start is indistinguishable
+  # from a clean audit, and the planned `--strict` flip would never have failed a build.
+  if ! audit_out="$(./scripts/audit-claims.bb 2>&1)"; then
+    echo "CLAIM AUDIT FAILED TO RUN"; printf '%s\n' "$audit_out"; exit 1
+  fi
+  printf '%s\n' "$audit_out" | sed -n '1,3p'
+  printf '%s\n' "$audit_out" | rg -c "name NO receipt" >/dev/null && \
+    echo "  (advisory: run scripts/audit-claims.bb for the full list)"
+fi
+
 echo "OK"

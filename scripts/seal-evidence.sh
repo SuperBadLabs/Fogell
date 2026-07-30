@@ -8,6 +8,33 @@ STAMP="$(git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
 DIR="evidence/${STAMP}-${TICKET,,}"
 mkdir -p "$DIR"
 
+# FG-104 review finding: a seal run before `git add` records a diff that OMITS every
+# untracked file — the FG-104 bundle validated an intermediate patch and left out the audit
+# script itself, which was the entire deliverable. Evidence that silently excludes the work
+# is worse than no evidence, because it carries a checksum.
+# The positional [extra-file ...] arguments are EVIDENCE artifacts — a measurement log, a
+# probe output — and are normally untracked on purpose. Refusing them broke the script's
+# own documented interface, and staging them as the error advised would have pushed
+# evidence-only files into the product commit. They are exempt; everything else is not.
+# Normalised: `git ls-files` reports `x.log` while a caller naturally writes `./x.log`,
+# and an exemption that fails on a leading `./` is no exemption at all.
+EXTRAS=" $(for e in "$@"; do printf '%s ' "${e#./}"; done)"
+# The bundle THIS run is writing is also untracked while it is being written, so a second
+# seal tripped over its own output. Exclude the directory being created, and the extras.
+UNTRACKED="$(git ls-files --others --exclude-standard | while read -r f; do
+  # ALL of evidence/ is output, not input. Excluding only the current run's directory
+  # still tripped over the PREVIOUS bundle, which makes the check circular: you cannot
+  # seal until you stage the last seal. The check exists to catch untracked SOURCE.
+  case "$f" in evidence/*) continue ;; esac
+  case "$EXTRAS" in *" $f "*) ;; *) printf '%s\n' "$f" ;; esac
+done)"
+if [ -n "$UNTRACKED" ]; then
+  echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
+  printf '  %s\n' $UNTRACKED >&2
+  echo "Stage them (git add) so the sealed diff covers the actual change." >&2
+  exit 1
+fi
+
 git diff HEAD --stat > "$DIR/diffstat.txt" 2>/dev/null
 git diff HEAD          > "$DIR/candidate.diff" 2>/dev/null
 git status --short     > "$DIR/status-before-commit.txt"
