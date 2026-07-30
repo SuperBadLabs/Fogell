@@ -25,7 +25,16 @@ type Trace =
       /// SHA-256 over (relative path, content hash) pairs, sorted.
       WorkspaceHash: string
       /// Files in the workspace, for a readable diff when hashes disagree.
-      WorkspaceFiles: (string * string) list }
+      WorkspaceFiles: (string * string) list
+      /// Whether the engine reported a reason for a non-success.
+      ///
+      /// The exact wording is NOT compared: Jenkins' text comes from whichever
+      /// plugin implements the step ("'x' doesn't match anything", with typographic
+      /// quotes), and matching it character for character would be over-fitting to
+      /// a plugin string rather than testing semantics. What must agree is that
+      /// both engines told the user *something* about why the build failed —
+      /// silence is the actual defect (JB-DUR-005).
+      ReportedFailureReason: bool }
 
 module Trace =
 
@@ -82,6 +91,61 @@ module Trace =
 
             sha256Text manifest, entries
 
+    /// FG-002b. Hash a workspace that lives somewhere this process cannot see,
+    /// by running a caller-supplied command that prints `<sha256>  <path>` lines.
+    ///
+    /// The same [isScaffolding] filter and the same sorted-manifest hash are
+    /// applied, so a remote hash and a local hash are computed identically. If
+    /// they were not, a matching pair would prove nothing.
+    let collectRemote (command: string) : string * (string * string) list =
+        try
+            let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+            psi.ArgumentList.Add "-c"
+            psi.ArgumentList.Add command
+            psi.RedirectStandardOutput <- true
+            psi.RedirectStandardError <- true
+            psi.UseShellExecute <- false
+
+            use proc = Diagnostics.Process.Start psi
+            let out = proc.StandardOutput.ReadToEnd()
+            proc.WaitForExit 60_000 |> ignore
+
+            let entries =
+                out.Replace("\r\n", "\n").Split '\n'
+                |> Array.choose (fun line ->
+                    // `sha256sum` output: "<hash>  <path>"
+                    let parts = line.Split("  ", 2, StringSplitOptions.None)
+
+                    if parts.Length <> 2 then
+                        None
+                    else
+                        let hash = parts[0].Trim()
+                        let relative = parts[1].Trim().TrimStart('.', '/').Replace('\\', '/')
+
+                        if hash = "" || relative = "" || isScaffolding relative then
+                            None
+                        else
+                            Some(relative, hash))
+                |> Array.sortBy fst
+                |> Array.toList
+
+            let manifest =
+                entries |> List.map (fun (p, h) -> $"{p}\t{h}") |> String.concat "\n"
+
+            sha256Text manifest, entries
+        with _ ->
+            "not-collected", []
+
+    /// Lines in which an engine explains a failure. Their presence is compared;
+    /// their wording is not.
+    let isDiagnosticLine (t: string) =
+        t.StartsWith "ERROR:"
+        || t.StartsWith "FATAL:"
+        || t.Contains "doesn\u2019t match anything"
+        || t.Contains "doesn't match anything"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ of \d+ test\(s\) failed$")
+
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
     /// the two engines, not a guess.
@@ -106,10 +170,24 @@ module Trace =
         elif t.StartsWith "+ " then None
         // Jenkins prefixes workspace paths that differ by construction
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
+        // Plugin banners: an artifact of which plugins this Jenkins has installed,
+        // not of Jenkins' behaviour. `[Checks API] No suitable checks publisher
+        // found.` appears purely because the checks plugin is present and
+        // unconfigured.
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[[A-Za-z][A-Za-z ]*(API|Plugin)\]") then None
+        // Engine diagnostic wording — captured as ReportedFailureReason instead.
+        elif isDiagnosticLine t then None
         else Some t
 
     let normaliseOutput (lines: string seq) : string list =
         lines |> Seq.choose normaliseLine |> List.ofSeq
+
+    /// Did the engine explain itself? Computed over RAW lines, before the
+    /// diagnostic-stripping normaliser removes them.
+    let reportedFailureReason (lines: string seq) : bool =
+        lines
+        |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
+        |> Seq.exists isDiagnosticLine
 
     /// The exclusions above are part of the contract, so they are published with
     /// every receipt rather than buried in code.
@@ -121,4 +199,9 @@ module Trace =
           "excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines"
           "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
-          "not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners" ]
+          "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"
+          "compared as a BOOLEAN, not text: whether a failure reason was reported"
+          "  (applies to failure/aborted only — an unstable build is explained by its test report)"
+          "  (Jenkins' wording comes from whichever plugin implements the step;"
+          "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
+          "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

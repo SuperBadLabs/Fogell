@@ -1,0 +1,1043 @@
+diff --git a/differential/cases/archive-artifacts.Jenkinsfile b/differential/cases/archive-artifacts.Jenkinsfile
+new file mode 100644
+index 0000000..21c0103
+--- /dev/null
++++ b/differential/cases/archive-artifacts.Jenkinsfile
+@@ -0,0 +1,12 @@
++pipeline {
++  agent any
++  stages {
++    stage('Produce') {
++      steps {
++        sh 'echo payload > out.txt'
++        sh 'mkdir -p target && echo jar > target/app.jar'
++        archiveArtifacts artifacts: 'out.txt, target/*.jar'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/archive-empty-fails.Jenkinsfile b/differential/cases/archive-empty-fails.Jenkinsfile
+new file mode 100644
+index 0000000..14ec789
+--- /dev/null
++++ b/differential/cases/archive-empty-fails.Jenkinsfile
+@@ -0,0 +1,10 @@
++pipeline {
++  agent any
++  stages {
++    stage('Nothing') {
++      steps {
++        archiveArtifacts artifacts: 'does-not-exist-*.zip'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/junit-failing.Jenkinsfile b/differential/cases/junit-failing.Jenkinsfile
+new file mode 100644
+index 0000000..3519622
+--- /dev/null
++++ b/differential/cases/junit-failing.Jenkinsfile
+@@ -0,0 +1,12 @@
++pipeline {
++  agent any
++  stages {
++    stage('Test') {
++      steps {
++        sh 'mkdir -p reports'
++        sh 'printf "%s" "<testsuite name=\\"s\\" tests=\\"2\\" failures=\\"1\\" errors=\\"0\\" skipped=\\"0\\"><testcase name=\\"ok\\"/><testcase name=\\"bad\\"><failure message=\\"boom\\"/></testcase></testsuite>" > reports/results.xml'
++        junit 'reports/*.xml'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/junit-passing.Jenkinsfile b/differential/cases/junit-passing.Jenkinsfile
+new file mode 100644
+index 0000000..2f5df02
+--- /dev/null
++++ b/differential/cases/junit-passing.Jenkinsfile
+@@ -0,0 +1,12 @@
++pipeline {
++  agent any
++  stages {
++    stage('Test') {
++      steps {
++        sh 'mkdir -p reports'
++        sh 'printf "%s" "<testsuite name=\\"s\\" tests=\\"3\\" failures=\\"0\\" errors=\\"0\\" skipped=\\"1\\"><testcase name=\\"a\\"/><testcase name=\\"b\\"/><testcase name=\\"c\\"/></testsuite>" > reports/results.xml'
++        junit 'reports/*.xml'
++      }
++    }
++  }
++}
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+new file mode 100644
+index 0000000..740d981
+--- /dev/null
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -0,0 +1,39 @@
++# Differential receipt — archive-artifacts.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         471151c262fe943469c44e9aa74e1a27bdfd5bdd81bddaa7bb2365336fd0a337
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++
++## Jenkins
++  result:         success
++  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
++  output (1 lines):
++    | Archiving artifacts
++  workspace:
++    d4e4877bac97  out.txt
++    fb8ce0550299  target/app.jar
++
++## Fogell
++  result:         success
++  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
++  output (1 lines):
++    | Archiving artifacts
++  workspace:
++    d4e4877bac97  out.txt
++    fb8ce0550299  target/app.jar
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+new file mode 100644
+index 0000000..229dfbf
+--- /dev/null
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -0,0 +1,33 @@
++# Differential receipt — archive-empty-fails.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         96284a35310a8045192d270961dd7ce8ea3bb7b396397439f2319753ae1f31e7
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++
++## Jenkins
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (1 lines):
++    | Archiving artifacts
++
++## Fogell
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (1 lines):
++    | Archiving artifacts
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index e27e53b..cadcb80 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -1,11 +1,9 @@
+ # Differential receipt — echo-only.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         d53429af41ed4dd8a21d77c7d7e076cd6532d0fdf5651a44275c9abda804f1f8
++seal:         e0ddf3ce5119c9728bb575a83e0f24b7a96a1063e87f0e072e17c720cee87358
+ 
+-VERDICT: PROVEN-PARTIAL — same result, same output.
+-  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
+-  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+ ## Comparison contract
+   compared: terminal result
+@@ -15,11 +13,16 @@ VERDICT: PROVEN-PARTIAL — same result, same output.
+   excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+-  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+   result:         success
+-  workspace-hash: not-collected
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+     | hello from fogell
+     | second line
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index 46c8859..1bbb2e7 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -1,11 +1,9 @@
+ # Differential receipt — env-scoping.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e4d2385f6d4f7ba163742509022e175d3c01d6027a5880a8dc0d0674bc406879
++seal:         064e32c9640c18849aacba069de13f930b8bfe1044c67602751b03f1a4bc9b43
+ 
+-VERDICT: PROVEN-PARTIAL — same result, same output.
+-  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
+-  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+ ## Comparison contract
+   compared: terminal result
+@@ -15,11 +13,16 @@ VERDICT: PROVEN-PARTIAL — same result, same output.
+   excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+-  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+   result:         success
+-  workspace-hash: not-collected
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+     | scope=pipeline shared=both
+     | scope=stage shared=both
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+new file mode 100644
+index 0000000..0fd6340
+--- /dev/null
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -0,0 +1,37 @@
++# Differential receipt — junit-failing.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         0d59bc0f4e65aa119566858f3a7bdcab4b5f78779be2d9bead37c477e4526ede
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++
++## Jenkins
++  result:         unstable
++  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
++  output (1 lines):
++    | Recording test results
++  workspace:
++    b2aa877b610b  reports/results.xml
++
++## Fogell
++  result:         unstable
++  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
++  output (1 lines):
++    | Recording test results
++  workspace:
++    b2aa877b610b  reports/results.xml
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+new file mode 100644
+index 0000000..190ca8c
+--- /dev/null
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -0,0 +1,37 @@
++# Differential receipt — junit-passing.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         1ab5612354552e5451fd0898c63054d4a7714ef31db0f78f4e814026c32ea7f9
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++
++## Jenkins
++  result:         success
++  workspace-hash: d5ff1fd7beab6daeb0898c00a3ee4dc3d9cf5824d004aeb1ca28823831e86c7c
++  output (1 lines):
++    | Recording test results
++  workspace:
++    cc22dc9a9fe7  reports/results.xml
++
++## Fogell
++  result:         success
++  workspace-hash: d5ff1fd7beab6daeb0898c00a3ee4dc3d9cf5824d004aeb1ca28823831e86c7c
++  output (1 lines):
++    | Recording test results
++  workspace:
++    cc22dc9a9fe7  reports/results.xml
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index fabdea3..a0175e8 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -1,11 +1,9 @@
+ # Differential receipt — nonzero-exit.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         7f5522957744dd4513aee85df40a199e3e4bcb5d8ef29b6ddd0ad7f521451756
++seal:         794e7e41957da9d015df6678138dca268d01f9dd42f54e068fd88a32848f5161
+ 
+-VERDICT: PROVEN-PARTIAL — same result, same output.
+-  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
+-  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+ ## Comparison contract
+   compared: terminal result
+@@ -15,18 +13,21 @@ VERDICT: PROVEN-PARTIAL — same result, same output.
+   excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+-  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+   result:         failure
+-  workspace-hash: not-collected
+-  output (2 lines):
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (1 lines):
+     | before
+-    | ERROR: script returned exit code 3
+ 
+ ## Fogell
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-  output (2 lines):
++  output (1 lines):
+     | before
+-    | ERROR: script returned exit code 3
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index 5a35f69..42c0c79 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -1,11 +1,9 @@
+ # Differential receipt — shell-and-file.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         1e9e7daa752f8ab2361278906e165579c3cd8a51886876c4d00c7aa6087e9709
++seal:         c4cbb7a75fa8035c2b9e863e6bf704f98f2f60e9df0cf31baa330696a31edd35
+ 
+-VERDICT: PROVEN-PARTIAL — same result, same output.
+-  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
+-  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+ ## Comparison contract
+   compared: terminal result
+@@ -15,13 +13,20 @@ VERDICT: PROVEN-PARTIAL — same result, same output.
+   excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+-  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+   result:         success
+-  workspace-hash: not-collected
++  workspace-hash: 5d74d13139d0acd504b6d49876dc58f9db07d73fddb74946bb35ce8ee8feee26
+   output (1 lines):
+     | compiled
++  workspace:
++    82bbb1ee2e80  artifact.txt
+ 
+ ## Fogell
+   result:         success
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index e5021b6..7242209 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,8 +60,8 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **PARTIAL** | **Differential harness** (`adr/0004`) | Harness runs both engines on the same Jenkinsfile and seals a receipt with the comparison contract stated in it. **4/4 files PROVEN-PARTIAL** (same terminal result, same normalised output). **tier-1 = 0/4**: Jenkins runs in a container on another host so its workspace is not collectable yet, and a receipt may not claim a workspace it never hashed. Closing that is FG-002b |
+-| FG-002b | P0 | TODO | Collect Jenkins' workspace so the hash can actually be compared, making tier-1 reachable | a receipt shows two real workspace hashes and they match |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **8/8 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+ | FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees) |
+@@ -120,8 +120,9 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+ | FG-041 | P0 | **PARTIAL** | `echo`, `dir`, `environment` scoping (lexical, stage overrides pipeline) | `echo` and environment scoping proven by differential receipt (`env-scoping`, stage overrides pipeline, shared vars inherited). `dir` nests and auto-creates, refusing traversal. `withEnv` still outstanding — split to FG-041b |
+ | FG-041b | P1 | TODO | `withEnv(['A=1']) { … }` block-scoped environment | differential receipt |
+-| FG-042 | P0 | TODO | `archiveArtifacts` + byte-exact retrieval at a stable URL | 34 files |
+-| FG-043 | P1 | TODO | `junit` test-result ingest and model | 26 files |
++| FG-042 | P0 | **PARTIAL** | `archiveArtifacts` with ant-glob expansion | Proven by receipt: multi-pattern archive (`out.txt, target/*.jar`) and the empty-match case, which Jenkins **fails** rather than passing quietly. Artifacts land outside the workspace so archiving cannot perturb the compared hash. Retrieval over a stable URL awaits the API — FG-042b |
++| FG-043 | P1 | **DONE** | `junit` test-result ingest | Proven by receipt for passing and failing reports. Failing tests → **UNSTABLE**, not FAILURE (the build worked, the code did not) — matching Jenkins. A malformed report is reported, never silently counted as zero |
++| FG-042b | P2 | TODO | Artifact retrieval at a stable URL, byte-exact | requires the controller API (FG-060) |
+ | FG-044 | P1 | TODO | `credentials` / `withCredentials`, scope-limited bindings | 22 files |
+ | FG-045 | P1 | TODO | `timeout`, `retry` (see FG-034/035) | 21 / 6 |
+ | FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
+diff --git a/scripts/run-differential.sh b/scripts/run-differential.sh
+new file mode 100755
+index 0000000..dc7d2f2
+--- /dev/null
++++ b/scripts/run-differential.sh
+@@ -0,0 +1,19 @@
++#!/usr/bin/env bash
++# FG-002/002b. Runs every differential case through both engines and seals
++# receipts. Exits non-zero unless every case is FULLY proven.
++set -uo pipefail
++cd "$(dirname "${BASH_SOURCE[0]}")/.."
++
++: "${FOGELL_JENKINS_URL:=http://127.0.0.1:18099}"
++: "${FOGELL_JENKINS_CORE:=2.568.1}"
++: "${FOGELL_JENKINS_HOST:=luigi}"
++: "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
++
++# Jenkins does not share a filesystem with us, so the workspace is hashed WHERE
++# IT LIVES using the same manifest form as a local hash (see Trace.collectRemote).
++export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
++export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
++
++dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }
++exec dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
++  "$FOGELL_JENKINS_URL" "$FOGELL_JENKINS_CORE" differential/receipts differential/cases/*.Jenkinsfile
+diff --git a/src/Fogell.Differential/Compare.fs b/src/Fogell.Differential/Compare.fs
+index cf9df0e..2e4e76b 100644
+--- a/src/Fogell.Differential/Compare.fs
++++ b/src/Fogell.Differential/Compare.fs
+@@ -7,6 +7,7 @@ open System.Security.Cryptography
+ /// Why a comparison failed, named so a report is machine-readable.
+ type Divergence =
+     | ResultDiffers of jenkins: string * fogell: string
++    | DiagnosticSilence of engine: string
+     | OutputDiffers of firstMismatchIndex: int * jenkins: string option * fogell: string option
+     | WorkspaceDiffers of jenkins: string * fogell: string
+     | JenkinsFailed of string
+@@ -15,6 +16,7 @@ type Divergence =
+     member this.Describe =
+         match this with
+         | ResultDiffers(j, f) -> $"terminal result: jenkins={j} fogell={f}"
++        | DiagnosticSilence engine -> $"{engine} failed without reporting a reason"
+         | OutputDiffers(i, j, f) ->
+             let show = Option.defaultValue "<absent>"
+             $"output line {i}: jenkins={show j} fogell={show f}"
+@@ -84,6 +86,16 @@ module Compare =
+               | Some d -> d
+               | None -> ()
+ 
++              // A FAILED or ABORTED build must be explained by both engines.
++              // `unstable` is excluded deliberately: Jenkins marks a build
++              // unstable from a test report and prints no ERROR line — the report
++              // is the explanation. Requiring one there fired symmetrically on
++              // both engines, which is the signature of a wrong rule rather than
++              // a real divergence.
++              if jenkins.Result = "failure" || jenkins.Result = "aborted" then
++                  if not fogell.ReportedFailureReason then DiagnosticSilence "fogell"
++                  if not jenkins.ReportedFailureReason then DiagnosticSilence "jenkins"
++
+               if
+                   jenkins.WorkspaceHash <> "not-collected"
+                   && fogell.WorkspaceHash <> "not-collected"
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index fcaa4a5..80ef46f 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -18,6 +18,9 @@ module FogellSide =
+         | Result.Ok pipeline ->
+             let output = System.Collections.Generic.List<string>()
+             let workspace = Path.Combine(workspaceRoot, jobName)
++            // artifacts live OUTSIDE the workspace so archiving cannot perturb
++            // the workspace hash the differential compares
++            let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
+             if Directory.Exists workspace then Directory.Delete(workspace, true)
+             Directory.CreateDirectory workspace |> ignore
+ 
+@@ -45,7 +48,10 @@ module FogellSide =
+                           Workspace = cwd
+                           Environment = envFor stage
+                           TimeoutMs = Some 120_000
+-                          OnLine = Some(fun l -> output.Add l) }
++                          OnLine = Some(fun l -> output.Add l)
++                          Named = step.Named
++                          Artifacts = Some(ArtifactStore.under artifactRoot)
++                          BuildKey = jobName }
+ 
+                 // Output arrives exactly once, via OnLine. An earlier version also
+                 // appended result.Stdout, so every shell line was emitted twice and
+@@ -60,8 +66,11 @@ module FogellSide =
+                 // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
+                 // opaque `exit code -1`, and we promised to be clearer, not quieter).
+                 if result.Status <> BuildStatus.Success then
+-                    result.Diagnostic
+-                    |> Option.iter (fun d -> output.Add $"ERROR: {d}")
++                    // Jenkins prints `ERROR: …` for a FAILED step. It does not for
++                    // an unstable one — `junit` marks the build unstable without
++                    // an ERROR line, so emitting one there is a false divergence.
++                    if result.Status = BuildStatus.Failure then
++                        result.Diagnostic |> Option.iter (fun d -> output.Add $"ERROR: {d}")
+ 
+                     status <- BuildStatus.worstOf status result.Status
+ 
+@@ -94,4 +103,5 @@ module FogellSide =
+                 { Result = BuildStatus.toWireString status
+                   Output = Trace.normaliseOutput output
+                   WorkspaceHash = workspaceHash
+-                  WorkspaceFiles = files }
++                  WorkspaceFiles = files
++                  ReportedFailureReason = Trace.reportedFailureReason output }
+diff --git a/src/Fogell.Differential/Jenkins.fs b/src/Fogell.Differential/Jenkins.fs
+index 2c6b0fd..d4fde53 100644
+--- a/src/Fogell.Differential/Jenkins.fs
++++ b/src/Fogell.Differential/Jenkins.fs
+@@ -15,9 +15,20 @@ type JenkinsConfig =
+     { BaseUrl: string
+       /// Recorded in the receipt so the claim names what it was measured against.
+       CoreVersion: string
+-      /// A directory visible to BOTH engines, so the workspace can be hashed.
+-      /// Jenkins runs in a container, so this is the host path of its workspace.
+-      WorkspaceRoot: string option }
++      /// A directory visible to this process, when Jenkins shares a filesystem.
++      WorkspaceRoot: string option
++      /// FG-002b. Jenkins usually does NOT share a filesystem — it runs in a
++      /// container, often on another host. Rather than give up on comparing
++      /// workspaces (which would cap every receipt at PROVEN-PARTIAL forever),
++      /// the harness can be handed a command that hashes the workspace WHERE IT
++      /// LIVES and prints `<sha256>  <relative-path>` lines on stdout.
++      ///
++      /// `{job}` is substituted with the job name. Example:
++      ///   ssh luigi 'podman exec jenkins-lab sh -c "cd /var/jenkins_home/workspace/{job} && find . -type f | sort | xargs -r sha256sum"'
++      ///
++      /// The output is normalised through exactly the same exclusion rules as a
++      /// local hash, so neither side gets a different definition of "workspace".
++      WorkspaceCollector: string option }
+ 
+ module Jenkins =
+ 
+@@ -96,15 +107,19 @@ module Jenkins =
+                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/consoleText").Result
+ 
+                     let workspaceHash, files =
+-                        match cfg.WorkspaceRoot with
+-                        | Some root -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
+-                        | None -> "not-collected", []
++                        match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
++                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
++                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", jobName))
++                        | None, None -> "not-collected", []
++
++                    let rawLines = console.Replace("\r\n", "\n").Split '\n'
+ 
+                     let trace =
+                         { Result = terminal
+-                          Output = Trace.normaliseOutput (console.Replace("\r\n", "\n").Split '\n')
++                          Output = Trace.normaliseOutput rawLines
+                           WorkspaceHash = workspaceHash
+-                          WorkspaceFiles = files }
++                          WorkspaceFiles = files
++                          ReportedFailureReason = Trace.reportedFailureReason rawLines }
+ 
+                     post $"/job/{jobName}/doDelete" None |> ignore
+                     Ok trace
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 8def63b..8263e9c 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -25,7 +25,16 @@ type Trace =
+       /// SHA-256 over (relative path, content hash) pairs, sorted.
+       WorkspaceHash: string
+       /// Files in the workspace, for a readable diff when hashes disagree.
+-      WorkspaceFiles: (string * string) list }
++      WorkspaceFiles: (string * string) list
++      /// Whether the engine reported a reason for a non-success.
++      ///
++      /// The exact wording is NOT compared: Jenkins' text comes from whichever
++      /// plugin implements the step ("'x' doesn't match anything", with typographic
++      /// quotes), and matching it character for character would be over-fitting to
++      /// a plugin string rather than testing semantics. What must agree is that
++      /// both engines told the user *something* about why the build failed —
++      /// silence is the actual defect (JB-DUR-005).
++      ReportedFailureReason: bool }
+ 
+ module Trace =
+ 
+@@ -82,6 +91,61 @@ module Trace =
+ 
+             sha256Text manifest, entries
+ 
++    /// FG-002b. Hash a workspace that lives somewhere this process cannot see,
++    /// by running a caller-supplied command that prints `<sha256>  <path>` lines.
++    ///
++    /// The same [isScaffolding] filter and the same sorted-manifest hash are
++    /// applied, so a remote hash and a local hash are computed identically. If
++    /// they were not, a matching pair would prove nothing.
++    let collectRemote (command: string) : string * (string * string) list =
++        try
++            let psi = Diagnostics.ProcessStartInfo("/bin/sh")
++            psi.ArgumentList.Add "-c"
++            psi.ArgumentList.Add command
++            psi.RedirectStandardOutput <- true
++            psi.RedirectStandardError <- true
++            psi.UseShellExecute <- false
++
++            use proc = Diagnostics.Process.Start psi
++            let out = proc.StandardOutput.ReadToEnd()
++            proc.WaitForExit 60_000 |> ignore
++
++            let entries =
++                out.Replace("\r\n", "\n").Split '\n'
++                |> Array.choose (fun line ->
++                    // `sha256sum` output: "<hash>  <path>"
++                    let parts = line.Split("  ", 2, StringSplitOptions.None)
++
++                    if parts.Length <> 2 then
++                        None
++                    else
++                        let hash = parts[0].Trim()
++                        let relative = parts[1].Trim().TrimStart('.', '/').Replace('\\', '/')
++
++                        if hash = "" || relative = "" || isScaffolding relative then
++                            None
++                        else
++                            Some(relative, hash))
++                |> Array.sortBy fst
++                |> Array.toList
++
++            let manifest =
++                entries |> List.map (fun (p, h) -> $"{p}\t{h}") |> String.concat "\n"
++
++            sha256Text manifest, entries
++        with _ ->
++            "not-collected", []
++
++    /// Lines in which an engine explains a failure. Their presence is compared;
++    /// their wording is not.
++    let isDiagnosticLine (t: string) =
++        t.StartsWith "ERROR:"
++        || t.StartsWith "FATAL:"
++        || t.Contains "doesn\u2019t match anything"
++        || t.Contains "doesn't match anything"
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ of \d+ test\(s\) failed$")
++
+     /// Normalise one output line so engine-specific decoration does not count as
+     /// a semantic difference. Every rule here is a measured difference between
+     /// the two engines, not a guess.
+@@ -106,11 +170,25 @@ module Trace =
+         elif t.StartsWith "+ " then None
+         // Jenkins prefixes workspace paths that differ by construction
+         elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
++        // Plugin banners: an artifact of which plugins this Jenkins has installed,
++        // not of Jenkins' behaviour. `[Checks API] No suitable checks publisher
++        // found.` appears purely because the checks plugin is present and
++        // unconfigured.
++        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[[A-Za-z][A-Za-z ]*(API|Plugin)\]") then None
++        // Engine diagnostic wording — captured as ReportedFailureReason instead.
++        elif isDiagnosticLine t then None
+         else Some t
+ 
+     let normaliseOutput (lines: string seq) : string list =
+         lines |> Seq.choose normaliseLine |> List.ofSeq
+ 
++    /// Did the engine explain itself? Computed over RAW lines, before the
++    /// diagnostic-stripping normaliser removes them.
++    let reportedFailureReason (lines: string seq) : bool =
++        lines
++        |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
++        |> Seq.exists isDiagnosticLine
++
+     /// The exclusions above are part of the contract, so they are published with
+     /// every receipt rather than buried in code.
+     let comparisonContract =
+@@ -121,4 +199,9 @@ module Trace =
+           "excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines"
+           "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
+           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
+-          "not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners" ]
++          "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"
++          "compared as a BOOLEAN, not text: whether a failure reason was reported"
++          "  (applies to failure/aborted only — an unstable build is explained by its test report)"
++          "  (Jenkins' wording comes from whichever plugin implements the step;"
++          "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
++          "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index ef4cf81..265c9a8 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -19,7 +19,13 @@ type StepRequest =
+       Workspace: string
+       Environment: (string * string) list
+       TimeoutMs: int option
+-      OnLine: (string -> unit) option }
++      OnLine: (string -> unit) option
++      /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
++      Named: (string * string) list
++      /// Where publishing steps write. None disables them by failing closed.
++      Artifacts: ArtifactStore option
++      /// Identifies this build in the artifact store.
++      BuildKey: string }
+ 
+ type StepResult =
+     { Status: BuildStatus
+@@ -31,6 +37,10 @@ type StepResult =
+       ProcessGroupId: int option
+       /// Populated for shell steps so callers can assert on containment.
+       Termination: Termination option
++      /// Relative paths published by `archiveArtifacts`, in sorted order.
++      Archived: string list
++      /// Test totals parsed by `junit`: total, failed, skipped.
++      TestTotals: (int * int * int) option
+       Diagnostic: string option }
+ 
+ module Executor =
+@@ -43,6 +53,8 @@ module Executor =
+           DurationMs = 0L
+           ProcessGroupId = None
+           Termination = None
++          Archived = []
++          TestTotals = None
+           Diagnostic = None }
+ 
+     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
+@@ -108,12 +120,80 @@ module Executor =
+               DurationMs = run.DurationMs
+               ProcessGroupId = run.ProcessGroupId
+               Termination = run.Termination
++              Archived = []
++              TestTotals = None
+               Diagnostic = diagnostic }
+ 
++    /// Read a step argument that may be positional or named, matching Jenkins'
++    /// tolerance for `archiveArtifacts '*.jar'` and
++    /// `archiveArtifacts artifacts: '*.jar'`.
++    let private argument (request: StepRequest) (names: string list) =
++        match request.Script with
++        | Some v when v <> "" -> Some v
++        | _ -> names |> List.tryPick (fun n -> request.Named |> List.tryPick (fun (k, v) -> if k = n then Some v else None))
++
++    /// Jenkins accepts a comma-separated glob list in one string.
++    let private patterns (raw: string) =
++        raw.Split(',') |> Array.map (fun s -> s.Trim()) |> Array.filter (fun s -> s <> "") |> Array.toList
++
++    /// FG-042. `archiveArtifacts artifacts: '<glob>' [, allowEmptyArchive: true]`
++    let private runArchive (request: StepRequest) : StepResult =
++        match request.Artifacts, argument request [ "artifacts" ] with
++        | None, _ ->
++            { ok Failure with
++                Diagnostic = Some "archiveArtifacts requires an artifact store; none configured" }
++        | _, None ->
++            { ok Failure with
++                Diagnostic = Some "archiveArtifacts requires an 'artifacts' pattern" }
++        | Some store, Some raw ->
++            // Jenkins prints this banner before archiving. Emitting the same line
++            // is parity; excluding it from comparison would merely hide a
++            // difference the user can see.
++            request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
++            let published = Publish.archive store request.BuildKey request.Workspace (patterns raw)
++
++            let allowEmpty =
++                request.Named
++                |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
++
++            if List.isEmpty published && not allowEmpty then
++                // Jenkins fails the build here rather than passing quietly, and
++                // a silent empty archive is the worst outcome for a user.
++                { ok Failure with
++                    Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
++            else
++                { ok Success with Archived = published }
++
++    /// FG-043. `junit '<glob>'` / `junit testResults: '<glob>'`
++    let private runJUnit (request: StepRequest) : StepResult =
++        match argument request [ "testResults"; "pattern" ] with
++        | None ->
++            { ok Failure with
++                Diagnostic = Some "junit requires a 'testResults' pattern" }
++        | Some raw ->
++            request.OnLine |> Option.iter (fun f -> f "Recording test results")
++
++            match Publish.parseJUnit request.Workspace (patterns raw) with
++            | Result.Error e -> { ok Failure with Diagnostic = Some e }
++            | Result.Ok(total, failed, skipped) ->
++                // Jenkins marks the build UNSTABLE (not failed) when tests fail:
++                // the build worked, the code did not.
++                let status = if failed > 0 then Unstable else Success
++
++                { ok status with
++                    TestTotals = Some(total, failed, skipped)
++                    Diagnostic =
++                        if failed > 0 then
++                            Some $"{failed} of {total} test(s) failed"
++                        else
++                            None }
++
+     /// Dispatch a requested effect. Steps Fogell does not implement fail closed
+     /// with a named reason — never a silent success (ADR 0001).
+     let runStep (request: StepRequest) : StepResult =
+         match request.Name, request.Script with
++        | "archiveArtifacts", _ -> runArchive request
++        | "junit", _ -> runJUnit request
+         | ("sh" | "bat"), Some script -> runShell request script
+         | ("sh" | "bat"), None ->
+             { ok Failure with
+diff --git a/src/Fogell.Execution/Fogell.Execution.fsproj b/src/Fogell.Execution/Fogell.Execution.fsproj
+index ca80697..6190a9a 100644
+--- a/src/Fogell.Execution/Fogell.Execution.fsproj
++++ b/src/Fogell.Execution/Fogell.Execution.fsproj
+@@ -10,6 +10,7 @@
+     <Compile Include="Native.fs" />
+     <Compile Include="Workspace.fs" />
+     <Compile Include="ProcessGroup.fs" />
++    <Compile Include="Publish.fs" />
+     <Compile Include="Executor.fs" />
+   </ItemGroup>
+   <ItemGroup>
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+new file mode 100644
+index 0000000..288afe6
+--- /dev/null
++++ b/src/Fogell.Execution/Publish.fs
+@@ -0,0 +1,112 @@
++namespace Fogell.Execution
++
++open System
++open System.IO
++open System.Text.RegularExpressions
++
++/// Where published artifacts and test results are collected. Kept separate from
++/// the workspace so archiving is observable without polluting what the next step
++/// sees — and so the differential's workspace hash is not perturbed by the act
++/// of archiving.
++type ArtifactStore =
++    { Root: string }
++
++    static member under(root: string) = { Root = root }
++
++/// FG-042 / FG-043. Artifact archiving and test-result ingest.
++///
++/// Both are *publishing* operations: they read the workspace and record
++/// something durable elsewhere. Neither mutates the workspace, which is what
++/// keeps the differential's workspace hash meaningful.
++module Publish =
++
++    /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
++    /// against a workspace. Deliberately supports only the forms measured in the
++    /// corpus; anything else is reported rather than silently matching nothing.
++    let expandGlob (workspace: string) (pattern: string) : string list =
++        if not (Directory.Exists workspace) then
++            []
++        else
++            let normalised = pattern.Replace('\\', '/').Trim()
++
++            let regex =
++                let escaped =
++                    normalised.Split('/')
++                    |> Array.map (fun segment ->
++                        if segment = "**" then
++                            "(?:.*)"
++                        else
++                            segment
++                            |> Regex.Escape
++                            |> fun e -> e.Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]"))
++                    |> String.concat "/"
++                    // `**/x` must also match a bare `x` at the root
++                    |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
++
++                Regex("^" + escaped + "$", RegexOptions.IgnoreCase)
++
++            Directory.GetFiles(workspace, "*", SearchOption.AllDirectories)
++            |> Array.choose (fun full ->
++                let relative = Path.GetRelativePath(workspace, full).Replace('\\', '/')
++                if regex.IsMatch relative then Some relative else None)
++            |> Array.sort
++            |> Array.toList
++
++    /// Copy matched files into the artifact store under `buildKey`, preserving
++    /// relative layout. Returns the sorted relative paths actually published.
++    let archive (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) =
++        let target = Path.Combine(store.Root, buildKey)
++
++        let published =
++            patterns
++            |> List.collect (expandGlob workspace)
++            |> List.distinct
++            |> List.sort
++
++        for relative in published do
++            let dest = Path.Combine(target, relative)
++            Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
++            File.Copy(Path.Combine(workspace, relative), dest, true)
++
++        published
++
++    /// Parse JUnit XML totals. Reads only the attributes every producer emits;
++    /// a malformed report is reported, not silently counted as zero.
++    let parseJUnit (workspace: string) (patterns: string list) : Result<int * int * int, string> =
++        let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
++
++        if List.isEmpty files then
++            Error "no test report matched the pattern"
++        else
++            let mutable total = 0
++            let mutable failed = 0
++            let mutable skipped = 0
++            let mutable malformed = []
++
++            for relative in files do
++                try
++                    let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
++
++                    // Sum over <testsuite> elements; a <testsuites> wrapper is
++                    // common, and counting both would double every figure.
++                    let suites =
++                        doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
++
++                    let readInt (e: Xml.Linq.XElement) name =
++                        match e.Attribute(Xml.Linq.XName.Get name) with
++                        | null -> 0
++                        | a ->
++                            match Int32.TryParse a.Value with
++                            | true, v -> v
++                            | _ -> 0
++
++                    for suite in suites do
++                        total <- total + readInt suite "tests"
++                        failed <- failed + readInt suite "failures" + readInt suite "errors"
++                        skipped <- skipped + readInt suite "skipped"
++                with ex ->
++                    malformed <- $"{relative}: {ex.GetType().Name}" :: malformed
++
++            match malformed with
++            | [] -> Ok(total, failed, skipped)
++            | errs -> Error("unparsable test report(s): " + String.concat "; " errs)
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 326e5dc..8f68bc4 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -26,7 +26,10 @@ let private request root script =
+       Workspace = ws
+       Environment = []
+       TimeoutMs = None
+-      OnLine = None }
++      OnLine = None
++      Named = []
++      Artifacts = None
++      BuildKey = "test" }
+ 
+ /// Spawn a real background child that records its own pid, then assert on that
+ /// pid directly.
+diff --git a/tools/Fogell.Differential.Cli/Program.fs b/tools/Fogell.Differential.Cli/Program.fs
+index 2ec0ba2..f0dcef6 100644
+--- a/tools/Fogell.Differential.Cli/Program.fs
++++ b/tools/Fogell.Differential.Cli/Program.fs
+@@ -22,10 +22,16 @@ let main argv =
+             | null | "" -> None
+             | v -> Some v
+ 
++        let collector =
++            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE_CMD" with
++            | null | "" -> None
++            | v -> Some v
++
+         let cfg =
+             { BaseUrl = baseUrl
+               CoreVersion = core
+-              WorkspaceRoot = jenkinsWorkspace }
++              WorkspaceRoot = jenkinsWorkspace
++              WorkspaceCollector = collector }
+ 
+         let fogellRoot =
+             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
+@@ -33,7 +39,12 @@ let main argv =
+         Directory.CreateDirectory fogellRoot |> ignore
+ 
+         printfn "jenkins:   %s (core %s)" baseUrl core
+-        printfn "workspace: %s" (defaultArg jenkinsWorkspace "<not collected — workspace hashes NOT compared>")
++        printfn
++            "workspace: %s"
++            (match jenkinsWorkspace, collector with
++             | Some p, _ -> $"local {p}"
++             | None, Some c -> $"remote collector: {c.Substring(0, min 60 c.Length)}..."
++             | None, None -> "<not collected — workspace hashes NOT compared>")
+         printfn ""
+ 
+         let receipts =
+@@ -41,8 +52,27 @@ let main argv =
+             |> List.mapi (fun i file ->
+                 let name = Path.GetFileName file
+                 let script = File.ReadAllText file
+-                // job name must be stable so the workspace path is predictable
+-                let job = "diff" + string i
++                // Job names MUST be derived from the file, not its index: an
++                // index-derived name reshuffles when a case is added, and the
++                // new occupant inherits the previous run's workspace. That
++                // showed up as a phantom workspace-hash divergence.
++                let job =
++                    "diff-"
++                    + Text.RegularExpressions.Regex.Replace(
++                        Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
++
++                // wipe any stale workspace so a hash can only match on merit
++                match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
++                | null
++                | "" -> ()
++                | template ->
++                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
++                    psi.ArgumentList.Add "-c"
++                    psi.ArgumentList.Add(template.Replace("{job}", job))
++                    psi.RedirectStandardOutput <- true
++                    psi.RedirectStandardError <- true
++                    use p = Diagnostics.Process.Start psi
++                    p.WaitForExit 30_000 |> ignore
+ 
+                 let jenkins = Jenkins.run cfg job script
+                 let fogell = FogellSide.run fogellRoot job script

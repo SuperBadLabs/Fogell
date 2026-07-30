@@ -1,11 +1,9 @@
 # Differential receipt — shell-and-file.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         1e9e7daa752f8ab2361278906e165579c3cd8a51886876c4d00c7aa6087e9709
+seal:         c4cbb7a75fa8035c2b9e863e6bf704f98f2f60e9df0cf31baa330696a31edd35
 
-VERDICT: PROVEN-PARTIAL — same result, same output.
-  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
-  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -15,13 +13,20 @@ VERDICT: PROVEN-PARTIAL — same result, same output.
   excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
   excluded: shell xtrace ('+ cmd') lines — provenance, not output
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
-  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
   result:         success
-  workspace-hash: not-collected
+  workspace-hash: 5d74d13139d0acd504b6d49876dc58f9db07d73fddb74946bb35ce8ee8feee26
   output (1 lines):
     | compiled
+  workspace:
+    82bbb1ee2e80  artifact.txt
 
 ## Fogell
   result:         success

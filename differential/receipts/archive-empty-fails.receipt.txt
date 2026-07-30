@@ -1,7 +1,7 @@
-# Differential receipt — env-scoping.Jenkinsfile
+# Differential receipt — archive-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         064e32c9640c18849aacba069de13f930b8bfe1044c67602751b03f1a4bc9b43
+seal:         96284a35310a8045192d270961dd7ce8ea3bb7b396397439f2319753ae1f31e7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -21,15 +21,13 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         success
+  result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  output (1 lines):
+    | Archiving artifacts
 
 ## Fogell
-  result:         success
+  result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  output (1 lines):
+    | Archiving artifacts

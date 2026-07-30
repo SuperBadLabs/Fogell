@@ -1,7 +1,7 @@
-# Differential receipt — env-scoping.Jenkinsfile
+# Differential receipt — archive-artifacts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         064e32c9640c18849aacba069de13f930b8bfe1044c67602751b03f1a4bc9b43
+seal:         471151c262fe943469c44e9aa74e1a27bdfd5bdd81bddaa7bb2365336fd0a337
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -22,14 +22,18 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
+  output (1 lines):
+    | Archiving artifacts
+  workspace:
+    d4e4877bac97  out.txt
+    fb8ce0550299  target/app.jar
 
 ## Fogell
   result:         success
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
+  output (1 lines):
+    | Archiving artifacts
+  workspace:
+    d4e4877bac97  out.txt
+    fb8ce0550299  target/app.jar

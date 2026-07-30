@@ -1,7 +1,7 @@
-# Differential receipt — env-scoping.Jenkinsfile
+# Differential receipt — junit-passing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         064e32c9640c18849aacba069de13f930b8bfe1044c67602751b03f1a4bc9b43
+seal:         1ab5612354552e5451fd0898c63054d4a7714ef31db0f78f4e814026c32ea7f9
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -22,14 +22,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  workspace-hash: d5ff1fd7beab6daeb0898c00a3ee4dc3d9cf5824d004aeb1ca28823831e86c7c
+  output (1 lines):
+    | Recording test results
+  workspace:
+    cc22dc9a9fe7  reports/results.xml
 
 ## Fogell
   result:         success
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | scope=pipeline shared=both
-    | scope=stage shared=both
+  workspace-hash: d5ff1fd7beab6daeb0898c00a3ee4dc3d9cf5824d004aeb1ca28823831e86c7c
+  output (1 lines):
+    | Recording test results
+  workspace:
+    cc22dc9a9fe7  reports/results.xml
