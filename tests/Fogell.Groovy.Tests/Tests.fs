@@ -241,6 +241,15 @@ let predicateValues =
               Expect.equal (run "if (false) { 1 }").Returned None "untaken branch yields nothing"
           }
 
+          test "an untaken trailing conditional yields nothing, not an earlier value" {
+              // REVIEW FIX (Codex, PR #14 round 3): `true` set the trailing value and
+              // the untaken `if` left it there, so this read as TRUE. The trailing
+              // value belongs to the FINAL statement, not to whatever ran last.
+              Expect.equal (run "true\nif (false) { false }").Returned None "untaken if clears it"
+              Expect.equal (run "true\nif (true) { false }").Returned (Some(VBool false)) "taken branch supplies it"
+              Expect.equal (run "true\nwhile (false) { 1 }").Returned None "loop that never runs clears it"
+          }
+
           test "a closure returns its trailing expression without `return`" {
               // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
               // block's value unless an explicit `return` appeared.

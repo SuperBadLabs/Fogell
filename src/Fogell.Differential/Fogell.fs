@@ -638,26 +638,34 @@ module FogellSide =
                     // followed by a stage PATH produced `/tools:<pipeline-path>` —
                     // prepending onto an out-of-date PATH, which can run the wrong
                     // executable. `envForWith` already resolves last-wins, so ask it.
-                    let currentPath =
+                    let outerPath =
                         envForWith ctx.EnvOverlay stage
                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
-                        |> Option.defaultWith (fun () ->
-                            match Environment.GetEnvironmentVariable "PATH" with
-                            | null -> ""
-                            | p -> p)
-
                     let pathAdditions =
                         bindings |> List.filter (fun (k, _) -> k.StartsWith "PATH+")
 
                     let plainBindings =
                         bindings |> List.filter (fun (k, _) -> not (k.StartsWith "PATH+"))
 
+                    // REVIEW FIX (Codex, PR #14 round 3): the base PATH was taken from
+                    // the ENCLOSING scope only, so `withEnv(['PATH=/custom',
+                    // 'PATH+TOOLS=/tools'])` produced `/tools:<outer-path>` and
+                    // silently discarded `/custom` — the augmentation has to build on
+                    // the plain PATH supplied by the SAME invocation when there is one.
+                    let basePath =
+                        plainBindings
+                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                        |> Option.orElse outerPath
+                        |> Option.defaultValue ""
+
                     let bindings =
                         if List.isEmpty pathAdditions then
                             plainBindings
                         else
                             let prefix = pathAdditions |> List.map snd |> String.concat ":"
-                            plainBindings @ [ "PATH", prefix + ":" + currentPath ]
+
+                            (plainBindings |> List.filter (fun (k, _) -> k <> "PATH"))
+                            @ [ "PATH", prefix + ":" + basePath ]
 
                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
 

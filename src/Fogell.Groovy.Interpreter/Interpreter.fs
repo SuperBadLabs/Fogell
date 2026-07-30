@@ -366,12 +366,24 @@ module Interpreter =
             evalExpr st env target |> ignore
             evalExpr st env v |> ignore
             env
+        // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
+        // returned TRUE, because `true` set the trailing value and the untaken `if`
+        // left it there. The trailing value belongs to the FINAL statement, so a
+        // statement producing nothing CLEARS it instead of inheriting what ran before.
+        //
+        // The first attempt at this edit silently did nothing — it matched
+        // `SIf(cond, thenBranch, elseBranch)` while the code says `SIf(c, t, f)` — and
+        // the build passed unchanged. Only the test caught it.
         | SIf(c, t, f) ->
+            st.LastValue <- None
+
             if Value.isTruthy (evalExpr st env c) then
                 execBlock st env t
             else
                 execBlock st env f
         | SForIn(v, src, body) ->
+            st.LastValue <- None
+
             match evalExpr st env src with
             | VList xs ->
                 if xs.Length > st.Budget.MaxLoopIterations then
@@ -389,6 +401,8 @@ module Interpreter =
                 cur
             | _ -> env
         | SWhile(c, body) ->
+            st.LastValue <- None
+
             let mutable cur = env
             let mutable iterations = 0
             let mutable running = true

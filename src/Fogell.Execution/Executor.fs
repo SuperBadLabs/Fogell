@@ -259,13 +259,21 @@ module Executor =
                 |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
 
             if aborted then
-                // Say so: a partially-archived build reported as success is the
-                // silent-loss shape this project exists to avoid.
+                // REVIEW FIX (Codex, PR #14 round 3): the previous version LOGGED the
+                // abort and then fell through to a Success result, so an explicitly
+                // incomplete artifact set left the build green and later stages ran.
+                // That is the same "partial result reported as success" shape as the
+                // parallel-sink and post-arm bugs. Detecting an interruption and
+                // discarding it from the StepResult is worse than not detecting it.
                 request.OnLine
                 |> Option.iter (fun f ->
                     f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
 
-            if List.isEmpty published && not allowEmpty then
+                { ok Aborted with
+                    Diagnostic =
+                        Some
+                            $"archiving aborted after {published.Length} file(s); the deadline expired and the artifact set is incomplete" }
+            elif List.isEmpty published && not allowEmpty then
                 // Jenkins fails the build here rather than passing quietly, and
                 // a silent empty archive is the worst outcome for a user.
                 { ok Failure with
