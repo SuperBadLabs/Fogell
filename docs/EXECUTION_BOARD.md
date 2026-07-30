@@ -44,6 +44,8 @@ derivation in `architecture/BASELINE.md`.
 | **Reached agent scheduling** | **119** | — | the only scoring denominator |
 | Declarative files in corpus | 92 (contain `pipeline {`) | — | reference |
 | Fogell declarative acceptance | — | **87/93 = 93.5%** | no regression, ever |
+| Fogell scripted acceptance | — | **109/135 = 80.7%** | no regression, ever |
+| Fogell total accepted | — | **196/228 = 86.0%** | no regression, ever |
 | Known front-end rejections | — | 14 | each closed or reasoned |
 | **Execution parity proven** | — | **0** | grows only with sealed receipts |
 | Per-step cost (durable) | 54.13 ms | — | < 8 ms at equal guarantees |
@@ -70,12 +72,13 @@ derivation in `architecture/BASELINE.md`.
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
 | FG-010 | P0 | **DONE** | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach) | **87/93 declarative corpus files accepted (93.5%)**. Criterion corrected: the earlier "194/228 declarative" figure was a mismeasurement — `forge validate` prints `OK` for BOTH paths and my shell classifier matched `OK*` before checking for "scripted". Only **92 of 228** corpus files contain a `pipeline {` block at all (naive regex agrees). 6 remaining failures: 3 `no_stages`, 3 `malformed_syntax` |
-| FG-011 | P0 | TODO | `Fogell.Groovy` AST + `Fogell.Groovy.Parser` — scripted escape hatch | 20/228 scripted files accepted; my 216-line patch set reapplied |
+| FG-011 | P0 | **DONE** | `Fogell.Groovy` AST + `Fogell.Groovy.Parser` — scripted escape hatch | **109/135 scripted files accepted (80.7%)**. Every construct proven necessary against Forge is present from the start: shebang, `@Library`->`library()`, `import`, trailing commas, slashy strings, `=~`/`==~`, typed closure params, `final`, `x++`, C-style `for`, ranges, `switch`, `instanceof`, spread-dot, safe-nav, multi-assign |
 | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
-| FG-013 | P0 | TODO | `Fogell.Groovy.Interpreter` — bounded evaluation (`adr/0002`), capability-limited, no arbitrary reflection or file/network access | untrusted-input probe: `new File('/etc/passwd')` and reflection are rejected with a named code |
+| FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
 | FG-014 | P1 | TODO | Close the 14 known Declarative rejections (`FOGELL-DAY1-BACKLOG.md`) via **minimal repros**, never the reported error position | acceptance ≥ 205/228 with zero regressions |
 | FG-015 | P1 | TODO | Close the 6 remaining Groovy constructs: nested-quote GString, spread-dot, ranges, `switch`, `instanceof`, multi-assign | each has a passing minimal repro; corpus does not regress |
-| FG-016 | P1 | TODO | Error reporting: named code + line/column + source excerpt for every rejection | every rejection path has a test asserting code and position |
+| FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
+| FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
 | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
 
 ## Wave 2 — Durable spine (McLoving-inspired)

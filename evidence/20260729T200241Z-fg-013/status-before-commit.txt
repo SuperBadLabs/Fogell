@@ -1,0 +1,16 @@
+M  Fogell.slnx
+M  corpus/BASELINE-DECLARATIVE-SCORE.tsv
+M  docs/EXECUTION_BOARD.md
+A  src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj
+A  src/Fogell.Groovy.Interpreter/Interpreter.fs
+A  src/Fogell.Groovy.Interpreter/Sandbox.fs
+A  src/Fogell.Groovy.Interpreter/Value.fs
+A  src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj
+A  src/Fogell.Groovy.Parser/Parser.fs
+A  src/Fogell.Groovy/Ast.fs
+A  src/Fogell.Groovy/Fogell.Groovy.fsproj
+A  tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj
+A  tests/Fogell.Groovy.Tests/Tests.fs
+M  tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj
+M  tools/Fogell.Corpus.Score/Program.fs
+?? evidence/20260729T200241Z-fg-013/

@@ -1,0 +1,464 @@
+module Fogell.Groovy.Parser.Parser
+
+open FParsec
+open Fogell.Groovy
+open Fogell.Admission
+
+/// Scripted-Groovy parser. Grammar coverage is driven by measured corpus
+/// demand, and every construct here was confirmed necessary by a minimal
+/// reproduction — never by an FParsec error position, which reports where the
+/// longest parse stopped rather than the cause.
+///
+/// Constructs proven necessary while measuring Forge, and included from the
+/// start here: shebang, `@Library`, `import`, trailing commas, slashy strings,
+/// `=~`/`==~`, typed closure params, `final`, `x++`, C-style `for`, ranges,
+/// `switch`, `instanceof`, spread-dot, multi-assign.
+
+type private P<'a> = Parser<'a, unit>
+
+let private lineComment: P<unit> = skipString "//" >>. skipRestOfLine false
+let private blockComment: P<unit> = skipString "/*" >>. skipCharsTillString "*/" true System.Int32.MaxValue
+let private ws: P<unit> = skipMany (choice [ skipMany1 (anyOf " \t\r\n"); lineComment; blockComment ])
+let private lexeme (p: P<'a>) = p .>> ws
+let private symbol s : P<unit> = lexeme (skipString s)
+
+let private isIdentStart c = isLetter c || c = '_'
+let private isIdentCont c = isLetter c || isDigit c || c = '_'
+let private rawIdent: P<string> = many1Satisfy2 isIdentStart isIdentCont
+let private identifier: P<string> = lexeme rawIdent
+
+let private keyword (s: string) : P<unit> =
+    lexeme (attempt (skipString s .>> notFollowedBy (satisfy isIdentCont)))
+
+let private reserved =
+    set [ "def"; "if"; "else"; "for"; "while"; "return"; "break"; "continue"; "throw"; "try"
+          "catch"; "finally"; "new"; "true"; "false"; "null"; "in"; "switch"; "case"; "default"
+          "instanceof"; "final"; "import"; "as" ]
+
+let private plainIdent: P<string> =
+    lexeme (attempt (rawIdent >>= fun n -> if reserved.Contains n then fail "reserved" else preturn n))
+
+// --- literals --------------------------------------------------------------
+
+let private escaped: P<char> =
+    skipChar '\\' >>. anyChar
+    |>> function
+        | 'n' -> '\n'
+        | 't' -> '\t'
+        | 'r' -> '\r'
+        | c -> c
+
+let private singleQuoted: P<Expr> =
+    between (skipString "'") (skipString "'") (manyChars (escaped <|> satisfy (fun c -> c <> '\'' && c <> '\n')))
+    |>> EStr
+
+let private tripleSingle: P<Expr> =
+    between (skipString "'''") (skipString "'''") (manyCharsTill (escaped <|> anyChar) (lookAhead (skipString "'''")))
+    |>> EStr
+
+/// Slashy string `/regex/`. Only reachable where a primary expression is
+/// expected, so `a / b` division is unaffected.
+let private slashy: P<Expr> =
+    attempt (
+        between (skipString "/") (skipString "/") (
+            manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
+        |>> EStr)
+
+let private exprRef, private exprImpl = createParserForwardedToRef<Expr, unit> ()
+let private stmtRef, private stmtImpl = createParserForwardedToRef<Stmt, unit> ()
+
+/// GString: literal runs plus `${…}` and `$ref` interpolations, kept apart so
+/// the interpreter — not the lexer — decides what an interpolation means.
+let private gstring (q: string) : P<Expr> =
+    let part =
+        choice
+            [ attempt (skipString "${" >>. ws >>. exprRef .>> ws .>> skipString "}") |>> GExpr
+              attempt (skipChar '$' >>. rawIdent .>>. many (attempt (skipChar '.' >>. rawIdent))
+                       |>> fun (h, tail) -> GExpr(List.fold (fun acc n -> EProp(acc, n)) (EVar h) tail))
+              (escaped |>> (string >> GLit))
+              (many1Satisfy (fun c -> c <> '$' && c <> '\\' && c <> q.[0]) |>> GLit) ]
+
+    between (skipString q) (skipString q) (many part)
+    |>> fun parts ->
+            // collapse to a plain string when nothing interpolates
+            if parts |> List.forall (function GLit _ -> true | GExpr _ -> false) then
+                EStr(parts |> List.map (function GLit s -> s | GExpr _ -> "") |> String.concat "")
+            else
+                EGString parts
+
+let private literal: P<Expr> =
+    lexeme (
+        choice
+            [ attempt tripleSingle
+              attempt (gstring "\"\"\"")
+              attempt singleQuoted
+              attempt (gstring "\"")
+              attempt (keyword "null" >>% ENull)
+              attempt (keyword "true" >>% EBool true)
+              attempt (keyword "false" >>% EBool false)
+              attempt (pint64 |>> EInt) ])
+
+// --- collections, closures, calls ------------------------------------------
+
+let private closureParams: P<string list> =
+    // `->` alone, or `a, b ->`, or typed `String s ->`
+    let typedParam = attempt (plainIdent >>. ws >>. plainIdent) <|> plainIdent
+    attempt (symbol "->" >>% [])
+    <|> attempt (sepBy1 typedParam (symbol ",") .>> symbol "->")
+
+let private closure: P<Closure> =
+    between (symbol "{") (symbol "}") (
+        ws >>. (opt (attempt closureParams) |>> Option.defaultValue [])
+        .>>. many (attempt stmtRef)
+        |>> fun (ps, body) -> { Params = ps; Body = body })
+
+let private mapKey: P<string> =
+    let dollarKey = attempt (skipChar '$' >>. rawIdent |>> fun n -> "$" + n)
+    let strKey =
+        (attempt tripleSingle <|> singleQuoted) >>= function
+            | EStr s -> preturn s
+            | _ -> fail "map key must be a constant"
+    lexeme (dollarKey <|> attempt rawIdent <|> strKey) .>> symbol ":"
+
+let private listOrMap: P<Expr> =
+    between (symbol "[") (symbol "]") (
+        choice
+            [ attempt (symbol ":" >>% EMap [])
+              attempt (sepEndBy1 (attempt (mapKey .>>. exprRef)) (symbol ",") |>> EMap)
+              (sepEndBy exprRef (symbol ",") |>> EList) ])
+
+let private arg: P<Arg> =
+    attempt (plainIdent .>>? symbol ":" .>>. exprRef |>> ANamed) <|> (exprRef |>> APos)
+
+let private argsInParens: P<Arg list> =
+    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ","))
+
+/// Command form: `sh 'make'`, `echo "x"`, `stash name: 's', includes: '*'`.
+/// Only admitted when what follows cannot start a binary operator, so
+/// `a + b` is never read as a call to `a`.
+let private commandArgs: P<Arg list> =
+    attempt (sepBy1 arg (symbol ","))
+
+let private primary: P<Expr> =
+    ws
+    >>. choice
+            [ attempt literal
+              attempt listOrMap
+              attempt (closure |>> EClosure)
+              attempt (between (symbol "(") (symbol ")") exprRef)
+              attempt slashy
+              // A constructor IS a call, so it must reach the sandbox's call gate.
+              // Parsing it as a variable named "new X" made `new File(...)`
+              // evaluate to null and slip past denial entirely.
+              attempt (keyword "new" >>. identifier .>>. opt (attempt argsInParens)
+                       |>> fun (n, args) -> ECall(FreeCall("new " + n), defaultArg args [], None))
+              (plainIdent |>> EVar) ]
+
+/// Postfix chain: property access, indexing, calls, spread-dot, safe-nav,
+/// and a trailing closure that turns `x.each { }` into a call.
+let private postfixChain (start: Expr) : P<Expr> =
+    let step (e: Expr) =
+        choice
+            [ attempt (symbol "*." >>. plainIdent |>> fun n -> EProp(e, n)) // spread-dot
+              attempt (symbol "?." >>. plainIdent |>> fun n -> EProp(e, n)) // safe navigation
+              attempt (
+                  symbol "." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
+                  |>> fun ((n, args), trailing) ->
+                          match args, trailing with
+                          | None, None -> EProp(e, n)
+                          | a, t -> ECall(MethodCall(e, n), defaultArg a [], t))
+              attempt (between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
+              attempt (argsInParens .>>. opt (attempt closure)
+                       |>> fun (args, t) ->
+                               match e with
+                               | EVar n -> ECall(FreeCall n, args, t)
+                               | _ -> ECall(MethodCall(e, "call"), args, t))
+              attempt (closure |>> fun c ->
+                          match e with
+                          | EVar n -> ECall(FreeCall n, [], Some c)
+                          | _ -> e) ]
+
+    let rec loop e =
+        (attempt (step e) >>= loop) <|> preturn e
+
+    loop start
+
+let private unaryRef, private unaryImpl = createParserForwardedToRef<Expr, unit> ()
+
+unaryImpl.Value <-
+    ws
+    >>. choice
+            [ attempt (symbol "!" >>. unaryRef |>> fun e -> EUnary("!", e))
+              attempt (symbol "-" >>. unaryRef |>> fun e -> EUnary("-", e))
+              (primary >>= postfixChain) ]
+
+let private binary (ops: string list) (next: P<Expr>) : P<Expr> =
+    let opP =
+        ops
+        |> List.map (fun o ->
+            // `+` must not match the first `+` of `++`, else `i++` parses as
+            // `i + (+…)` and postfix increment becomes unreachable.
+            let guard =
+                if o = "+" then notFollowedBy (anyOf "=&|+")
+                elif o = "-" then notFollowedBy (anyOf "=&|->")
+                else notFollowedBy (anyOf "=&|")
+
+            attempt (lexeme (skipString o .>> guard)) >>% o)
+        |> choice
+
+    chainl1 next (opP |>> fun op l r -> EBinary(op, l, r))
+
+let private multiplicative = binary [ "*"; "/"; "%" ] unaryRef
+let private additive = binary [ "+"; "-" ] multiplicative
+let private shift = binary [ "<<" ] additive
+
+let private rangeExpr =
+    chainl1 shift (attempt (symbol "..") >>% (fun l r -> EBinary("..", l, r)))
+
+let private instanceOfExpr =
+    rangeExpr .>>. opt (attempt (keyword "instanceof" >>. identifier))
+    |>> function
+        | e, None -> e
+        | e, Some t -> EBinary("instanceof", e, EStr t)
+
+let private relational =
+    chainl1 instanceOfExpr (
+        choice
+            [ attempt (symbol "<=") >>% "<="
+              attempt (symbol ">=") >>% ">="
+              attempt (lexeme (skipString "<" .>> notFollowedBy (anyOf "<="))) >>% "<"
+              attempt (lexeme (skipString ">" .>> notFollowedBy (anyOf ">="))) >>% ">" ]
+        |>> fun op l r -> EBinary(op, l, r))
+
+let private regexMatch =
+    chainl1 relational (
+        choice [ attempt (symbol "==~") >>% "==~"; attempt (symbol "=~") >>% "=~" ]
+        |>> fun op l r -> EBinary(op, l, r))
+
+let private equality =
+    chainl1 regexMatch (
+        choice [ attempt (symbol "==") >>% "=="; attempt (symbol "!=") >>% "!=" ]
+        |>> fun op l r -> EBinary(op, l, r))
+
+let private logicalAnd = chainl1 equality (attempt (symbol "&&") >>% fun l r -> EBinary("&&", l, r))
+let private logicalOr = chainl1 logicalAnd (attempt (symbol "||") >>% fun l r -> EBinary("||", l, r))
+
+exprImpl.Value <-
+    logicalOr
+    >>= fun c ->
+            choice
+                [ attempt (symbol "?" >>. exprRef .>>. (symbol ":" >>. exprRef) |>> fun (a, b) -> ETernary(c, a, b))
+                  attempt (symbol "?:" >>. exprRef |>> fun b -> EElvis(c, b))
+                  preturn c ]
+
+// --- statements ------------------------------------------------------------
+
+let private block: P<Stmt list> = between (symbol "{") (symbol "}") (ws >>. many (attempt stmtRef))
+let private blockOrSingle: P<Stmt list> = attempt block <|> (stmtRef |>> List.singleton)
+
+let private annotationStmt: P<Stmt> =
+    // `@Library('x') _` preserved as the equivalent `library('x')` call so the
+    // dependency survives into the AST rather than being discarded.
+    attempt (
+        skipChar '@' >>. identifier .>>. opt (attempt argsInParens)
+        .>> ws .>> opt (attempt (symbol "_"))
+        |>> fun (name, args) ->
+                let lowered = if name = "Library" then "library" else name
+                SExpr(ECall(FreeCall lowered, defaultArg args [], None)))
+
+let private importStmt: P<Stmt> =
+    attempt (
+        keyword "import" >>. opt (keyword "static")
+        >>. lexeme (many1Chars (satisfy (fun c -> isLetter c || isDigit c || c = '.' || c = '_' || c = '*')))
+        |>> fun path -> SExpr(ECall(FreeCall "import", [ APos(EStr path) ], None)))
+
+let private defFunc: P<Stmt> =
+    attempt (
+        keyword "def" >>. plainIdent
+        .>>. between (symbol "(") (symbol ")") (sepEndBy plainIdent (symbol ","))
+        .>>. block
+        |>> fun ((n, ps), b) -> SFunc(n, ps, b))
+
+let private multiAssign: P<Stmt> =
+    // `def (a, b) = expr` — bind the first name; the tuple shape is recorded by
+    // binding each name to an indexed read of the source.
+    attempt (
+        keyword "def"
+        >>. between (symbol "(") (symbol ")") (sepBy1 plainIdent (symbol ","))
+        .>> symbol "="
+        .>>. exprRef
+        |>> fun (names, src) ->
+                let binds =
+                    names |> List.mapi (fun i n -> SDef(n, Some(EIndex(src, EInt(int64 i)))))
+
+                SIf(EBool true, binds, []))
+
+let private defVar: P<Stmt> =
+    attempt (keyword "def" >>. plainIdent .>>. opt (attempt (symbol "=" >>. exprRef)) |>> SDef)
+
+let private finalStmt: P<Stmt> =
+    attempt (
+        keyword "final"
+        >>. opt (attempt (plainIdent .>>? followedBy (plainIdent .>> ws .>> skipString "=")))
+        >>. plainIdent .>> symbol "=" .>>. exprRef
+        |>> fun (n, v) -> SDef(n, Some v))
+
+let private typedVar: P<Stmt> =
+    // `String s = "x"` — commits only on `<Type> <name> =`
+    attempt (
+        plainIdent >>? ws >>? plainIdent .>>? symbol "=" .>>. exprRef
+        |>> fun (n, v) -> SDef(n, Some v))
+
+let private ifStmt: P<Stmt> =
+    attempt (
+        keyword "if" >>. between (symbol "(") (symbol ")") exprRef
+        .>>. blockOrSingle
+        .>>. opt (attempt (keyword "else" >>. blockOrSingle))
+        |>> fun ((c, t), e) -> SIf(c, t, defaultArg e []))
+
+let private forStmt: P<Stmt> =
+    let forIn =
+        attempt (
+            between (symbol "(") (symbol ")") (
+                opt (attempt (keyword "def")) >>. plainIdent .>> keyword "in" .>>. exprRef)
+            .>>. blockOrSingle
+            |>> fun ((v, src), b) -> SForIn(v, src, b))
+
+    // C-style `for (int i = 0; i < n; i++)` desugars to init + while, so no AST
+    // case is needed and the interpreter sees ordinary constructs.
+    let forC =
+        between (symbol "(") (symbol ")") (
+            opt (attempt (opt (attempt plainIdent) >>. plainIdent .>> symbol "=" .>>. exprRef))
+            .>> symbol ";" .>>. opt exprRef .>> symbol ";" .>>. opt stmtRef)
+        .>>. blockOrSingle
+        |>> fun (((init, cond), step), body) ->
+                let inner = body @ (match step with Some s -> [ s ] | None -> [])
+                let loop = SWhile(defaultArg cond (EBool true), inner)
+
+                match init with
+                | Some(v, e) -> SIf(EBool true, [ SDef(v, Some e); loop ], [])
+                | None -> loop
+
+    keyword "for" >>. (forIn <|> forC)
+
+let private whileStmt: P<Stmt> =
+    attempt (keyword "while" >>. between (symbol "(") (symbol ")") exprRef .>>. blockOrSingle |>> SWhile)
+
+let private tryStmt: P<Stmt> =
+    attempt (
+        keyword "try" >>. block
+        .>>. opt (attempt (
+            keyword "catch"
+            >>. between (symbol "(") (symbol ")") (opt (attempt plainIdent) >>. opt plainIdent)
+            .>>. block))
+        .>>. opt (attempt (keyword "finally" >>. block))
+        |>> fun ((b, c), f) -> STry(b, c, defaultArg f []))
+
+/// `switch (e) { case a: … default: … }` — flattened to nested ifs so the
+/// interpreter needs no extra case. Fallthrough is NOT modelled; Jenkinsfile
+/// switches in the corpus all break or return.
+let private switchStmt: P<Stmt> =
+    attempt (
+        keyword "switch" >>. between (symbol "(") (symbol ")") exprRef
+        .>>. between (symbol "{") (symbol "}") (
+            ws
+            >>. many (
+                attempt (
+                    (attempt (keyword "case" >>. exprRef .>> symbol ":") |>> Some
+                     <|> (keyword "default" >>. symbol ":" >>% None))
+                    .>>. many (attempt stmtRef))))
+        |>> fun (subject, arms) ->
+                let dflt =
+                    arms |> List.tryPick (fun (k, body) -> if k.IsNone then Some body else None)
+
+                arms
+                |> List.choose (fun (k, body) -> k |> Option.map (fun v -> v, body))
+                |> List.rev
+                |> List.fold
+                    (fun acc (v, body) -> [ SIf(EBinary("==", subject, v), body, acc) ])
+                    (defaultArg dflt [])
+                |> function
+                    | [ single ] -> single
+                    | many -> SIf(EBool true, many, []))
+
+let private returnStmt: P<Stmt> = attempt (keyword "return" >>. opt exprRef |>> SReturn)
+let private throwStmt: P<Stmt> = attempt (keyword "throw" >>. exprRef |>> SThrow)
+
+/// Command-form free call with no parentheses: `sh 'make'`, `echo "x"`.
+let private commandCall: P<Stmt> =
+    attempt (
+        plainIdent .>>? (notFollowedBy (choice [ symbol "="; symbol "." ; symbol "(" ]))
+        .>>. commandArgs
+        .>>. opt (attempt closure)
+        |>> fun ((n, args), t) -> SExpr(ECall(FreeCall n, args, t)))
+
+let private assignOrExpr: P<Stmt> =
+    let assignOp =
+        choice
+            [ attempt (lexeme (skipString "=" .>> notFollowedBy (anyOf "=~"))) >>% None
+              attempt (symbol "+=") >>% Some "+"
+              attempt (symbol "-=") >>% Some "-"
+              attempt (symbol "*=") >>% Some "*"
+              attempt (symbol "/=") >>% Some "/" ]
+
+    exprRef
+    >>= fun lhs ->
+            choice
+                [ attempt ((attempt (symbol "++") >>% "+") <|> (attempt (symbol "--") >>% "-")
+                           |>> fun op -> SAssign(lhs, EBinary(op, lhs, EInt 1L)))
+                  attempt (assignOp >>= fun op ->
+                              exprRef
+                              |>> fun rhs ->
+                                      match op with
+                                      | None -> SAssign(lhs, rhs)
+                                      | Some o -> SAssign(lhs, EBinary(o, lhs, rhs)))
+                  preturn (SExpr lhs) ]
+
+stmtImpl.Value <-
+    ws
+    >>. choice
+            [ annotationStmt
+              importStmt
+              attempt defFunc
+              attempt multiAssign
+              finalStmt
+              defVar
+              ifStmt
+              forStmt
+              whileStmt
+              tryStmt
+              switchStmt
+              returnStmt
+              attempt (keyword "break" >>% SBreak)
+              attempt (keyword "continue" >>% SContinue)
+              throwStmt
+              attempt typedVar
+              attempt commandCall
+              assignOrExpr ]
+    .>> opt (attempt (skipMany1 (symbol ";")))
+
+/// A `#!` shebang is legal Groovy but only on the first line.
+let private shebang: P<unit> =
+    let atStart (stream: CharStream<unit>) =
+        if stream.Index = 0L then Reply(()) else Reply(Error, expected "start of script")
+
+    attempt (atStart >>. skipString "#!" >>. skipRestOfLine true)
+
+let private program: P<Script> = opt shebang >>. ws >>. many (attempt stmtRef) .>> ws .>> eof
+
+let parseWithLimits (limits: Limits) (source: string) : Result<Script, AdmissionError> =
+    match Limits.precheck limits source with
+    | Result.Error e -> Result.Error e
+    | Result.Ok() ->
+        match runParserOnString program () "script" source with
+        | ParserResult.Success(s, _, _) -> Result.Ok s
+        | ParserResult.Failure(msg, err, _) ->
+            let firstLine =
+                msg.Split('\n')
+                |> Array.filter (fun l -> l.Trim() <> "")
+                |> Array.tryLast
+                |> Option.defaultValue "unparsable"
+
+            Result.Error(AdmissionError.at MalformedSyntax err.Position.Line err.Position.Column (firstLine.Trim()))
+
+let parse (source: string) : Result<Script, AdmissionError> = parseWithLimits Limits.defaults source
