@@ -1,0 +1,4 @@
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Execution/Executor.fs
+ M tests/Fogell.Differential.Tests/Tests.fs
+?? evidence/20260730T154305Z-fg-044b-echo-review1/

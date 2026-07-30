@@ -1,0 +1,4 @@
+ src/Fogell.Differential/Trace.fs         | 26 ++++++++++++++++++++++----
+ src/Fogell.Execution/Executor.fs         |  8 +++++++-
+ tests/Fogell.Differential.Tests/Tests.fs | 27 +++++++++++++++++++++++++++
+ 3 files changed, 56 insertions(+), 5 deletions(-)

@@ -369,7 +369,13 @@ module Executor =
 
             { ok Success with
                 Stdout = masked + "\n"
-                Stderr = if List.isEmpty leaks then "" else String.concat "\n" leaks + "\n" }
+                // Only when nobody streamed them. The differential runner ALWAYS supplies
+                // OnLine and then re-emits every Stderr line, so returning them here too
+                // printed each warning TWICE for a single leak.
+                Stderr =
+                    match request.OnLine, leaks with
+                    | None, (_ :: _) -> String.concat "\n" leaks + "\n"
+                    | _ -> "" }
         | "echo", None -> { ok Success with Stdout = "\n" }
         | name, _ ->
             { ok Failure with
