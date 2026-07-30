@@ -1,0 +1,11 @@
+M  Fogell.slnx
+M  docs/EXECUTION_BOARD.md
+A  src/Fogell.Controller.Api/Authorization.fs
+A  src/Fogell.Controller.Api/Contracts.fs
+A  src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+A  src/Fogell.Controller.Api/Router.fs
+M  src/Fogell.Store/Store.fs
+A  tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+A  tests/Fogell.Controller.Api.Tests/Tests.fs
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/20260729T213752Z-fg-060/

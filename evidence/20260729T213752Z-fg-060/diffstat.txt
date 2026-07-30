@@ -1,0 +1,11 @@
+ Fogell.slnx                                        |   2 +
+ docs/EXECUTION_BOARD.md                            |   4 +-
+ src/Fogell.Controller.Api/Authorization.fs         |  58 +++++
+ src/Fogell.Controller.Api/Contracts.fs             |  44 ++++
+ .../Fogell.Controller.Api.fsproj                   |  15 ++
+ src/Fogell.Controller.Api/Router.fs                | 239 ++++++++++++++++++
+ src/Fogell.Store/Store.fs                          |  39 ++-
+ .../Fogell.Controller.Api.Tests.fsproj             |   9 +
+ tests/Fogell.Controller.Api.Tests/Tests.fs         | 281 +++++++++++++++++++++
+ tests/Fogell.Store.Tests/Tests.fs                  |   6 +-
+ 10 files changed, 690 insertions(+), 7 deletions(-)
