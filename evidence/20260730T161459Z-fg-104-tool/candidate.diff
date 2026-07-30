@@ -1,0 +1,30 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 5332cd7..7dee5a2 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -184,7 +184,7 @@ converts that recurring cost into a one-time cost.
+ | FG-101 | **P0** | TODO | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+ | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
+ | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
+-| FG-104 | P1 | TODO | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. Acceptance: a review pass over `Fogell.Differential` and `Fogell.Pipeline.Parser` doc comments; each either points at its test/receipt or is marked NOT IMPLEMENTED |
++| FG-104 | P1 | **PARTIAL** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every source file for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **26**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Remaining half: annotate the 26 (each cites its receipt or is marked UNPROVEN), then flip the check to `--strict` so it fails a build instead of printing at it. Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
+ 
+ ## Wave 3.6 — Harness capability (unlocks five blocked tickets at once)
+ 
+diff --git a/scripts/build-and-test.sh b/scripts/build-and-test.sh
+index d559128..33a0939 100755
+--- a/scripts/build-and-test.sh
++++ b/scripts/build-and-test.sh
+@@ -16,4 +16,12 @@ for p in tests/*/; do
+   [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
+ done
+ [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
++# FG-104. Reports MEASURED claims that name no receipt. NOT blocking yet: 26 pre-date the
++# rule and are being annotated. Flip to --strict once that backlog is zero, so the check
++# fails a build rather than printing at it.
++if [ -x scripts/audit-claims.bb ]; then
++  echo "=== claim audit (FG-104, advisory) ==="
++  ./scripts/audit-claims.bb | head -3
++fi
++
+ echo "OK"

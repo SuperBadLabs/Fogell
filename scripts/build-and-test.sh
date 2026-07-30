@@ -16,4 +16,12 @@ for p in tests/*/; do
   [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+# FG-104. Reports MEASURED claims that name no receipt. NOT blocking yet: 26 pre-date the
+# rule and are being annotated. Flip to --strict once that backlog is zero, so the check
+# fails a build rather than printing at it.
+if [ -x scripts/audit-claims.bb ]; then
+  echo "=== claim audit (FG-104, advisory) ==="
+  ./scripts/audit-claims.bb | head -3
+fi
+
 echo "OK"
