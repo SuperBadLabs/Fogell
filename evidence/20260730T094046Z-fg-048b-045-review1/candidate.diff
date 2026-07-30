@@ -1,0 +1,296 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index 2fccd6e..8c7d04a 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
++seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -45,5 +45,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 36b32d5..5631db5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -132,7 +132,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) `echo` bypasses BOTH credential interpolation and masking: `echo "$TOKEN"` emits the literal `$TOKEN` here where Jenkins emits `****`, and an echo message already containing the value is never masked — the masker is wired to the shell path only. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. MEASURED on a plain job: all six evaluate **false**, their stages are skipped, and the build **succeeds** — so modelling them turns a refusal into a working build. `when-context-conditions` receipt PROVEN tier-1. Three further parser gaps were found while measuring the result: `anyOf { a; b }` with **semicolon** separators degraded the whole condition to unmodelled (6 corpus occurrences); `beforeAgent true` is an evaluation-ORDER option, not a condition, and being unmodelled it failed the whole `when` closed; and one missing `_` in the operand charset left `equals actual: _deploy_to_nexus` unmodelled. **Declarative corpus files whose `when` conditions are now ALL modelled: 28 of 28, up from 24** — none fail closed. BOUNDARY: only the context-ABSENT case is receipt-proven; a real multibranch build with a `CHANGE_ID`, or one with an actual changelog, is not — FG-048c |
+-| FG-048c | P2 | TODO | Receipts for `when` context conditions when the context is PRESENT | FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
++| FG-048c | P2 | TODO | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+ | FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape), `credentials-userpass` (12) and `credentials-file` (3) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file), a missing credential id, a request that parses to NO bindings, and a **credential type mismatch** all fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+ | FG-045 | P1 | **DONE** | `timeout`, `retry` (see FG-034/035) | The step forms were proven by FG-034/035, but surveying the corpus's ACTUAL shapes rather than assuming the ticket was a formality found a real gap: `timeout` is also declared as a pipeline or stage **option** (`options { timeout(time: 1, unit: 'HOURS') }`), and stage options were discarded by the parser outright. MEASURED: Jenkins **aborts** when an options timeout expires — the following stage never runs. Fogell ignored them, so such a pipeline ran **unbounded** and reported success; the probe's 60-second sleep completed against a 4-second declared timeout. Two receipts PROVEN tier-1 (`options-timeout-pipeline`, `options-timeout-stage`); a nested deadline can only tighten an inherited one. Corpus survey: 55 `timeout` occurrences, of which `time:/unit:` 55, bare `timeout(N)` 5, `DAYS` 6. `retry(count:, conditions: [...])` (5 files) is noted in FG-045b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index bc5a4ae..90438e9 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -455,26 +455,37 @@ module FogellSide =
+                 // not the real thing: `equals expected: 2, actual: 2.0` would still
+                 // be called unequal. Stated rather than implied.
+                 | WhenEquals(expected, actual) ->
+-                    // An operand is either a LITERAL (quoted, or a bare number) or an
+-                    // EXPRESSION such as `env.X` / `params.Y`. Comparing an expression's
+-                    // SOURCE TEXT against a literal is silently wrong — `equals
+-                    // actual: env.X, expected: 'y'` compared the string "env.X" — so
+-                    // expression-shaped operands are resolved from the environment first.
+-                    let resolveOperand (raw: string) =
++                    // Jenkins compares OBJECTS: Integer 2 is not String "2". An operand is
++                    // a quoted literal (a String), a bare number (an Integer), or an
++                    // expression like `env.X` — and an environment variable is a String.
++                    //
++                    // REGRESSION, caught by both reviewers: PR #13 round 5 established the
++                    // type distinction by keeping each operand's source form, and my
++                    // expression-resolution fix then stripped the quotes and made
++                    // `equals expected: 2, actual: '2'` equal again. The fix has to
++                    // preserve provenance, not just resolve.
++                    let classify (raw: string) =
+                         let t = raw.Trim()
+ 
+                         if t.StartsWith "'" || t.StartsWith "\"" then
+-                            t.Trim('\'', '"')
+-                        elif t.Length > 0 && (Char.IsDigit t[0] || t[0] = '-') then
+-                            t
++                            // a String literal
++                            Choice1Of2(t.Trim('\'', '"'))
++                        elif t.Length > 0 && (Char.IsDigit t[0] || (t[0] = '-' && t.Length > 1)) then
++                            // a numeric literal — a different Groovy type entirely
++                            Choice2Of2 t
+                         else
++                            // an expression; environment values are Strings
+                             let bare = if t.StartsWith "env." then t.Substring 4 else t
+ 
+                             match Map.tryFind bare env with
+-                            | Some v -> v
+-                            | None -> t
++                            | Some v -> Choice1Of2 v
++                            | None -> Choice1Of2 t
+ 
+-                    Some(resolveOperand expected = resolveOperand actual)
++                    match classify expected, classify actual with
++                    | Choice1Of2 a, Choice1Of2 b -> Some(a = b)
++                    | Choice2Of2 a, Choice2Of2 b -> Some(a.Trim() = b.Trim())
++                    // A number and a string are never equal, which is the whole point.
++                    | _ -> Some false
+ 
+                 // Neutral: an evaluation-ORDER directive never decides whether a stage runs.
+                 | WhenEvaluationOption -> Some true
+@@ -495,12 +506,17 @@ module FogellSide =
+                 | WhenIsRestartedRun ->
+                     // Nothing in this engine restarts a run yet, so this cannot be true.
+                     Some false
+-                | WhenTriggeredBy cause ->
+-                    // The trigger is recorded in BUILD_CAUSE when we know it; absent means
+-                    // "started by a user", which no named trigger cause matches.
+-                    match Map.tryFind "BUILD_CAUSE" env with
+-                    | Some actual -> Some(actual.Trim() = cause.Trim())
+-                    | None -> Some false
++                | WhenTriggeredBy _ ->
++                    // MEASURED false on a user-started build, and it stays false until real
++                    // cause metadata exists.
++                    //
++                    // REVIEW FIX (both reviewers, PR #16): reading `BUILD_CAUSE` out of the
++                    // environment made the gate SPOOFABLE — a Jenkinsfile declaring
++                    // `environment { BUILD_CAUSE = 'TimerTrigger' }` would open a stage
++                    // Jenkins skips, and nothing else in the engine ever produces that
++                    // variable. A gate whose input the gated party controls is not a gate.
++                    Some false
++
+                 | WhenChangeset _
+                 | WhenChangelog _ ->
+                     // Both need an SCM changelog. There is none, and Jenkins itself warns
+@@ -618,20 +634,27 @@ module FogellSide =
+             ///
+             /// A nested deadline can only tighten an inherited one, never extend it.
+             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+-                let declared =
++                // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
++                // turned into None here, so the declared SAFETY BOUND silently vanished and
++                // the job ran unbounded — while the step form fails closed on the very same
++                // error. Errors are surfaced so the caller can stop the build.
++                let declared, optionError =
+                     options
+-                    |> List.tryPick (fun o ->
+-                        if o.Name = "timeout" then
++                    |> List.filter (fun o -> o.Name = "timeout")
++                    |> List.fold
++                        (fun (acc, err) o ->
+                             match timeoutMs o with
+-                            | Ok ms -> Some(runClock.ElapsedMilliseconds + ms)
+-                            | Error _ -> None
+-                        else
+-                            None)
++                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms), err)
++                            | Error e -> (acc, Some e))
++                        (None, None)
+ 
+-                match declared, inherited with
+-                | Some d, Some i -> Some(min d i)
+-                | Some d, None -> Some d
+-                | None, i -> i
++                let effective =
++                    match declared, inherited with
++                    | Some d, Some i -> Some(min d i)
++                    | Some d, None -> Some d
++                    | None, i -> i
++
++                effective, optionError
+ 
+             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
+                 if not (List.isEmpty stage.Post) then
+@@ -671,7 +694,15 @@ module FogellSide =
+ 
+             and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
+                 // A stage's own `options { timeout(...) }` tightens whatever it inherited.
+-                let deadline = deadlineFromOptions stage.Options inherited
++                let deadline, optionError = deadlineFromOptions stage.Options inherited
++
++                // A declared bound we cannot understand must stop the build, not vanish.
++                match optionError with
++                | Some e ->
++                    emit $"ERROR: stage '{stage.Name}' declares an unusable timeout option: {e}"
++                    ctx.Failed.Value <- true
++                    ctx.Sink BuildStatus.Failure
++                | None ->
+ 
+                 if not (halted ctx) then
+                     // FG-048. The `when` gate, before anything else runs.
+@@ -1358,7 +1389,14 @@ module FogellSide =
+             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+ 
+             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
+-            let pipelineDeadline = deadlineFromOptions pipeline.Options None
++            let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
++
++            match pipelineOptionError with
++            | Some e ->
++                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
++                root.Failed.Value <- true
++                bump BuildStatus.Failure
++            | None -> ()
+ 
+             for stage in pipeline.Stages do
+                 if root.Failed.Value then
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 2f9465d..6aca6fd 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -168,7 +168,12 @@ module Trace =
+         // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
+         // `changelog` on a first build. Engine narration about its own evaluation, not
+         // build output — and imitating the sentence would be over-fitting again.
+-        || t.StartsWith "Warning, empty changelog"
++        // The EXACT sentence, not a prefix. REGRESSION, caught by both reviewers: a broad
++        // prefix match drops any user output beginning with these words and — because
++        // diagnostic lines also set ReportedFailureReason — can mask an engine's silence on
++        // a failed run, producing a FALSE PROVEN. That is precisely the `Terminated` defect
++        // fixed earlier in this file; I reproduced it two rules later.
++        || t = "Warning, empty changelog. Probably because this is the first build."
+         // FG-049. A failing `post` step makes Jenkins print a Java exception and
+         // stack trace into the build log. It is the engine explaining itself, which
+         // is what this predicate is for — and matching a stack trace verbatim would
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 6ee13e3..c00f858 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -213,20 +213,42 @@ let private whenEqualsCondition: P<WhenCondition> =
+ /// stages failed closed.
+ let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
+ 
++/// `()` and nothing else. Accepting arbitrary contents and throwing them away is how a
++/// form Jenkins REJECTS gets silently executed.
++let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
++
++/// A condition taking one value, written bare (`changeset '**/*.java'`) or named with
++/// its ONE legal key. A different key is returned as raw text so the caller can record
++/// it unmodelled rather than mistake it for the value.
++let private namedOrBare (key: string) : P<Result<string, string>> =
++    // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
++    // same shadowing that bit this file once before.
++    (attempt (identifier .>> symbol ":" .>>. stringLiteral)
++     |>> fun (k, v) -> if k = key then Result.Ok v else Result.Error $"{k}: {v}")
++    <|> (stringLiteral |>> Result.Ok)
++
+ let rec private whenCondition: P<WhenCondition> =
+     parse {
+         let! _ = ws
+         return! choice
+                     // Same key validation as `tag`: a named argument that is not
+                     // `pattern:` must not be mistaken for the branch pattern.
+-                    [ // FG-048b. Context-dependent conditions. The zero-argument forms
+-                      // accept optional empty parens, as Jenkinsfiles write them.
+-                      attempt (keyword "buildingTag" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenBuildingTag)
+-                      attempt (keyword "changeRequest" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenChangeRequest)
+-                      attempt (keyword "isRestartedRun" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenIsRestartedRun)
+-                      attempt (keyword "changeset" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangeset)
+-                      attempt (keyword "changelog" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangelog)
+-                      attempt (keyword "triggeredBy" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenTriggeredBy)
++                    [ // FG-048b. Context-dependent conditions.
++                      //
++                      // REVIEW FIXES (both reviewers, PR #16): these accepted ANY balanced
++                      // parentheses and DISCARDED the contents, so `buildingTag('x')` and
++                      // `changeRequest(target: 'main')` were silently modelled as their
++                      // argument-free forms — Jenkins rejects the first and applies a
++                      // filter for the second. Only genuinely EMPTY parens are accepted;
++                      // anything inside falls through to unmodelled and fails closed.
++                      // Named forms validate their key, the same rule already applied to
++                      // `tag` and `branch`, so a wrong key cannot become the pattern.
++                      attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
++                      attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
++                      attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
++                      attempt (keyword "changeset" >>. namedOrBare "glob" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
++                      attempt (keyword "changelog" >>. namedOrBare "regexp" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
++                      attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
+                       attempt (
+                           keyword "branch"
+                           >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index 2bea82b..03ccc30 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -161,6 +161,35 @@ let structure =
+               Expect.equal (one "triggeredBy 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "triggeredBy"
+           }
+ 
++          test "a zero-argument when condition rejects arguments" {
++              // These accepted ANY balanced parens and DISCARDED the contents, so
++              // `buildingTag('x')` — which Jenkins rejects — was silently modelled as the
++              // argument-free form, and `changeRequest(target: 'main')` lost its filter.
++              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
++
++              Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "empty parens are fine"
++
++              match one "buildingTag('x')" with
++              | Some(WhenUnmodelled _) -> ()
++              | other -> failtest $"arguments must not be discarded, got {other}"
++
++              match one "changeRequest(target: 'main')" with
++              | Some(WhenUnmodelled _) -> ()
++              | other -> failtest $"a changeRequest filter must not be dropped, got {other}"
++          }
++
++          test "a wrong named key never becomes the pattern" {
++              // The same failure mode already fixed for `tag`, reintroduced for the three
++              // conditions added in this batch.
++              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
++
++              Expect.equal (one "changeset glob: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the legal key works"
++
++              match one "changeset comparator: 'REGEXP'" with
++              | Some(WhenUnmodelled("changeset", _)) -> ()
++              | other -> failtest $"a wrong key must be unmodelled, got {other}"
++          }
++
+           test "semicolon-separated conditions inside anyOf parse" {
+               // `anyOf { branch 'a'; branch 'b' }` is idiomatic and appeared in 6 corpus
+               // files. `many whenCondition` stopped at the semicolon, the closing brace

@@ -1,0 +1,7 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? evidence/20260730T094046Z-fg-048b-045-review1/

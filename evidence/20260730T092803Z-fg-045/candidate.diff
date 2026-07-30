@@ -1,0 +1,188 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 4a572c1..36b32d5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **45/45 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **47/47 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -135,7 +135,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-048c | P2 | TODO | Receipts for `when` context conditions when the context is PRESENT | FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+ | FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape), `credentials-userpass` (12) and `credentials-file` (3) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file), a missing credential id, a request that parses to NO bindings, and a **credential type mismatch** all fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+-| FG-045 | P1 | TODO | `timeout`, `retry` (see FG-034/035) | 21 / 6 |
++| FG-045 | P1 | **DONE** | `timeout`, `retry` (see FG-034/035) | The step forms were proven by FG-034/035, but surveying the corpus's ACTUAL shapes rather than assuming the ticket was a formality found a real gap: `timeout` is also declared as a pipeline or stage **option** (`options { timeout(time: 1, unit: 'HOURS') }`), and stage options were discarded by the parser outright. MEASURED: Jenkins **aborts** when an options timeout expires — the following stage never runs. Fogell ignored them, so such a pipeline ran **unbounded** and reported success; the probe's 60-second sleep completed against a 4-second declared timeout. Two receipts PROVEN tier-1 (`options-timeout-pipeline`, `options-timeout-stage`); a nested deadline can only tighten an inherited one. Corpus survey: 55 `timeout` occurrences, of which `time:/unit:` 55, bare `timeout(N)` 5, `DAYS` 6. `retry(count:, conditions: [...])` (5 files) is noted in FG-045b |
++| FG-045b | P2 | TODO | `retry(conditions: [...])` — retry only on matching conditions | 5 corpus files use the plugin's conditional form (`agent()`, `kubernetesAgent()`). Fogell retries unconditionally, which retries MORE than Jenkins would. Not a refusal, but a named divergence rather than a silent one |
+ | FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
+ | FG-047 | P1 | **DONE** | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | `stash-unstash` receipt PROVEN tier-1, and the property that matters is the one tested: the stash is stored with the BUILD (outside the workspace), so it survives `deleteDir()`. Storing it under the workspace would pass a naive round-trip and fail this. A missing stash name FAILS rather than silently restoring nothing. `deleteDir()` implemented alongside, since the test is meaningless without it. Writing this receipt is what exposed the step-swallowing parser bug (FG-010b) |
+ | FG-048 | P1 | **DONE** | `when` conditions incl. `expression` via the bounded interpreter | Two receipts PROVEN tier-1. `when-conditions`: `expression { return false }` skips, `environment name/value` matches and mismatches correctly, `allOf` + `not` composes; a skipped stage leaves the build **SUCCESS** and its **`post` block does not run** (both measured). `when-scm-and-equals`: MEASURED that on a plain job Jenkins **skips** `branch` and `tag` stages because `BRANCH_NAME`/`TAG_NAME` do not exist — which is what lets those two be modelled rather than refused, and they are the corpus's heaviest `when` users. `equals` is a plain comparison. **Two parser bugs found by receipt:** `when { environment name: 'X', value: 'Y' }` did not parse at all (the code expected `environment X = 'Y'`, which Jenkins rejects), and an unparseable `when` fell through the stage's generic section fallback so the stage ran **unconditionally** — silently running a stage Jenkins skips, the worst failure mode available. A backstop now records any unrecognised `when` as unmodelled so evaluation fails closed. Unmodelled conditions: FG-048b |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index dc55cb4..80cf156 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -70,6 +70,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   context-dependent `when` condition (`buildingTag`, `changeRequest`, `changeset`,
+   `changelog`, `triggeredBy`, `isRestartedRun`) is **false** and its stage is skipped,
+   with the build succeeding. (Proven: `when-context-conditions`.)
++- `options { timeout(...) }` at pipeline or stage level **aborts** the build when it
++  expires, exactly as the `timeout` step does; the following stage does not run.
++  (Proven: `options-timeout-pipeline`, `options-timeout-stage`.)
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index a1318e3..bc5a4ae 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -611,6 +611,28 @@ module FogellSide =
+                 | PostCondition.NotBuilt -> 8
+                 | PostCondition.Cleanup -> 9
+ 
++            /// FG-045. `options { timeout(...) }` at pipeline or stage level. MEASURED:
++            /// Jenkins ABORTS the build when it expires — `finished.txt` and the following
++            /// stage never appear. Fogell ignored options entirely, so such a pipeline ran
++            /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
++            ///
++            /// A nested deadline can only tighten an inherited one, never extend it.
++            let deadlineFromOptions (options: Step list) (inherited: int64 option) =
++                let declared =
++                    options
++                    |> List.tryPick (fun o ->
++                        if o.Name = "timeout" then
++                            match timeoutMs o with
++                            | Ok ms -> Some(runClock.ElapsedMilliseconds + ms)
++                            | Error _ -> None
++                        else
++                            None)
++
++                match declared, inherited with
++                | Some d, Some i -> Some(min d i)
++                | Some d, None -> Some d
++                | None, i -> i
++
+             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
+                 if not (List.isEmpty stage.Post) then
+                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
+@@ -647,7 +669,10 @@ module FogellSide =
+ 
+                             if postCtx.Failed.Value then ctx.Failed.Value <- true
+ 
+-            and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
++            and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
++                // A stage's own `options { timeout(...) }` tightens whatever it inherited.
++                let deadline = deadlineFromOptions stage.Options inherited
++
+                 if not (halted ctx) then
+                     // FG-048. The `when` gate, before anything else runs.
+                     let gate =
+@@ -682,7 +707,7 @@ module FogellSide =
+                                     stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
+                                     ctx.Sink st }
+ 
+-                    runStageBody body cwd stage
++                    runStageBody body cwd deadline stage
+ 
+                     if body.Failed.Value then ctx.Failed.Value <- true
+ 
+@@ -1256,10 +1281,10 @@ module FogellSide =
+ 
+                 | _ -> runStepInner ctx stage cwd step deadline
+ 
+-            and runStageBody (ctx: BranchCtx) (cwd: string) (stage: Stage) =
++            and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: int64 option) (stage: Stage) =
+                     for step in stage.Steps do
+                         if not (halted ctx) then
+-                            runStepDispatch ctx cwd stage step None
++                            runStepDispatch ctx cwd stage step deadline
+ 
+                     if stage.IsParallel && not (List.isEmpty stage.Nested) then
+                         // JB-FAIL-006/007. Branches run concurrently and, by
+@@ -1309,7 +1334,7 @@ module FogellSide =
+ 
+                                 branchCtx,
+                                 System.Threading.Tasks.Task.Run(fun () ->
+-                                    runStage branchCtx cwd branch
++                                    runStage branchCtx cwd deadline branch
+ 
+                                     if branchCtx.Failed.Value then
+                                         siblingFailed.Cancel()))
+@@ -1328,10 +1353,13 @@ module FogellSide =
+                             ctx.Failed.Value <- true
+                     else
+                         for nested in stage.Nested do
+-                            runStage ctx cwd nested
++                            runStage ctx cwd deadline nested
+ 
+             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+ 
++            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
++            let pipelineDeadline = deadlineFromOptions pipeline.Options None
++
+             for stage in pipeline.Stages do
+                 if root.Failed.Value then
+                     // Jenkins names every stage it skips because of an earlier
+@@ -1339,7 +1367,7 @@ module FogellSide =
+                     // run is the JB-DUR-005 defect in miniature, so we say it too.
+                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                 else
+-                    runStage root workspace stage
++                    runStage root workspace pipelineDeadline stage
+ 
+             // Pipeline-level `post` is selected against the BUILD result, so it
+             // runs after every stage. Modelled as a synthetic stage carrying only
+@@ -1352,6 +1380,7 @@ module FogellSide =
+                       Environment = []
+                       EnvironmentLiteralNames = Set.empty
+                       Steps = []
++                      Options = []
+                       When = None
+                       Post = pipeline.Post
+                       Nested = []
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index cde1947..1e05625 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -75,6 +75,9 @@ type Stage =
+       /// produce a false differential match.
+       EnvironmentLiteralNames: Set<string>
+       Steps: Step list
++      /// FG-045. Stage-level `options { }`. Previously discarded outright, so a
++      /// `timeout` declared here bounded nothing and the stage ran unbounded.
++      Options: Step list
+       When: WhenCondition option
+       Post: (PostCondition * Step list) list
+       /// Nested `stages { }` (sequential) and `parallel { }` children.
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index ae68ff7..6ee13e3 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -324,6 +324,7 @@ type private StageSection =
+     | SecPost of (PostCondition * Step list) list
+     | SecNested of Stage list * bool
+     | SecFailFast of bool
++    | SecOptions of Step list
+     | SecOther of string
+ 
+ stageRef.Value <-
+@@ -346,7 +347,7 @@ stageRef.Value <-
+                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
+                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
+                       attempt (failFastDirective |>> SecFailFast)
+-                      attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
++                      attempt (keyword "options" >>. stepBlock |>> SecOptions)
+                       attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
+                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
+                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
+@@ -365,6 +366,7 @@ stageRef.Value <-
+                         | _ -> None))
+                     Set.empty
+               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
++              Options = defaultArg (pick (function SecOptions o -> Some o | _ -> None)) []
+               When = pick (function SecWhen w -> Some w | _ -> None)
+               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
+               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []

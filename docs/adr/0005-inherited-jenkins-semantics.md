@@ -66,6 +66,25 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   mask it; the receipt showed Jenkins masks both.)
 - `stash` with the default `allowEmpty: false` and no matching files **fails the
   build** — later steps do not run. (Proven: `stash-empty-fails`.)
+- On a plain job — no SCM, not multibranch, first build, started by a user — every
+  context-dependent `when` condition (`buildingTag`, `changeRequest`, `changeset`,
+  `changelog`, `triggeredBy`, `isRestartedRun`) is **false** and its stage is skipped,
+  with the build succeeding. (Proven: `when-context-conditions`.)
+- `options { timeout(...) }` at pipeline or stage level **aborts** the build when it
+  expires, exactly as the `timeout` step does; the following stage does not run.
+  (Proven: `options-timeout-pipeline`, `options-timeout-stage`.)
+- The data-bound parameter for `when { changeset }` and `when { changelog }` is
+  **`pattern`**; `glob` is REJECTED with a compilation error. `triggeredBy` uses `cause`.
+  (Proven: `when-scm-pattern-keys`. Recorded because I invented `glob`/`regexp` once and
+  a wrong data-bound name inverts the gate in both directions — accepting what Jenkins
+  refuses, and refusing what real Jenkinsfiles write.)
+- `beforeAgent` / `beforeInput` / `beforeOptions` are DIRECTIVES, legal only directly
+  under `when`. Nested inside `allOf`/`anyOf`/`not`, Jenkins refuses to COMPILE the
+  pipeline, and its error names the complete set of valid conditionals: allOf, anyOf,
+  branch, buildingTag, changeRequest, changelog, changeset, environment, equals,
+  expression, isRestartedRun, not, tag, triggeredBy — all fourteen are modelled.
+- A `when` block containing only directives and no condition is **rejected**:
+  *"Empty when closure, remove the property or add some content."* (Measured.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

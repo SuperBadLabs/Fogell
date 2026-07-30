@@ -1,0 +1,4 @@
+ M Fogell.slnx
+ M src/Fogell.Differential/Trace.fs
+ M tests/Fogell.Differential.Tests/Tests.fs
+?? evidence/20260730T120451Z-fg-002f-solution/

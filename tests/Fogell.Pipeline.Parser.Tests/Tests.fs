@@ -147,6 +147,101 @@ let structure =
               Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
           }
 
+          test "context-dependent when conditions are modelled, not refused" {
+              // MEASURED: on a plain job all six are FALSE and their stages are skipped,
+              // with the build succeeding. They used to fail CLOSED, refusing the file.
+              let one w =
+                  (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "buildingTag"
+              Expect.equal (one "changeRequest()") (Some WhenChangeRequest) "changeRequest"
+              Expect.equal (one "isRestartedRun()") (Some WhenIsRestartedRun) "isRestartedRun"
+              Expect.equal (one "changeset '**/*.java'") (Some(WhenChangeset "**/*.java")) "changeset"
+              Expect.equal (one "changelog '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "changelog"
+              Expect.equal (one "triggeredBy 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "triggeredBy"
+          }
+
+          test "a zero-argument when condition rejects arguments" {
+              // These accepted ANY balanced parens and DISCARDED the contents, so
+              // `buildingTag('x')` — which Jenkins rejects — was silently modelled as the
+              // argument-free form, and `changeRequest(target: 'main')` lost its filter.
+              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "empty parens are fine"
+
+              match one "buildingTag('x')" with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtest $"arguments must not be discarded, got {other}"
+
+              match one "changeRequest(target: 'main')" with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtest $"a changeRequest filter must not be dropped, got {other}"
+          }
+
+          test "a wrong named key never becomes the pattern" {
+              // The same failure mode already fixed for `tag`, reintroduced for the three
+              // conditions added in this batch.
+              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              // MEASURED: `pattern` is the data-bound name Jenkins accepts; `glob` is
+              // REJECTED with a compilation error. An earlier version of this test asserted
+              // `glob` was legal — it encoded a key I had invented, so the test agreed with
+              // the bug instead of catching it.
+              Expect.equal (one "changeset pattern: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the measured key works"
+              Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
+              Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
+
+              match one "changeset glob: '**/*.java'" with
+              | Some(WhenUnmodelled("changeset", _)) -> ()
+              | other -> failtest $"`glob` is rejected by Jenkins and must be unmodelled, got {other}"
+
+              match one "changeset comparator: 'REGEXP'" with
+              | Some(WhenUnmodelled("changeset", _)) -> ()
+              | other -> failtest $"a wrong key must be unmodelled, got {other}"
+          }
+
+          test "semicolon-separated conditions inside anyOf parse" {
+              // `anyOf { branch 'a'; branch 'b' }` is idiomatic and appeared in 6 corpus
+              // files. `many whenCondition` stopped at the semicolon, the closing brace
+              // failed, and the WHOLE anyOf degraded to unmodelled — so it failed closed.
+              let p = ok (mk "    stage('a') { when { anyOf { branch 'master'; branch 'staging' } } steps { echo 'x' } }")
+              Expect.equal p.Stages.[0].When (Some(WhenAnyOf [ WhenBranch "master"; WhenBranch "staging" ])) "both branches"
+          }
+
+          test "beforeAgent is an evaluation option, not a condition" {
+              // It changes WHEN the condition is evaluated, never WHETHER it holds.
+              // Treated as unmodelled it made the whole `when` fail closed.
+              // A directive contributes NOTHING to the condition, so only the condition
+              // survives. The earlier assertion kept it as a neutral conjunct, which is
+              // also why it could be nested — and MEASURED, Jenkins rejects that:
+              //   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf,
+              //   branch, buildingTag, changeRequest, changelog, changeset, environment,
+              //   equals, expression, isRestartedRun, not, tag, triggeredBy
+              let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
+              Expect.equal p.Stages.[0].When (Some(WhenBranch "main")) "the directive contributes nothing"
+
+              // Nested inside a condition it must NOT be accepted, because Jenkins refuses
+              // to compile such a pipeline.
+              let nested = ok (mk "    stage('a') { when { anyOf { beforeAgent true\n branch 'x' } } steps { echo 'y' } }")
+
+              match nested.Stages.[0].When with
+              | Some(WhenAnyOf [ WhenUnmodelled("beforeAgent", _); _ ]) -> ()
+              | other -> failtest $"a nested directive must be unmodelled, got {other}"
+          }
+
+          test "an equals operand may be a bare identifier with an underscore" {
+              // The last unmodelled `when` in the corpus was
+              // `equals expected: 'False', actual: _deploy_to_nexus` — one character
+              // missing from an identifier charset made the stage fail closed.
+              let p = ok (mk "    stage('a') { when { equals expected: 'False', actual: _deploy_to_nexus } steps { echo 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenEquals(e, a)) ->
+                  Expect.equal e "'False'" "quoted literal keeps its quotes"
+                  Expect.equal a "_deploy_to_nexus" "identifier operand survives"
+              | other -> failtest $"expected WhenEquals, got {other}"
+          }
+
           test "a named when argument that is not `pattern` fails closed" {
               // REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
               // `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a

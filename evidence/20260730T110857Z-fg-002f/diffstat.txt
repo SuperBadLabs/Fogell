@@ -1,0 +1,10 @@
+ .../receipts/options-timeout-pipeline.receipt.txt  |  8 ++++---
+ .../receipts/parallel-always-failfast.receipt.txt  | 10 +++++---
+ .../receipts/parallel-failfast.receipt.txt         | 10 +++++---
+ .../receipts/parallel-post-selection.receipt.txt   |  8 ++++---
+ .../receipts/parallel-siblings-finish.receipt.txt  |  8 ++++---
+ .../post-failure-stops-pipeline.receipt.txt        |  8 ++++---
+ docs/EXECUTION_BOARD.md                            |  2 +-
+ src/Fogell.Differential/Fogell.fs                  | 15 +++++++++---
+ src/Fogell.Differential/Trace.fs                   | 28 ++++++++++++----------
+ 9 files changed, 63 insertions(+), 34 deletions(-)

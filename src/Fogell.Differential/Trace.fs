@@ -145,7 +145,6 @@ module Trace =
     /// their wording is not.
     let isDiagnosticLine (t: string) =
         t.StartsWith "ERROR:"
-        || t.StartsWith "FATAL:"
         // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
         // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
         // nested steps due to timeout / Sending interrupt signal to process /
@@ -158,30 +157,44 @@ module Trace =
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
-        || t.StartsWith "Failed in branch "
         // FG-044. Jenkins narrates credential masking as one line naming every bound
         // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
         // that join word character for character would over-fit to plugin wording, the
         // thing this contract exists to avoid. Both engines say it; the wording is not
         // compared, and the load-bearing evidence is that the value never appears.
         || t.StartsWith "Masking supported pattern matches of "
+        // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
+        // `changelog` on a first build. Engine narration about its own evaluation, not
+        // build output — and imitating the sentence would be over-fitting again.
+        // The EXACT sentence, not a prefix. REGRESSION, caught by both reviewers: a broad
+        // prefix match drops any user output beginning with these words and — because
+        // diagnostic lines also set ReportedFailureReason — can mask an engine's silence on
+        // a failed run, producing a FALSE PROVEN. That is precisely the `Terminated` defect
+        // fixed earlier in this file; I reproduced it two rules later.
+        || t = "Warning, empty changelog. Probably because this is the first build."
         // FG-049. A failing `post` step makes Jenkins print a Java exception and
         // stack trace into the build log. It is the engine explaining itself, which
         // is what this predicate is for — and matching a stack trace verbatim would
         // be over-fitting to a plugin's internals in the most extreme way available.
         || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
-        || t.StartsWith "hudson.AbortException"
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
-        || t.StartsWith "Aborted by "
+        // A pipeline-level timeout surfaces as this exception class in the log. Engine
+        // narration about its own interrupt, same category as the lines above.
+        // NOTE, third instance of one mistake: `WorkflowScript: \d+:`, a bare `^` and
+        // `\d+ errors?` were added here last round to silence a Groovy compilation report.
+        // Every one of them is USER-REPRODUCIBLE — a pipeline echoing "1 error" would lose
+        // the line, and because this predicate also feeds ReportedFailureReason it could
+        // mask an engine failing silently and yield a FALSE PROVEN. That is exactly the
+        // defect fixed for `Terminated`, then again for the changelog warning, and I
+        // recreated it while fixing the second one. They are removed rather than narrowed:
+        // they existed only for a case that is no longer in the suite, so the machinery
+        // was pure risk. The rule this file needs is that a pattern belongs here only if a
+        // user's own output cannot plausibly match it.
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
         || t.Contains "workflow.actions.ErrorAction$ErrorId"
         || t.Contains "doesn\u2019t match anything"
         || t.Contains "doesn't match anything"
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ of \d+ test\(s\) failed$")
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
@@ -230,35 +243,82 @@ module Trace =
     /// ONLY when such an interrupt was actually narrated earlier in the run.
     /// Everywhere else it is ordinary user output and is compared.
     let normaliseOutput (lines: string seq) : string list =
-        // REVIEW FIX (Codex, PR #13): the first version latched this flag for the
-        // whole build, so a legitimate `Terminated` printed much later — say by an
-        // `always` post block after a timeout — was still swallowed. Jenkins emits
-        // the pair ADJACENTLY ("Sending interrupt signal to process" then
-        // "Terminated"), so the window is exactly the next line and it closes
-        // immediately, whether or not it was used.
-        let mutable interruptJustNarrated = false
+        // Two engine-narration shapes are recognised by CONTEXT, never by their text
+        // alone, because a build can legitimately print either:
+        //
+        //   * `Terminated` — only when an interrupt was narrated on the previous line.
+        //   * a Java exception head (`hudson.AbortException: …`) and the `at …(…)` frames
+        //     under it — only when a frame actually FOLLOWS the head. A pipeline echoing
+        //     an exception class name on its own keeps that line.
+        //
+        // This is the fifth defect of one class: a pattern a user's own output can match,
+        // removed from the compared output AND counted as a reported failure reason, so an
+        // engine failing silently could still read PROVEN. Six such patterns turned out to
+        // be protecting nothing and were deleted (FG-002f); these three are load-bearing,
+        // so they are gated instead.
+        let all = lines |> Seq.toArray
 
-        [ for line in lines do
-            let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
-            let suppress = raw = "Terminated" && interruptJustNarrated
+        let clean (l: string) =
+            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+
+        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
+
+        let looksLikeExceptionHead (l: string) =
+            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
+
+        let mutable interruptJustNarrated = false
+        let mutable inStackTrace = false
+
+        [ for i in 0 .. all.Length - 1 do
+            let raw = clean all[i]
+            let next = if i + 1 < all.Length then clean all[i + 1] else ""
+
+            // A head only opens the window when a frame really follows it.
+            if looksLikeExceptionHead raw && isFrame next then inStackTrace <- true
+            elif not (isFrame raw) then inStackTrace <- false
+
+            let suppress =
+                (raw = "Terminated" && interruptJustNarrated)
+                || (isFrame raw && inStackTrace)
+                || (looksLikeExceptionHead raw && isFrame next)
 
             interruptJustNarrated <-
                 raw.StartsWith "Sending interrupt signal to process"
                 || raw.StartsWith "Cancelling nested steps"
 
             if not suppress then
-                match normaliseLine line with
+                match normaliseLine all[i] with
                 | Some l -> yield l
                 | None -> () ]
 
-    /// Did the engine explain itself? Computed over RAW lines, before the
-    /// diagnostic-stripping normaliser removes them.
-    /// `Terminated` on its own is only a reason when an interrupt was narrated
-    /// with it; see [normaliseOutput].
+    /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
+    /// see [normaliseOutput].
+    ///
+    /// REVIEW FIX (Codex, PR #16 round 9): moving exception heads and stack frames out of
+    /// [isDiagnosticLine] and into a CONTEXTUAL gate left this function unable to see
+    /// them. A Jenkins failure explained ONLY by a stack trace would then report NO
+    /// reason while Fogell's `ERROR:` reported one — a DiagnosticSilence divergence on an
+    /// otherwise matching run. The same context detection has to serve both.
     let reportedFailureReason (lines: string seq) : bool =
-        lines
-        |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
-        |> Seq.exists isDiagnosticLine
+        let all = lines |> Seq.toArray
+
+        let clean (l: string) =
+            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+
+        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
+
+        let looksLikeExceptionHead (l: string) =
+            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
+
+        let hasStackTrace =
+            all
+            |> Array.mapi (fun i l ->
+                let raw = clean l
+                let next = if i + 1 < all.Length then clean all[i + 1] else ""
+                looksLikeExceptionHead raw && isFrame next)
+            |> Array.exists id
+
+        hasStackTrace || (all |> Array.map clean |> Array.exists isDiagnosticLine)
 
     /// The exclusions above are part of the contract, so they are published with
     /// every receipt rather than buried in code.
@@ -282,6 +342,9 @@ module Trace =
           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: credential-masking narration — both engines announce it, wording differs"
+          "excluded: compile/evaluation rejection narration — Jenkins refuses an invalid"
+          "  pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with"
+          "  the same workspace, and comparing a compiler's error layout is over-fitting"
           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
           "  counted as a reported reason instead, since it explains the engine, not the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

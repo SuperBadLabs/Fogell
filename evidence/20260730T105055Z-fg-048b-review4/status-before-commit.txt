@@ -1,0 +1,3 @@
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Trace.fs
+?? evidence/20260730T105055Z-fg-048b-review4/

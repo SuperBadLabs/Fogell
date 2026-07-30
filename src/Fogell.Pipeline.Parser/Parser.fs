@@ -193,7 +193,11 @@ let private whenEqualsCondition: P<WhenCondition> =
     >>. sepBy1
             (identifier .>> symbol ":"
              .>>. (attempt (stringLiteral |>> fun v -> $"'{v}'")
-                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || isLetter c) .>> ws)))
+                   // `_` belongs here: the last unmodelled `when` in the corpus was
+                   // `equals expected: 'False', actual: _deploy_to_nexus`, and omitting
+                   // underscore from an IDENTIFIER charset made that whole condition
+                   // unmodelled — so the stage failed closed over one character.
+                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)))
             (symbol ",")
     .>> ws
     |>> fun pairs ->
@@ -203,13 +207,56 @@ let private whenEqualsCondition: P<WhenCondition> =
             | Some e, Some a -> WhenEquals(e, a)
             | _ -> WhenUnmodelled("equals", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
 
+/// A `;` between conditions. `anyOf { branch 'a'; branch 'b' }` is idiomatic and
+/// appeared in 6 corpus files, where `many whenCondition` stopped at the semicolon, the
+/// closing brace failed to match, and the WHOLE anyOf degraded to unmodelled — so those
+/// stages failed closed.
+let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
+
+/// `()` and nothing else. Accepting arbitrary contents and throwing them away is how a
+/// form Jenkins REJECTS gets silently executed.
+let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
+
+/// A condition taking one value, written bare (`changeset '**/*.java'`) or named with
+/// its ONE legal key.
+///
+/// MEASURED, after inventing the key names once already: Jenkins ACCEPTS
+/// `changeset pattern:` and `changelog pattern:` and REJECTS `changeset glob:` with a
+/// compilation error — so the invented `glob`/`regexp` keys made Fogell accept what
+/// Jenkins refuses AND fail closed on the form real Jenkinsfiles use. `triggeredBy cause:`
+/// was measured correct. Guessing a data-bound parameter name is not a small thing: it
+/// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
+/// it unmodelled rather than mistake it for the value.
+let private namedOrBare (key: string) : P<Result<string, string>> =
+    // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
+    // same shadowing that bit this file once before.
+    (attempt (identifier .>> symbol ":" .>>. stringLiteral)
+     |>> fun (k, v) -> if k = key then Result.Ok v else Result.Error $"{k}: {v}")
+    <|> (stringLiteral |>> Result.Ok)
+
 let rec private whenCondition: P<WhenCondition> =
     parse {
         let! _ = ws
         return! choice
                     // Same key validation as `tag`: a named argument that is not
                     // `pattern:` must not be mistaken for the branch pattern.
-                    [ attempt (
+                    [ // FG-048b. Context-dependent conditions.
+                      //
+                      // REVIEW FIXES (both reviewers, PR #16): these accepted ANY balanced
+                      // parentheses and DISCARDED the contents, so `buildingTag('x')` and
+                      // `changeRequest(target: 'main')` were silently modelled as their
+                      // argument-free forms — Jenkins rejects the first and applies a
+                      // filter for the second. Only genuinely EMPTY parens are accepted;
+                      // anything inside falls through to unmodelled and fails closed.
+                      // Named forms validate their key, the same rule already applied to
+                      // `tag` and `branch`, so a wrong key cannot become the pattern.
+                      attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
+                      attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
+                      attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
+                      attempt (keyword "changeset" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
+                      attempt (keyword "changelog" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
+                      attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
+                      attempt (
                           keyword "branch"
                           >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
                                 |>> fun (k, v) -> if k = "pattern" then WhenBranch v else WhenUnmodelled("branch", $"{k}: {v}"))
@@ -219,8 +266,8 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition
                       attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
-                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAllOf)
-                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAnyOf)
+                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
+                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
                       // Unrecognised condition. `.>> ws` is load-bearing: without
                       // it this branch ends mid-line, the enclosing `}` fails to
@@ -248,12 +295,38 @@ let rec private whenCondition: P<WhenCondition> =
 /// `when { environment name: 'A', value: '1'\n environment name: 'B', value: '2' }`
 /// failed at the second, fell to the opaque backstop, and FAILED THE BUILD — where
 /// Jenkins simply requires both.
+/// `beforeAgent true` and friends are DIRECTIVES, legal only DIRECTLY under `when`.
+///
+/// MEASURED: Jenkins rejects one nested inside allOf/anyOf/not —
+///   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf, branch,
+///   buildingTag, changeRequest, changelog, changeset, environment, equals, expression,
+///   isRestartedRun, not, tag, triggeredBy
+/// Parsing them as ordinary recursive conditions made `anyOf { beforeAgent true; branch
+/// 'never' }` unconditionally TRUE here, running a stage on a pipeline Jenkins refuses to
+/// COMPILE. That enumeration is also the authority for what a `when` may contain, and all
+/// fourteen of those conditionals are modelled.
+let private whenDirective: P<unit> =
+    (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
+    >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
+    .>> ws
+
+/// One item directly under `when`: a directive (contributing nothing) or a condition.
+let private whenItem: P<WhenCondition option> =
+    (attempt (whenDirective >>% None)) <|> (whenCondition |>> Some)
+
 let private whenSection: P<WhenCondition> =
     keyword "when"
-    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenCondition))
-    |>> function
-        | [ single ] -> single
-        | many -> WhenAllOf many
+    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenItem))
+    |>> fun items ->
+            match items |> List.choose id with
+            | [ single ] -> single
+            // MEASURED: Jenkins REJECTS a `when` holding only directives —
+            //   WorkflowScript: 5: Empty when closure, remove the property or add some
+            //   content.
+            // Treating it as "nothing to gate on, so run" executed a stage on a pipeline
+            // Jenkins refuses to compile.
+            | [] -> WhenUnmodelled("when", "empty when closure")
+            | multiple -> WhenAllOf multiple
 
 /// Backstop. If the structured parse above fails for ANY reason, the `when`
 /// must still be recorded — as unmodelled, so evaluation fails closed. It must
@@ -297,6 +370,7 @@ type private StageSection =
     | SecPost of (PostCondition * Step list) list
     | SecNested of Stage list * bool
     | SecFailFast of bool
+    | SecOptions of Step list
     | SecOther of string
 
 stageRef.Value <-
@@ -319,7 +393,7 @@ stageRef.Value <-
                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
-                      attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
+                      attempt (keyword "options" >>. stepBlock |>> SecOptions)
                       attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
@@ -338,6 +412,7 @@ stageRef.Value <-
                         | _ -> None))
                     Set.empty
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
+              Options = defaultArg (pick (function SecOptions o -> Some o | _ -> None)) []
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []

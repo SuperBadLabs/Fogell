@@ -1,0 +1,7 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+?? evidence/20260730T114214Z-fg-002f-acceptance/
+?? tests/Fogell.Differential.Tests/

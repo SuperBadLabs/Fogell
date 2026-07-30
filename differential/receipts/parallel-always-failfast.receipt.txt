@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+seal:         b0bc62bebe7b0d3e36da85c5fd8fc09f417fa1d71384bad7ac7599d63182ce1b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
@@ -37,13 +40,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (4 lines):
     | from-quick
     | from-slow
+    | Failed in branch quick-fail
+    | Failed in branch interrupted
 
 ## Fogell
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (4 lines):
     | from-slow
     | from-quick
+    | Failed in branch quick-fail
+    | Failed in branch interrupted

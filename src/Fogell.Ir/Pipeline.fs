@@ -29,6 +29,22 @@ type Step =
 type WhenCondition =
     | WhenBranch of string
     | WhenTag of string
+    /// FG-048b. Conditions whose truth depends on build CONTEXT that a plain pipeline
+    /// job does not have — an SCM changelog, a multibranch CHANGE_ID, a timer trigger,
+    /// a restart. MEASURED on the pinned Jenkins: with that context absent, every one of
+    /// them is FALSE and the stage is skipped, and the build is a success. Modelling that
+    /// is what turns a fail-closed refusal into a working build for the corpus files
+    /// using them.
+    | WhenBuildingTag
+    | WhenChangeRequest
+    | WhenChangeset of pattern: string
+    | WhenChangelog of pattern: string
+    | WhenTriggeredBy of cause: string
+    | WhenIsRestartedRun
+    /// `beforeAgent` / `beforeInput` / `beforeOptions`: an evaluation-ORDER directive, not
+    /// a condition. It never changes whether the stage runs, so it is neutral — true
+    /// under conjunction. Treating it as unmodelled made the whole `when` fail closed.
+    | WhenEvaluationOption
     | WhenEquals of expected: string * actual: string
     | WhenEnvironment of name: string * value: string
     | WhenExpression of source: string
@@ -59,6 +75,9 @@ type Stage =
       /// produce a false differential match.
       EnvironmentLiteralNames: Set<string>
       Steps: Step list
+      /// FG-045. Stage-level `options { }`. Previously discarded outright, so a
+      /// `timeout` declared here bounded nothing and the stage ran unbounded.
+      Options: Step list
       When: WhenCondition option
       Post: (PostCondition * Step list) list
       /// Nested `stages { }` (sequential) and `parallel { }` children.

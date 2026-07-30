@@ -1,0 +1,3 @@
+ docs/EXECUTION_BOARD.md          |  1 +
+ src/Fogell.Differential/Trace.fs | 18 ++++++++++--------
+ 2 files changed, 11 insertions(+), 8 deletions(-)

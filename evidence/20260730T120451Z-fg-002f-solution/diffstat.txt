@@ -1,0 +1,4 @@
+ Fogell.slnx                              |  1 +
+ src/Fogell.Differential/Trace.fs         | 32 +++++++++++++++++++++++++++-----
+ tests/Fogell.Differential.Tests/Tests.fs | 19 +++++++++++++++++++
+ 3 files changed, 47 insertions(+), 5 deletions(-)

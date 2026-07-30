@@ -454,7 +454,92 @@ module FogellSide =
                 // This is a source-level approximation of Jenkins' object comparison,
                 // not the real thing: `equals expected: 2, actual: 2.0` would still
                 // be called unequal. Stated rather than implied.
-                | WhenEquals(expected, actual) -> Some(expected.Trim() = actual.Trim())
+                | WhenEquals(expected, actual) ->
+                    // Jenkins compares OBJECTS: Integer 2 is not String "2". An operand is
+                    // a quoted literal (a String), a bare number (an Integer), or an
+                    // expression like `env.X` — and an environment variable is a String.
+                    //
+                    // REGRESSION, caught by both reviewers: PR #13 round 5 established the
+                    // type distinction by keeping each operand's source form, and my
+                    // expression-resolution fix then stripped the quotes and made
+                    // `equals expected: 2, actual: '2'` equal again. The fix has to
+                    // preserve provenance, not just resolve.
+                    let classify (raw: string) =
+                        let t = raw.Trim()
+
+                        if t.Length >= 2 && (t.StartsWith "'" || t.StartsWith "\"") && t.EndsWith(string t[0]) then
+                            // A String literal. Remove ONLY the one reconstructed delimiter:
+                            // `Trim('\'', '"')` stripped every quote at both ends, so
+                            // `equals expected: '"foo', actual: 'foo'` compared "foo" with
+                            // foo as equal and ran a stage Jenkins skips.
+                            Choice1Of3(t.Substring(1, t.Length - 2))
+                        elif t = "true" || t = "false" then
+                            // a Boolean literal. REVIEW FIX (Codex, PR #16 round 4): bare
+                            // `true` fell through to the expression branch and became a
+                            // String, so `equals expected: true, actual: 'true'` compared
+                            // equal and ran a stage Jenkins skips.
+                            Choice3Of3 t
+                        elif t.Length > 0 && (Char.IsDigit t[0] || (t[0] = '-' && t.Length > 1)) then
+                            // a numeric literal — a different Groovy type entirely
+                            Choice2Of3 t
+                        else
+                            // an expression; environment values are Strings
+                            let bare = if t.StartsWith "env." then t.Substring 4 else t
+
+                            match Map.tryFind bare env with
+                            | Some v -> Choice1Of3 v
+                            | None ->
+                                // REVIEW FIX (Codex, PR #16 round 5): an unresolved
+                                // expression became its own SOURCE TEXT, so
+                                // `equals expected: 'env.MISSING', actual: env.MISSING`
+                                // compared two identical strings and ran a stage Jenkins
+                                // skips — Jenkins compares a String against null. Null is
+                                // its own class: equal only to another null.
+                                Choice2Of3 "\u0000null"
+
+                    match classify expected, classify actual with
+                    | Choice1Of3 a, Choice1Of3 b -> Some(a = b)
+                    | Choice2Of3 a, Choice2Of3 b -> Some(a.Trim() = b.Trim())
+                    | Choice3Of3 a, Choice3Of3 b -> Some(a = b)
+                    // Different Groovy types are never equal, which is the whole point.
+                    | _ -> Some false
+
+                // Neutral: an evaluation-ORDER directive never decides whether a stage runs.
+                | WhenEvaluationOption -> Some true
+
+                // FG-048b. MEASURED on the pinned Jenkins: on a plain job — no SCM
+                // changelog, no multibranch metadata, not a restart, triggered by a user —
+                // every one of these is FALSE and its stage is skipped, with the build
+                // succeeding. Before this they failed CLOSED, refusing up to 15 corpus
+                // files outright, and a refusal is still a broken lift-and-shift.
+                //
+                // The BOUNDARY, stated rather than implied: only the context-absent case
+                // is receipt-proven. A real multibranch build where CHANGE_ID exists, or a
+                // build with an actual changelog, is NOT covered by that measurement —
+                // those paths use the variable when present and are unproven until this
+                // harness can produce such a build (FG-048c).
+                | WhenBuildingTag -> Some(Map.containsKey "TAG_NAME" env)
+                | WhenChangeRequest -> Some(Map.containsKey "CHANGE_ID" env)
+                | WhenIsRestartedRun ->
+                    // Nothing in this engine restarts a run yet, so this cannot be true.
+                    Some false
+                | WhenTriggeredBy _ ->
+                    // MEASURED false on a user-started build, and it stays false until real
+                    // cause metadata exists.
+                    //
+                    // REVIEW FIX (both reviewers, PR #16): reading `BUILD_CAUSE` out of the
+                    // environment made the gate SPOOFABLE — a Jenkinsfile declaring
+                    // `environment { BUILD_CAUSE = 'TimerTrigger' }` would open a stage
+                    // Jenkins skips, and nothing else in the engine ever produces that
+                    // variable. A gate whose input the gated party controls is not a gate.
+                    Some false
+
+                | WhenChangeset _
+                | WhenChangelog _ ->
+                    // Both need an SCM changelog. There is none, and Jenkins itself warns
+                    // "empty changelog, probably because this is the first build" and
+                    // evaluates false.
+                    Some false
 
                 | WhenNot inner -> evalWhen stage inner |> Option.map not
 
@@ -559,7 +644,43 @@ module FogellSide =
                 | PostCondition.NotBuilt -> 8
                 | PostCondition.Cleanup -> 9
 
-            let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
+            /// FG-045. `options { timeout(...) }` at pipeline or stage level. MEASURED:
+            /// Jenkins ABORTS the build when it expires — `finished.txt` and the following
+            /// stage never appear. Fogell ignored options entirely, so such a pipeline ran
+            /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
+            ///
+            /// A nested deadline can only tighten an inherited one, never extend it.
+            let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+                // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
+                // turned into None here, so the declared SAFETY BOUND silently vanished and
+                // the job ran unbounded — while the step form fails closed on the very same
+                // error. Errors are surfaced so the caller can stop the build.
+                let declared, optionError =
+                    options
+                    |> List.filter (fun o -> o.Name = "timeout")
+                    |> List.fold
+                        (fun (acc, err) o ->
+                            match timeoutMs o with
+                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms), err)
+                            | Error e -> (acc, Some e))
+                        (None, None)
+
+                let effective =
+                    match declared, inherited with
+                    | Some d, Some i -> Some(min d i)
+                    | Some d, None -> Some d
+                    | None, i -> i
+
+                effective, optionError
+
+            let rec runPostWithDeadline
+                (ctx: BranchCtx)
+                (cwd: string)
+                (stage: Stage)
+                (result: BuildStatus)
+                (previous: BuildStatus option)
+                (deadline: int64 option)
+                =
                 if not (List.isEmpty stage.Post) then
                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
                     // against the pre-post result, so on a SUCCESSFUL stage with
@@ -591,11 +712,22 @@ module FogellSide =
 
                             for st in steps do
                                 if not (halted postCtx) then
-                                    runStepDispatch postCtx cwd stage st None
+                                    runStepDispatch postCtx cwd stage st deadline
 
                             if postCtx.Failed.Value then ctx.Failed.Value <- true
 
-            and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+            and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
+                // A stage's own `options { timeout(...) }` tightens whatever it inherited.
+                let deadline, optionError = deadlineFromOptions stage.Options inherited
+
+                // A declared bound we cannot understand must stop the build, not vanish.
+                match optionError with
+                | Some e ->
+                    emit $"ERROR: stage '{stage.Name}' declares an unusable timeout option: {e}"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | None ->
+
                 if not (halted ctx) then
                     // FG-048. The `when` gate, before anything else runs.
                     let gate =
@@ -630,7 +762,7 @@ module FogellSide =
                                     stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
                                     ctx.Sink st }
 
-                    runStageBody body cwd stage
+                    runStageBody body cwd deadline stage
 
                     if body.Failed.Value then ctx.Failed.Value <- true
 
@@ -646,7 +778,8 @@ module FogellSide =
                     // pipeline runnable — later stages ran and a failFast parent was
                     // never told. Jenkins propagates it.
                     let postCtx = { ctx with Failed = ref false }
-                    runPost postCtx cwd stage stageStatus.Value None
+                    // A stage's post runs under the same deadline as the stage itself.
+                    runPostWithDeadline postCtx cwd stage stageStatus.Value None deadline
                     if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
@@ -1204,10 +1337,10 @@ module FogellSide =
 
                 | _ -> runStepInner ctx stage cwd step deadline
 
-            and runStageBody (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+            and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: int64 option) (stage: Stage) =
                     for step in stage.Steps do
                         if not (halted ctx) then
-                            runStepDispatch ctx cwd stage step None
+                            runStepDispatch ctx cwd stage step deadline
 
                     if stage.IsParallel && not (List.isEmpty stage.Nested) then
                         // JB-FAIL-006/007. Branches run concurrently and, by
@@ -1257,9 +1390,15 @@ module FogellSide =
 
                                 branchCtx,
                                 System.Threading.Tasks.Task.Run(fun () ->
-                                    runStage branchCtx cwd branch
+                                    runStage branchCtx cwd deadline branch
 
                                     if branchCtx.Failed.Value then
+                                        // Jenkins names the branch that failed. EMITTING it
+                                        // is better than suppressing Jenkins' copy: an
+                                        // exclusion that a user's own output can match is a
+                                        // false-PROVEN path, and this sentence is real
+                                        // information a reader wants.
+                                        emit $"Failed in branch {branch.Name}"
                                         siblingFailed.Cancel()))
 
                         // Every branch is awaited even under failFast: an
@@ -1276,9 +1415,19 @@ module FogellSide =
                             ctx.Failed.Value <- true
                     else
                         for nested in stage.Nested do
-                            runStage ctx cwd nested
+                            runStage ctx cwd deadline nested
 
             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+
+            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
+            let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+
+            match pipelineOptionError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+            | None -> ()
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then
@@ -1287,7 +1436,7 @@ module FogellSide =
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
-                    runStage root workspace stage
+                    runStage root workspace pipelineDeadline stage
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only
@@ -1300,6 +1449,7 @@ module FogellSide =
                       Environment = []
                       EnvironmentLiteralNames = Set.empty
                       Steps = []
+                      Options = []
                       When = None
                       Post = pipeline.Post
                       Nested = []
@@ -1307,7 +1457,11 @@ module FogellSide =
                       FailFast = false
                       Position = { Line = 0L; Column = 0L } }
 
-                runPost { root with Failed = ref false } workspace synthetic status None
+                // REVIEW FIX (Codex, PR #16 round 5): the pipeline deadline reached
+                // runStage but NOT the pipeline-level post, so a slow `post { always }`
+                // ran unbounded past a timeout Jenkins enforces around it. Same
+                // "one path was missed" shape as FG-002e.
+                runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
 
             let workspaceHash, files = Trace.hashWorkspace workspace
 

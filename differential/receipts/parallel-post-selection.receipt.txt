@@ -1,7 +1,7 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         67e66c733db5a6e1d1cd6804de635f7059ad8e4ab627065905b76a81c290f69c
+seal:         bf0c0da7f2cf11ccfced1cfc9ba918ae06fb4f541a014e6da8020c7bc7f37461
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
@@ -37,7 +40,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (0 lines):
+  output (1 lines):
+    | Failed in branch fails
   workspace:
     8ecc5f94c57b  fine.txt
     844cd17a64df  right-arm.txt
@@ -45,7 +49,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (0 lines):
+  output (1 lines):
+    | Failed in branch fails
   workspace:
     8ecc5f94c57b  fine.txt
     844cd17a64df  right-arm.txt

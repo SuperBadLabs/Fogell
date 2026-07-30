@@ -20,6 +20,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />
+    <Project Path="tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj" />
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
     <Project Path="tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj" />
     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
