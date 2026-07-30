@@ -1,0 +1,8 @@
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Execution/Publish.fs
+ M src/Fogell.Groovy.Interpreter/Interpreter.fs
+?? differential/cases/withenv-path-augmentation.Jenkinsfile
+?? differential/receipts/withenv-path-augmentation.receipt.txt
+?? evidence/20260730T003908Z-fg-041b-path-interp/

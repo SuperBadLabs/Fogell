@@ -1,0 +1,206 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 5cc9300..da2a9e2 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **28/28 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **29/29 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -120,7 +120,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ |---|---|---|---|---:|
+ | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+ | FG-041 | P0 | **PARTIAL** | `echo`, `dir`, `environment` scoping (lexical, stage overrides pipeline) | `echo` and environment scoping proven by differential receipt (`env-scoping`, stage overrides pipeline, shared vars inherited). `dir` nests and auto-creates, refusing traversal. `withEnv` still outstanding — split to FG-041b |
+-| FG-041b | P1 | **DONE** | `withEnv(['A=1']) { … }` block-scoped environment | `withenv-scoping` receipt PROVEN tier-1. MEASURED and matched: inside the block an added variable is visible and a shadowed one takes the new value; **after** the block the added variable is UNSET and the shadowed one reverts to its outer value. The argument is a Groovy list literal, split where its meaning is needed rather than in the parser (`adr/0002`) |
++| FG-041b | P1 | **DONE** | `withEnv(['A=1']) { … }` block-scoped environment, `PATH+` augmentation, `${VAR}` interpolation | `withenv-scoping` receipt PROVEN tier-1. MEASURED and matched: inside the block an added variable is visible and a shadowed one takes the new value; **after** the block the added variable is UNSET and the shadowed one reverts to its outer value. The argument is a Groovy list literal, split where its meaning is needed rather than in the parser (`adr/0002`) |
+ | FG-042 | P0 | **PARTIAL** | `archiveArtifacts` with ant-glob expansion | Proven by receipt: multi-pattern archive (`out.txt, target/*.jar`) and the empty-match case, which Jenkins **fails** rather than passing quietly. Artifacts land outside the workspace so archiving cannot perturb the compared hash. Retrieval over a stable URL awaits the API — FG-042b |
+ | FG-043 | P1 | **DONE** | `junit` test-result ingest | Proven by receipt for passing and failing reports. Failing tests → **UNSTABLE**, not FAILURE (the build worked, the code did not) — matching Jenkins. A malformed report is reported, never silently counted as zero |
+ | FG-042b | P2 | TODO | Artifact retrieval at a stable URL, byte-exact | requires the controller API (FG-060) |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 84dfa74..fd84629 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -73,9 +73,34 @@ module FogellSide =
+                   "EXECUTOR_NUMBER", "0"
+                   "NODE_NAME", "built-in" ]
+ 
++            /// Values in an `environment { }` block interpolate `${NAME}` / `$NAME`
++            /// against what is already visible, which is why `PATH = "/x:${PATH}"` is
++            /// the idiom in 33 corpus files. Without expansion that assignment WIPES
++            /// the inherited PATH — the failure that exposed this was a `tr: not
++            /// found` in a differential case, i.e. a build broken by our own env
++            /// handling.
++            ///
++            /// Resolution is a left-to-right fold, so a declaration sees the process
++            /// environment plus every earlier declaration, and a later scope wins.
++            /// An unknown name expands to empty, matching Groovy's null-to-string.
++            let interpolate (known: Map<string, string>) (value: string) =
++                Text.RegularExpressions.Regex.Replace(
++                    value,
++                    @"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
++                    fun m ->
++                        let name =
++                            if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value
++
++                        match Map.tryFind name known with
++                        | Some v -> v
++                        | None ->
++                            match Environment.GetEnvironmentVariable name with
++                            | null -> ""
++                            | v -> v)
++
+             let envForWith (overlay: (string * string) list) (stage: Stage) =
+                 (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
+-                |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
++                |> List.fold (fun acc (k, v) -> Map.add k (interpolate acc v) acc) Map.empty
+                 |> Map.toList
+ 
+             let mutable status = BuildStatus.Success
+@@ -123,7 +148,14 @@ module FogellSide =
+                             | Some ms -> Some ms
+                             | None -> Some 120_000L
+                           OnLine = Some emit
+-                          Interrupt = ctx.Interrupt
++                          // The deadline is part of the interrupt, so it reaches every
++                          // step type — not just the shell runner. `archiveArtifacts`
++                          // polls it between files.
++                          Interrupt =
++                            match deadline, ctx.Interrupt with
++                            | None, i -> i
++                            | Some d, None -> Some(fun () -> runClock.ElapsedMilliseconds >= d)
++                            | Some d, Some i -> Some(fun () -> runClock.ElapsedMilliseconds >= d || i ())
+                           Secrets = []
+                           Named = step.Named
+                           Artifacts = Some(ArtifactStore.under artifactRoot)
+@@ -600,8 +632,14 @@ module FogellSide =
+                     // is the standard Jenkins idiom for PREPENDING to PATH. The binding
+                     // was copied literally as a variable called `PATH+TOOLS`, so the
+                     // wrapped process kept its old PATH and the tools were not found.
++                    // REVIEW FIX (Copilot + Codex, PR #14 — both flagged it): this read
++                    // the RAW concatenation with List.tryPick, i.e. the FIRST PATH,
++                    // while the environment is explicitly last-wins. A pipeline PATH
++                    // followed by a stage PATH produced `/tools:<pipeline-path>` —
++                    // prepending onto an out-of-date PATH, which can run the wrong
++                    // executable. `envForWith` already resolves last-wins, so ask it.
+                     let currentPath =
+-                        (jenkinsProvided @ pipeline.Environment @ stage.Environment @ ctx.EnvOverlay)
++                        envForWith ctx.EnvOverlay stage
+                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                         |> Option.defaultWith (fun () ->
+                             match Environment.GetEnvironmentVariable "PATH" with
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 2d04b8e..f4a85d5 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -245,12 +245,26 @@ module Executor =
+             // is parity; excluding it from comparison would merely hide a
+             // difference the user can see.
+             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
+-            let published = Publish.archive store request.BuildKey request.Workspace (patterns raw)
++
++            let abort () =
++                match request.Interrupt with
++                | Some p -> (try p () with _ -> false)
++                | None -> false
++
++            let published, aborted =
++                Publish.archiveWithAbort store request.BuildKey request.Workspace (patterns raw) abort
+ 
+             let allowEmpty =
+                 request.Named
+                 |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
+ 
++            if aborted then
++                // Say so: a partially-archived build reported as success is the
++                // silent-loss shape this project exists to avoid.
++                request.OnLine
++                |> Option.iter (fun f ->
++                    f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
++
+             if List.isEmpty published && not allowEmpty then
+                 // Jenkins fails the build here rather than passing quietly, and
+                 // a silent empty archive is the worst outcome for a user.
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 288afe6..174ac5c 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -54,21 +54,40 @@ module Publish =
+ 
+     /// Copy matched files into the artifact store under `buildKey`, preserving
+     /// relative layout. Returns the sorted relative paths actually published.
+-    let archive (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) =
++    /// `abort` is polled BETWEEN files.
++    ///
++    /// REVIEW FIX (Codex, PR #14): a `timeout` deadline only ever reached the shell
++    /// runner, so an `archiveArtifacts` starting just before the deadline copied for
++    /// as long as it liked while Jenkins would have aborted the block. Checking a
++    /// predicate per file makes the deadline real for this step too. It is still not
++    /// interruptible *within* a single large file copy, which is stated rather than
++    /// implied.
++    let archiveWithAbort (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) (abort: unit -> bool) =
+         let target = Path.Combine(store.Root, buildKey)
+ 
+-        let published =
++        let matched =
+             patterns
+             |> List.collect (expandGlob workspace)
+             |> List.distinct
+             |> List.sort
+ 
+-        for relative in published do
+-            let dest = Path.Combine(target, relative)
+-            Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
+-            File.Copy(Path.Combine(workspace, relative), dest, true)
++        let published = System.Collections.Generic.List<string>()
++        let mutable aborted = false
+ 
+-        published
++        for relative in matched do
++            if not aborted then
++                if abort () then
++                    aborted <- true
++                else
++                    let dest = Path.Combine(target, relative)
++                    Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
++                    File.Copy(Path.Combine(workspace, relative), dest, true)
++                    published.Add relative
++
++        List.ofSeq published, aborted
++
++    let archive store buildKey workspace patterns =
++        archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
+ 
+     /// Parse JUnit XML totals. Reads only the attributes every producer emits;
+     /// a malformed report is reported, not silently counted as zero.
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 558eaf8..d286918 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -262,12 +262,18 @@ module Interpreter =
+                     // closure return is the trailing expression, and LastValue is
+                     // saved/restored around the call so an inner closure cannot
+                     // clobber the enclosing block's trailing value.
++                    // REVIEW FIX (Copilot, PR #14): the restore only happened on the
++                    // NON-return path, so a closure using an explicit `return` still
++                    // clobbered the enclosing block's trailing value. try/finally, so
++                    // both exits restore it.
+                     let outer = st.LastValue
+-                    st.LastValue <- None
+-                    execBlock st bound c.Body |> ignore
+-                    let inner = st.LastValue
+-                    st.LastValue <- outer
+-                    defaultArg inner VNull
++
++                    try
++                        st.LastValue <- None
++                        execBlock st bound c.Body |> ignore
++                        defaultArg st.LastValue VNull
++                    finally
++                        st.LastValue <- outer
+                 with ReturnSignal v ->
+                     v
+ 

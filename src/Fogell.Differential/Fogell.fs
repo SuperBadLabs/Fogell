@@ -73,9 +73,34 @@ module FogellSide =
                   "EXECUTOR_NUMBER", "0"
                   "NODE_NAME", "built-in" ]
 
+            /// Values in an `environment { }` block interpolate `${NAME}` / `$NAME`
+            /// against what is already visible, which is why `PATH = "/x:${PATH}"` is
+            /// the idiom in 33 corpus files. Without expansion that assignment WIPES
+            /// the inherited PATH — the failure that exposed this was a `tr: not
+            /// found` in a differential case, i.e. a build broken by our own env
+            /// handling.
+            ///
+            /// Resolution is a left-to-right fold, so a declaration sees the process
+            /// environment plus every earlier declaration, and a later scope wins.
+            /// An unknown name expands to empty, matching Groovy's null-to-string.
+            let interpolate (known: Map<string, string>) (value: string) =
+                Text.RegularExpressions.Regex.Replace(
+                    value,
+                    @"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
+                    fun m ->
+                        let name =
+                            if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value
+
+                        match Map.tryFind name known with
+                        | Some v -> v
+                        | None ->
+                            match Environment.GetEnvironmentVariable name with
+                            | null -> ""
+                            | v -> v)
+
             let envForWith (overlay: (string * string) list) (stage: Stage) =
                 (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
-                |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
+                |> List.fold (fun acc (k, v) -> Map.add k (interpolate acc v) acc) Map.empty
                 |> Map.toList
 
             let mutable status = BuildStatus.Success
@@ -123,7 +148,14 @@ module FogellSide =
                             | Some ms -> Some ms
                             | None -> Some 120_000L
                           OnLine = Some emit
-                          Interrupt = ctx.Interrupt
+                          // The deadline is part of the interrupt, so it reaches every
+                          // step type — not just the shell runner. `archiveArtifacts`
+                          // polls it between files.
+                          Interrupt =
+                            match deadline, ctx.Interrupt with
+                            | None, i -> i
+                            | Some d, None -> Some(fun () -> runClock.ElapsedMilliseconds >= d)
+                            | Some d, Some i -> Some(fun () -> runClock.ElapsedMilliseconds >= d || i ())
                           Secrets = []
                           Named = step.Named
                           Artifacts = Some(ArtifactStore.under artifactRoot)
@@ -600,8 +632,14 @@ module FogellSide =
                     // is the standard Jenkins idiom for PREPENDING to PATH. The binding
                     // was copied literally as a variable called `PATH+TOOLS`, so the
                     // wrapped process kept its old PATH and the tools were not found.
+                    // REVIEW FIX (Copilot + Codex, PR #14 — both flagged it): this read
+                    // the RAW concatenation with List.tryPick, i.e. the FIRST PATH,
+                    // while the environment is explicitly last-wins. A pipeline PATH
+                    // followed by a stage PATH produced `/tools:<pipeline-path>` —
+                    // prepending onto an out-of-date PATH, which can run the wrong
+                    // executable. `envForWith` already resolves last-wins, so ask it.
                     let currentPath =
-                        (jenkinsProvided @ pipeline.Environment @ stage.Environment @ ctx.EnvOverlay)
+                        envForWith ctx.EnvOverlay stage
                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
                         |> Option.defaultWith (fun () ->
                             match Environment.GetEnvironmentVariable "PATH" with

@@ -245,11 +245,25 @@ module Executor =
             // is parity; excluding it from comparison would merely hide a
             // difference the user can see.
             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
-            let published = Publish.archive store request.BuildKey request.Workspace (patterns raw)
+
+            let abort () =
+                match request.Interrupt with
+                | Some p -> (try p () with _ -> false)
+                | None -> false
+
+            let published, aborted =
+                Publish.archiveWithAbort store request.BuildKey request.Workspace (patterns raw) abort
 
             let allowEmpty =
                 request.Named
                 |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
+
+            if aborted then
+                // Say so: a partially-archived build reported as success is the
+                // silent-loss shape this project exists to avoid.
+                request.OnLine
+                |> Option.iter (fun f ->
+                    f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
 
             if List.isEmpty published && not allowEmpty then
                 // Jenkins fails the build here rather than passing quietly, and

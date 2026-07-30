@@ -262,12 +262,18 @@ module Interpreter =
                     // closure return is the trailing expression, and LastValue is
                     // saved/restored around the call so an inner closure cannot
                     // clobber the enclosing block's trailing value.
+                    // REVIEW FIX (Copilot, PR #14): the restore only happened on the
+                    // NON-return path, so a closure using an explicit `return` still
+                    // clobbered the enclosing block's trailing value. try/finally, so
+                    // both exits restore it.
                     let outer = st.LastValue
-                    st.LastValue <- None
-                    execBlock st bound c.Body |> ignore
-                    let inner = st.LastValue
-                    st.LastValue <- outer
-                    defaultArg inner VNull
+
+                    try
+                        st.LastValue <- None
+                        execBlock st bound c.Body |> ignore
+                        defaultArg st.LastValue VNull
+                    finally
+                        st.LastValue <- outer
                 with ReturnSignal v ->
                     v
 

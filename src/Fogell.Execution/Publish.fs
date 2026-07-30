@@ -54,21 +54,40 @@ module Publish =
 
     /// Copy matched files into the artifact store under `buildKey`, preserving
     /// relative layout. Returns the sorted relative paths actually published.
-    let archive (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) =
+    /// `abort` is polled BETWEEN files.
+    ///
+    /// REVIEW FIX (Codex, PR #14): a `timeout` deadline only ever reached the shell
+    /// runner, so an `archiveArtifacts` starting just before the deadline copied for
+    /// as long as it liked while Jenkins would have aborted the block. Checking a
+    /// predicate per file makes the deadline real for this step too. It is still not
+    /// interruptible *within* a single large file copy, which is stated rather than
+    /// implied.
+    let archiveWithAbort (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) (abort: unit -> bool) =
         let target = Path.Combine(store.Root, buildKey)
 
-        let published =
+        let matched =
             patterns
             |> List.collect (expandGlob workspace)
             |> List.distinct
             |> List.sort
 
-        for relative in published do
-            let dest = Path.Combine(target, relative)
-            Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
-            File.Copy(Path.Combine(workspace, relative), dest, true)
+        let published = System.Collections.Generic.List<string>()
+        let mutable aborted = false
 
-        published
+        for relative in matched do
+            if not aborted then
+                if abort () then
+                    aborted <- true
+                else
+                    let dest = Path.Combine(target, relative)
+                    Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
+                    File.Copy(Path.Combine(workspace, relative), dest, true)
+                    published.Add relative
+
+        List.ofSeq published, aborted
+
+    let archive store buildKey workspace patterns =
+        archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
 
     /// Parse JUnit XML totals. Reads only the attributes every producer emits;
     /// a malformed report is reported, not silently counted as zero.
