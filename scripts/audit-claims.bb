@@ -20,7 +20,16 @@
       receipts (->> (fs/glob (str root "/differential/receipts") "*.receipt.txt")
                     (map #(str/replace (fs/file-name %) ".receipt.txt" ""))
                     set)
-      sources (->> (fs/glob (str root "/src") "**/*.fs") (map str) sort)
+      ;; ALL F# sources, not just src/ — tools and tests carry MEASURED claims too, and a
+      ;; check whose scope is narrower than its description is the very defect this script
+      ;; exists to catch. Caught by review, in the script that catches it.
+      sources (->> (concat (fs/glob (str root "/src") "**/*.fs")
+                           (fs/glob (str root "/tools") "**/*.fs")
+                           (fs/glob (str root "/tests") "**/*.fs"))
+                   (map str)
+                   (remove #(str/includes? % "/obj/"))
+                   (remove #(str/includes? % "/bin/"))
+                   sort)
       findings
       (for [f sources
             :let [lines (str/split-lines (slurp f))]

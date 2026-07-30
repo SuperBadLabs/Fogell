@@ -21,7 +21,12 @@ done
 # fails a build rather than printing at it.
 if [ -x scripts/audit-claims.bb ]; then
   echo "=== claim audit (FG-104, advisory) ==="
-  ./scripts/audit-claims.bb | head -3
+  # No `| head`: piping into head can SIGPIPE babashka and mask its exit status, which
+  # would make an advisory check silently become a broken one.
+  audit_out="$(./scripts/audit-claims.bb 2>&1)"
+  printf '%s\n' "$audit_out" | sed -n '1,3p'
+  printf '%s\n' "$audit_out" | rg -c "name NO receipt" >/dev/null && \
+    echo "  (advisory: run scripts/audit-claims.bb for the full list)"
 fi
 
 echo "OK"
