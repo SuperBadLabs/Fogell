@@ -55,13 +55,13 @@ derivation in `architecture/BASELINE.md`.
 
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
-| FG-000 | P0 | TODO | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi |
-| FG-001 | P0 | TODO | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` |
+| FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+| FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
 | FG-002 | P0 | TODO | **Differential harness** (`adr/0004`): pinned Jenkins image digest + Fogell, same host, compare terminal result, ordered step sequence, canonical workspace hash | one file passes end-to-end and emits a sealed receipt with both sides' hashes |
-| FG-003 | P0 | TODO | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero |
+| FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
 | FG-004 | P0 | TODO | Admission bounds: source bytes, node count, nesting depth, scalar length, collection sizes, capped **before** schema compilation | fuzz 10k malformed inputs: zero crashes, zero stack overflows, every rejection named |
 | FG-005 | P1 | TODO | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | a ticket's receipt verifies standalone |
-| FG-006 | P1 | TODO | `Fogell.Domain`: build/node/attempt/status model, worst-of status aggregation | property test: aggregation is associative and commutative |
+| FG-006 | P1 | **DONE** | `Fogell.Domain`: build/node/attempt/status model, worst-of status aggregation | property test: aggregation is associative and commutative | — `Fogell.Domain`: 18 Expecto tests pass. worstOf proven a commutative monoid exhaustively over all 25 pairs and 125 triples; ofMany order-independence property-tested; 7-condition publication guard and retry-never-rewrites covered
 
 ## Wave 1 — Front end (Forge-inspired)
 
