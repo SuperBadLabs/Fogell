@@ -1,0 +1,5 @@
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Store/Store.fs
+A  src/Fogell.Store/migrations/0002_scheduler.sql
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/20260729T212053Z-fg-061/

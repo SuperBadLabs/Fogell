@@ -270,6 +270,168 @@ let fencing =
               Expect.equal f2.Value (f1.Value + 1L) "monotonic"
           } ]
 
+/// FG-061. Scheduling is where a cross-tenant leak or a double-claim would do
+/// real damage, so every property here is tested against the live database.
+let scheduling =
+    testList
+        "FG-061 scheduler"
+        [ test "an attempt is claimed once and only once" {
+              let org, project = freshProject ()
+              let a = admitOk (newBuild org project "claim-1" [ "b" ])
+
+              match store.ClaimNext(org, "agent-a", "trusted-linux", [ "linux" ], 60) with
+              | Ok(Some(attemptId, _, buildId, fence)) ->
+                  Expect.equal attemptId a.AttemptId "the queued attempt"
+                  Expect.equal buildId a.BuildId "its build"
+                  Expect.isGreaterThan fence.Value 0L "fence was incremented by the offer"
+              | other -> failtestf "expected a claim, got %A" other
+
+              // second claim finds nothing: the attempt is no longer queued
+              match store.ClaimNext(org, "agent-b", "trusted-linux", [ "linux" ], 60) with
+              | Ok None -> ()
+              | other -> failtestf "expected no second claim, got %A" other
+          }
+
+          test "16 concurrent schedulers never hand out the same attempt twice" {
+              let org, project = freshProject ()
+
+              let admitted =
+                  [ 1..4 ]
+                  |> List.map (fun i -> admitOk (newBuild org project $"conc-{i}" [ "b" ]))
+
+              let claims =
+                  [ 1..16 ]
+                  |> List.map (fun i ->
+                      async {
+                          return Store(connectionString).ClaimNext(org, $"agent-{i}", "trusted-linux", [ "linux" ], 60)
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let won =
+                  claims
+                  |> Array.choose (function
+                      | Ok(Some(a, _, _, _)) -> Some a
+                      | _ -> None)
+
+              Expect.equal won.Length admitted.Length "exactly as many claims as attempts"
+              Expect.equal (Array.distinct won).Length won.Length "no attempt claimed twice"
+          }
+
+          test "a capability mismatch is not claimable" {
+              let org, project = freshProject ()
+
+              admitOk
+                  { newBuild org project "caps" [ "b" ] with
+                      RequiredCapabilities = [ "linux"; "gpu" ] }
+              |> ignore
+
+              match store.ClaimNext(org, "agent-a", "trusted-linux", [ "linux" ], 60) with
+              | Ok None -> ()
+              | other -> failtestf "an agent without 'gpu' must not claim, got %A" other
+
+              match store.ClaimNext(org, "agent-a", "trusted-linux", [ "linux"; "gpu" ], 60) with
+              | Ok(Some _) -> ()
+              | other -> failtestf "an agent with both capabilities must claim, got %A" other
+          }
+
+          test "a trust-pool mismatch is not claimable" {
+              let org, project = freshProject ()
+
+              admitOk
+                  { newBuild org project "pool" [ "b" ] with
+                      RequiredTrustPool = "trusted-windows" }
+              |> ignore
+
+              match store.ClaimNext(org, "agent-a", "trusted-linux", [ "linux" ], 60) with
+              | Ok None -> ()
+              | other -> failtestf "wrong pool must not claim, got %A" other
+          }
+
+          test "claims are FIFO by admission order" {
+              let org, project = freshProject ()
+              let first = admitOk (newBuild org project "fifo-1" [ "b" ])
+              System.Threading.Thread.Sleep 20
+              let second = admitOk (newBuild org project "fifo-2" [ "b" ])
+
+              let claim () =
+                  match store.ClaimNext(org, "agent-a", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some(a, _, _, _)) -> a
+                  | other -> failtestf "expected a claim, got %A" other
+
+              Expect.equal (claim ()) first.AttemptId "oldest first"
+              Expect.equal (claim ()) second.AttemptId "then the next"
+          }
+
+          test "wait diagnostics distinguish empty from capability mismatch" {
+              let org, project = freshProject ()
+              Expect.stringContains (store.ExplainWait(org, "trusted-linux", [ "linux" ])) "empty" "empty queue"
+
+              admitOk
+                  { newBuild org project "diag" [ "b" ] with
+                      RequiredCapabilities = [ "linux"; "gpu" ] }
+              |> ignore
+
+              let mismatch = store.ExplainWait(org, "trusted-linux", [ "linux" ])
+              Expect.stringContains mismatch "gpu" "names the missing capability"
+
+              let ok = store.ExplainWait(org, "trusted-linux", [ "linux"; "gpu" ])
+              Expect.stringContains ok "claimable" "reports claimable work"
+          }
+
+          test "wait diagnostics name a trust-pool mismatch" {
+              let org, project = freshProject ()
+
+              admitOk
+                  { newBuild org project "poolmsg" [ "b" ] with
+                      RequiredTrustPool = "trusted-windows" }
+              |> ignore
+
+              Expect.stringContains
+                  (store.ExplainWait(org, "trusted-linux", [ "linux" ]))
+                  "trust pool"
+                  "explains the pool mismatch"
+          } ]
+
+/// FG-064. A client must be able to tail a running build.
+let logs =
+    testList
+        "FG-064 progressive log"
+        [ test "log chunks are readable from an offset while the build runs" {
+              let org, project = freshProject ()
+              let a = admitOk (newBuild org project "log-1" [ "b" ])
+
+              for i in 0..4 do
+                  Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, i, $"line-{i}")) $"append {i}"
+
+              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.length) 5 "all five"
+              Expect.equal (store.ReadLog(org, a.BuildId, 3) |> List.length) 2 "tail from offset"
+              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.map snd |> List.head) "line-0" "ordered"
+          }
+
+          test "appending the same sequence twice is idempotent" {
+              let org, project = freshProject ()
+              let a = admitOk (newBuild org project "log-2" [ "b" ])
+              Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "once")) "first"
+              Expect.isFalse (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "again")) "duplicate rejected"
+              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.length) 1 "still one chunk"
+          }
+
+          test "cancellation is recorded and visible in the snapshot" {
+              let org, project = freshProject ()
+              let a = admitOk (newBuild org project "cancel" [ "b" ])
+
+              match store.BuildSnapshot(org, a.BuildId) with
+              | Some(_, requested) -> Expect.isFalse requested "not requested yet"
+              | None -> failtest "snapshot missing"
+
+              Expect.isTrue (store.RequestCancellation(org, a.BuildId)) "recorded"
+
+              match store.BuildSnapshot(org, a.BuildId) with
+              | Some(_, requested) -> Expect.isTrue requested "now requested"
+              | None -> failtest "snapshot missing"
+          } ]
+
 [<EntryPoint>]
 let main argv =
     if not available then
@@ -289,4 +451,4 @@ let main argv =
             runTestsWithCLIArgs
                 []
                 argv
-                (testSequenced (testList "Fogell.Store" [ migrations; admission; fencing ]))
+                (testSequenced (testList "Fogell.Store" [ migrations; admission; fencing; scheduling; logs ]))
