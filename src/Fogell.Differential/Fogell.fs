@@ -1200,8 +1200,16 @@ module FogellSide =
                             |> List.tryPick (fun (k, v) -> if k = "message" then Some v else None))
                         |> Option.defaultValue "Proceed?"
 
+                    // MEASURED: the confirmation label is configurable and Jenkins prints
+                    // it — `ok: 'Ship it'` yields "Ship it or Abort". Hardcoding "Proceed"
+                    // diverged on any pipeline that customises it.
+                    let okLabel =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+                        |> Option.defaultValue "Proceed"
+
                     emit message
-                    emit "Proceed or Abort"
+                    emit $"{okLabel} or Abort"
 
                     match deadline with
                     | None ->
@@ -1210,31 +1218,46 @@ module FogellSide =
                         ctx.Sink BuildStatus.Failure
                     | Some _ ->
                         // Wait out the deadline exactly as an unanswered prompt would.
-                        let mutable waiting = true
+                        //
+                        // REVIEW FIX (both reviewers, PR #17): the loop exited on EITHER
+                        // the deadline or a sibling interrupt and then reported Aborted
+                        // unconditionally — so a failFast sibling's FAILURE became an
+                        // abort. That is the collateral-outranks-cause bug for the FOURTH
+                        // time in this project (shell steps, stash, unstash, deleteDir),
+                        // which is the argument for FG-002e being a sweep rather than a
+                        // queue of instances.
+                        //
+                        // Polling backs off instead of spinning at 50 ms: an `input` under
+                        // an hour-long timeout woke ~72,000 times for nothing.
+                        let interruptedBySibling () =
+                            match ctx.Interrupt with
+                            | Some p -> (try p () with _ -> false)
+                            | None -> false
 
-                        while waiting do
-                            let expired =
-                                match remainingMs deadline with
-                                | Some ms -> ms <= 1
-                                | None -> true
+                        let mutable stop = false
+                        let mutable bySibling = false
 
-                            let interrupted =
-                                match ctx.Interrupt with
-                                | Some p -> (try p () with _ -> false)
-                                | None -> false
+                        while not stop do
+                            let left = int (defaultArg (remainingMs deadline) 0)
 
-                            if expired || interrupted then
-                                waiting <- false
+                            if left <= 1 then stop <- true
+                            elif interruptedBySibling () then
+                                stop <- true
+                                bySibling <- true
                             else
-                                System.Threading.Thread.Sleep 50
+                                System.Threading.Thread.Sleep(min 250 (max 10 left))
 
                         // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
                         // timeout, and a silent abort here would be the defect this
                         // project exists to beat. `ERROR:` lines are diagnostics — kept
                         // out of the compared output, counted as a reported reason.
-                        emit "ERROR: input aborted: the approval deadline expired with no response"
                         ctx.Failed.Value <- true
-                        ctx.Sink BuildStatus.Aborted
+
+                        if bySibling then
+                            emit "ERROR: input interrupted: a failFast sibling failed"
+                        else
+                            emit "ERROR: input aborted: the approval deadline expired with no response"
+                            ctx.Sink BuildStatus.Aborted
 
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive

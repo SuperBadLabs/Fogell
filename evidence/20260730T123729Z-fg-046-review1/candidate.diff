@@ -1,0 +1,106 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 21e5426..1e600ec 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **50/50 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **52/52 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -127,7 +127,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments by `pull_request_review_id` — a round is a REVIEW, not a wall-clock minute, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
+-| FG-002e | P1 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. **Raised to P1 and widened after PR #15**: the same pattern recurred in brand-new code four more times (`stash` copy loop, `stash` predicate missing the deadline, `unstash` restore, `deleteDir` recursive delete), and a sibling pattern appeared alongside it — an interrupted step reporting `Aborted` when a failFast *sibling* was the cause, which is the collateral-outranks-cause bug already fixed twice elsewhere. Acceptance: enumerate every return point in `Publish`, `Executor` and the walker; assert each either polls or provably cannot be reached after an interrupt; and assert every abort classifies its CAUSE (deadline → aborted, sibling → failure) rather than assuming one |
++| FG-002e | P1 | **PARTIAL** | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. **Raised to P1 and widened after PR #15**: the same pattern recurred in brand-new code four more times (`stash` copy loop, `stash` predicate missing the deadline, `unstash` restore, `deleteDir` recursive delete), and a sibling pattern appeared alongside it — an interrupted step reporting `Aborted` when a failFast *sibling* was the cause, which is the collateral-outranks-cause bug already fixed twice elsewhere. Acceptance: enumerate every return point in `Publish`, `Executor` and the walker; assert each either polls or provably cannot be reached after an interrupt; and assert every abort classifies its CAUSE (deadline → aborted, sibling → failure) rather than assuming one. **The cause-classification half is now swept and closed.** Every `Sink BuildStatus.Aborted` site in the walker was enumerated and each either tests the deadline explicitly or distinguishes a sibling interrupt: the pre-step deadline check, `deleteDir`, `stash`, `unstash` and `input`. `input-failfast-is-failure` proves the invariant end-to-end — a failFast sibling failing while another branch waits at a gate gives **failure** on both engines, not aborted. The bug had appeared five times before it was swept (shell steps, stash, unstash, deleteDir, input); the polling half of this ticket remains open |
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) `echo` bypasses BOTH credential interpolation and masking: `echo "$TOKEN"` emits the literal `$TOKEN` here where Jenkins emits `****`, and an echo message already containing the value is never masked — the masker is wired to the shell path only. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+ | FG-002f | P1 | **DONE** | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile report by prefix — and the third was added *while fixing* the second. The shape is always identical: a pattern a user's own output can match gets suppressed from the compared output AND counted as a reported failure reason, so one engine failing silently can still read PROVEN. Remaining moderate-risk patterns to adjudicate: `FATAL:`, `Failed in branch `, `Aborted by `, `^at …(…)$`, `No artifacts found`, `\d+ of \d+ test(s) failed`. **Discharged empirically, by deleting each candidate and re-running all 49 receipts.** Result: **six of the suppressions were DEAD** — `FATAL:`, `No artifacts found`, `N of M test(s) failed`, `Aborted by `, the compile-report trio, and the skipped-stage regex — every one a latent false-PROVEN path protecting nothing. Two were load-bearing and are now handled without a user-reproducible match: Fogell **emits** `Failed in branch <name>` as Jenkins does (so neither copy needs suppressing), and Java stack frames are **context-gated** to the window opened by an exception line. The finding underneath: my instinct on a divergence was to add an exclusion rather than check whether the engines already agree — six times out of eight, they did. The three exception-class prefixes that survived that pass were themselves flagged next round (the **fifth** instance) and are now context-gated: an exception head is narration only when a frame FOLLOWS it. `tests/Fogell.Differential.Tests` is the acceptance the ticket asked for — it emits every look-alike from a build and asserts it survives, and it names the one residual ambiguity (a build printing an exception head then a frame is byte-identical to a real trace) rather than pretending the gate is total |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 9abfc97..298ab39 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1200,8 +1200,16 @@ module FogellSide =
+                             |> List.tryPick (fun (k, v) -> if k = "message" then Some v else None))
+                         |> Option.defaultValue "Proceed?"
+ 
++                    // MEASURED: the confirmation label is configurable and Jenkins prints
++                    // it — `ok: 'Ship it'` yields "Ship it or Abort". Hardcoding "Proceed"
++                    // diverged on any pipeline that customises it.
++                    let okLabel =
++                        step.Named
++                        |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
++                        |> Option.defaultValue "Proceed"
++
+                     emit message
+-                    emit "Proceed or Abort"
++                    emit $"{okLabel} or Abort"
+ 
+                     match deadline with
+                     | None ->
+@@ -1210,31 +1218,46 @@ module FogellSide =
+                         ctx.Sink BuildStatus.Failure
+                     | Some _ ->
+                         // Wait out the deadline exactly as an unanswered prompt would.
+-                        let mutable waiting = true
++                        //
++                        // REVIEW FIX (both reviewers, PR #17): the loop exited on EITHER
++                        // the deadline or a sibling interrupt and then reported Aborted
++                        // unconditionally — so a failFast sibling's FAILURE became an
++                        // abort. That is the collateral-outranks-cause bug for the FOURTH
++                        // time in this project (shell steps, stash, unstash, deleteDir),
++                        // which is the argument for FG-002e being a sweep rather than a
++                        // queue of instances.
++                        //
++                        // Polling backs off instead of spinning at 50 ms: an `input` under
++                        // an hour-long timeout woke ~72,000 times for nothing.
++                        let interruptedBySibling () =
++                            match ctx.Interrupt with
++                            | Some p -> (try p () with _ -> false)
++                            | None -> false
+ 
+-                        while waiting do
+-                            let expired =
+-                                match remainingMs deadline with
+-                                | Some ms -> ms <= 1
+-                                | None -> true
++                        let mutable stop = false
++                        let mutable bySibling = false
+ 
+-                            let interrupted =
+-                                match ctx.Interrupt with
+-                                | Some p -> (try p () with _ -> false)
+-                                | None -> false
++                        while not stop do
++                            let left = int (defaultArg (remainingMs deadline) 0)
+ 
+-                            if expired || interrupted then
+-                                waiting <- false
++                            if left <= 1 then stop <- true
++                            elif interruptedBySibling () then
++                                stop <- true
++                                bySibling <- true
+                             else
+-                                System.Threading.Thread.Sleep 50
++                                System.Threading.Thread.Sleep(min 250 (max 10 left))
+ 
+                         // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
+                         // timeout, and a silent abort here would be the defect this
+                         // project exists to beat. `ERROR:` lines are diagnostics — kept
+                         // out of the compared output, counted as a reported reason.
+-                        emit "ERROR: input aborted: the approval deadline expired with no response"
+                         ctx.Failed.Value <- true
+-                        ctx.Sink BuildStatus.Aborted
++
++                        if bySibling then
++                            emit "ERROR: input interrupted: a failFast sibling failed"
++                        else
++                            emit "ERROR: input aborted: the approval deadline expired with no response"
++                            ctx.Sink BuildStatus.Aborted
+ 
+                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
+                 // artifact root, NOT the workspace — which is what makes a stash survive
