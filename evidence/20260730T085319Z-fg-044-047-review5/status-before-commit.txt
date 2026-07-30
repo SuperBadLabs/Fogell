@@ -1,0 +1,5 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Execution/Secrets.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+?? evidence/20260730T085319Z-fg-044-047-review5/

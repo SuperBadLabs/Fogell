@@ -1,0 +1,5 @@
+ .../receipts/parallel-always-failfast.receipt.txt  |  4 +-
+ src/Fogell.Differential/Fogell.fs                  | 69 ++++++++++++++++------
+ src/Fogell.Execution/Secrets.fs                    | 29 +++++++--
+ tests/Fogell.Execution.Tests/Tests.fs              | 28 +++++++++
+ 4 files changed, 103 insertions(+), 27 deletions(-)

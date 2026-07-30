@@ -355,6 +355,34 @@ let secrets =
               Secrets.revoke [ binding ]
           }
 
+          test "a binary file credential reports no phantom literal leak" {
+              // REVIEW FIX (Codex, PR #15 round 5): `bindBytes` stores an empty Value for a
+              // non-UTF-8 credential, and every string contains the empty string — so a
+              // literal leak was reported on EVERY line of output inside the block. A
+              // warning that always fires trains the reader to ignore the channel.
+              let root = tempRoot ()
+              let bytes = [| 0uy; 159uy; 146uy; 150uy; 255uy |] // invalid UTF-8
+              let binding = Secrets.bindBytes root "CERT" bytes
+
+              Expect.isEmpty (Secrets.detectLeaks [ binding ] "ordinary build output") "no phantom leak"
+              Expect.equal (Secrets.mask [ binding ] "ordinary build output") "ordinary build output" "output untouched"
+              Secrets.revoke [ binding ]
+          }
+
+          test "an explicitly requested variable is never overridden by a companion" {
+              // Requested `TOKEN_FILE` must survive another binding's generated
+              // `TOKEN_FILE` companion, or the body gets a path where its credential
+              // should be.
+              let root = tempRoot ()
+              let explicitBinding = Secrets.bind root "TOKEN_FILE" "explicit-secret"
+              let other = Secrets.bind root "TOKEN" "other-secret"
+
+              let env = Secrets.environmentFor [ explicitBinding; other ] |> Map.ofList
+
+              Expect.equal (Map.tryFind "TOKEN_FILE" env) (Some "explicit-secret") "the requested value wins"
+              Secrets.revoke [ explicitBinding; other ]
+          }
+
           test "a stash name cannot escape the stash root" {
               // Both reviewers flagged this independently on PR #15, and it was
               // destructive: `save` deletes its target recursively before recreating it,

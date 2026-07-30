@@ -130,10 +130,23 @@ module Secrets =
     /// file path (our addition). Masking on every output path is what actually
     /// protects the value — see FG-071 — not its absence from the environment.
     let environmentFor (bindings: SecretBinding list) =
-        bindings
-        |> List.collect (fun b ->
-            let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
-            [ b.ValueVariable, exported; b.PathVariable, b.FilePath ])
+        // REVIEW FIX (Codex, PR #15 round 5): the overlay is last-wins, so a generated
+        // `X_FILE` companion could overwrite a variable the Jenkinsfile had EXPLICITLY
+        // requested as `X_FILE` — handing the body a path where its configured credential
+        // should be. Requested names win; a colliding companion is dropped.
+        let requested = bindings |> List.map (fun b -> b.ValueVariable) |> Set.ofList
+
+        let values =
+            bindings
+            |> List.map (fun b ->
+                b.ValueVariable, (if b.ValueVariableCarriesPath then b.FilePath else b.Value))
+
+        let companions =
+            bindings
+            |> List.filter (fun b -> not (requested.Contains b.PathVariable))
+            |> List.map (fun b -> b.PathVariable, b.FilePath)
+
+        values @ companions
 
     /// FG-070's original, hardened form: the path ONLY, no value. Available for a
     /// caller that accepts the incompatibility.
@@ -152,8 +165,12 @@ module Secrets =
     /// swallowed.
     let detectLeaks (bindings: SecretBinding list) (maskedText: string) : Leak list =
         [ for b in bindings do
-              // the literal must never survive masking; if it does, the masker failed
-              if maskedText.Contains b.Value then
+              // REVIEW FIX (Codex, PR #15 round 5): `bindBytes` deliberately stores an
+              // empty Value for a binary credential, and EVERY string contains the empty
+              // string — so this reported a literal credential leak on every line of
+              // output inside the block. A security warning that fires always is worse
+              // than none: it trains the reader to ignore the channel.
+              if b.Value <> "" && maskedText.Contains b.Value then
                   { Variable = b.ValueVariable; Encoding = "literal" }
 
               for name, form in detectableForms b.Value do

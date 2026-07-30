@@ -993,29 +993,60 @@ module FogellSide =
                 // workspace, or the enclosing `dir` block's cwd — without removing the
                 // directory itself. It is what makes the stash test meaningful.
                 | "deleteDir", _ ->
-                    // REVIEW FIX (Codex, PR #15 round 3): a recursive delete of a large
-                    // workspace is slow, and nothing here observed the deadline — so a
-                    // `deleteDir()` as the last step inside a `timeout` finished past it
-                    // with the build green.
-                    let expired () =
-                        match remainingMs deadline with
-                        | Some ms -> ms <= 1
-                        | None -> false
+                    // Polling here has now been wrong twice: first absent altogether, then
+                    // checking only the deadline and only BEFORE each top-level entry — so a
+                    // fail-fast sibling could not stop it, and a single large directory
+                    // could cross the deadline with no later check. One predicate covering
+                    // both causes, checked before AND after each entry.
+                    let stop () =
+                        let interrupted =
+                            match ctx.Interrupt with
+                            | Some p -> (try p () with _ -> false)
+                            | None -> false
+
+                        let expired =
+                            match remainingMs deadline with
+                            | Some ms -> ms <= 1
+                            | None -> false
+
+                        interrupted, expired
 
                     if Directory.Exists cwd then
+                        let mutable halt = false
+
                         for entry in Directory.GetFileSystemEntries cwd do
-                          if expired () then
-                            emit "ERROR: deleteDir aborted: the step's deadline expired"
-                            ctx.Failed.Value <- true
-                            ctx.Sink BuildStatus.Aborted
-                          else
-                            try
-                                if Directory.Exists entry then Directory.Delete(entry, true)
-                                else File.Delete entry
-                            with ex ->
-                                emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
+                            if not halt then
+                                match stop () with
+                                | true, _
+                                | _, true -> halt <- true
+                                | _ ->
+                                    try
+                                        if Directory.Exists entry then Directory.Delete(entry, true)
+                                        else File.Delete entry
+
+                                        // A single recursive delete can itself outlast the
+                                        // deadline, so re-check immediately after it.
+                                        match stop () with
+                                        | true, _
+                                        | _, true -> halt <- true
+                                        | _ -> ()
+                                    with ex ->
+                                        emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
+                                        ctx.Failed.Value <- true
+                                        ctx.Sink BuildStatus.Failure
+
+                        if halt then
+                            // Classify the CAUSE: a sibling's failure is a failure, a
+                            // deadline is an abort.
+                            let interrupted, _ = stop ()
+
+                            if interrupted then
+                                emit "ERROR: deleteDir interrupted: a failFast sibling failed"
                                 ctx.Failed.Value <- true
-                                ctx.Sink BuildStatus.Failure
+                            else
+                                emit "ERROR: deleteDir aborted: the step's deadline expired"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Aborted
 
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive
