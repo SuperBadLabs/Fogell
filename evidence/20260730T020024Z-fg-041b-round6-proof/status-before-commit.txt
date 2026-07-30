@@ -1,0 +1,6 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M tests/Fogell.Groovy.Tests/Tests.fs
+?? differential/cases/withenv-path-no-base.Jenkinsfile
+?? differential/receipts/withenv-path-no-base.receipt.txt
+?? evidence/20260730T020024Z-fg-041b-round6-proof/

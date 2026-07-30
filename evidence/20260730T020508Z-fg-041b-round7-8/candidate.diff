@@ -1,0 +1,227 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index a73468d..a30f1f2 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
++seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -44,5 +44,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 4a9eb72..2ecabe3 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **33/33 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **34/34 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -127,6 +127,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments into rounds, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
++| FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+ | FG-044 | P1 | TODO | `credentials` / `withCredentials`, scope-limited bindings | 22 files |
+diff --git a/scripts/review-rounds.bb b/scripts/review-rounds.bb
+index a5b8748..8f8350f 100755
+--- a/scripts/review-rounds.bb
++++ b/scripts/review-rounds.bb
+@@ -57,6 +57,10 @@
+                        (or "")
+                        str/trim))
+         title-of (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
++        identity-of (fn [c]
++                      [(get c "path")
++                       (or (get c "line") (get c "original_line"))
++                       (full-title c)])
+         rounds (->> comments
+                     (group-by #(subs (get % "created_at") 0 16))
+                     (sort-by key))
+@@ -71,12 +75,16 @@
+            seen #{}
+            n 1]
+       (when stamp
+-        (let [titles (map full-title cs)
++        ;; REVIEW FIX (Codex, PR #14 round 8): identity was the full TITLE alone, so two
++        ;; findings with identical titles in different files collapsed and a round could
++        ;; still report "0 NEW" — which this script calls safe to skip. Third flaw of
++        ;; the class this tool prevents, found inside it. Identity is path + line + title.
++        (let [titles (map identity-of cs)
+               fresh  (remove seen titles)]
+           (println (format "\nround %d  %sZ  commit %s  (%d comment(s), %d NEW)"
+                            n stamp (get shas stamp "?") (count cs) (count fresh)))
+           (doseq [c cs
+-                  :let [t (full-title c)]]
++                  :let [t (identity-of c)]]
+             (println (format "  %-4s %-28s %s"
+                              (if (seen t) "seen" "NEW")
+                              (str (last (str/split (get c "path") #"/")) ":"
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 263ec72..0e20cde 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -84,19 +84,42 @@ module FogellSide =
+             /// environment plus every earlier declaration, and a later scope wins.
+             /// An unknown name expands to empty, matching Groovy's null-to-string.
+             let interpolate (known: Map<string, string>) (value: string) =
++                // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
++                //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
++                //    The parser keeps the backslash so this pass can honour it and then
++                //    remove it, instead of expanding what Jenkins leaves alone.
++                //  * `"$env.BUILD_NUMBER"` and `"${env.BUILD_NUMBER}"` are the ordinary
++                //    Jenkins spellings. The old pattern matched only a bare identifier,
++                //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
++                //    while the braced dotted form was not matched at all.
++                let resolveName (name: string) =
++                    // `env.X` and `env['X']` are the same variable as a bare `X`.
++                    let bare =
++                        if name.StartsWith "env." then name.Substring 4
++                        else name
++
++                    match Map.tryFind bare known with
++                    | Some v -> v
++                    | None ->
++                        match Environment.GetEnvironmentVariable bare with
++                        | null -> ""
++                        | v -> v
++
++                let pattern =
++                    // escaped dollar | ${ dotted } | $dotted
++                    @"\\(\$)|\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
++
+                 Text.RegularExpressions.Regex.Replace(
+                     value,
+-                    @"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
++                    pattern,
+                     fun m ->
+-                        let name =
+-                            if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value
+-
+-                        match Map.tryFind name known with
+-                        | Some v -> v
+-                        | None ->
+-                            match Environment.GetEnvironmentVariable name with
+-                            | null -> ""
+-                            | v -> v)
++                        if m.Groups[1].Success then
++                            // escaped: emit a literal dollar, expand nothing
++                            "$"
++                        elif m.Groups[2].Success then
++                            resolveName m.Groups[2].Value
++                        else
++                            resolveName m.Groups[3].Value)
+ 
+             let envForWith (overlay: (string * string) list) (stage: Stage) =
+                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 738aec8..1806505 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -368,9 +368,15 @@ module Interpreter =
+             let value = evalExpr st env v
+             st.LastValue <- Some value
+             Env.withVar n value env
++        // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
++        // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
++        // here and left LastValue absent or STALE — reported unevaluable, or worse
++        // reusing an earlier truthy value. Groovy assignments yield their RHS whatever
++        // the target shape is.
+         | SAssign(target, v) ->
+             evalExpr st env target |> ignore
+-            evalExpr st env v |> ignore
++            let value = evalExpr st env v
++            st.LastValue <- Some value
+             env
+         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
+         // returned TRUE, because `true` set the trailing value and the untaken `if`
+diff --git a/src/Fogell.Pipeline.Parser/Lexeme.fs b/src/Fogell.Pipeline.Parser/Lexeme.fs
+index aab66ee..1c4f1d8 100644
+--- a/src/Fogell.Pipeline.Parser/Lexeme.fs
++++ b/src/Fogell.Pipeline.Parser/Lexeme.fs
+@@ -56,6 +56,33 @@ let private tripleQuoted (q: string) : P<string> =
+     between (skipString q) (skipString q) (
+         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
+ 
++/// As [escapedChar], but an escaped $ keeps its backslash.
++///
++/// REVIEW FIX (Codex, PR #14 round 7): in a GString, "\$BUILD_NUMBER" is the
++/// literal text $BUILD_NUMBER — Groovy does not interpolate it. The backslash
++/// was stripped here, BEFORE the value was classified as interpolating, so the
++/// interpolation pass expanded it and the step ran with a different environment than
++/// Jenkins. The marker now survives to the interpolation pass, which honours it and
++/// then removes it.
++let private escapedCharKeepingDollar: P<string> =
++    skipChar '\\' >>. anyChar
++    |>> function
++        | 'n' -> "\n"
++        | 't' -> "\t"
++        | 'r' -> "\r"
++        | '$' -> "\\$"
++        | c -> string c
++
++/// Variants used where interpolation provenance matters, so \$ is preserved.
++let private quotedKeepingDollar (q: string) : P<string> =
++    between (skipString q) (skipString q) (
++        manyStrings (escapedCharKeepingDollar <|> (satisfy (fun c -> c <> q.[0] && c <> '\n') |>> string)))
++
++let private tripleQuotedKeepingDollar (q: string) : P<string> =
++    between (skipString q) (skipString q) (
++        manyTill (escapedCharKeepingDollar <|> (anyChar |>> string)) (lookAhead (skipString q))
++        |>> String.concat "")
++
+ /// Any Groovy string form Jenkinsfiles use, including slashy strings.
+ /// A string literal PLUS whether Groovy would interpolate it.
+ ///
+@@ -72,9 +99,9 @@ let stringLiteralWithKind: P<string * bool> =
+     lexeme (
+         choice
+             [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
+-              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
++              attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s, true)
+               attempt (quoted "'" |>> fun s -> s, false)
+-              attempt (quoted "\"" |>> fun s -> s, true)
++              attempt (quotedKeepingDollar "\"" |>> fun s -> s, true)
+               // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
+               // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
+               // expand. Only single-quoted forms are literal.
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index a24568d..4f4d735 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -256,6 +256,19 @@ let predicateValues =
+               Expect.equal (run "true\ndef x").Returned (Some VNull) "uninitialised def is null"
+           }
+ 
++          test "an assignment through a property or index target yields its RHS" {
++              // Round-7 finding: only the bare-variable form recorded a value, so
++              // `env.DEPLOY = false` or `values[0] = false` as the FINAL statement left
++              // LastValue absent or stale — reported unevaluable, or reusing an earlier
++              // truthy value. Groovy assignments yield their RHS whatever the target is.
++              Expect.equal (run "true\nenv.DEPLOY = false").Returned (Some(VBool false)) "property target"
++
++              // The INDEX form (`xs[0] = false`) is not asserted here because the
++              // Groovy parser cannot parse it at all yet — a separate gap, measured at
++              // 9 corpus files, tracked as FG-015b. Asserting it here would have made
++              // this test fail for a reason unrelated to what it is testing.
++          }
++
+           test "a closure returns its trailing expression without `return`" {
+               // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
+               // block's value unless an explicit `return` appeared.

@@ -56,7 +56,62 @@ let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
 
+/// As [escapedChar], but an escaped $ keeps its backslash.
+///
+/// REVIEW FIX (Codex, PR #14 round 7): in a GString, "\$BUILD_NUMBER" is the
+/// literal text $BUILD_NUMBER — Groovy does not interpolate it. The backslash
+/// was stripped here, BEFORE the value was classified as interpolating, so the
+/// interpolation pass expanded it and the step ran with a different environment than
+/// Jenkins. The marker now survives to the interpolation pass, which honours it and
+/// then removes it.
+let private escapedCharKeepingDollar: P<string> =
+    skipChar '\\' >>. anyChar
+    |>> function
+        | 'n' -> "\n"
+        | 't' -> "\t"
+        | 'r' -> "\r"
+        // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is
+        // an escaped BACKSLASH followed by a live interpolation — Groovy yields one
+        // backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
+        // cases indistinguishable downstream, so that value came out as a literal
+        // `$X`. NUL cannot occur in an environment value, so it cannot collide.
+        | '$' -> "\u0000"
+        | c -> string c
+
+/// Variants used where interpolation provenance matters, so \$ is preserved.
+let private quotedKeepingDollar (q: string) : P<string> =
+    between (skipString q) (skipString q) (
+        manyStrings (escapedCharKeepingDollar <|> (satisfy (fun c -> c <> q.[0] && c <> '\n') |>> string)))
+
+let private tripleQuotedKeepingDollar (q: string) : P<string> =
+    between (skipString q) (skipString q) (
+        manyTill (escapedCharKeepingDollar <|> (anyChar |>> string)) (lookAhead (skipString q))
+        |>> String.concat "")
+
 /// Any Groovy string form Jenkinsfiles use, including slashy strings.
+/// A string literal PLUS whether Groovy would interpolate it.
+///
+/// REVIEW FIX (Codex, PR #14 round 4): quote type was discarded, so a
+/// single-quoted `LITERAL = '$BUILD_NUMBER'` — which Groovy keeps VERBATIM —
+/// was interpolated anyway. That runs a stage or command with a different value
+/// than Jenkins and can produce a FALSE differential match, the one outcome this
+/// harness must never produce. Measured 53 single-quoted dollar-bearing
+/// assignments in the 228-file corpus, so it is not hypothetical.
+///
+/// Single-quoted forms are literal. Double-quoted, triple-double AND slashy are
+/// GStrings and interpolate.
+let stringLiteralWithKind: P<string * bool> =
+    lexeme (
+        choice
+            [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
+              attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s, true)
+              attempt (quoted "'" |>> fun s -> s, false)
+              attempt (quotedKeepingDollar "\"" |>> fun s -> s, true)
+              // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
+              // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
+              // expand. Only single-quoted forms are literal.
+              attempt (quoted "/" |>> fun s -> s, true) ])
+
 let stringLiteral: P<string> =
     lexeme (
         choice

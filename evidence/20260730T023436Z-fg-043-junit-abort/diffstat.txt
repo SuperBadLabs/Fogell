@@ -1,0 +1,4 @@
+ src/Fogell.Execution/Executor.fs      |  9 ++++++++-
+ src/Fogell.Execution/Publish.fs       | 25 ++++++++++++++++++++-----
+ tests/Fogell.Execution.Tests/Tests.fs |  6 +++++-
+ 3 files changed, 33 insertions(+), 7 deletions(-)

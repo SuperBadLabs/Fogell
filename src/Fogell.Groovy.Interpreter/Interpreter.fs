@@ -255,8 +255,25 @@ module Interpreter =
 
             let r =
                 try
-                    execBlock st bound c.Body |> ignore
-                    VNull
+                    // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
+                    // VNull returned unless the closure used an explicit `return`. So
+                    // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
+                    // and therefore Jenkins — evaluates as true. Groovy's implicit
+                    // closure return is the trailing expression, and LastValue is
+                    // saved/restored around the call so an inner closure cannot
+                    // clobber the enclosing block's trailing value.
+                    // REVIEW FIX (Copilot, PR #14): the restore only happened on the
+                    // NON-return path, so a closure using an explicit `return` still
+                    // clobbered the enclosing block's trailing value. try/finally, so
+                    // both exits restore it.
+                    let outer = st.LastValue
+
+                    try
+                        st.LastValue <- None
+                        execBlock st bound c.Body |> ignore
+                        defaultArg st.LastValue VNull
+                    finally
+                        st.LastValue <- outer
                 with ReturnSignal v ->
                     v
 
@@ -332,19 +349,53 @@ module Interpreter =
         | SExpr e ->
             st.LastValue <- Some(evalExpr st env e)
             env
-        | SDef(n, Some e) -> Env.withVar n (evalExpr st env e) env
-        | SDef(n, None) -> Env.withVar n VNull env
-        | SAssign(EVar n, v) -> Env.withVar n (evalExpr st env v) env
+        // REVIEW FIX (Codex, PR #13 round 4): only SExpr updated LastValue, so a
+        // predicate whose final statement is an assignment — `def deploy = true
+        // deploy = false` — produced no value and FAILED the build as unevaluable,
+        // where Groovy assignments are value-producing and Jenkins reads it as false.
+        | SDef(n, Some e) ->
+            let v = evalExpr st env e
+            st.LastValue <- Some v
+            Env.withVar n v env
+        // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
+        // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
+        // LastValue and the closure returned true. An uninitialised declaration
+        // evaluates to null.
+        | SDef(n, None) ->
+            st.LastValue <- Some VNull
+            Env.withVar n VNull env
+        | SAssign(EVar n, v) ->
+            let value = evalExpr st env v
+            st.LastValue <- Some value
+            Env.withVar n value env
+        // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
+        // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
+        // here and left LastValue absent or STALE — reported unevaluable, or worse
+        // reusing an earlier truthy value. Groovy assignments yield their RHS whatever
+        // the target shape is.
         | SAssign(target, v) ->
             evalExpr st env target |> ignore
-            evalExpr st env v |> ignore
+            let value = evalExpr st env v
+            st.LastValue <- Some value
             env
+        // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
+        // returned TRUE, because `true` set the trailing value and the untaken `if`
+        // left it there. The trailing value belongs to the FINAL statement, so a
+        // statement producing nothing CLEARS it instead of inheriting what ran before.
+        //
+        // The first attempt at this edit silently did nothing — it matched
+        // `SIf(cond, thenBranch, elseBranch)` while the code says `SIf(c, t, f)` — and
+        // the build passed unchanged. Only the test caught it.
         | SIf(c, t, f) ->
+            st.LastValue <- None
+
             if Value.isTruthy (evalExpr st env c) then
                 execBlock st env t
             else
                 execBlock st env f
         | SForIn(v, src, body) ->
+            st.LastValue <- None
+
             match evalExpr st env src with
             | VList xs ->
                 if xs.Length > st.Budget.MaxLoopIterations then
@@ -362,6 +413,8 @@ module Interpreter =
                 cur
             | _ -> env
         | SWhile(c, body) ->
+            st.LastValue <- None
+
             let mutable cur = env
             let mutable iterations = 0
             let mutable running = true

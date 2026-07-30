@@ -1,0 +1,202 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 2ecabe3..0b2bbac 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **34/34 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **35/35 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 0e20cde..6cf5113 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -106,20 +106,21 @@ module FogellSide =
+                         | v -> v
+ 
+                 let pattern =
+-                    // escaped dollar | ${ dotted } | $dotted
+-                    @"\\(\$)|\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
++                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
++                    // parser replaced it with a NUL sentinel, restored below.
++                    @"\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+ 
+-                Text.RegularExpressions.Regex.Replace(
+-                    value,
+-                    pattern,
+-                    fun m ->
+-                        if m.Groups[1].Success then
+-                            // escaped: emit a literal dollar, expand nothing
+-                            "$"
+-                        elif m.Groups[2].Success then
+-                            resolveName m.Groups[2].Value
+-                        else
+-                            resolveName m.Groups[3].Value)
++                let expanded =
++                    Text.RegularExpressions.Regex.Replace(
++                        value,
++                        pattern,
++                        fun m ->
++                            if m.Groups[1].Success then resolveName m.Groups[1].Value
++                            else resolveName m.Groups[2].Value)
++
++                // Restore escaped dollars as literal text, after expansion so they
++                // cannot themselves be expanded.
++                expanded.Replace("\u0000", "$")
+ 
+             let envForWith (overlay: (string * string) list) (stage: Stage) =
+                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index fe3136d..403f861 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -309,7 +309,15 @@ module Executor =
+         | Some raw ->
+             request.OnLine |> Option.iter (fun f -> f "Recording test results")
+ 
+-            match Publish.parseJUnit request.Workspace (patterns raw) with
++            let abort () =
++                let fired (f: (unit -> bool) option) =
++                    match f with
++                    | Some p -> (try p () with _ -> false)
++                    | None -> false
++
++                fired request.Interrupt || fired request.DeadlineExpired
++
++            match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
+             | Result.Error e -> { ok Failure with Diagnostic = Some e }
+             | Result.Ok(total, failed, skipped) ->
+                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 174ac5c..5766c64 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -84,6 +84,14 @@ module Publish =
+                     File.Copy(Path.Combine(workspace, relative), dest, true)
+                     published.Add relative
+ 
++                    // REVIEW FIX (Codex, PR #14 round 9): polling only BEFORE each copy
++                    // meant an interrupt firing during the only or final copy had no
++                    // later iteration to observe it, so `aborted` stayed false and the
++                    // step returned Success — a timeout expiring while the build stays
++                    // green. A copy cannot be interrupted mid-file, but once it returns
++                    // the interruption must still be classified.
++                    if abort () then aborted <- true
++
+         List.ofSeq published, aborted
+ 
+     let archive store buildKey workspace patterns =
+@@ -91,7 +99,11 @@ module Publish =
+ 
+     /// Parse JUnit XML totals. Reads only the attributes every producer emits;
+     /// a malformed report is reported, not silently counted as zero.
+-    let parseJUnit (workspace: string) (patterns: string list) : Result<int * int * int, string> =
++    /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
++    /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
++    /// only archive read it, so a `timeout` whose last step is `junit` could scan many
++    /// reports and return Success or Unstable after the deadline.
++    let parseJUnitWithAbort (workspace: string) (patterns: string list) (abort: unit -> bool) : Result<int * int * int, string> =
+         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
+ 
+         if List.isEmpty files then
+@@ -102,7 +114,13 @@ module Publish =
+             let mutable skipped = 0
+             let mutable malformed = []
+ 
++            let mutable aborted = false
++
+             for relative in files do
++              if not aborted then
++                if abort () then
++                    aborted <- true
++                else
+                 try
+                     let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
+ 
+@@ -126,6 +144,14 @@ module Publish =
+                 with ex ->
+                     malformed <- $"{relative}: {ex.GetType().Name}" :: malformed
+ 
+-            match malformed with
+-            | [] -> Ok(total, failed, skipped)
+-            | errs -> Error("unparsable test report(s): " + String.concat "; " errs)
++            // Same rule as the archive path: once a report has been parsed, an
++            // interruption observed afterwards still counts.
++            if not aborted && abort () then aborted <- true
++
++            match aborted, malformed with
++            | true, _ -> Error "aborted: the step's deadline expired while reading test reports"
++            | false, [] -> Ok(total, failed, skipped)
++            | false, errs -> Error("unparsable test report(s): " + String.concat "; " errs)
++
++    let parseJUnit (workspace: string) (patterns: string list) =
++        parseJUnitWithAbort workspace patterns (fun () -> false)
+diff --git a/src/Fogell.Pipeline.Parser/Lexeme.fs b/src/Fogell.Pipeline.Parser/Lexeme.fs
+index 1c4f1d8..fd110e8 100644
+--- a/src/Fogell.Pipeline.Parser/Lexeme.fs
++++ b/src/Fogell.Pipeline.Parser/Lexeme.fs
+@@ -70,7 +70,12 @@ let private escapedCharKeepingDollar: P<string> =
+         | 'n' -> "\n"
+         | 't' -> "\t"
+         | 'r' -> "\r"
+-        | '$' -> "\\$"
++        // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is
++        // an escaped BACKSLASH followed by a live interpolation — Groovy yields one
++        // backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
++        // cases indistinguishable downstream, so that value came out as a literal
++        // `$X`. NUL cannot occur in an environment value, so it cannot collide.
++        | '$' -> "\u0000"
+         | c -> string c
+ 
+ /// Variants used where interpolation provenance matters, so \$ is preserved.
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 16328b8..2f1b2c9 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -542,6 +542,42 @@ let externalInterrupt =
+               | None -> failtest "an abort must carry a diagnostic"
+           }
+ 
++          test "junit honours an expired deadline instead of returning a result" {
++              // REVIEW FIX (Codex, PR #14 round 9): DeadlineExpired was DOCUMENTED as
++              // polled by "archive, junit" and only archive read it, so a `timeout`
++              // whose last step is `junit` could scan reports and return Success or
++              // Unstable after the deadline — leaving the build non-aborted.
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failwith e.Describe
++
++              File.WriteAllText(
++                  Path.Combine(ws, "report.xml"),
++                  "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
++
++              let r =
++                  Executor.runStep
++                      { Name = "junit"
++                        Script = None
++                        Workspace = ws
++                        Environment = []
++                        TimeoutMs = None
++                        Interrupt = None
++                        DeadlineExpired = Some(fun () -> true)
++                        Secrets = []
++                        OnLine = None
++                        Named = [ "testResults", "report.xml" ]
++                        Artifacts = None
++                        BuildKey = "k" }
++
++              Expect.notEqual r.Status Success "an expired deadline must not yield a result"
++
++              match r.Diagnostic with
++              | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
++              | None -> failtest "an aborted junit must carry a diagnostic"
++          }
++
+           test "an interrupt that never fires leaves the step alone" {
+               // Guard against the previous class of vacuous test: if the poll
+               // were treated as truthy, or called once at the wrong moment, the

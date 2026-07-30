@@ -76,19 +76,24 @@ stepRef.Value <-
 // Sections
 // ---------------------------------------------------------------------------
 
-let private keyValueBody: P<(string * string) list> =
-    // `NAME = value` lines inside environment { } / tools { }
+/// `NAME = value` lines inside environment { } / tools { }, carrying whether the
+/// value interpolates. An unquoted value is a Groovy expression, so it does.
+let private keyValueBodyWithKind: P<(string * string * bool) list> =
     many (
         attempt (
             ws
             >>. identifier
             .>> symbol "="
-            .>>. (stringLiteral
-                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))
-            .>> ws))
+            .>>. (stringLiteralWithKind
+                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim(), true))
+            .>> ws
+            |>> fun (n, (v, interpolates)) -> n, v, interpolates))
 
-let private environmentSection: P<(string * string) list> =
-    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBody
+let private keyValueBody: P<(string * string) list> =
+    keyValueBodyWithKind |>> List.map (fun (n, v, _) -> n, v)
+
+let private environmentSection: P<(string * string * bool) list> =
+    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
 
 let private toolsSection: P<(string * string) list> =
     keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
@@ -219,8 +224,19 @@ let rec private whenCondition: P<WhenCondition> =
                        |>> WhenUnmodelled) ]
     }
 
+/// A `when { }` gate. Declarative allows SEVERAL direct conditions and combines
+/// them with implicit all-of semantics.
+///
+/// REVIEW FIX (Codex, PR #13 round 3): only ONE condition was parsed, so
+/// `when { environment name: 'A', value: '1'\n environment name: 'B', value: '2' }`
+/// failed at the second, fell to the opaque backstop, and FAILED THE BUILD — where
+/// Jenkins simply requires both.
 let private whenSection: P<WhenCondition> =
-    keyword "when" >>. between (symbol "{") (symbol "}") (ws >>. whenCondition)
+    keyword "when"
+    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenCondition))
+    |>> function
+        | [ single ] -> single
+        | many -> WhenAllOf many
 
 /// Backstop. If the structured parse above fails for ANY reason, the `when`
 /// must still be recorded — as unmodelled, so evaluation fails closed. It must
@@ -258,7 +274,7 @@ let private failFastDirective: P<bool> =
 /// generic syntax error.
 type private StageSection =
     | SecAgent of AgentSpec
-    | SecEnv of (string * string) list
+    | SecEnv of (string * string * bool) list
     | SecSteps of Step list
     | SecWhen of WhenCondition
     | SecPost of (PostCondition * Step list) list
@@ -296,7 +312,14 @@ stageRef.Value <-
             let pick f = sections |> List.tryPick f
             { Name = name
               Agent = pick (function SecAgent a -> Some a | _ -> None)
-              Environment = defaultArg (pick (function SecEnv e -> Some e | _ -> None)) []
+              Environment =
+                defaultArg (pick (function SecEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
+              EnvironmentLiteralNames =
+                defaultArg
+                    (pick (function
+                        | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
+                        | _ -> None))
+                    Set.empty
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
@@ -311,7 +334,7 @@ stageRef.Value <-
 
 type private TopSection =
     | TopAgent of AgentSpec
-    | TopEnv of (string * string) list
+    | TopEnv of (string * string * bool) list
     | TopTools of (string * string) list
     | TopOptions of Step list
     | TopParameters of Step list
@@ -372,7 +395,14 @@ let private pipelineParser: P<Pipeline> =
     |>> fun sections ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
-              Environment = defaultArg (pick (function TopEnv e -> Some e | _ -> None)) []
+              Environment =
+                defaultArg (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
+              EnvironmentLiteralNames =
+                defaultArg
+                    (pick (function
+                        | TopEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
+                        | _ -> None))
+                    Set.empty
               Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
               Options = defaultArg (pick (function TopOptions o -> Some o | _ -> None)) []
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []

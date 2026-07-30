@@ -18,7 +18,7 @@ type StepRequest =
       /// Use [Workspace.createFresh] once per attempt, then pass it here.
       Workspace: string
       Environment: (string * string) list
-      TimeoutMs: int option
+      TimeoutMs: int64 option
       OnLine: (string -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
@@ -26,7 +26,19 @@ type StepRequest =
       Artifacts: ArtifactStore option
       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
+      ///
+      /// EXTERNAL cancellation only. A `timeout` deadline travels in [TimeoutMs]
+      /// and, for steps that do their own work, in [DeadlineExpired].
+      ///
+      /// REVIEW FIX (Codex, PR #14 round 6): folding the deadline into this
+      /// predicate made `ProcessGroup.run` classify an expired timeout as
+      /// `Cancelled`, so the diagnostic read "step was cancelled" instead of naming
+      /// the timeout — losing the distinction FG-033 exists to preserve.
       Interrupt: (unit -> bool) option
+      /// Polled by steps that perform their own work (archive, junit) so a
+      /// `timeout` bounds them too. Kept separate from [Interrupt] so the reported
+      /// CAUSE stays correct.
+      DeadlineExpired: (unit -> bool) option
       /// FG-071. Secret bindings live for this step. Output is masked against
       /// them ON THE WAY OUT — including the streaming path.
       ///
@@ -245,13 +257,42 @@ module Executor =
             // is parity; excluding it from comparison would merely hide a
             // difference the user can see.
             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
-            let published = Publish.archive store request.BuildKey request.Workspace (patterns raw)
+
+            // Either cause stops the archive; the diagnostic names neither, because
+            // this layer cannot tell a deadline from a failed failFast sibling.
+            let abort () =
+                let fired (f: (unit -> bool) option) =
+                    match f with
+                    | Some p -> (try p () with _ -> false)
+                    | None -> false
+
+                fired request.Interrupt || fired request.DeadlineExpired
+
+            let published, aborted =
+                Publish.archiveWithAbort store request.BuildKey request.Workspace (patterns raw) abort
 
             let allowEmpty =
                 request.Named
                 |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
 
-            if List.isEmpty published && not allowEmpty then
+            if aborted then
+                // REVIEW FIX (Codex, PR #14 round 3): the previous version LOGGED the
+                // abort and then fell through to a Success result, so an explicitly
+                // incomplete artifact set left the build green and later stages ran.
+                // That is the same "partial result reported as success" shape as the
+                // parallel-sink and post-arm bugs. Detecting an interruption and
+                // discarding it from the StepResult is worse than not detecting it.
+                // REVIEW FIX (Codex, PR #14 round 4), two errors in one place:
+                //  * emitting here AND returning a Diagnostic printed the failure
+                //    twice for one event, because runStepInner emits it as well;
+                //  * it asserted the DEADLINE expired, but under `parallel` failFast
+                //    the interrupt comes from a failed sibling. The engine does not
+                //    know which, so it must not name one.
+                { ok Aborted with
+                    Diagnostic =
+                        Some
+                            $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
+            elif List.isEmpty published && not allowEmpty then
                 // Jenkins fails the build here rather than passing quietly, and
                 // a silent empty archive is the worst outcome for a user.
                 { ok Failure with
@@ -268,8 +309,23 @@ module Executor =
         | Some raw ->
             request.OnLine |> Option.iter (fun f -> f "Recording test results")
 
-            match Publish.parseJUnit request.Workspace (patterns raw) with
-            | Result.Error e -> { ok Failure with Diagnostic = Some e }
+            let abort () =
+                let fired (f: (unit -> bool) option) =
+                    match f with
+                    | Some p -> (try p () with _ -> false)
+                    | None -> false
+
+                fired request.Interrupt || fired request.DeadlineExpired
+
+            match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
+            // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
+            // `timeout` ending in `junit` selected `post { failure }` where a shell or
+            // archive timeout selects `post { aborted }`. The cause is preserved and
+            // mapped to the matching result.
+            | Result.Error Interrupted ->
+                { ok Aborted with
+                    Diagnostic = Some "junit aborted: the step was interrupted while reading test reports" }
+            | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.

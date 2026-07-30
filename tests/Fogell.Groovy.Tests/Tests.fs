@@ -225,10 +225,54 @@ let predicateValues =
               Expect.equal (run "return false").Returned (Some(VBool false)) "explicit return"
           }
 
-          test "a script with no expression has no value" {
-              // None must stay distinguishable from false: a predicate that produced
-              // nothing is unevaluable, not negative.
-              Expect.equal (run "def x = 1").Returned None "no trailing expression"
+          test "an assignment IS a value, as in Groovy" {
+              // This test previously asserted `def x = 1` produced NO value. That was
+              // wrong about Groovy — a declaration with an initialiser evaluates to the
+              // assigned value — and a Codex review on PR #13 caught the code matching
+              // the wrong assertion. `expression { def deploy = true; deploy = false }`
+              // must read as false, not as unevaluable.
+              Expect.equal (run "def x = 1").Returned (Some(VInt 1L)) "declaration yields its value"
+              Expect.equal (run "def d = true\nd = false").Returned (Some(VBool false)) "reassignment yields its value"
+          }
+
+          test "a predicate that truly produces nothing stays None" {
+              // None must remain distinguishable from false: nothing ran, so there is
+              // no value — which is unevaluable, not negative.
+              Expect.equal (run "if (false) { 1 }").Returned None "untaken branch yields nothing"
+          }
+
+          test "an untaken trailing conditional yields nothing, not an earlier value" {
+              // REVIEW FIX (Codex, PR #14 round 3): `true` set the trailing value and
+              // the untaken `if` left it there, so this read as TRUE. The trailing
+              // value belongs to the FINAL statement, not to whatever ran last.
+              Expect.equal (run "true\nif (false) { false }").Returned None "untaken if clears it"
+              Expect.equal (run "true\nif (true) { false }").Returned (Some(VBool false)) "taken branch supplies it"
+              Expect.equal (run "true\nwhile (false) { 1 }").Returned None "loop that never runs clears it"
+          }
+
+          test "an uninitialised trailing declaration yields null, not the previous value" {
+              // Round-6 finding: value tracking covered only INITIALISED declarations,
+              // so `true; def x` left `true` in place and `[1].any { … }` was true.
+              Expect.equal (run "true\ndef x").Returned (Some VNull) "uninitialised def is null"
+          }
+
+          test "an assignment through a property or index target yields its RHS" {
+              // Round-7 finding: only the bare-variable form recorded a value, so
+              // `env.DEPLOY = false` or `values[0] = false` as the FINAL statement left
+              // LastValue absent or stale — reported unevaluable, or reusing an earlier
+              // truthy value. Groovy assignments yield their RHS whatever the target is.
+              Expect.equal (run "true\nenv.DEPLOY = false").Returned (Some(VBool false)) "property target"
+
+              // The INDEX form (`xs[0] = false`) is not asserted here because the
+              // Groovy parser cannot parse it at all yet — a separate gap, measured at
+              // 9 corpus files, tracked as FG-015b. Asserting it here would have made
+              // this test fail for a reason unrelated to what it is testing.
+          }
+
+          test "a closure returns its trailing expression without `return`" {
+              // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
+              // block's value unless an explicit `return` appeared.
+              Expect.equal (run "[1].any { it == 1 }").Returned (Some(VBool true)) "implicit closure return"
           } ]
 
 [<EntryPoint>]

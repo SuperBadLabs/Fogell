@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md               |  2 +-
+ src/Fogell.Differential/Fogell.fs     | 27 +++++++++++++-------------
+ src/Fogell.Execution/Executor.fs      | 10 +++++++++-
+ src/Fogell.Execution/Publish.fs       | 34 +++++++++++++++++++++++++++++----
+ src/Fogell.Pipeline.Parser/Lexeme.fs  |  7 ++++++-
+ tests/Fogell.Execution.Tests/Tests.fs | 36 +++++++++++++++++++++++++++++++++++
+ 6 files changed, 96 insertions(+), 20 deletions(-)

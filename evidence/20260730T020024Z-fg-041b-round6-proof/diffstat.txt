@@ -1,0 +1,4 @@
+ differential/receipts/parallel-always-failfast.receipt.txt | 4 ++--
+ docs/EXECUTION_BOARD.md                                    | 2 +-
+ tests/Fogell.Groovy.Tests/Tests.fs                         | 6 ++++++
+ 3 files changed, 9 insertions(+), 3 deletions(-)

@@ -47,6 +47,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   **unset** and a shadowed one **reverts**. (Proven: `withenv-scoping`.)
 - `timeout` bounds the **block**, not each step inside it. (Proven:
   `timeout-block-deadline`.)
+- `env['NAME']` is **rejected** by Jenkins' script sandbox — `staticMethod
+  org.codehaus.groovy.runtime.DefaultGroovyMethods getAt` is not an approved
+  signature, and the build fails. Only `env.NAME` and `${env.NAME}` work. An
+  automated review asked for the bracketed form to be supported; the receipt says
+  supporting it would make Fogell RUN what Jenkins REFUSES, which is the same
+  divergence direction rejected for stage-level `failFast`.
 - Approval/`input` state survives a controller restart.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a
   46 s network partition cost **zero** log lines.

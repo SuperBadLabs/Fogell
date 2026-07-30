@@ -1,0 +1,6 @@
+ M scripts/review-rounds.bb
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Groovy.Interpreter/Interpreter.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+?? evidence/20260730T014751Z-fg-041b-round6/

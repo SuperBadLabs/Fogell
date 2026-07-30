@@ -53,6 +53,11 @@ type Stage =
     { Name: string
       Agent: AgentSpec option
       Environment: (string * string) list
+      /// Names whose value was written with a LITERAL quote form (single, triple
+      /// single, or slashy). Groovy does not interpolate those, so neither may we
+      /// — expanding `'$BUILD_NUMBER'` runs a different value than Jenkins and can
+      /// produce a false differential match.
+      EnvironmentLiteralNames: Set<string>
       Steps: Step list
       When: WhenCondition option
       Post: (PostCondition * Step list) list
@@ -70,6 +75,8 @@ type Stage =
 type Pipeline =
     { Agent: AgentSpec
       Environment: (string * string) list
+      /// See Stage.EnvironmentLiteralNames.
+      EnvironmentLiteralNames: Set<string>
       Options: Step list
       Parameters: Step list
       Triggers: Step list
@@ -82,6 +89,7 @@ module Pipeline =
     let empty =
         { Agent = AgentNone
           Environment = []
+          EnvironmentLiteralNames = Set.empty
           Options = []
           Parameters = []
           Triggers = []

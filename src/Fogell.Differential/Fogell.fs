@@ -57,9 +57,110 @@ module FogellSide =
 
             /// Environment visible to a step: pipeline scope, overridden by stage
             /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
+            /// Variables Jenkins provides to every build. REVIEW FIX (Codex, PR #13
+            /// round 4): only pipeline- and stage-declared variables were visible, so
+            /// `when { environment name: 'BUILD_NUMBER', value: '1' }` and
+            /// `expression { env.BUILD_NUMBER == '1' }` saw them as ABSENT and skipped
+            /// a stage Jenkins runs. Declarative overrides still win, as they do on
+            /// Jenkins — hence these go first.
+            let jenkinsProvided =
+                [ "BUILD_NUMBER", "1"
+                  "BUILD_ID", "1"
+                  "BUILD_DISPLAY_NAME", "#1"
+                  "JOB_NAME", jobName
+                  "JOB_BASE_NAME", jobName
+                  "WORKSPACE", Path.Combine(workspaceRoot, jobName)
+                  "EXECUTOR_NUMBER", "0"
+                  "NODE_NAME", "built-in" ]
+
+            /// Values in an `environment { }` block interpolate `${NAME}` / `$NAME`
+            /// against what is already visible, which is why `PATH = "/x:${PATH}"` is
+            /// the idiom in 33 corpus files. Without expansion that assignment WIPES
+            /// the inherited PATH — the failure that exposed this was a `tr: not
+            /// found` in a differential case, i.e. a build broken by our own env
+            /// handling.
+            ///
+            /// Resolution is a left-to-right fold, so a declaration sees the process
+            /// environment plus every earlier declaration, and a later scope wins.
+            /// An unknown name expands to empty, matching Groovy's null-to-string.
+            let interpolate (known: Map<string, string>) (value: string) =
+                // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
+                //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
+                //    The parser keeps the backslash so this pass can honour it and then
+                //    remove it, instead of expanding what Jenkins leaves alone.
+                //  * `"$env.BUILD_NUMBER"` and `"${env.BUILD_NUMBER}"` are the ordinary
+                //    Jenkins spellings. The old pattern matched only a bare identifier,
+                //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
+                //    while the braced dotted form was not matched at all.
+                let resolveName (name: string) =
+                    // `env.X` is the same variable as a bare `X`. The bracketed
+                    // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
+                    // rejects it outright (measured — see the pattern below).
+                    let bare =
+                        if name.StartsWith "env." then name.Substring 4
+                        else name
+
+                    match Map.tryFind bare known with
+                    | Some v -> v
+                    | None ->
+                        match Environment.GetEnvironmentVariable bare with
+                        | null -> ""
+                        | v -> v
+
+                let pattern =
+                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
+                    // parser replaced it with a NUL sentinel, restored below.
+                    //
+                    // A Codex review (PR #14 round 13) asked for the bracketed
+                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
+                    // Jenkins, that request is wrong: the sandbox REJECTS it —
+                    //   Scripts not permitted to use staticMethod
+                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
+                    // and the build fails. Supporting it would make Fogell RUN what
+                    // Jenkins REFUSES, which is the same divergence direction rejected
+                    // for stage-level failFast: a pipeline that works here would fail
+                    // there. Dotted only, and the comment on `resolveName` no longer
+                    // claims otherwise.
+                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
+                    let dotted = ident + "(?:\." + ident + ")*"
+                    @"\${(" + dotted + @")}|\$(" + dotted + ")"
+
+                let expanded =
+                    Text.RegularExpressions.Regex.Replace(
+                        value,
+                        pattern,
+                        fun m ->
+                            if m.Groups[1].Success then resolveName m.Groups[1].Value
+                            else resolveName m.Groups[2].Value)
+
+                // Restore escaped dollars as literal text, after expansion so they
+                // cannot themselves be expanded.
+                expanded.Replace("\u0000", "$")
+
             let envForWith (overlay: (string * string) list) (stage: Stage) =
-                (pipeline.Environment @ stage.Environment @ overlay)
-                |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
+                // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
+                // two scopes' literal-name sets, so a pipeline `VALUE = '$X'` followed
+                // by a stage `VALUE = "$X"` left the stage's GString literal — the
+                // name was still in the set. Codex had warned in round 4 to "carry
+                // provenance with each binding or resolve each scope using its own
+                // provenance", and I took the union shortcut anyway. Each scope is now
+                // resolved against ITS OWN provenance.
+                let withKind (names: Set<string>) (bindings: (string * string) list) =
+                    bindings |> List.map (fun (k, v) -> k, v, not (Set.contains k names))
+
+                // Jenkins-provided values are plain strings, never GStrings; a
+                // withEnv overlay was already resolved where its quote form was known.
+                let scoped =
+                    withKind (jenkinsProvided |> List.map fst |> Set.ofList) jenkinsProvided
+                    @ withKind pipeline.EnvironmentLiteralNames pipeline.Environment
+                    @ withKind stage.EnvironmentLiteralNames stage.Environment
+                    @ withKind (overlay |> List.map fst |> Set.ofList) overlay
+
+                scoped
+                |> List.fold
+                    (fun acc (k, v, interpolates) ->
+                        Map.add k (if interpolates then interpolate acc v else v) acc)
+                    Map.empty
                 |> Map.toList
 
             let mutable status = BuildStatus.Success
@@ -80,11 +181,13 @@ module FogellSide =
             /// Int32.MaxValue — wrapped negative and was floored to 1 ms, aborting
             /// instantly. Fixing "DAYS silently means minutes" had introduced
             /// "DAYS means one millisecond". Clamped at the executor's ceiling.
+            /// REVIEW FIX (Codex, PR #13 round 2): clamping at Int32.MaxValue avoided
+            /// the earlier integer wrap but still SHORTENED the requested deadline —
+            /// a 30-day budget became 24.8 days, aborting work Jenkins still allows.
+            /// The executor's budget is int64 now, so the deadline is represented
+            /// exactly and nothing is silently rewritten.
             let remainingMs (deadline: int64 option) =
-                deadline
-                |> Option.map (fun d ->
-                    let left = d - runClock.ElapsedMilliseconds
-                    int (max 1L (min left (int64 Int32.MaxValue))))
+                deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
                 let script =
@@ -103,9 +206,15 @@ module FogellSide =
                           TimeoutMs =
                             match remainingMs deadline with
                             | Some ms -> Some ms
-                            | None -> Some 120_000
+                            | None -> Some 120_000L
                           OnLine = Some emit
+                          // External cancellation only — a failFast sibling. The
+                          // deadline reaches the shell runner through TimeoutMs and
+                          // self-working steps through DeadlineExpired, so an expired
+                          // timeout is still reported as a timeout.
                           Interrupt = ctx.Interrupt
+                          DeadlineExpired =
+                            deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
                           Secrets = []
                           Named = step.Named
                           Artifacts = Some(ArtifactStore.under artifactRoot)
@@ -277,15 +386,25 @@ module FogellSide =
 
                 | WhenNot inner -> evalWhen stage inner |> Option.map not
 
+                // REVIEW FIX (Codex, PR #13 round 2): an unevaluable operand used to
+                // dominate, so `allOf { <false>, triggeredBy(...) }` failed the build
+                // even though the false operand ALREADY decides that Jenkins skips.
+                // Three-valued short-circuiting: a decisive known operand wins, and
+                // only a genuinely undetermined result is reported unevaluable. This
+                // shrinks the fail-closed surface without guessing anything.
                 | WhenAllOf conds ->
                     let results = conds |> List.map (evalWhen stage)
-                    if results |> List.exists Option.isNone then None
-                    else Some(results |> List.forall (fun r -> r = Some true))
+
+                    if results |> List.contains (Some false) then Some false
+                    elif results |> List.exists Option.isNone then None
+                    else Some true
 
                 | WhenAnyOf conds ->
                     let results = conds |> List.map (evalWhen stage)
-                    if results |> List.exists Option.isNone then None
-                    else Some(results |> List.exists (fun r -> r = Some true))
+
+                    if results |> List.contains (Some true) then Some true
+                    elif results |> List.exists Option.isNone then None
+                    else Some false
 
                 | WhenExpression source ->
                     // ADR 0002: expressions stay as source text and the bounded
@@ -370,20 +489,39 @@ module FogellSide =
 
             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
                 if not (List.isEmpty stage.Post) then
-                    stage.Post
-                    |> List.filter (fun (cond, _) -> postFires cond result previous)
-                    |> List.sortBy (fun (cond, _) -> postRank cond)
-                    |> List.iter (fun (_, steps) ->
-                        // A post block runs even though the stage failed — that is
-                        // the point of it — so it gets a context whose failure flag
-                        // is clear. A failure INSIDE post is still the build's.
-                        let postCtx = { ctx with Failed = ref false }
+                    // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
+                    // against the pre-post result, so on a SUCCESSFUL stage with
+                    // `post { always { exit 1 } failure { … } success { … } }` the
+                    // failing `always` left `failure` ineligible and `success` still
+                    // eligible — success-only publication after a post failure, the
+                    // same class of defect as the parallel-sink bug.
+                    //
+                    // The first attempt at this fix did not work and the receipt said
+                    // so: it introduced an `effective` ref but never updated it, and
+                    // `List.filter` is eager, so every predicate ran before any arm
+                    // did. Eligibility is therefore decided INSIDE the loop, against a
+                    // result the arms themselves update.
+                    let effective = ref result
 
-                        for st in steps do
-                            if not (halted postCtx) then
-                                runStepDispatch postCtx cwd stage st None
+                    for cond, steps in stage.Post |> List.sortBy (fun (c, _) -> postRank c) do
+                        if postFires cond effective.Value previous then
+                            // A post block runs even though the stage failed — that is
+                            // the point of it — so it gets a clear failure flag. A
+                            // failure INSIDE post belongs to the build AND to the
+                            // effective result the later arms are chosen against.
+                            let postCtx =
+                                { ctx with
+                                    Failed = ref false
+                                    Sink =
+                                        fun st ->
+                                            effective.Value <- BuildStatus.worstOf effective.Value st
+                                            ctx.Sink st }
 
-                        if postCtx.Failed.Value then ctx.Failed.Value <- true)
+                            for st in steps do
+                                if not (halted postCtx) then
+                                    runStepDispatch postCtx cwd stage st None
+
+                            if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
                 if not (halted ctx) then
@@ -445,6 +583,23 @@ module FogellSide =
             /// failed as an unsupported step every time. Every body now re-enters
             /// this dispatcher, so wrappers compose to any depth.
             and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+                // REVIEW FIX (Codex, PR #13 round 4): a deadline only ever became a
+                // `TimeoutMs` for the shell runner. `echo`, `junit`,
+                // `archiveArtifacts` and wrapper dispatch enforce nothing, so a
+                // `timeout` block full of those could keep running long after Jenkins
+                // would have aborted it. The deadline is now checked BEFORE every
+                // dispatch, whatever the step is.
+                let expired =
+                    match deadline with
+                    | Some d -> runClock.ElapsedMilliseconds >= d
+                    | None -> false
+
+                if expired then
+                    emit $"ERROR: timeout expired before step '{step.Name}'; block aborted"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Aborted
+                else
+
                 match step.Name, step.Positional with
                 // JB-FAIL-001/002: timeout and abort share one interrupt path,
                 // and the interrupt is a trappable SIGTERM with a grace window.
@@ -522,15 +677,89 @@ module FogellSide =
                     // any value containing one — `withEnv(['CSV=a,b'])` bound
                     // `CSV=a` while Jenkins exposes `a,b`. Match the QUOTED list
                     // elements instead, so commas inside an element are content.
+                    // Group 1 is single-quoted (LITERAL in Groovy), group 2 is
+                    // double-quoted (a GString, so it interpolates). Keeping the
+                    // distinction here is the same fix as for `environment { }`.
                     let bindings =
                         step.Positional
                         |> List.collect (fun raw ->
                             [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
-                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ]
-                            |> List.choose (fun entry ->
+                                if m.Groups[1].Success then m.Groups[1].Value, false
+                                else m.Groups[2].Value, true ]
+                            |> List.choose (fun (entry, interpolates) ->
                                 match entry.IndexOf '=' with
-                                | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
+                                | i when i > 0 ->
+                                    let name = entry.Substring(0, i)
+                                    let raw = entry.Substring(i + 1)
+
+                                    // REVIEW FIX (Codex, PR #14 round 13): `withEnv`
+                                    // extracts its entries with a regex and never goes
+                                    // through the lexer, so the NUL-sentinel handling
+                                    // that protects `"\$X"` in an `environment` block
+                                    // did not apply here — `withEnv(["X=\$BUILD_NUMBER"])`
+                                    // was expanded where Groovy keeps it literal. Apply
+                                    // the same substitution before interpolating.
+                                    let value =
+                                        if interpolates then
+                                            raw.Replace("\\$", "\u0000")
+                                            |> interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList)
+                                        else
+                                            raw
+
+                                    Some(name, value)
                                 | _ -> None))
+
+                    // REVIEW FIX (Codex, PR #13 round 2): `PATH+TOOLS=/opt/tools/bin`
+                    // is the standard Jenkins idiom for PREPENDING to PATH. The binding
+                    // was copied literally as a variable called `PATH+TOOLS`, so the
+                    // wrapped process kept its old PATH and the tools were not found.
+                    // REVIEW FIX (Copilot + Codex, PR #14 — both flagged it): this read
+                    // the RAW concatenation with List.tryPick, i.e. the FIRST PATH,
+                    // while the environment is explicitly last-wins. A pipeline PATH
+                    // followed by a stage PATH produced `/tools:<pipeline-path>` —
+                    // prepending onto an out-of-date PATH, which can run the wrong
+                    // executable. `envForWith` already resolves last-wins, so ask it.
+                    let outerPath =
+                        envForWith ctx.EnvOverlay stage
+                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                    let pathAdditions =
+                        bindings |> List.filter (fun (k, _) -> k.StartsWith "PATH+")
+
+                    let plainBindings =
+                        bindings |> List.filter (fun (k, _) -> not (k.StartsWith "PATH+"))
+
+                    // REVIEW FIX (Codex, PR #14 round 3): the base PATH was taken from
+                    // the ENCLOSING scope only, so `withEnv(['PATH=/custom',
+                    // 'PATH+TOOLS=/tools'])` produced `/tools:<outer-path>` and
+                    // silently discarded `/custom` — the augmentation has to build on
+                    // the plain PATH supplied by the SAME invocation when there is one.
+                    // REVIEW FIX (Codex, PR #14 round 6): with no PATH declared
+                    // anywhere, this defaulted to "" and produced `/tools:`, wiping the
+                    // inherited PATH so ordinary tools in /usr/bin vanished. An earlier
+                    // revision had this fallback and a later edit of mine dropped it.
+                    // REVIEW FIX (Codex, PR #14 round 11): tryPick took the FIRST plain
+                    // PATH in the list, but the environment is last-wins, so
+                    // ['PATH=/first', 'PATH=/second', 'PATH+TOOLS=/tools'] produced
+                    // `/tools:/first` and discarded the effective `/second`.
+                    let basePath =
+                        plainBindings
+                        |> List.filter (fun (k, _) -> k = "PATH")
+                        |> List.tryLast
+                        |> Option.map snd
+                        |> Option.orElse outerPath
+                        |> Option.defaultWith (fun () ->
+                            match Environment.GetEnvironmentVariable "PATH" with
+                            | null -> ""
+                            | p -> p)
+
+                    let bindings =
+                        if List.isEmpty pathAdditions then
+                            plainBindings
+                        else
+                            let prefix = pathAdditions |> List.map snd |> String.concat ":"
+
+                            (plainBindings |> List.filter (fun (k, _) -> k <> "PATH"))
+                            @ [ "PATH", prefix + ":" + basePath ]
 
                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
 
@@ -655,6 +884,7 @@ module FogellSide =
                     { Name = ""
                       Agent = None
                       Environment = []
+                      EnvironmentLiteralNames = Set.empty
                       Steps = []
                       When = None
                       Post = pipeline.Post

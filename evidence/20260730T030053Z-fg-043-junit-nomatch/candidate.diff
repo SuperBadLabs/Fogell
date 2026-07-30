@@ -1,0 +1,66 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index e222bf8..f971c60 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -127,6 +127,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments by `pull_request_review_id` — a round is a REVIEW, not a wall-clock minute, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
++| FG-002e | P2 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. Acceptance: enumerate every return point in `Publish` and `Executor` and assert each either polls or provably cannot be reached after an interrupt |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 7f8c315..1d0678b 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -123,7 +123,13 @@ module Publish =
+         : Result<int * int * int, JUnitProblem> =
+         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
+ 
+-        if List.isEmpty files then
++        // REVIEW FIX (Codex, PR #14 round 12): the mirror of the archive zero-match
++        // case. With no matching report the scan can still have been long, and an
++        // interrupt firing during it was reported as "no test report matched" — a
++        // pattern problem the user would go and debug — instead of an abort.
++        if abort () then
++            Error Interrupted
++        elif List.isEmpty files then
+             Error(Unreadable "no test report matched the pattern")
+         else
+             let mutable total = 0
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 8f00d77..e20c871 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -577,6 +577,30 @@ let externalInterrupt =
+               // and archive timeouts select `post { aborted }`. Assert the exact status.
+               Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
+ 
++              // Round-12 mirror: with NO matching report, an interrupt must still be an
++              // abort rather than "no test report matched the pattern" — which would
++              // send the user off debugging a glob that was fine.
++              let noMatch =
++                  Executor.runStep
++                      { Name = "junit"
++                        Script = None
++                        Workspace = ws
++                        Environment = []
++                        TimeoutMs = None
++                        Interrupt = None
++                        DeadlineExpired = Some(fun () -> true)
++                        Secrets = []
++                        OnLine = None
++                        Named = [ "testResults", "nothing-matches-*.xml" ]
++                        Artifacts = None
++                        BuildKey = "k" }
++
++              Expect.equal noMatch.Status Aborted "zero-match plus interrupt is an abort"
++
++              match noMatch.Diagnostic with
++              | Some d -> Expect.isFalse (d.Contains "no test report matched") $"not blamed on the pattern: {d}"
++              | None -> failtest "expected a diagnostic"
++
+               match r.Diagnostic with
+               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
+               | None -> failtest "an aborted junit must carry a diagnostic"

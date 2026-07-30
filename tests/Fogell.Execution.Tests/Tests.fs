@@ -28,6 +28,7 @@ let private request root script =
       Environment = []
       TimeoutMs = None
       Interrupt = None
+      DeadlineExpired = None
       Secrets = []
       OnLine = None
       Named = []
@@ -520,6 +521,89 @@ let externalInterrupt =
                   // sends the operator to the wrong place.
                   Expect.isFalse (d.ToLowerInvariant().Contains "timeout") $"cause is not a timeout: {d}"
               | None -> failtest "an abort must carry a diagnostic"
+          }
+
+          test "an expired timeout is reported as a TIMEOUT, not a cancellation" {
+              // REVIEW FIX (Codex, PR #14 round 6): folding the deadline into the
+              // interrupt predicate made ProcessGroup classify an expired timeout as
+              // `Cancelled`, so the diagnostic said "step was cancelled" and stopped
+              // naming the timeout — losing exactly the cause distinction FG-033
+              // exists to preserve.
+              let r =
+                  Executor.runStep
+                      { request (tempRoot ()) "sleep 30" with
+                          TimeoutMs = Some 800L
+                          DeadlineExpired = Some(fun () -> true) }
+
+              Expect.equal r.Status Aborted "aborted"
+
+              match r.Diagnostic with
+              | Some d -> Expect.stringContains d "timeout" $"the cause is still named a timeout: {d}"
+              | None -> failtest "an abort must carry a diagnostic"
+          }
+
+          test "junit honours an expired deadline instead of returning a result" {
+              // REVIEW FIX (Codex, PR #14 round 9): DeadlineExpired was DOCUMENTED as
+              // polled by "archive, junit" and only archive read it, so a `timeout`
+              // whose last step is `junit` could scan reports and return Success or
+              // Unstable after the deadline — leaving the build non-aborted.
+              let root = tempRoot ()
+              let ws = match Workspace.createFresh root (key ()) with
+                       | Result.Ok p -> p
+                       | Result.Error e -> failwith e.Describe
+
+              File.WriteAllText(
+                  Path.Combine(ws, "report.xml"),
+                  "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
+
+              let r =
+                  Executor.runStep
+                      { Name = "junit"
+                        Script = None
+                        Workspace = ws
+                        Environment = []
+                        TimeoutMs = None
+                        Interrupt = None
+                        DeadlineExpired = Some(fun () -> true)
+                        Secrets = []
+                        OnLine = None
+                        Named = [ "testResults", "report.xml" ]
+                        Artifacts = None
+                        BuildKey = "k" }
+
+              // Asserting only `notEqual Success` was too weak — it passes for Failure,
+              // which is exactly the bug Codex found in round 10: an interrupted junit
+              // returned Failure, so a timeout selected `post { failure }` where shell
+              // and archive timeouts select `post { aborted }`. Assert the exact status.
+              Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
+
+              // Round-12 mirror: with NO matching report, an interrupt must still be an
+              // abort rather than "no test report matched the pattern" — which would
+              // send the user off debugging a glob that was fine.
+              let noMatch =
+                  Executor.runStep
+                      { Name = "junit"
+                        Script = None
+                        Workspace = ws
+                        Environment = []
+                        TimeoutMs = None
+                        Interrupt = None
+                        DeadlineExpired = Some(fun () -> true)
+                        Secrets = []
+                        OnLine = None
+                        Named = [ "testResults", "nothing-matches-*.xml" ]
+                        Artifacts = None
+                        BuildKey = "k" }
+
+              Expect.equal noMatch.Status Aborted "zero-match plus interrupt is an abort"
+
+              match noMatch.Diagnostic with
+              | Some d -> Expect.isFalse (d.Contains "no test report matched") $"not blamed on the pattern: {d}"
+              | None -> failtest "expected a diagnostic"
+
+              match r.Diagnostic with
+              | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
+              | None -> failtest "an aborted junit must carry a diagnostic"
           }
 
           test "an interrupt that never fires leaves the step alone" {

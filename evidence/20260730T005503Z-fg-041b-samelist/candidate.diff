@@ -1,0 +1,146 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index da2a9e2..966c76b 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **29/29 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **30/30 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index fd84629..d8cde0b 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -638,26 +638,34 @@ module FogellSide =
+                     // followed by a stage PATH produced `/tools:<pipeline-path>` —
+                     // prepending onto an out-of-date PATH, which can run the wrong
+                     // executable. `envForWith` already resolves last-wins, so ask it.
+-                    let currentPath =
++                    let outerPath =
+                         envForWith ctx.EnvOverlay stage
+                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+-                        |> Option.defaultWith (fun () ->
+-                            match Environment.GetEnvironmentVariable "PATH" with
+-                            | null -> ""
+-                            | p -> p)
+-
+                     let pathAdditions =
+                         bindings |> List.filter (fun (k, _) -> k.StartsWith "PATH+")
+ 
+                     let plainBindings =
+                         bindings |> List.filter (fun (k, _) -> not (k.StartsWith "PATH+"))
+ 
++                    // REVIEW FIX (Codex, PR #14 round 3): the base PATH was taken from
++                    // the ENCLOSING scope only, so `withEnv(['PATH=/custom',
++                    // 'PATH+TOOLS=/tools'])` produced `/tools:<outer-path>` and
++                    // silently discarded `/custom` — the augmentation has to build on
++                    // the plain PATH supplied by the SAME invocation when there is one.
++                    let basePath =
++                        plainBindings
++                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
++                        |> Option.orElse outerPath
++                        |> Option.defaultValue ""
++
+                     let bindings =
+                         if List.isEmpty pathAdditions then
+                             plainBindings
+                         else
+                             let prefix = pathAdditions |> List.map snd |> String.concat ":"
+-                            plainBindings @ [ "PATH", prefix + ":" + currentPath ]
++
++                            (plainBindings |> List.filter (fun (k, _) -> k <> "PATH"))
++                            @ [ "PATH", prefix + ":" + basePath ]
+ 
+                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
+ 
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index f4a85d5..0c28652 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -259,13 +259,21 @@ module Executor =
+                 |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
+ 
+             if aborted then
+-                // Say so: a partially-archived build reported as success is the
+-                // silent-loss shape this project exists to avoid.
++                // REVIEW FIX (Codex, PR #14 round 3): the previous version LOGGED the
++                // abort and then fell through to a Success result, so an explicitly
++                // incomplete artifact set left the build green and later stages ran.
++                // That is the same "partial result reported as success" shape as the
++                // parallel-sink and post-arm bugs. Detecting an interruption and
++                // discarding it from the StepResult is worse than not detecting it.
+                 request.OnLine
+                 |> Option.iter (fun f ->
+                     f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
+ 
+-            if List.isEmpty published && not allowEmpty then
++                { ok Aborted with
++                    Diagnostic =
++                        Some
++                            $"archiving aborted after {published.Length} file(s); the deadline expired and the artifact set is incomplete" }
++            elif List.isEmpty published && not allowEmpty then
+                 // Jenkins fails the build here rather than passing quietly, and
+                 // a silent empty archive is the worst outcome for a user.
+                 { ok Failure with
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index d286918..34687e7 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -366,12 +366,24 @@ module Interpreter =
+             evalExpr st env target |> ignore
+             evalExpr st env v |> ignore
+             env
++        // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
++        // returned TRUE, because `true` set the trailing value and the untaken `if`
++        // left it there. The trailing value belongs to the FINAL statement, so a
++        // statement producing nothing CLEARS it instead of inheriting what ran before.
++        //
++        // The first attempt at this edit silently did nothing — it matched
++        // `SIf(cond, thenBranch, elseBranch)` while the code says `SIf(c, t, f)` — and
++        // the build passed unchanged. Only the test caught it.
+         | SIf(c, t, f) ->
++            st.LastValue <- None
++
+             if Value.isTruthy (evalExpr st env c) then
+                 execBlock st env t
+             else
+                 execBlock st env f
+         | SForIn(v, src, body) ->
++            st.LastValue <- None
++
+             match evalExpr st env src with
+             | VList xs ->
+                 if xs.Length > st.Budget.MaxLoopIterations then
+@@ -389,6 +401,8 @@ module Interpreter =
+                 cur
+             | _ -> env
+         | SWhile(c, body) ->
++            st.LastValue <- None
++
+             let mutable cur = env
+             let mutable iterations = 0
+             let mutable running = true
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index bc64bb4..1764f42 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -241,6 +241,15 @@ let predicateValues =
+               Expect.equal (run "if (false) { 1 }").Returned None "untaken branch yields nothing"
+           }
+ 
++          test "an untaken trailing conditional yields nothing, not an earlier value" {
++              // REVIEW FIX (Codex, PR #14 round 3): `true` set the trailing value and
++              // the untaken `if` left it there, so this read as TRUE. The trailing
++              // value belongs to the FINAL statement, not to whatever ran last.
++              Expect.equal (run "true\nif (false) { false }").Returned None "untaken if clears it"
++              Expect.equal (run "true\nif (true) { false }").Returned (Some(VBool false)) "taken branch supplies it"
++              Expect.equal (run "true\nwhile (false) { 1 }").Returned None "loop that never runs clears it"
++          }
++
+           test "a closure returns its trailing expression without `return`" {
+               // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
+               // block's value unless an explicit `return` appeared.

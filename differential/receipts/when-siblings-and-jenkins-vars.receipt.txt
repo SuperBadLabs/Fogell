@@ -1,0 +1,47 @@
+# Differential receipt — when-siblings-and-jenkins-vars.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         6856ae88862bfab18bd4ca4a285f0cd59eca7270d275e2bfa23adf9a3cc9a679
+
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
+    provenance — but when the traced command contains a literal newline the trace spans
+    several lines and only the FIRST begins with '+ '. A continuation line is not
+    distinguishable from real output (the line after a trace is USUALLY real output), so
+    it is compared as output. Cases whose commands embed a newline must therefore carry
+    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+    counted as a reported reason instead, since it explains the engine, not the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+
+## Jenkins
+  result:         success
+  workspace-hash: 76de8d58814f6a2f103eb6d17d0274d5a5841eb1e7774861854e386808705f98
+  output (1 lines):
+    | Stage "One sibling fails" skipped due to when conditional
+  workspace:
+    bbb867ee7630  buildnum.txt
+    5a868bff7417  siblings.txt
+
+## Fogell
+  result:         success
+  workspace-hash: 76de8d58814f6a2f103eb6d17d0274d5a5841eb1e7774861854e386808705f98
+  output (1 lines):
+    | Stage "One sibling fails" skipped due to when conditional
+  workspace:
+    bbb867ee7630  buildnum.txt
+    5a868bff7417  siblings.txt

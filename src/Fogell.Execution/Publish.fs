@@ -18,6 +18,14 @@ type ArtifactStore =
 /// Both are *publishing* operations: they read the workspace and record
 /// something durable elsewhere. Neither mutates the workspace, which is what
 /// keeps the differential's workspace hash meaningful.
+/// FG-043. Why a test-report read did not produce counts. REVIEW FIX (Codex, PR #14
+/// round 10): an interruption was returned as a plain `Error`, so the caller mapped it
+/// to Failure and a `timeout` ending in `junit` selected `post { failure }` instead of
+/// `post { aborted }` — unlike shell and archive timeouts. The cause has to survive.
+type JUnitProblem =
+    | Interrupted
+    | Unreadable of string
+
 module Publish =
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
@@ -54,36 +62,88 @@ module Publish =
 
     /// Copy matched files into the artifact store under `buildKey`, preserving
     /// relative layout. Returns the sorted relative paths actually published.
-    let archive (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) =
+    /// `abort` is polled BETWEEN files.
+    ///
+    /// REVIEW FIX (Codex, PR #14): a `timeout` deadline only ever reached the shell
+    /// runner, so an `archiveArtifacts` starting just before the deadline copied for
+    /// as long as it liked while Jenkins would have aborted the block. Checking a
+    /// predicate per file makes the deadline real for this step too. It is still not
+    /// interruptible *within* a single large file copy, which is stated rather than
+    /// implied.
+    let archiveWithAbort (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) (abort: unit -> bool) =
         let target = Path.Combine(store.Root, buildKey)
 
-        let published =
+        let matched =
             patterns
             |> List.collect (expandGlob workspace)
             |> List.distinct
             |> List.sort
 
-        for relative in published do
-            let dest = Path.Combine(target, relative)
-            Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
-            File.Copy(Path.Combine(workspace, relative), dest, true)
+        let published = System.Collections.Generic.List<string>()
 
-        published
+        // REVIEW FIX (Codex, PR #14 round 11): with `allowEmptyArchive: true` and no
+        // matches, the copy loop never runs, so neither polling site was reached and an
+        // interrupt during the (potentially long) glob scan left the step Successful.
+        // Poll once after expansion, before the loop can decline to execute.
+        let mutable aborted = abort ()
+
+        for relative in matched do
+            if not aborted then
+                if abort () then
+                    aborted <- true
+                else
+                    let dest = Path.Combine(target, relative)
+                    Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
+                    File.Copy(Path.Combine(workspace, relative), dest, true)
+                    published.Add relative
+
+                    // REVIEW FIX (Codex, PR #14 round 9): polling only BEFORE each copy
+                    // meant an interrupt firing during the only or final copy had no
+                    // later iteration to observe it, so `aborted` stayed false and the
+                    // step returned Success — a timeout expiring while the build stays
+                    // green. A copy cannot be interrupted mid-file, but once it returns
+                    // the interruption must still be classified.
+                    if abort () then aborted <- true
+
+        List.ofSeq published, aborted
+
+    let archive store buildKey workspace patterns =
+        archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
 
     /// Parse JUnit XML totals. Reads only the attributes every producer emits;
     /// a malformed report is reported, not silently counted as zero.
-    let parseJUnit (workspace: string) (patterns: string list) : Result<int * int * int, string> =
+    /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
+    /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
+    /// only archive read it, so a `timeout` whose last step is `junit` could scan many
+    /// reports and return Success or Unstable after the deadline.
+    let parseJUnitWithAbort
+        (workspace: string)
+        (patterns: string list)
+        (abort: unit -> bool)
+        : Result<int * int * int, JUnitProblem> =
         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
 
-        if List.isEmpty files then
-            Error "no test report matched the pattern"
+        // REVIEW FIX (Codex, PR #14 round 12): the mirror of the archive zero-match
+        // case. With no matching report the scan can still have been long, and an
+        // interrupt firing during it was reported as "no test report matched" — a
+        // pattern problem the user would go and debug — instead of an abort.
+        if abort () then
+            Error Interrupted
+        elif List.isEmpty files then
+            Error(Unreadable "no test report matched the pattern")
         else
             let mutable total = 0
             let mutable failed = 0
             let mutable skipped = 0
             let mutable malformed = []
 
+            let mutable aborted = false
+
             for relative in files do
+              if not aborted then
+                if abort () then
+                    aborted <- true
+                else
                 try
                     let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
 
@@ -107,6 +167,17 @@ module Publish =
                 with ex ->
                     malformed <- $"{relative}: {ex.GetType().Name}" :: malformed
 
-            match malformed with
-            | [] -> Ok(total, failed, skipped)
-            | errs -> Error("unparsable test report(s): " + String.concat "; " errs)
+            // Same rule as the archive path: once a report has been parsed, an
+            // interruption observed afterwards still counts.
+            if not aborted && abort () then aborted <- true
+
+            match aborted, malformed with
+            | true, _ -> Error Interrupted
+            | false, [] -> Ok(total, failed, skipped)
+            | false, errs -> Error(Unreadable("unparsable test report(s): " + String.concat "; " errs))
+
+    let parseJUnit (workspace: string) (patterns: string list) =
+        match parseJUnitWithAbort workspace patterns (fun () -> false) with
+        | Ok v -> Ok v
+        | Error Interrupted -> Error "interrupted"
+        | Error(Unreadable m) -> Error m

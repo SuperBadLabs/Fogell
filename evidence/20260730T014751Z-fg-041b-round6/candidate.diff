@@ -1,0 +1,195 @@
+diff --git a/scripts/review-rounds.bb b/scripts/review-rounds.bb
+index e294c8b..a5b8748 100755
+--- a/scripts/review-rounds.bb
++++ b/scripts/review-rounds.bb
+@@ -42,7 +42,12 @@
+         reviews  (gh (str "/pulls/" pr "/reviews"))
+         ;; A "round" is a distinct comment timestamp minute — the bots post a
+         ;; whole review at once.
+-        title-of (fn [c]
++        ;; REVIEW FIX (Codex, PR #14 round 6): identity was the TRUNCATED title, so two
++        ;; findings sharing their first 72 characters collapsed and a round could
++        ;; report "0 NEW" — which this script itself calls safe to skip. Second time a
++        ;; flaw of the very class this tool prevents has been found inside it. Identity
++        ;; is the full normalised title; truncation is for display only.
++        full-title (fn [c]
+                    (-> (get c "body")
+                        (str/replace #"!\[P\d Badge\]\(https[^)]*\)" "")
+                        (str/replace #"[*#]|<sub>|</sub>" "")
+@@ -50,8 +55,8 @@
+                        (->> (remove str/blank?))
+                        first
+                        (or "")
+-                       str/trim
+-                       (as-> t (subs t 0 (min 72 (count t))))))
++                       str/trim))
++        title-of (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
+         rounds (->> comments
+                     (group-by #(subs (get % "created_at") 0 16))
+                     (sort-by key))
+@@ -66,16 +71,16 @@
+            seen #{}
+            n 1]
+       (when stamp
+-        (let [titles (map title-of cs)
++        (let [titles (map full-title cs)
+               fresh  (remove seen titles)]
+           (println (format "\nround %d  %sZ  commit %s  (%d comment(s), %d NEW)"
+                            n stamp (get shas stamp "?") (count cs) (count fresh)))
+           (doseq [c cs
+-                  :let [t (title-of c)]]
++                  :let [t (full-title c)]]
+             (println (format "  %-4s %-28s %s"
+                              (if (seen t) "seen" "NEW")
+                              (str (last (str/split (get c "path") #"/")) ":"
+                                   (or (get c "line") (get c "original_line")))
+-                             t)))
++                             (title-of c))))
+           (recur more (into seen titles) (inc n)))))
+     (println "\nEvery NEW line must be triaged before merging. A round with 0 NEW is the only safe one to skip.")))
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index dbcccf7..263ec72 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -169,14 +169,13 @@ module FogellSide =
+                             | Some ms -> Some ms
+                             | None -> Some 120_000L
+                           OnLine = Some emit
+-                          // The deadline is part of the interrupt, so it reaches every
+-                          // step type — not just the shell runner. `archiveArtifacts`
+-                          // polls it between files.
+-                          Interrupt =
+-                            match deadline, ctx.Interrupt with
+-                            | None, i -> i
+-                            | Some d, None -> Some(fun () -> runClock.ElapsedMilliseconds >= d)
+-                            | Some d, Some i -> Some(fun () -> runClock.ElapsedMilliseconds >= d || i ())
++                          // External cancellation only — a failFast sibling. The
++                          // deadline reaches the shell runner through TimeoutMs and
++                          // self-working steps through DeadlineExpired, so an expired
++                          // timeout is still reported as a timeout.
++                          Interrupt = ctx.Interrupt
++                          DeadlineExpired =
++                            deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
+                           Secrets = []
+                           Named = step.Named
+                           Artifacts = Some(ArtifactStore.under artifactRoot)
+@@ -687,11 +686,18 @@ module FogellSide =
+                     // 'PATH+TOOLS=/tools'])` produced `/tools:<outer-path>` and
+                     // silently discarded `/custom` — the augmentation has to build on
+                     // the plain PATH supplied by the SAME invocation when there is one.
++                    // REVIEW FIX (Codex, PR #14 round 6): with no PATH declared
++                    // anywhere, this defaulted to "" and produced `/tools:`, wiping the
++                    // inherited PATH so ordinary tools in /usr/bin vanished. An earlier
++                    // revision had this fallback and a later edit of mine dropped it.
+                     let basePath =
+                         plainBindings
+                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                         |> Option.orElse outerPath
+-                        |> Option.defaultValue ""
++                        |> Option.defaultWith (fun () ->
++                            match Environment.GetEnvironmentVariable "PATH" with
++                            | null -> ""
++                            | p -> p)
+ 
+                     let bindings =
+                         if List.isEmpty pathAdditions then
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 34fe650..fe3136d 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -26,7 +26,19 @@ type StepRequest =
+       Artifacts: ArtifactStore option
+       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
+       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
++      ///
++      /// EXTERNAL cancellation only. A `timeout` deadline travels in [TimeoutMs]
++      /// and, for steps that do their own work, in [DeadlineExpired].
++      ///
++      /// REVIEW FIX (Codex, PR #14 round 6): folding the deadline into this
++      /// predicate made `ProcessGroup.run` classify an expired timeout as
++      /// `Cancelled`, so the diagnostic read "step was cancelled" instead of naming
++      /// the timeout — losing the distinction FG-033 exists to preserve.
+       Interrupt: (unit -> bool) option
++      /// Polled by steps that perform their own work (archive, junit) so a
++      /// `timeout` bounds them too. Kept separate from [Interrupt] so the reported
++      /// CAUSE stays correct.
++      DeadlineExpired: (unit -> bool) option
+       /// FG-071. Secret bindings live for this step. Output is masked against
+       /// them ON THE WAY OUT — including the streaming path.
+       ///
+@@ -246,10 +258,15 @@ module Executor =
+             // difference the user can see.
+             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
+ 
++            // Either cause stops the archive; the diagnostic names neither, because
++            // this layer cannot tell a deadline from a failed failFast sibling.
+             let abort () =
+-                match request.Interrupt with
+-                | Some p -> (try p () with _ -> false)
+-                | None -> false
++                let fired (f: (unit -> bool) option) =
++                    match f with
++                    | Some p -> (try p () with _ -> false)
++                    | None -> false
++
++                fired request.Interrupt || fired request.DeadlineExpired
+ 
+             let published, aborted =
+                 Publish.archiveWithAbort store request.BuildKey request.Workspace (patterns raw) abort
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 34687e7..738aec8 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -357,7 +357,13 @@ module Interpreter =
+             let v = evalExpr st env e
+             st.LastValue <- Some v
+             Env.withVar n v env
+-        | SDef(n, None) -> Env.withVar n VNull env
++        // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
++        // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
++        // LastValue and the closure returned true. An uninitialised declaration
++        // evaluates to null.
++        | SDef(n, None) ->
++            st.LastValue <- Some VNull
++            Env.withVar n VNull env
+         | SAssign(EVar n, v) ->
+             let value = evalExpr st env v
+             st.LastValue <- Some value
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index a17a14a..16328b8 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -28,6 +28,7 @@ let private request root script =
+       Environment = []
+       TimeoutMs = None
+       Interrupt = None
++      DeadlineExpired = None
+       Secrets = []
+       OnLine = None
+       Named = []
+@@ -522,6 +523,25 @@ let externalInterrupt =
+               | None -> failtest "an abort must carry a diagnostic"
+           }
+ 
++          test "an expired timeout is reported as a TIMEOUT, not a cancellation" {
++              // REVIEW FIX (Codex, PR #14 round 6): folding the deadline into the
++              // interrupt predicate made ProcessGroup classify an expired timeout as
++              // `Cancelled`, so the diagnostic said "step was cancelled" and stopped
++              // naming the timeout — losing exactly the cause distinction FG-033
++              // exists to preserve.
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "sleep 30" with
++                          TimeoutMs = Some 800L
++                          DeadlineExpired = Some(fun () -> true) }
++
++              Expect.equal r.Status Aborted "aborted"
++
++              match r.Diagnostic with
++              | Some d -> Expect.stringContains d "timeout" $"the cause is still named a timeout: {d}"
++              | None -> failtest "an abort must carry a diagnostic"
++          }
++
+           test "an interrupt that never fires leaves the step alone" {
+               // Guard against the previous class of vacuous test: if the poll
+               // were treated as truthy, or called once at the wrong moment, the

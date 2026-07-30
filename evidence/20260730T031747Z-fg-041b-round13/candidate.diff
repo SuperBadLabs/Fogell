@@ -1,0 +1,106 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index a30f1f2..a73468d 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
++seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -44,5 +44,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-quick
+     | from-slow
++    | from-quick
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index f971c60..625756d 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **36/36 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **37/37 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index fda7bc0..9dd3ace 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -47,6 +47,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   **unset** and a shadowed one **reverts**. (Proven: `withenv-scoping`.)
+ - `timeout` bounds the **block**, not each step inside it. (Proven:
+   `timeout-block-deadline`.)
++- `env['NAME']` is **rejected** by Jenkins' script sandbox — `staticMethod
++  org.codehaus.groovy.runtime.DefaultGroovyMethods getAt` is not an approved
++  signature, and the build fails. Only `env.NAME` and `${env.NAME}` work. An
++  automated review asked for the bracketed form to be supported; the receipt says
++  supporting it would make Fogell RUN what Jenkins REFUSES, which is the same
++  divergence direction rejected for stage-level `failFast`.
+ - Approval/`input` state survives a controller restart.
+ - Agent-side output is buffered locally and recovered by offset on reconnect: a
+   46 s network partition cost **zero** log lines.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index c9abced..10f2be1 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -93,7 +93,9 @@ module FogellSide =
+                 //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
+                 //    while the braced dotted form was not matched at all.
+                 let resolveName (name: string) =
+-                    // `env.X` and `env['X']` are the same variable as a bare `X`.
++                    // `env.X` is the same variable as a bare `X`. The bracketed
++                    // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
++                    // rejects it outright (measured — see the pattern below).
+                     let bare =
+                         if name.StartsWith "env." then name.Substring 4
+                         else name
+@@ -108,7 +110,20 @@ module FogellSide =
+                 let pattern =
+                     // ${ dotted } | $dotted. An escaped dollar never reaches here: the
+                     // parser replaced it with a NUL sentinel, restored below.
+-                    @"\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
++                    //
++                    // A Codex review (PR #14 round 13) asked for the bracketed
++                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
++                    // Jenkins, that request is wrong: the sandbox REJECTS it —
++                    //   Scripts not permitted to use staticMethod
++                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
++                    // and the build fails. Supporting it would make Fogell RUN what
++                    // Jenkins REFUSES, which is the same divergence direction rejected
++                    // for stage-level failFast: a pipeline that works here would fail
++                    // there. Dotted only, and the comment on `resolveName` no longer
++                    // claims otherwise.
++                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
++                    let dotted = ident + "(?:\." + ident + ")*"
++                    @"\${(" + dotted + @")}|\$(" + dotted + ")"
+ 
+                 let expanded =
+                     Text.RegularExpressions.Regex.Replace(
+@@ -677,9 +692,17 @@ module FogellSide =
+                                     let name = entry.Substring(0, i)
+                                     let raw = entry.Substring(i + 1)
+ 
++                                    // REVIEW FIX (Codex, PR #14 round 13): `withEnv`
++                                    // extracts its entries with a regex and never goes
++                                    // through the lexer, so the NUL-sentinel handling
++                                    // that protects `"\$X"` in an `environment` block
++                                    // did not apply here — `withEnv(["X=\$BUILD_NUMBER"])`
++                                    // was expanded where Groovy keeps it literal. Apply
++                                    // the same substitution before interpolating.
+                                     let value =
+                                         if interpolates then
+-                                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
++                                            raw.Replace("\\$", "\u0000")
++                                            |> interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList)
+                                         else
+                                             raw
+ 

@@ -1,0 +1,201 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 0b2bbac..e222bf8 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **35/35 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **36/36 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -124,7 +124,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-042 | P0 | **PARTIAL** | `archiveArtifacts` with ant-glob expansion | Proven by receipt: multi-pattern archive (`out.txt, target/*.jar`) and the empty-match case, which Jenkins **fails** rather than passing quietly. Artifacts land outside the workspace so archiving cannot perturb the compared hash. Retrieval over a stable URL awaits the API — FG-042b |
+ | FG-043 | P1 | **DONE** | `junit` test-result ingest | Proven by receipt for passing and failing reports. Failing tests → **UNSTABLE**, not FAILURE (the build worked, the code did not) — matching Jenkins. A malformed report is reported, never silently counted as zero |
+ | FG-042b | P2 | TODO | Artifact retrieval at a stable URL, byte-exact | requires the controller API (FG-060) |
+-| FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments into rounds, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
++| FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments by `pull_request_review_id` — a round is a REVIEW, not a wall-clock minute, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+diff --git a/scripts/review-rounds.bb b/scripts/review-rounds.bb
+index 8f8350f..1a7c0c6 100755
+--- a/scripts/review-rounds.bb
++++ b/scripts/review-rounds.bb
+@@ -2,11 +2,18 @@
+ ;; FG-002d. List each automated review round for a PR with its reviewed commit and
+ ;; the findings NEW in that round.
+ ;;
+-;; Exists because of a specific failure: on PR #13 I filtered review comments with
+-;; a `created_at` cutoff in the wrong timezone, so every poll re-showed round 1. I
+-;; read that as the reviewer re-posting stale findings, said so, and merged over
+-;; NINE unread findings — two of which let success-only post arms run on a failed
+-;; build. Never eyeball timestamps again; group by round and diff the titles.
++;; Exists because of a specific failure: on PR #13 I filtered review comments with a
++;; `created_at` cutoff in the wrong timezone, so every poll re-showed round 1. I read
++;; that as the reviewer re-posting stale findings, said so, and merged over NINE
++;; unread findings — two of which let success-only post arms run on a failed build.
++;;
++;; This script has itself been the subject of four review findings, every one of the
++;; class it exists to prevent: it parsed only the first page of `--paginate`; it
++;; deduplicated on a truncated title; then on a title without its location; and it
++;; grouped rounds by wall-clock minute, which merges two reviews submitted in the same
++;; minute and splits one review whose comments cross a boundary — misattributing
++;; findings to the wrong commit. Rounds are now keyed by `pull_request_review_id`,
++;; which is what actually defines a round.
+ ;;
+ ;;   usage: scripts/review-rounds.bb <pr-number> [owner/repo]
+ 
+@@ -21,16 +28,8 @@
+     (System/exit 2))
+ 
+   (defn gh [path]
+-    ;; REVIEW FIX (Codex, PR #14 round 4), and it is pointed: `gh api --paginate`
+-    ;; emits ONE JSON VALUE PER PAGE, so `parse-string` on the combined stream sees
+-    ;; only the first page. This checker exists precisely to stop me under-reporting
+-    ;; review findings, and it could have reported "0 NEW" while omitting newer
+-    ;; comments — the failure it was written to prevent, reproduced inside the
+-    ;; prevention.
+-    ;;
+-    ;; Codex suggested `--slurp`; this gh (2.45.0) does not have that flag, so the
+-    ;; concatenated values are read as a SEQUENCE instead, which works on every
+-    ;; version. Verified against a PR with >1 page by lowering per_page.
++    ;; `gh api --paginate` emits ONE JSON VALUE PER PAGE, so parse the concatenated
++    ;; stream as a sequence. (`--slurp` would do it, but gh 2.45 has no such flag.)
+     (->> (shell {:out :string} "gh" "api" (str "repos/" repo path) "--paginate")
+          :out
+          java.io.StringReader.
+@@ -40,55 +39,49 @@
+ 
+   (let [comments (gh (str "/pulls/" pr "/comments"))
+         reviews  (gh (str "/pulls/" pr "/reviews"))
+-        ;; A "round" is a distinct comment timestamp minute — the bots post a
+-        ;; whole review at once.
+-        ;; REVIEW FIX (Codex, PR #14 round 6): identity was the TRUNCATED title, so two
+-        ;; findings sharing their first 72 characters collapsed and a round could
+-        ;; report "0 NEW" — which this script itself calls safe to skip. Second time a
+-        ;; flaw of the very class this tool prevents has been found inside it. Identity
+-        ;; is the full normalised title; truncation is for display only.
++        review-by-id (into {} (map (juxt #(get % "id") identity)) reviews)
++
+         full-title (fn [c]
+-                   (-> (get c "body")
+-                       (str/replace #"!\[P\d Badge\]\(https[^)]*\)" "")
+-                       (str/replace #"[*#]|<sub>|</sub>" "")
+-                       str/split-lines
+-                       (->> (remove str/blank?))
+-                       first
+-                       (or "")
+-                       str/trim))
+-        title-of (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
++                     (-> (get c "body")
++                         (str/replace #"!\[P\d Badge\]\(https[^)]*\)" "")
++                         (str/replace #"[*#]|<sub>|</sub>" "")
++                         str/split-lines
++                         (->> (remove str/blank?))
++                         first
++                         (or "")
++                         str/trim))
++        ;; Identity is path + line + full title: a truncated title collides, and so
++        ;; does a full title repeated in another file.
+         identity-of (fn [c]
+                       [(get c "path")
+                        (or (get c "line") (get c "original_line"))
+                        (full-title c)])
+-        rounds (->> comments
+-                    (group-by #(subs (get % "created_at") 0 16))
+-                    (sort-by key))
+-        shas (->> reviews
+-                  (keep (fn [r]
+-                          (when-let [m (re-find #"Reviewed commit:.*?`([0-9a-f]{7,})`" (or (get r "body") ""))]
+-                            [(subs (get r "submitted_at") 0 16) (subs (second m) 0 10)])))
+-                  (into {}))]
++        display (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
+ 
+-    (println (format "PR #%s — %d comments across %d round(s)" pr (count comments) (count rounds)))
+-    (loop [[[stamp cs] & more] rounds
+-           seen #{}
+-           n 1]
+-      (when stamp
+-        ;; REVIEW FIX (Codex, PR #14 round 8): identity was the full TITLE alone, so two
+-        ;; findings with identical titles in different files collapsed and a round could
+-        ;; still report "0 NEW" — which this script calls safe to skip. Third flaw of
+-        ;; the class this tool prevents, found inside it. Identity is path + line + title.
+-        (let [titles (map identity-of cs)
+-              fresh  (remove seen titles)]
+-          (println (format "\nround %d  %sZ  commit %s  (%d comment(s), %d NEW)"
+-                           n stamp (get shas stamp "?") (count cs) (count fresh)))
+-          (doseq [c cs
+-                  :let [t (identity-of c)]]
++        ;; A ROUND is a review, not a minute.
++        rounds (->> comments
++                    (group-by #(get % "pull_request_review_id"))
++                    (sort-by (fn [[rid cs]]
++                               [(or (get-in review-by-id [rid "submitted_at"])
++                                    (get (first cs) "created_at"))
++                                (str rid)])))]
++
++    (println (format "PR #%s — %d comments across %d review(s)" pr (count comments) (count rounds)))
++    (loop [[[rid cs] & more] rounds, seen #{}, n 1]
++      (when rid
++        (let [r      (get review-by-id rid)
++              sha    (some-> (or (get r "commit_id") "") (subs 0 (min 10 (count (or (get r "commit_id") "")))))
++              when'  (or (get r "submitted_at") (get (first cs) "created_at"))
++              who    (get-in r ["user" "login"] "?")
++              ids    (map identity-of cs)
++              fresh  (remove seen ids)]
++          (println (format "\nreview %d  %s  %s  commit %s  (%d comment(s), %d NEW)"
++                           n when' who (if (str/blank? (str sha)) "?" sha) (count cs) (count fresh)))
++          (doseq [c cs]
+             (println (format "  %-4s %-28s %s"
+-                             (if (seen t) "seen" "NEW")
++                             (if (seen (identity-of c)) "seen" "NEW")
+                              (str (last (str/split (get c "path") #"/")) ":"
+                                   (or (get c "line") (get c "original_line")))
+-                             (title-of c))))
+-          (recur more (into seen titles) (inc n)))))
+-    (println "\nEvery NEW line must be triaged before merging. A round with 0 NEW is the only safe one to skip.")))
++                             (display c))))
++          (recur more (into seen ids) (inc n)))))
++    (println "\nEvery NEW line must be triaged before merging. A review with 0 NEW is the only safe one to skip.")))
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 6cf5113..c9abced 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -714,9 +714,15 @@ module FogellSide =
+                     // anywhere, this defaulted to "" and produced `/tools:`, wiping the
+                     // inherited PATH so ordinary tools in /usr/bin vanished. An earlier
+                     // revision had this fallback and a later edit of mine dropped it.
++                    // REVIEW FIX (Codex, PR #14 round 11): tryPick took the FIRST plain
++                    // PATH in the list, but the environment is last-wins, so
++                    // ['PATH=/first', 'PATH=/second', 'PATH+TOOLS=/tools'] produced
++                    // `/tools:/first` and discarded the effective `/second`.
+                     let basePath =
+                         plainBindings
+-                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
++                        |> List.filter (fun (k, _) -> k = "PATH")
++                        |> List.tryLast
++                        |> Option.map snd
+                         |> Option.orElse outerPath
+                         |> Option.defaultWith (fun () ->
+                             match Environment.GetEnvironmentVariable "PATH" with
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 34376dc..7f8c315 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -80,7 +80,12 @@ module Publish =
+             |> List.sort
+ 
+         let published = System.Collections.Generic.List<string>()
+-        let mutable aborted = false
++
++        // REVIEW FIX (Codex, PR #14 round 11): with `allowEmptyArchive: true` and no
++        // matches, the copy loop never runs, so neither polling site was reached and an
++        // interrupt during the (potentially long) glob scan left the step Successful.
++        // Poll once after expansion, before the loop can decline to execute.
++        let mutable aborted = abort ()
+ 
+         for relative in matched do
+             if not aborted then

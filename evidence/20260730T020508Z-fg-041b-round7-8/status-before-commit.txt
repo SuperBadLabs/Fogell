@@ -1,0 +1,10 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M scripts/review-rounds.bb
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Groovy.Interpreter/Interpreter.fs
+ M src/Fogell.Pipeline.Parser/Lexeme.fs
+ M tests/Fogell.Groovy.Tests/Tests.fs
+?? differential/cases/env-escaped-and-dotted.Jenkinsfile
+?? differential/receipts/env-escaped-and-dotted.receipt.txt
+?? evidence/20260730T020508Z-fg-041b-round7-8/
