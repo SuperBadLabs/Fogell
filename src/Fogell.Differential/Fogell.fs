@@ -469,22 +469,29 @@ module FogellSide =
 
                         if t.StartsWith "'" || t.StartsWith "\"" then
                             // a String literal
-                            Choice1Of2(t.Trim('\'', '"'))
+                            Choice1Of3(t.Trim('\'', '"'))
+                        elif t = "true" || t = "false" then
+                            // a Boolean literal. REVIEW FIX (Codex, PR #16 round 4): bare
+                            // `true` fell through to the expression branch and became a
+                            // String, so `equals expected: true, actual: 'true'` compared
+                            // equal and ran a stage Jenkins skips.
+                            Choice3Of3 t
                         elif t.Length > 0 && (Char.IsDigit t[0] || (t[0] = '-' && t.Length > 1)) then
                             // a numeric literal — a different Groovy type entirely
-                            Choice2Of2 t
+                            Choice2Of3 t
                         else
                             // an expression; environment values are Strings
                             let bare = if t.StartsWith "env." then t.Substring 4 else t
 
                             match Map.tryFind bare env with
-                            | Some v -> Choice1Of2 v
-                            | None -> Choice1Of2 t
+                            | Some v -> Choice1Of3 v
+                            | None -> Choice1Of3 t
 
                     match classify expected, classify actual with
-                    | Choice1Of2 a, Choice1Of2 b -> Some(a = b)
-                    | Choice2Of2 a, Choice2Of2 b -> Some(a.Trim() = b.Trim())
-                    // A number and a string are never equal, which is the whole point.
+                    | Choice1Of3 a, Choice1Of3 b -> Some(a = b)
+                    | Choice2Of3 a, Choice2Of3 b -> Some(a.Trim() = b.Trim())
+                    | Choice3Of3 a, Choice3Of3 b -> Some(a = b)
+                    // Different Groovy types are never equal, which is the whole point.
                     | _ -> Some false
 
                 // Neutral: an evaluation-ORDER directive never decides whether a stage runs.

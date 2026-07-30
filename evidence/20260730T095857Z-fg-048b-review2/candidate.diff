@@ -1,0 +1,124 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 5631db5..08c5754 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **47/47 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **48/48 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 80cf156..84b2962 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -73,6 +73,11 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+ - `options { timeout(...) }` at pipeline or stage level **aborts** the build when it
+   expires, exactly as the `timeout` step does; the following stage does not run.
+   (Proven: `options-timeout-pipeline`, `options-timeout-stage`.)
++- The data-bound parameter for `when { changeset }` and `when { changelog }` is
++  **`pattern`**; `glob` is REJECTED with a compilation error. `triggeredBy` uses `cause`.
++  (Proven: `when-scm-pattern-keys`. Recorded because I invented `glob`/`regexp` once and
++  a wrong data-bound name inverts the gate in both directions — accepting what Jenkins
++  refuses, and refusing what real Jenkinsfiles write.)
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 90438e9..78cd10c 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -469,22 +469,29 @@ module FogellSide =
+ 
+                         if t.StartsWith "'" || t.StartsWith "\"" then
+                             // a String literal
+-                            Choice1Of2(t.Trim('\'', '"'))
++                            Choice1Of3(t.Trim('\'', '"'))
++                        elif t = "true" || t = "false" then
++                            // a Boolean literal. REVIEW FIX (Codex, PR #16 round 4): bare
++                            // `true` fell through to the expression branch and became a
++                            // String, so `equals expected: true, actual: 'true'` compared
++                            // equal and ran a stage Jenkins skips.
++                            Choice3Of3 t
+                         elif t.Length > 0 && (Char.IsDigit t[0] || (t[0] = '-' && t.Length > 1)) then
+                             // a numeric literal — a different Groovy type entirely
+-                            Choice2Of2 t
++                            Choice2Of3 t
+                         else
+                             // an expression; environment values are Strings
+                             let bare = if t.StartsWith "env." then t.Substring 4 else t
+ 
+                             match Map.tryFind bare env with
+-                            | Some v -> Choice1Of2 v
+-                            | None -> Choice1Of2 t
++                            | Some v -> Choice1Of3 v
++                            | None -> Choice1Of3 t
+ 
+                     match classify expected, classify actual with
+-                    | Choice1Of2 a, Choice1Of2 b -> Some(a = b)
+-                    | Choice2Of2 a, Choice2Of2 b -> Some(a.Trim() = b.Trim())
+-                    // A number and a string are never equal, which is the whole point.
++                    | Choice1Of3 a, Choice1Of3 b -> Some(a = b)
++                    | Choice2Of3 a, Choice2Of3 b -> Some(a.Trim() = b.Trim())
++                    | Choice3Of3 a, Choice3Of3 b -> Some(a = b)
++                    // Different Groovy types are never equal, which is the whole point.
+                     | _ -> Some false
+ 
+                 // Neutral: an evaluation-ORDER directive never decides whether a stage runs.
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index c00f858..265b6b3 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -218,7 +218,14 @@ let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
+ let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
+ 
+ /// A condition taking one value, written bare (`changeset '**/*.java'`) or named with
+-/// its ONE legal key. A different key is returned as raw text so the caller can record
++/// its ONE legal key.
++///
++/// MEASURED, after inventing the key names once already: Jenkins ACCEPTS
++/// `changeset pattern:` and `changelog pattern:` and REJECTS `changeset glob:` with a
++/// compilation error — so the invented `glob`/`regexp` keys made Fogell accept what
++/// Jenkins refuses AND fail closed on the form real Jenkinsfiles use. `triggeredBy cause:`
++/// was measured correct. Guessing a data-bound parameter name is not a small thing: it
++/// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
+ /// it unmodelled rather than mistake it for the value.
+ let private namedOrBare (key: string) : P<Result<string, string>> =
+     // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
+@@ -246,8 +253,8 @@ let rec private whenCondition: P<WhenCondition> =
+                       attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
+                       attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
+                       attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
+-                      attempt (keyword "changeset" >>. namedOrBare "glob" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
+-                      attempt (keyword "changelog" >>. namedOrBare "regexp" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
++                      attempt (keyword "changeset" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
++                      attempt (keyword "changelog" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
+                       attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
+                       attempt (
+                           keyword "branch"
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index 03ccc30..86e9909 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -183,7 +183,17 @@ let structure =
+               // conditions added in this batch.
+               let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+ 
+-              Expect.equal (one "changeset glob: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the legal key works"
++              // MEASURED: `pattern` is the data-bound name Jenkins accepts; `glob` is
++              // REJECTED with a compilation error. An earlier version of this test asserted
++              // `glob` was legal — it encoded a key I had invented, so the test agreed with
++              // the bug instead of catching it.
++              Expect.equal (one "changeset pattern: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the measured key works"
++              Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
++              Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
++
++              match one "changeset glob: '**/*.java'" with
++              | Some(WhenUnmodelled("changeset", _)) -> ()
++              | other -> failtest $"`glob` is rejected by Jenkins and must be unmodelled, got {other}"
+ 
+               match one "changeset comparator: 'REGEXP'" with
+               | Some(WhenUnmodelled("changeset", _)) -> ()

@@ -1,0 +1,8 @@
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? differential/cases/when-scm-pattern-keys.Jenkinsfile
+?? differential/receipts/when-scm-pattern-keys.receipt.txt
+?? evidence/20260730T095857Z-fg-048b-review2/

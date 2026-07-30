@@ -218,7 +218,14 @@ let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
 let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
 
 /// A condition taking one value, written bare (`changeset '**/*.java'`) or named with
-/// its ONE legal key. A different key is returned as raw text so the caller can record
+/// its ONE legal key.
+///
+/// MEASURED, after inventing the key names once already: Jenkins ACCEPTS
+/// `changeset pattern:` and `changelog pattern:` and REJECTS `changeset glob:` with a
+/// compilation error — so the invented `glob`/`regexp` keys made Fogell accept what
+/// Jenkins refuses AND fail closed on the form real Jenkinsfiles use. `triggeredBy cause:`
+/// was measured correct. Guessing a data-bound parameter name is not a small thing: it
+/// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
 /// it unmodelled rather than mistake it for the value.
 let private namedOrBare (key: string) : P<Result<string, string>> =
     // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
@@ -246,8 +253,8 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
                       attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
                       attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
-                      attempt (keyword "changeset" >>. namedOrBare "glob" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
-                      attempt (keyword "changelog" >>. namedOrBare "regexp" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
+                      attempt (keyword "changeset" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
+                      attempt (keyword "changelog" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
                       attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
                       attempt (
                           keyword "branch"

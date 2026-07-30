@@ -73,6 +73,11 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 - `options { timeout(...) }` at pipeline or stage level **aborts** the build when it
   expires, exactly as the `timeout` step does; the following stage does not run.
   (Proven: `options-timeout-pipeline`, `options-timeout-stage`.)
+- The data-bound parameter for `when { changeset }` and `when { changelog }` is
+  **`pattern`**; `glob` is REJECTED with a compilation error. `triggeredBy` uses `cause`.
+  (Proven: `when-scm-pattern-keys`. Recorded because I invented `glob`/`regexp` once and
+  a wrong data-bound name inverts the gate in both directions — accepting what Jenkins
+  refuses, and refusing what real Jenkinsfiles write.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

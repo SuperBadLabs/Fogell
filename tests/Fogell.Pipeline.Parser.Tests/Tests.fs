@@ -183,7 +183,17 @@ let structure =
               // conditions added in this batch.
               let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
 
-              Expect.equal (one "changeset glob: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the legal key works"
+              // MEASURED: `pattern` is the data-bound name Jenkins accepts; `glob` is
+              // REJECTED with a compilation error. An earlier version of this test asserted
+              // `glob` was legal — it encoded a key I had invented, so the test agreed with
+              // the bug instead of catching it.
+              Expect.equal (one "changeset pattern: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the measured key works"
+              Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
+              Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
+
+              match one "changeset glob: '**/*.java'" with
+              | Some(WhenUnmodelled("changeset", _)) -> ()
+              | other -> failtest $"`glob` is rejected by Jenkins and must be unmodelled, got {other}"
 
               match one "changeset comparator: 'REGEXP'" with
               | Some(WhenUnmodelled("changeset", _)) -> ()
