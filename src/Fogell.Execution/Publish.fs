@@ -18,6 +18,14 @@ type ArtifactStore =
 /// Both are *publishing* operations: they read the workspace and record
 /// something durable elsewhere. Neither mutates the workspace, which is what
 /// keeps the differential's workspace hash meaningful.
+/// FG-043. Why a test-report read did not produce counts. REVIEW FIX (Codex, PR #14
+/// round 10): an interruption was returned as a plain `Error`, so the caller mapped it
+/// to Failure and a `timeout` ending in `junit` selected `post { failure }` instead of
+/// `post { aborted }` — unlike shell and archive timeouts. The cause has to survive.
+type JUnitProblem =
+    | Interrupted
+    | Unreadable of string
+
 module Publish =
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
@@ -103,11 +111,15 @@ module Publish =
     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
     /// reports and return Success or Unstable after the deadline.
-    let parseJUnitWithAbort (workspace: string) (patterns: string list) (abort: unit -> bool) : Result<int * int * int, string> =
+    let parseJUnitWithAbort
+        (workspace: string)
+        (patterns: string list)
+        (abort: unit -> bool)
+        : Result<int * int * int, JUnitProblem> =
         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
 
         if List.isEmpty files then
-            Error "no test report matched the pattern"
+            Error(Unreadable "no test report matched the pattern")
         else
             let mutable total = 0
             let mutable failed = 0
@@ -149,9 +161,12 @@ module Publish =
             if not aborted && abort () then aborted <- true
 
             match aborted, malformed with
-            | true, _ -> Error "aborted: the step's deadline expired while reading test reports"
+            | true, _ -> Error Interrupted
             | false, [] -> Ok(total, failed, skipped)
-            | false, errs -> Error("unparsable test report(s): " + String.concat "; " errs)
+            | false, errs -> Error(Unreadable("unparsable test report(s): " + String.concat "; " errs))
 
     let parseJUnit (workspace: string) (patterns: string list) =
-        parseJUnitWithAbort workspace patterns (fun () -> false)
+        match parseJUnitWithAbort workspace patterns (fun () -> false) with
+        | Ok v -> Ok v
+        | Error Interrupted -> Error "interrupted"
+        | Error(Unreadable m) -> Error m

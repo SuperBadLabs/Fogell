@@ -1,0 +1,4 @@
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Execution/Publish.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+?? evidence/20260730T023436Z-fg-043-junit-abort/

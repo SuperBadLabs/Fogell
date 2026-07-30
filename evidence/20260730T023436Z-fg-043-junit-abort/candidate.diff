@@ -1,0 +1,90 @@
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 403f861..abea6d8 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -318,7 +318,14 @@ module Executor =
+                 fired request.Interrupt || fired request.DeadlineExpired
+ 
+             match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
+-            | Result.Error e -> { ok Failure with Diagnostic = Some e }
++            // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
++            // `timeout` ending in `junit` selected `post { failure }` where a shell or
++            // archive timeout selects `post { aborted }`. The cause is preserved and
++            // mapped to the matching result.
++            | Result.Error Interrupted ->
++                { ok Aborted with
++                    Diagnostic = Some "junit aborted: the step was interrupted while reading test reports" }
++            | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
+             | Result.Ok(total, failed, skipped) ->
+                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
+                 // the build worked, the code did not.
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 5766c64..34376dc 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -18,6 +18,14 @@ type ArtifactStore =
+ /// Both are *publishing* operations: they read the workspace and record
+ /// something durable elsewhere. Neither mutates the workspace, which is what
+ /// keeps the differential's workspace hash meaningful.
++/// FG-043. Why a test-report read did not produce counts. REVIEW FIX (Codex, PR #14
++/// round 10): an interruption was returned as a plain `Error`, so the caller mapped it
++/// to Failure and a `timeout` ending in `junit` selected `post { failure }` instead of
++/// `post { aborted }` — unlike shell and archive timeouts. The cause has to survive.
++type JUnitProblem =
++    | Interrupted
++    | Unreadable of string
++
+ module Publish =
+ 
+     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
+@@ -103,11 +111,15 @@ module Publish =
+     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
+     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
+     /// reports and return Success or Unstable after the deadline.
+-    let parseJUnitWithAbort (workspace: string) (patterns: string list) (abort: unit -> bool) : Result<int * int * int, string> =
++    let parseJUnitWithAbort
++        (workspace: string)
++        (patterns: string list)
++        (abort: unit -> bool)
++        : Result<int * int * int, JUnitProblem> =
+         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
+ 
+         if List.isEmpty files then
+-            Error "no test report matched the pattern"
++            Error(Unreadable "no test report matched the pattern")
+         else
+             let mutable total = 0
+             let mutable failed = 0
+@@ -149,9 +161,12 @@ module Publish =
+             if not aborted && abort () then aborted <- true
+ 
+             match aborted, malformed with
+-            | true, _ -> Error "aborted: the step's deadline expired while reading test reports"
++            | true, _ -> Error Interrupted
+             | false, [] -> Ok(total, failed, skipped)
+-            | false, errs -> Error("unparsable test report(s): " + String.concat "; " errs)
++            | false, errs -> Error(Unreadable("unparsable test report(s): " + String.concat "; " errs))
+ 
+     let parseJUnit (workspace: string) (patterns: string list) =
+-        parseJUnitWithAbort workspace patterns (fun () -> false)
++        match parseJUnitWithAbort workspace patterns (fun () -> false) with
++        | Ok v -> Ok v
++        | Error Interrupted -> Error "interrupted"
++        | Error(Unreadable m) -> Error m
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 2f1b2c9..8f00d77 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -571,7 +571,11 @@ let externalInterrupt =
+                         Artifacts = None
+                         BuildKey = "k" }
+ 
+-              Expect.notEqual r.Status Success "an expired deadline must not yield a result"
++              // Asserting only `notEqual Success` was too weak — it passes for Failure,
++              // which is exactly the bug Codex found in round 10: an interrupted junit
++              // returned Failure, so a timeout selected `post { failure }` where shell
++              // and archive timeouts select `post { aborted }`. Assert the exact status.
++              Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
+ 
+               match r.Diagnostic with
+               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"

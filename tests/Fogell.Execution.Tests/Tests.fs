@@ -571,7 +571,11 @@ let externalInterrupt =
                         Artifacts = None
                         BuildKey = "k" }
 
-              Expect.notEqual r.Status Success "an expired deadline must not yield a result"
+              // Asserting only `notEqual Success` was too weak — it passes for Failure,
+              // which is exactly the bug Codex found in round 10: an interrupted junit
+              // returned Failure, so a timeout selected `post { failure }` where shell
+              // and archive timeouts select `post { aborted }`. Assert the exact status.
+              Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
 
               match r.Diagnostic with
               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"

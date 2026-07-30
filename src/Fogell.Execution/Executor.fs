@@ -318,7 +318,14 @@ module Executor =
                 fired request.Interrupt || fired request.DeadlineExpired
 
             match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
-            | Result.Error e -> { ok Failure with Diagnostic = Some e }
+            // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
+            // `timeout` ending in `junit` selected `post { failure }` where a shell or
+            // archive timeout selects `post { aborted }`. The cause is preserved and
+            // mapped to the matching result.
+            | Result.Error Interrupted ->
+                { ok Aborted with
+                    Diagnostic = Some "junit aborted: the step was interrupted while reading test reports" }
+            | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.
