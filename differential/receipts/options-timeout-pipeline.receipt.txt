@@ -1,7 +1,7 @@
 # Differential receipt — options-timeout-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         31984642d05e4edec2cb6f2f4e007dba4ab74793aecab9204930d9f476772e54
+seal:         ef765c9ea6572be0b176f9d18991639432bacce8af106560eeca1701bf26914d
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -35,13 +35,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
-  output (0 lines):
+  output (1 lines):
+    | Stage "after" skipped due to earlier failure(s)
   workspace:
     eff64b343dcb  started.txt
 
 ## Fogell
   result:         aborted
   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
-  output (0 lines):
+  output (1 lines):
+    | Stage "after" skipped due to earlier failure(s)
   workspace:
     eff64b343dcb  started.txt

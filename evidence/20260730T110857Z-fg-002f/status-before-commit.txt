@@ -1,0 +1,10 @@
+ M differential/receipts/options-timeout-pipeline.receipt.txt
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M differential/receipts/parallel-failfast.receipt.txt
+ M differential/receipts/parallel-post-selection.receipt.txt
+ M differential/receipts/parallel-siblings-finish.receipt.txt
+ M differential/receipts/post-failure-stops-pipeline.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+?? evidence/20260730T110857Z-fg-002f/

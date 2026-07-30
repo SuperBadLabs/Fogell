@@ -145,7 +145,6 @@ module Trace =
     /// their wording is not.
     let isDiagnosticLine (t: string) =
         t.StartsWith "ERROR:"
-        || t.StartsWith "FATAL:"
         // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
         // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
         // nested steps due to timeout / Sending interrupt signal to process /
@@ -158,7 +157,6 @@ module Trace =
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
-        || t.StartsWith "Failed in branch "
         // FG-044. Jenkins narrates credential masking as one line naming every bound
         // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
         // that join word character for character would over-fit to plugin wording, the
@@ -194,21 +192,12 @@ module Trace =
         // they existed only for a case that is no longer in the suite, so the machinery
         // was pure risk. The rule this file needs is that a pattern belongs here only if a
         // user's own output cannot plausibly match it.
-        // Control-flow narration emitted by BOTH engines when a stage does not run
-        // because an earlier one failed. The fact itself is carried by the workspace —
-        // the stage produced nothing — so the sentence is not compared.
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^Stage "".*"" skipped due to earlier failure")
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
-        || t.StartsWith "Aborted by "
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
         || t.Contains "workflow.actions.ErrorAction$ErrorId"
         || t.Contains "doesn\u2019t match anything"
         || t.Contains "doesn't match anything"
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ of \d+ test\(s\) failed$")
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
@@ -265,9 +254,24 @@ module Trace =
         // immediately, whether or not it was used.
         let mutable interruptJustNarrated = false
 
+        // A Java stack frame is only narration when it FOLLOWS an exception line. Matched
+        // on its own, `at something(else)` is output a build can legitimately produce —
+        // the user-reproducible shape that has now caused this class of defect three
+        // times. Fogell emits no stack traces, so the window only ever opens on Jenkins.
+        let mutable inStackTrace = false
+
         [ for line in lines do
             let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
-            let suppress = raw = "Terminated" && interruptJustNarrated
+            // Any `at …(…)` line, including Jenkins' `at PluginClassLoader for …` form.
+            // A narrower shape closed the window on the first PluginClassLoader frame and
+            // let every frame after it through.
+            let isFrame = raw.StartsWith "at " && raw.Contains "("
+
+            if raw.Contains "Exception" && raw.Contains "." then inStackTrace <- true
+            elif not isFrame then inStackTrace <- false
+
+            let suppress =
+                (raw = "Terminated" && interruptJustNarrated) || (isFrame && inStackTrace)
 
             interruptJustNarrated <-
                 raw.StartsWith "Sending interrupt signal to process"

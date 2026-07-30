@@ -467,9 +467,12 @@ module FogellSide =
                     let classify (raw: string) =
                         let t = raw.Trim()
 
-                        if t.StartsWith "'" || t.StartsWith "\"" then
-                            // a String literal
-                            Choice1Of3(t.Trim('\'', '"'))
+                        if t.Length >= 2 && (t.StartsWith "'" || t.StartsWith "\"") && t.EndsWith(string t[0]) then
+                            // A String literal. Remove ONLY the one reconstructed delimiter:
+                            // `Trim('\'', '"')` stripped every quote at both ends, so
+                            // `equals expected: '"foo', actual: 'foo'` compared "foo" with
+                            // foo as equal and ran a stage Jenkins skips.
+                            Choice1Of3(t.Substring(1, t.Length - 2))
                         elif t = "true" || t = "false" then
                             // a Boolean literal. REVIEW FIX (Codex, PR #16 round 4): bare
                             // `true` fell through to the expression branch and became a
@@ -1390,6 +1393,12 @@ module FogellSide =
                                     runStage branchCtx cwd deadline branch
 
                                     if branchCtx.Failed.Value then
+                                        // Jenkins names the branch that failed. EMITTING it
+                                        // is better than suppressing Jenkins' copy: an
+                                        // exclusion that a user's own output can match is a
+                                        // false-PROVEN path, and this sentence is real
+                                        // information a reader wants.
+                                        emit $"Failed in branch {branch.Name}"
                                         siblingFailed.Cancel()))
 
                         // Every branch is awaited even under failFast: an

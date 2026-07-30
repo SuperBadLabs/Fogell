@@ -1,0 +1,312 @@
+diff --git a/differential/receipts/options-timeout-pipeline.receipt.txt b/differential/receipts/options-timeout-pipeline.receipt.txt
+index 3297ac3..6bc9be6 100644
+--- a/differential/receipts/options-timeout-pipeline.receipt.txt
++++ b/differential/receipts/options-timeout-pipeline.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — options-timeout-pipeline.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         31984642d05e4edec2cb6f2f4e007dba4ab74793aecab9204930d9f476772e54
++seal:         ef765c9ea6572be0b176f9d18991639432bacce8af106560eeca1701bf26914d
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -35,13 +35,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         aborted
+   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
+-  output (0 lines):
++  output (1 lines):
++    | Stage "after" skipped due to earlier failure(s)
+   workspace:
+     eff64b343dcb  started.txt
+ 
+ ## Fogell
+   result:         aborted
+   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
+-  output (0 lines):
++  output (1 lines):
++    | Stage "after" skipped due to earlier failure(s)
+   workspace:
+     eff64b343dcb  started.txt
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index 7a6ecda..e31a280 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
++seal:         8fc38766a04ac4ec02727515cec433380259e76e0e93669e45b5b1f9ef67192a
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -40,13 +40,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-  output (2 lines):
++  output (4 lines):
+     | from-quick
+     | from-slow
++    | Failed in branch quick-fail
++    | Failed in branch interrupted
+ 
+ ## Fogell
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-  output (2 lines):
++  output (4 lines):
+     | from-quick
+     | from-slow
++    | Failed in branch quick-fail
++    | Failed in branch interrupted
+diff --git a/differential/receipts/parallel-failfast.receipt.txt b/differential/receipts/parallel-failfast.receipt.txt
+index 5a06764..53b91b1 100644
+--- a/differential/receipts/parallel-failfast.receipt.txt
++++ b/differential/receipts/parallel-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         c2b6a64342c804e12f02d80f415a9740caca9c419782673e1a755810b0c04891
++seal:         15696b0ffbcc4a463d0c922c3d213289a7a1911d5a5e879a3e3db5dece357772
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -40,7 +40,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
+-  output (0 lines):
++  output (2 lines):
++    | Failed in branch quick-fail
++    | Failed in branch interrupted
+   workspace:
+     bfbd1f4027c3  failed.txt
+     eff64b343dcb  started.txt
+@@ -48,7 +50,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Fogell
+   result:         failure
+   workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
+-  output (0 lines):
++  output (2 lines):
++    | Failed in branch quick-fail
++    | Failed in branch interrupted
+   workspace:
+     bfbd1f4027c3  failed.txt
+     eff64b343dcb  started.txt
+diff --git a/differential/receipts/parallel-post-selection.receipt.txt b/differential/receipts/parallel-post-selection.receipt.txt
+index edefeb1..06c75c2 100644
+--- a/differential/receipts/parallel-post-selection.receipt.txt
++++ b/differential/receipts/parallel-post-selection.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-post-selection.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         67e66c733db5a6e1d1cd6804de635f7059ad8e4ab627065905b76a81c290f69c
++seal:         bf0c0da7f2cf11ccfced1cfc9ba918ae06fb4f541a014e6da8020c7bc7f37461
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -40,7 +40,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+-  output (0 lines):
++  output (1 lines):
++    | Failed in branch fails
+   workspace:
+     8ecc5f94c57b  fine.txt
+     844cd17a64df  right-arm.txt
+@@ -48,7 +49,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Fogell
+   result:         failure
+   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+-  output (0 lines):
++  output (1 lines):
++    | Failed in branch fails
+   workspace:
+     8ecc5f94c57b  fine.txt
+     844cd17a64df  right-arm.txt
+diff --git a/differential/receipts/parallel-siblings-finish.receipt.txt b/differential/receipts/parallel-siblings-finish.receipt.txt
+index b09e2e8..cf7a2cf 100644
+--- a/differential/receipts/parallel-siblings-finish.receipt.txt
++++ b/differential/receipts/parallel-siblings-finish.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-siblings-finish.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         23c3fbadff3bfe2467df5c3c4e24bb7bfbdb08f495fc75d44a1638e52a9a267c
++seal:         e1b6f1d3c48ab72dd119249e8e9e0979bc84416b9482d52fa0f98e3325701c36
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -40,7 +40,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+-  output (0 lines):
++  output (1 lines):
++    | Failed in branch quick-fail
+   workspace:
+     bfbd1f4027c3  failed.txt
+     d117fa006ba9  slow.txt
+@@ -48,7 +49,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Fogell
+   result:         failure
+   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+-  output (0 lines):
++  output (1 lines):
++    | Failed in branch quick-fail
+   workspace:
+     bfbd1f4027c3  failed.txt
+     d117fa006ba9  slow.txt
+diff --git a/differential/receipts/post-failure-stops-pipeline.receipt.txt b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+index 62c2798..23ea0db 100644
+--- a/differential/receipts/post-failure-stops-pipeline.receipt.txt
++++ b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         8b618f86a53f31966c9c3fa3ccfc8ba60f6b1b3db5d1a7032ad1f5eb1730229f
++seal:         47c8bfea2497bed7436747385b794f91b16602f6eb200dd9351b201420f0f87a
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -35,7 +35,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+-  output (0 lines):
++  output (1 lines):
++    | Stage "Must not run" skipped due to earlier failure(s)
+   workspace:
+     9e2ec912af5d  body.txt
+     d526687a0564  post.txt
+@@ -43,7 +44,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Fogell
+   result:         failure
+   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+-  output (0 lines):
++  output (1 lines):
++    | Stage "Must not run" skipped due to earlier failure(s)
+   workspace:
+     9e2ec912af5d  body.txt
+     d526687a0564  post.txt
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 4906f48..bf31474 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -130,7 +130,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002e | P1 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. **Raised to P1 and widened after PR #15**: the same pattern recurred in brand-new code four more times (`stash` copy loop, `stash` predicate missing the deadline, `unstash` restore, `deleteDir` recursive delete), and a sibling pattern appeared alongside it — an interrupted step reporting `Aborted` when a failFast *sibling* was the cause, which is the collateral-outranks-cause bug already fixed twice elsewhere. Acceptance: enumerate every return point in `Publish`, `Executor` and the walker; assert each either polls or provably cannot be reached after an interrupt; and assert every abort classifies its CAUSE (deadline → aborted, sibling → failure) rather than assuming one |
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) `echo` bypasses BOTH credential interpolation and masking: `echo "$TOKEN"` emits the literal `$TOKEN` here where Jenkins emits `****`, and an echo message already containing the value is never masked — the masker is wired to the shell path only. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+-| FG-002f | P1 | TODO | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile report by prefix — and the third was added *while fixing* the second. The shape is always identical: a pattern a user's own output can match gets suppressed from the compared output AND counted as a reported failure reason, so one engine failing silently can still read PROVEN. Remaining moderate-risk patterns to adjudicate: `FATAL:`, `Failed in branch `, `Aborted by `, `^at …(…)$`, `No artifacts found`, `\d+ of \d+ test(s) failed`. Acceptance: each surviving pattern is either provably not user-reproducible, or gated on engine context (as `Terminated` now is), with a test that emits the look-alike from a build and asserts it survives |
++| FG-002f | P1 | **DONE** | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile report by prefix — and the third was added *while fixing* the second. The shape is always identical: a pattern a user's own output can match gets suppressed from the compared output AND counted as a reported failure reason, so one engine failing silently can still read PROVEN. Remaining moderate-risk patterns to adjudicate: `FATAL:`, `Failed in branch `, `Aborted by `, `^at …(…)$`, `No artifacts found`, `\d+ of \d+ test(s) failed`. **Discharged empirically, by deleting each candidate and re-running all 49 receipts.** Result: **six of the suppressions were DEAD** — `FATAL:`, `No artifacts found`, `N of M test(s) failed`, `Aborted by `, the compile-report trio, and the skipped-stage regex — every one a latent false-PROVEN path protecting nothing. Two were load-bearing and are now handled without a user-reproducible match: Fogell **emits** `Failed in branch <name>` as Jenkins does (so neither copy needs suppressing), and Java stack frames are **context-gated** to the window opened by an exception line. The finding underneath: my instinct on a divergence was to add an exclusion rather than check whether the engines already agree — six times out of eight, they did |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. **Coverage is now complete against Jenkins' own enumeration.** Rejecting a nested `beforeAgent` made Jenkins print the authoritative list — *"Valid conditionals are: allOf, anyOf, branch, buildingTag, changeRequest, changelog, changeset, environment, equals, expression, isRestartedRun, not, tag, triggeredBy"* — all **fourteen** of which are modelled. MEASURED on a plain job: all six context-dependent ones evaluate **false**, their stages are skipped, and the build **succeeds** — so modelling them turns a refusal into a working build. `when-context-conditions` receipt PROVEN tier-1. Three further parser gaps were found while measuring the result: `anyOf { a; b }` with **semicolon** separators degraded the whole condition to unmodelled (6 corpus occurrences); `beforeAgent true` is an evaluation-ORDER option, not a condition, and being unmodelled it failed the whole `when` closed; and one missing `_` in the operand charset left `equals actual: _deploy_to_nexus` unmodelled. **Declarative corpus files whose `when` conditions are now ALL modelled: 28 of 28, up from 24** — none fail closed. BOUNDARY: only the context-ABSENT case is receipt-proven; a real multibranch build with a `CHANGE_ID`, or one with an actual changelog, is not — FG-048c |
+ | FG-048c | P2 | TODO | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index c3ec5c3..8a6ca93 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -467,9 +467,12 @@ module FogellSide =
+                     let classify (raw: string) =
+                         let t = raw.Trim()
+ 
+-                        if t.StartsWith "'" || t.StartsWith "\"" then
+-                            // a String literal
+-                            Choice1Of3(t.Trim('\'', '"'))
++                        if t.Length >= 2 && (t.StartsWith "'" || t.StartsWith "\"") && t.EndsWith(string t[0]) then
++                            // A String literal. Remove ONLY the one reconstructed delimiter:
++                            // `Trim('\'', '"')` stripped every quote at both ends, so
++                            // `equals expected: '"foo', actual: 'foo'` compared "foo" with
++                            // foo as equal and ran a stage Jenkins skips.
++                            Choice1Of3(t.Substring(1, t.Length - 2))
+                         elif t = "true" || t = "false" then
+                             // a Boolean literal. REVIEW FIX (Codex, PR #16 round 4): bare
+                             // `true` fell through to the expression branch and became a
+@@ -1390,6 +1393,12 @@ module FogellSide =
+                                     runStage branchCtx cwd deadline branch
+ 
+                                     if branchCtx.Failed.Value then
++                                        // Jenkins names the branch that failed. EMITTING it
++                                        // is better than suppressing Jenkins' copy: an
++                                        // exclusion that a user's own output can match is a
++                                        // false-PROVEN path, and this sentence is real
++                                        // information a reader wants.
++                                        emit $"Failed in branch {branch.Name}"
+                                         siblingFailed.Cancel()))
+ 
+                         // Every branch is awaited even under failFast: an
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 2e39a4c..3e3014f 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -145,7 +145,6 @@ module Trace =
+     /// their wording is not.
+     let isDiagnosticLine (t: string) =
+         t.StartsWith "ERROR:"
+-        || t.StartsWith "FATAL:"
+         // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
+         // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
+         // nested steps due to timeout / Sending interrupt signal to process /
+@@ -158,7 +157,6 @@ module Trace =
+         || t.StartsWith "Timeout has been exceeded"
+         || t.StartsWith "Cancelling nested steps"
+         || t.StartsWith "Sending interrupt signal to process"
+-        || t.StartsWith "Failed in branch "
+         // FG-044. Jenkins narrates credential masking as one line naming every bound
+         // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
+         // that join word character for character would over-fit to plugin wording, the
+@@ -194,21 +192,12 @@ module Trace =
+         // they existed only for a case that is no longer in the suite, so the machinery
+         // was pure risk. The rule this file needs is that a pattern belongs here only if a
+         // user's own output cannot plausibly match it.
+-        // Control-flow narration emitted by BOTH engines when a stage does not run
+-        // because an earlier one failed. The fact itself is carried by the workspace —
+-        // the stage produced nothing — so the sentence is not compared.
+-        || Text.RegularExpressions.Regex.IsMatch(t, @"^Stage "".*"" skipped due to earlier failure")
+-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
+-        || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
+-        || t.StartsWith "Aborted by "
+         // The timeout plugin appends an opaque correlation id. It carries no
+         // semantics and its value changes every run, so it could never be
+         // compared even in principle.
+         || t.Contains "workflow.actions.ErrorAction$ErrorId"
+         || t.Contains "doesn\u2019t match anything"
+         || t.Contains "doesn't match anything"
+-        || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
+-        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ of \d+ test\(s\) failed$")
+ 
+     /// Normalise one output line so engine-specific decoration does not count as
+     /// a semantic difference. Every rule here is a measured difference between
+@@ -265,9 +254,24 @@ module Trace =
+         // immediately, whether or not it was used.
+         let mutable interruptJustNarrated = false
+ 
++        // A Java stack frame is only narration when it FOLLOWS an exception line. Matched
++        // on its own, `at something(else)` is output a build can legitimately produce —
++        // the user-reproducible shape that has now caused this class of defect three
++        // times. Fogell emits no stack traces, so the window only ever opens on Jenkins.
++        let mutable inStackTrace = false
++
+         [ for line in lines do
+             let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+-            let suppress = raw = "Terminated" && interruptJustNarrated
++            // Any `at …(…)` line, including Jenkins' `at PluginClassLoader for …` form.
++            // A narrower shape closed the window on the first PluginClassLoader frame and
++            // let every frame after it through.
++            let isFrame = raw.StartsWith "at " && raw.Contains "("
++
++            if raw.Contains "Exception" && raw.Contains "." then inStackTrace <- true
++            elif not isFrame then inStackTrace <- false
++
++            let suppress =
++                (raw = "Terminated" && interruptJustNarrated) || (isFrame && inStackTrace)
+ 
+             interruptJustNarrated <-
+                 raw.StartsWith "Sending interrupt signal to process"
