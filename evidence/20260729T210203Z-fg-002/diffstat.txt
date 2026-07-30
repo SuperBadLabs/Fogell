@@ -1,0 +1,20 @@
+ Fogell.slnx                                        |   2 +
+ differential/cases/echo-only.Jenkinsfile           |  11 ++
+ differential/cases/env-scoping.Jenkinsfile         |  22 +++
+ differential/cases/nonzero-exit.Jenkinsfile        |  11 ++
+ differential/cases/shell-and-file.Jenkinsfile      |  11 ++
+ differential/receipts/echo-only.receipt.txt        |  32 ++++
+ differential/receipts/env-scoping.receipt.txt      |  32 ++++
+ differential/receipts/nonzero-exit.receipt.txt     |  32 ++++
+ differential/receipts/shell-and-file.receipt.txt   |  32 ++++
+ docs/EXECUTION_BOARD.md                            |   6 +-
+ src/Fogell.Differential/Compare.fs                 | 189 +++++++++++++++++++++
+ src/Fogell.Differential/Fogell.Differential.fsproj |  13 ++
+ src/Fogell.Differential/Fogell.fs                  |  97 +++++++++++
+ src/Fogell.Differential/Jenkins.fs                 | 112 ++++++++++++
+ src/Fogell.Differential/Trace.fs                   | 124 ++++++++++++++
+ src/Fogell.Execution/Executor.fs                   |  19 ++-
+ tests/Fogell.Execution.Tests/Tests.fs              |  29 +++-
+ .../Fogell.Differential.Cli.fsproj                 |  10 ++
+ tools/Fogell.Differential.Cli/Program.fs           |  91 ++++++++++
+ 19 files changed, 857 insertions(+), 18 deletions(-)

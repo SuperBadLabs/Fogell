@@ -5,6 +5,7 @@
     <Project Path="src/Fogell.Groovy/Fogell.Groovy.fsproj" />
     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
+    <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
     <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
@@ -12,6 +13,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
+    <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />

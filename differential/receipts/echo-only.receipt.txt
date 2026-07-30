@@ -1,0 +1,32 @@
+# Differential receipt — echo-only.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         d53429af41ed4dd8a21d77c7d7e076cd6532d0fdf5651a44275c9abda804f1f8
+
+VERDICT: PROVEN-PARTIAL — same result, same output.
+  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
+  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
+  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
+
+## Jenkins
+  result:         success
+  workspace-hash: not-collected
+  output (2 lines):
+    | hello from fogell
+    | second line
+
+## Fogell
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (2 lines):
+    | hello from fogell
+    | second line

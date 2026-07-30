@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Trace.fs" />
+    <Compile Include="Jenkins.fs" />
+    <Compile Include="Fogell.fs" />
+    <Compile Include="Compare.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+    <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
+  </ItemGroup>
+</Project>

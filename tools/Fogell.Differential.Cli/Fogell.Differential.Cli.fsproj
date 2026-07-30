@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><IsPackable>false</IsPackable>
+    <AssemblyName>fogell-diff</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="Program.fs" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fogell.Differential/Fogell.Differential.fsproj" />
+  </ItemGroup>
+</Project>
