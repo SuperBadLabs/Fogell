@@ -48,7 +48,9 @@ type RunRequest =
     { Command: string
       WorkingDirectory: string
       Environment: (string * string) list
-      TimeoutMs: int option
+      /// Milliseconds. int64 because a Jenkins `timeout(time: 30, unit: 'DAYS')`
+      /// exceeds Int32.MaxValue ms and must not be silently shortened.
+      TimeoutMs: int64 option
       /// How long a step may take to honour SIGTERM before it is killed.
       GraceMs: int
       /// Called with each output line as it arrives, so a running build streams
@@ -224,7 +226,7 @@ module ProcessGroup =
             | Some p -> (try p () with _ -> false)
             | None -> false
 
-        let waitForProcessExit (budgetMs: int option) =
+        let waitForProcessExit (budgetMs: int64 option) =
             let deadline =
                 budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
 
@@ -232,7 +234,7 @@ module ProcessGroup =
 
             let expired () =
                 match deadline with
-                | Some(clock, ms) -> clock.ElapsedMilliseconds >= int64 ms
+                | Some(clock, ms) -> clock.ElapsedMilliseconds >= ms
                 | None -> false
 
             while not exited && not (expired ()) && not (interrupted ()) do

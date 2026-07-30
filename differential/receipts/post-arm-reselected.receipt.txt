@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — post-arm-reselected.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+seal:         aa3f631b343ca66b519af4b7ab877224b3ea9eefe7a03428a8a6dfdfb33bcfd3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -27,22 +27,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-quick
-    | from-slow
+  workspace-hash: 44323591937507613a2a9970912571c3963206a8ae883f38fdf1e2d7be157d82
+  output (0 lines):
+  workspace:
+    9e2ec912af5d  body.txt
+    844cd17a64df  right-arm.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-slow
-    | from-quick
+  workspace-hash: 44323591937507613a2a9970912571c3963206a8ae883f38fdf1e2d7be157d82
+  output (0 lines):
+  workspace:
+    9e2ec912af5d  body.txt
+    844cd17a64df  right-arm.txt

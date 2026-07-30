@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — when-siblings-and-jenkins-vars.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+seal:         6856ae88862bfab18bd4ca4a285f0cd59eca7270d275e2bfa23adf9a3cc9a679
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -27,22 +27,21 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-quick
-    | from-slow
+  result:         success
+  workspace-hash: 76de8d58814f6a2f103eb6d17d0274d5a5841eb1e7774861854e386808705f98
+  output (1 lines):
+    | Stage "One sibling fails" skipped due to when conditional
+  workspace:
+    bbb867ee7630  buildnum.txt
+    5a868bff7417  siblings.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-slow
-    | from-quick
+  result:         success
+  workspace-hash: 76de8d58814f6a2f103eb6d17d0274d5a5841eb1e7774861854e386808705f98
+  output (1 lines):
+    | Stage "One sibling fails" skipped due to when conditional
+  workspace:
+    bbb867ee7630  buildnum.txt
+    5a868bff7417  siblings.txt

@@ -57,8 +57,24 @@ module FogellSide =
 
             /// Environment visible to a step: pipeline scope, overridden by stage
             /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
+            /// Variables Jenkins provides to every build. REVIEW FIX (Codex, PR #13
+            /// round 4): only pipeline- and stage-declared variables were visible, so
+            /// `when { environment name: 'BUILD_NUMBER', value: '1' }` and
+            /// `expression { env.BUILD_NUMBER == '1' }` saw them as ABSENT and skipped
+            /// a stage Jenkins runs. Declarative overrides still win, as they do on
+            /// Jenkins — hence these go first.
+            let jenkinsProvided =
+                [ "BUILD_NUMBER", "1"
+                  "BUILD_ID", "1"
+                  "BUILD_DISPLAY_NAME", "#1"
+                  "JOB_NAME", jobName
+                  "JOB_BASE_NAME", jobName
+                  "WORKSPACE", Path.Combine(workspaceRoot, jobName)
+                  "EXECUTOR_NUMBER", "0"
+                  "NODE_NAME", "built-in" ]
+
             let envForWith (overlay: (string * string) list) (stage: Stage) =
-                (pipeline.Environment @ stage.Environment @ overlay)
+                (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
                 |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
                 |> Map.toList
 
@@ -80,11 +96,13 @@ module FogellSide =
             /// Int32.MaxValue — wrapped negative and was floored to 1 ms, aborting
             /// instantly. Fixing "DAYS silently means minutes" had introduced
             /// "DAYS means one millisecond". Clamped at the executor's ceiling.
+            /// REVIEW FIX (Codex, PR #13 round 2): clamping at Int32.MaxValue avoided
+            /// the earlier integer wrap but still SHORTENED the requested deadline —
+            /// a 30-day budget became 24.8 days, aborting work Jenkins still allows.
+            /// The executor's budget is int64 now, so the deadline is represented
+            /// exactly and nothing is silently rewritten.
             let remainingMs (deadline: int64 option) =
-                deadline
-                |> Option.map (fun d ->
-                    let left = d - runClock.ElapsedMilliseconds
-                    int (max 1L (min left (int64 Int32.MaxValue))))
+                deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
                 let script =
@@ -103,7 +121,7 @@ module FogellSide =
                           TimeoutMs =
                             match remainingMs deadline with
                             | Some ms -> Some ms
-                            | None -> Some 120_000
+                            | None -> Some 120_000L
                           OnLine = Some emit
                           Interrupt = ctx.Interrupt
                           Secrets = []
@@ -277,15 +295,25 @@ module FogellSide =
 
                 | WhenNot inner -> evalWhen stage inner |> Option.map not
 
+                // REVIEW FIX (Codex, PR #13 round 2): an unevaluable operand used to
+                // dominate, so `allOf { <false>, triggeredBy(...) }` failed the build
+                // even though the false operand ALREADY decides that Jenkins skips.
+                // Three-valued short-circuiting: a decisive known operand wins, and
+                // only a genuinely undetermined result is reported unevaluable. This
+                // shrinks the fail-closed surface without guessing anything.
                 | WhenAllOf conds ->
                     let results = conds |> List.map (evalWhen stage)
-                    if results |> List.exists Option.isNone then None
-                    else Some(results |> List.forall (fun r -> r = Some true))
+
+                    if results |> List.contains (Some false) then Some false
+                    elif results |> List.exists Option.isNone then None
+                    else Some true
 
                 | WhenAnyOf conds ->
                     let results = conds |> List.map (evalWhen stage)
-                    if results |> List.exists Option.isNone then None
-                    else Some(results |> List.exists (fun r -> r = Some true))
+
+                    if results |> List.contains (Some true) then Some true
+                    elif results |> List.exists Option.isNone then None
+                    else Some false
 
                 | WhenExpression source ->
                     // ADR 0002: expressions stay as source text and the bounded
@@ -370,20 +398,39 @@ module FogellSide =
 
             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
                 if not (List.isEmpty stage.Post) then
-                    stage.Post
-                    |> List.filter (fun (cond, _) -> postFires cond result previous)
-                    |> List.sortBy (fun (cond, _) -> postRank cond)
-                    |> List.iter (fun (_, steps) ->
-                        // A post block runs even though the stage failed — that is
-                        // the point of it — so it gets a context whose failure flag
-                        // is clear. A failure INSIDE post is still the build's.
-                        let postCtx = { ctx with Failed = ref false }
+                    // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
+                    // against the pre-post result, so on a SUCCESSFUL stage with
+                    // `post { always { exit 1 } failure { … } success { … } }` the
+                    // failing `always` left `failure` ineligible and `success` still
+                    // eligible — success-only publication after a post failure, the
+                    // same class of defect as the parallel-sink bug.
+                    //
+                    // The first attempt at this fix did not work and the receipt said
+                    // so: it introduced an `effective` ref but never updated it, and
+                    // `List.filter` is eager, so every predicate ran before any arm
+                    // did. Eligibility is therefore decided INSIDE the loop, against a
+                    // result the arms themselves update.
+                    let effective = ref result
 
-                        for st in steps do
-                            if not (halted postCtx) then
-                                runStepDispatch postCtx cwd stage st None
+                    for cond, steps in stage.Post |> List.sortBy (fun (c, _) -> postRank c) do
+                        if postFires cond effective.Value previous then
+                            // A post block runs even though the stage failed — that is
+                            // the point of it — so it gets a clear failure flag. A
+                            // failure INSIDE post belongs to the build AND to the
+                            // effective result the later arms are chosen against.
+                            let postCtx =
+                                { ctx with
+                                    Failed = ref false
+                                    Sink =
+                                        fun st ->
+                                            effective.Value <- BuildStatus.worstOf effective.Value st
+                                            ctx.Sink st }
 
-                        if postCtx.Failed.Value then ctx.Failed.Value <- true)
+                            for st in steps do
+                                if not (halted postCtx) then
+                                    runStepDispatch postCtx cwd stage st None
+
+                            if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
                 if not (halted ctx) then
@@ -445,6 +492,23 @@ module FogellSide =
             /// failed as an unsupported step every time. Every body now re-enters
             /// this dispatcher, so wrappers compose to any depth.
             and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+                // REVIEW FIX (Codex, PR #13 round 4): a deadline only ever became a
+                // `TimeoutMs` for the shell runner. `echo`, `junit`,
+                // `archiveArtifacts` and wrapper dispatch enforce nothing, so a
+                // `timeout` block full of those could keep running long after Jenkins
+                // would have aborted it. The deadline is now checked BEFORE every
+                // dispatch, whatever the step is.
+                let expired =
+                    match deadline with
+                    | Some d -> runClock.ElapsedMilliseconds >= d
+                    | None -> false
+
+                if expired then
+                    emit $"ERROR: timeout expired before step '{step.Name}'; block aborted"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Aborted
+                else
+
                 match step.Name, step.Positional with
                 // JB-FAIL-001/002: timeout and abort share one interrupt path,
                 // and the interrupt is a trappable SIGTERM with a grace window.
@@ -531,6 +595,31 @@ module FogellSide =
                                 match entry.IndexOf '=' with
                                 | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
                                 | _ -> None))
+
+                    // REVIEW FIX (Codex, PR #13 round 2): `PATH+TOOLS=/opt/tools/bin`
+                    // is the standard Jenkins idiom for PREPENDING to PATH. The binding
+                    // was copied literally as a variable called `PATH+TOOLS`, so the
+                    // wrapped process kept its old PATH and the tools were not found.
+                    let currentPath =
+                        (jenkinsProvided @ pipeline.Environment @ stage.Environment @ ctx.EnvOverlay)
+                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                        |> Option.defaultWith (fun () ->
+                            match Environment.GetEnvironmentVariable "PATH" with
+                            | null -> ""
+                            | p -> p)
+
+                    let pathAdditions =
+                        bindings |> List.filter (fun (k, _) -> k.StartsWith "PATH+")
+
+                    let plainBindings =
+                        bindings |> List.filter (fun (k, _) -> not (k.StartsWith "PATH+"))
+
+                    let bindings =
+                        if List.isEmpty pathAdditions then
+                            plainBindings
+                        else
+                            let prefix = pathAdditions |> List.map snd |> String.concat ":"
+                            plainBindings @ [ "PATH", prefix + ":" + currentPath ]
 
                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
 

@@ -1,0 +1,9 @@
+ .../receipts/parallel-always-failfast.receipt.txt  |   4 +-
+ docs/EXECUTION_BOARD.md                            |   3 +-
+ src/Fogell.Differential/Fogell.fs                  | 133 +++++++++++++++++----
+ src/Fogell.Execution/Executor.fs                   |   2 +-
+ src/Fogell.Execution/ProcessGroup.fs               |   8 +-
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       |  27 ++++-
+ src/Fogell.Pipeline.Parser/Parser.fs               |  13 +-
+ tests/Fogell.Groovy.Tests/Tests.fs                 |  24 +++-
+ 8 files changed, 177 insertions(+), 37 deletions(-)

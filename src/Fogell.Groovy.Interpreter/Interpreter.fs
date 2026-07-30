@@ -255,8 +255,19 @@ module Interpreter =
 
             let r =
                 try
+                    // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
+                    // VNull returned unless the closure used an explicit `return`. So
+                    // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
+                    // and therefore Jenkins — evaluates as true. Groovy's implicit
+                    // closure return is the trailing expression, and LastValue is
+                    // saved/restored around the call so an inner closure cannot
+                    // clobber the enclosing block's trailing value.
+                    let outer = st.LastValue
+                    st.LastValue <- None
                     execBlock st bound c.Body |> ignore
-                    VNull
+                    let inner = st.LastValue
+                    st.LastValue <- outer
+                    defaultArg inner VNull
                 with ReturnSignal v ->
                     v
 
@@ -332,9 +343,19 @@ module Interpreter =
         | SExpr e ->
             st.LastValue <- Some(evalExpr st env e)
             env
-        | SDef(n, Some e) -> Env.withVar n (evalExpr st env e) env
+        // REVIEW FIX (Codex, PR #13 round 4): only SExpr updated LastValue, so a
+        // predicate whose final statement is an assignment — `def deploy = true
+        // deploy = false` — produced no value and FAILED the build as unevaluable,
+        // where Groovy assignments are value-producing and Jenkins reads it as false.
+        | SDef(n, Some e) ->
+            let v = evalExpr st env e
+            st.LastValue <- Some v
+            Env.withVar n v env
         | SDef(n, None) -> Env.withVar n VNull env
-        | SAssign(EVar n, v) -> Env.withVar n (evalExpr st env v) env
+        | SAssign(EVar n, v) ->
+            let value = evalExpr st env v
+            st.LastValue <- Some value
+            Env.withVar n value env
         | SAssign(target, v) ->
             evalExpr st env target |> ignore
             evalExpr st env v |> ignore

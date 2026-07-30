@@ -18,7 +18,7 @@ type StepRequest =
       /// Use [Workspace.createFresh] once per attempt, then pass it here.
       Workspace: string
       Environment: (string * string) list
-      TimeoutMs: int option
+      TimeoutMs: int64 option
       OnLine: (string -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list

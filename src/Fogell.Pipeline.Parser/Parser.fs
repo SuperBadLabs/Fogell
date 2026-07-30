@@ -219,8 +219,19 @@ let rec private whenCondition: P<WhenCondition> =
                        |>> WhenUnmodelled) ]
     }
 
+/// A `when { }` gate. Declarative allows SEVERAL direct conditions and combines
+/// them with implicit all-of semantics.
+///
+/// REVIEW FIX (Codex, PR #13 round 3): only ONE condition was parsed, so
+/// `when { environment name: 'A', value: '1'\n environment name: 'B', value: '2' }`
+/// failed at the second, fell to the opaque backstop, and FAILED THE BUILD — where
+/// Jenkins simply requires both.
 let private whenSection: P<WhenCondition> =
-    keyword "when" >>. between (symbol "{") (symbol "}") (ws >>. whenCondition)
+    keyword "when"
+    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenCondition))
+    |>> function
+        | [ single ] -> single
+        | many -> WhenAllOf many
 
 /// Backstop. If the structured parse above fails for ANY reason, the `when`
 /// must still be recorded — as unmodelled, so evaluation fails closed. It must
