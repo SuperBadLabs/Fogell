@@ -12,7 +12,16 @@ mkdir -p "$DIR"
 # untracked file — the FG-104 bundle validated an intermediate patch and left out the audit
 # script itself, which was the entire deliverable. Evidence that silently excludes the work
 # is worse than no evidence, because it carries a checksum.
-UNTRACKED="$(git ls-files --others --exclude-standard)"
+# The positional [extra-file ...] arguments are EVIDENCE artifacts — a measurement log, a
+# probe output — and are normally untracked on purpose. Refusing them broke the script's
+# own documented interface, and staging them as the error advised would have pushed
+# evidence-only files into the product commit. They are exempt; everything else is not.
+# Normalised: `git ls-files` reports `x.log` while a caller naturally writes `./x.log`,
+# and an exemption that fails on a leading `./` is no exemption at all.
+EXTRAS=" $(for e in "$@"; do printf '%s ' "${e#./}"; done)"
+UNTRACKED="$(git ls-files --others --exclude-standard | while read -r f; do
+  case "$EXTRAS" in *" $f "*) ;; *) printf '%s\n' "$f" ;; esac
+done)"
 if [ -n "$UNTRACKED" ]; then
   echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
   printf '  %s\n' $UNTRACKED >&2

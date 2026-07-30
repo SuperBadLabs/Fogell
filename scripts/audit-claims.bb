@@ -35,9 +35,16 @@
             :let [lines (str/split-lines (slurp f))]
             [i line] (map-indexed vector lines)
             :when (str/includes? line "MEASURED")
-            :let [block (str/join " " (subvec (vec lines)
-                                              (max 0 (- i 6))
-                                              (min (count lines) (+ i 14))))
+            ;; The receipt must be cited by THIS claim's own contiguous comment block, not
+            ;; merely somewhere within twenty lines. A fixed window let a receipt named by a
+            ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
+            ;; unbacked claim sitting next to a backed one — defeating the per-claim
+            ;; guarantee the check exists to give.
+            :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
+                  v (vec lines)
+                  start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
+                  stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
+                  block (str/join " " (subvec v start (inc stop)))
                   named (filter #(str/includes? block %) receipts)]
             :when (empty? named)]
         {:file (str (fs/relativize root f)) :line (inc i)
