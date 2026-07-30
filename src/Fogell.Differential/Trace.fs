@@ -177,11 +177,8 @@ module Trace =
         // is what this predicate is for — and matching a stack trace verbatim would
         // be over-fitting to a plugin's internals in the most extreme way available.
         || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
-        || t.StartsWith "hudson.AbortException"
         // A pipeline-level timeout surfaces as this exception class in the log. Engine
         // narration about its own interrupt, same category as the lines above.
-        || t.StartsWith "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
-        || t.StartsWith "org.codehaus.groovy.control.MultipleCompilationErrorsException"
         // NOTE, third instance of one mistake: `WorkflowScript: \d+:`, a bare `^` and
         // `\d+ errors?` were added here last round to silence a Groovy compilation report.
         // Every one of them is USER-REPRODUCIBLE — a pipeline echoing "1 error" would lose
@@ -246,44 +243,54 @@ module Trace =
     /// ONLY when such an interrupt was actually narrated earlier in the run.
     /// Everywhere else it is ordinary user output and is compared.
     let normaliseOutput (lines: string seq) : string list =
-        // REVIEW FIX (Codex, PR #13): the first version latched this flag for the
-        // whole build, so a legitimate `Terminated` printed much later — say by an
-        // `always` post block after a timeout — was still swallowed. Jenkins emits
-        // the pair ADJACENTLY ("Sending interrupt signal to process" then
-        // "Terminated"), so the window is exactly the next line and it closes
-        // immediately, whether or not it was used.
-        let mutable interruptJustNarrated = false
+        // Two engine-narration shapes are recognised by CONTEXT, never by their text
+        // alone, because a build can legitimately print either:
+        //
+        //   * `Terminated` — only when an interrupt was narrated on the previous line.
+        //   * a Java exception head (`hudson.AbortException: …`) and the `at …(…)` frames
+        //     under it — only when a frame actually FOLLOWS the head. A pipeline echoing
+        //     an exception class name on its own keeps that line.
+        //
+        // This is the fifth defect of one class: a pattern a user's own output can match,
+        // removed from the compared output AND counted as a reported failure reason, so an
+        // engine failing silently could still read PROVEN. Six such patterns turned out to
+        // be protecting nothing and were deleted (FG-002f); these three are load-bearing,
+        // so they are gated instead.
+        let all = lines |> Seq.toArray
 
-        // A Java stack frame is only narration when it FOLLOWS an exception line. Matched
-        // on its own, `at something(else)` is output a build can legitimately produce —
-        // the user-reproducible shape that has now caused this class of defect three
-        // times. Fogell emits no stack traces, so the window only ever opens on Jenkins.
+        let clean (l: string) =
+            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+
+        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
+
+        let looksLikeExceptionHead (l: string) =
+            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
+
+        let mutable interruptJustNarrated = false
         let mutable inStackTrace = false
 
-        [ for line in lines do
-            let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
-            // Any `at …(…)` line, including Jenkins' `at PluginClassLoader for …` form.
-            // A narrower shape closed the window on the first PluginClassLoader frame and
-            // let every frame after it through.
-            let isFrame = raw.StartsWith "at " && raw.Contains "("
+        [ for i in 0 .. all.Length - 1 do
+            let raw = clean all[i]
+            let next = if i + 1 < all.Length then clean all[i + 1] else ""
 
-            if raw.Contains "Exception" && raw.Contains "." then inStackTrace <- true
-            elif not isFrame then inStackTrace <- false
+            // A head only opens the window when a frame really follows it.
+            if looksLikeExceptionHead raw && isFrame next then inStackTrace <- true
+            elif not (isFrame raw) then inStackTrace <- false
 
             let suppress =
-                (raw = "Terminated" && interruptJustNarrated) || (isFrame && inStackTrace)
+                (raw = "Terminated" && interruptJustNarrated)
+                || (isFrame raw && inStackTrace)
+                || (looksLikeExceptionHead raw && isFrame next)
 
             interruptJustNarrated <-
                 raw.StartsWith "Sending interrupt signal to process"
                 || raw.StartsWith "Cancelling nested steps"
 
             if not suppress then
-                match normaliseLine line with
+                match normaliseLine all[i] with
                 | Some l -> yield l
                 | None -> () ]
 
-    /// Did the engine explain itself? Computed over RAW lines, before the
-    /// diagnostic-stripping normaliser removes them.
     /// `Terminated` on its own is only a reason when an interrupt was narrated
     /// with it; see [normaliseOutput].
     let reportedFailureReason (lines: string seq) : bool =

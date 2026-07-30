@@ -320,8 +320,12 @@ let private whenSection: P<WhenCondition> =
     |>> fun items ->
             match items |> List.choose id with
             | [ single ] -> single
-            // Only directives and no condition: nothing to gate on, so the stage runs.
-            | [] -> WhenEvaluationOption
+            // MEASURED: Jenkins REJECTS a `when` holding only directives —
+            //   WorkflowScript: 5: Empty when closure, remove the property or add some
+            //   content.
+            // Treating it as "nothing to gate on, so run" executed a stage on a pipeline
+            // Jenkins refuses to compile.
+            | [] -> WhenUnmodelled("when", "empty when closure")
             | multiple -> WhenAllOf multiple
 
 /// Backstop. If the structured parse above fails for ANY reason, the `when`
