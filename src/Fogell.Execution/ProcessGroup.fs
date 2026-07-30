@@ -1,0 +1,260 @@
+namespace Fogell.Execution
+
+open System
+open System.Diagnostics
+open System.Threading
+
+/// FG-031/FG-032. Process-group lifecycle containment.
+///
+/// The mechanism: every step is launched through `setsid`, so the child leads a
+/// new session and its pid IS its process-group id. Signalling `-pgid` then
+/// reaches the step and every descendant it spawned, which is the difference
+/// between terminating a step and orphaning its children.
+///
+/// ADR 0008 is explicit that this is *lifecycle* containment, not a hostile
+/// multi-tenant boundary. A determined workload can leave the group with its own
+/// `setsid`; untrusted multi-tenant work needs VM-level isolation.
+type Outcome =
+    | Completed of exitCode: int
+    | TimedOut
+    | Cancelled
+
+type Termination =
+    { /// True when SIGTERM alone was enough — i.e. the step had a chance to
+      /// clean up, which is the contract scripts rely on (ADR 0005).
+      GracefulExit: bool
+      /// True when SIGKILL was needed after the grace period elapsed.
+      Escalated: bool
+      /// Descendants still alive after the group was reaped. Should be zero:
+      /// Jenkins leaves `nohup`ed children running and we promised to beat that.
+      LeakedProcesses: int }
+
+type RunResult =
+    { Outcome: Outcome
+      Stdout: string
+      Stderr: string
+      DurationMs: int64
+      ProcessGroupId: int option
+      Termination: Termination option }
+
+type RunRequest =
+    { Command: string
+      WorkingDirectory: string
+      Environment: (string * string) list
+      TimeoutMs: int option
+      /// How long a step may take to honour SIGTERM before it is killed.
+      GraceMs: int
+      /// Called with each output line as it arrives, so a running build streams
+      /// rather than materialising at the end (FG-040 / JB-LOG-002 parity).
+      OnLine: (string -> unit) option
+      /// Set when the step's group should be reaped even on success. Jenkins does
+      /// NOT do this — measured: `nohup`ed children survive both success and
+      /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
+      /// killed. FG-032 beats that, with an opt-out.
+      ReapGroup: bool }
+
+    static member create(command, workingDirectory) =
+        { Command = command
+          WorkingDirectory = workingDirectory
+          Environment = []
+          TimeoutMs = None
+          GraceMs = 2_000
+          OnLine = None
+          ReapGroup = true }
+
+module ProcessGroup =
+
+    /// Count processes still in the group. Reads /proc directly rather than
+    /// shelling out, so the check cannot itself spawn something.
+    let private survivorsIn (pgid: int) : int =
+        try
+            IO.Directory.GetDirectories "/proc"
+            |> Array.choose (fun d ->
+                match Int32.TryParse(IO.Path.GetFileName d) with
+                | true, pid -> Some pid
+                | _ -> None)
+            |> Array.filter (fun pid ->
+                match Native.processGroupOf pid with
+                | Some g -> g = pgid
+                | None -> false)
+            |> Array.length
+        with _ ->
+            0
+
+    /// Wait until the group is EMPTY, up to `budgetMs`.
+    ///
+    /// This deliberately counts group membership rather than asking whether the
+    /// leader pid still exists. The leader is usually the first to exit — a step
+    /// that backgrounds a daemon leaves the group populated while the leader is
+    /// long gone — so a leader-existence check reports success and leaves the
+    /// daemon running. That is exactly the Jenkins behaviour FG-032 exists to
+    /// beat, and the first version of this function reproduced it.
+    let private waitForGroupExit (pgid: int) (budgetMs: int) : bool =
+        let sw = Stopwatch.StartNew()
+        let mutable gone = survivorsIn pgid = 0
+
+        while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
+            Thread.Sleep 20
+            gone <- survivorsIn pgid = 0
+
+        gone
+
+    /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
+    /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
+    /// TERM with a grace window, and scripts install handlers expecting it.
+    let terminateGroup (pgid: int) (graceMs: int) : Termination =
+        let termDelivered = Native.signalGroup pgid Native.SIGTERM
+        let exitedOnTerm = termDelivered && waitForGroupExit pgid graceMs
+
+        let escalated =
+            if exitedOnTerm then
+                false
+            else
+                Native.signalGroup pgid Native.SIGKILL |> ignore
+                waitForGroupExit pgid 2_000 |> ignore
+                true
+
+        { GracefulExit = exitedOnTerm
+          Escalated = escalated
+          LeakedProcesses = survivorsIn pgid }
+
+    /// Reap whatever remains of a group after the step's direct child exited.
+    /// A step that backgrounds a daemon leaves it in the group; Jenkins lets it
+    /// survive, we do not.
+    let reap (pgid: int) (graceMs: int) : Termination =
+        if survivorsIn pgid = 0 then
+            { GracefulExit = true
+              Escalated = false
+              LeakedProcesses = 0 }
+        else
+            terminateGroup pgid graceMs
+
+    /// Run one command in its own process group.
+    let run (request: RunRequest) : RunResult =
+        let sw = Stopwatch.StartNew()
+
+        // `setsid --wait` keeps a parent around to collect the exit status, but
+        // that parent is what .NET reports as the process id — and ITS group is
+        // ours, not the child's. So the session leader reports its own pid on
+        // stderr as the first line, and that is the real process-group id.
+        let pgidMarker = "__FOGELL_PGID "
+
+        let psi = ProcessStartInfo("/usr/bin/setsid")
+        psi.ArgumentList.Add "--wait"
+        psi.ArgumentList.Add "/bin/sh"
+        psi.ArgumentList.Add "-c"
+        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -c \"$FOGELL_SCRIPT\""
+        psi.Environment["FOGELL_SCRIPT"] <- request.Command
+        psi.WorkingDirectory <- request.WorkingDirectory
+        psi.RedirectStandardOutput <- true
+        psi.RedirectStandardError <- true
+        psi.UseShellExecute <- false
+
+        for k, v in request.Environment do
+            psi.Environment[k] <- v
+
+        use proc = new Process()
+        proc.StartInfo <- psi
+
+        let stdout = Text.StringBuilder()
+        let stderr = Text.StringBuilder()
+        let reportedPgid = ref 0
+
+        let emit (sink: Text.StringBuilder) (line: string) =
+            if line <> null then
+                lock sink (fun () -> sink.AppendLine line |> ignore)
+                request.OnLine |> Option.iter (fun f -> f line)
+
+        proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
+
+        proc.ErrorDataReceived.Add(fun e ->
+            match e.Data with
+            | null -> ()
+            | line when line.StartsWith pgidMarker ->
+                // the leader's own pid: the real group id. Never surfaced to the
+                // caller as build output.
+                match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
+                | true, pid -> reportedPgid.Value <- pid
+                | _ -> ()
+            | line -> emit stderr line)
+
+        proc.Start() |> ignore
+        proc.BeginOutputReadLine()
+        proc.BeginErrorReadLine()
+
+        // Wait briefly for the leader to report its pid. Deriving it from
+        // proc.Id is WRONG: that is setsid's pid, in our own group.
+        let pgid =
+            let clock = Stopwatch.StartNew()
+
+            while reportedPgid.Value = 0 && clock.ElapsedMilliseconds < 2_000L && not proc.HasExited do
+                Thread.Sleep 5
+
+            // one more chance after exit, in case the marker arrived late
+            if reportedPgid.Value = 0 then
+                Thread.Sleep 50
+
+            match reportedPgid.Value with
+            | 0 -> None
+            | pid -> Some pid
+
+        // NOTE: never use the parameterless WaitForExit() with redirected
+        // output. It waits for the *pipes* to close, and a backgrounded
+        // grandchild inherits them — so a step that spawns a daemon would hang
+        // the executor forever. Wait on the process handle only, then give the
+        // async readers a bounded window to flush.
+        let waitForProcessExit (budgetMs: int option) =
+            let deadline =
+                budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
+
+            let mutable exited = proc.HasExited
+
+            let expired () =
+                match deadline with
+                | Some(clock, ms) -> clock.ElapsedMilliseconds >= int64 ms
+                | None -> false
+
+            while not exited && not (expired ()) do
+                Thread.Sleep 10
+                exited <- proc.HasExited
+
+            exited
+
+        let flushReaders (budgetMs: int) =
+            // Best-effort: if a daemon holds the pipe this returns on the budget
+            // rather than blocking, and whatever was read so far is kept.
+            let clock = Stopwatch.StartNew()
+            let mutable settled = false
+
+            while not settled && clock.ElapsedMilliseconds < int64 budgetMs do
+                let before = stdout.Length + stderr.Length
+                Thread.Sleep 40
+                settled <- (stdout.Length + stderr.Length) = before
+
+        let finished = waitForProcessExit request.TimeoutMs
+
+        let outcome, termination =
+            if finished then
+                flushReaders 500
+                let code = proc.ExitCode
+
+                let t =
+                    if request.ReapGroup then
+                        pgid |> Option.map (fun g -> reap g request.GraceMs)
+                    else
+                        None
+
+                Completed code, t
+            else
+                let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
+                flushReaders 300
+                TimedOut, t
+
+        sw.Stop()
+
+        { Outcome = outcome
+          Stdout = stdout.ToString()
+          Stderr = stderr.ToString()
+          DurationMs = sw.ElapsedMilliseconds
+          ProcessGroupId = pgid
+          Termination = termination }

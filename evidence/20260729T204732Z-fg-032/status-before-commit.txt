@@ -1,0 +1,10 @@
+M  Fogell.slnx
+M  docs/EXECUTION_BOARD.md
+A  src/Fogell.Execution/Executor.fs
+A  src/Fogell.Execution/Fogell.Execution.fsproj
+A  src/Fogell.Execution/Native.fs
+A  src/Fogell.Execution/ProcessGroup.fs
+A  src/Fogell.Execution/Workspace.fs
+A  tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj
+A  tests/Fogell.Execution.Tests/Tests.fs
+?? evidence/20260729T204732Z-fg-032/

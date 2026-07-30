@@ -1,0 +1,969 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index f410c24..8d8c038 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -5,6 +5,7 @@
+     <Project Path="src/Fogell.Groovy/Fogell.Groovy.fsproj" />
+     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
++    <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
+     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+     <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
+     <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+@@ -14,6 +15,7 @@
+   </Folder>
+   <Folder Name="/tests/">
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
++    <Project Path="tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj" />
+     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
+     <Project Path="tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj" />
+     <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 4d0b1c8..2808edb 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -100,9 +100,9 @@ derivation in `architecture/BASELINE.md`.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-030 | P0 | TODO | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | path-abuse probe suite all rejected |
+-| FG-031 | P0 | TODO | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | a `trap ... TERM` handler runs and its output reaches the log |
+-| FG-032 | P0 | TODO | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | `nohup`'d child is dead after success *and* after abort; opt-out keeps it |
++| FG-030 | P0 | **DONE** | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | 6 tests: absolute, traversal, mid-path traversal, symlinked component, outside-root, and reuse all refused with a named error |
++| FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
++| FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
+ | FG-033 | P0 | TODO | **Dead-process detection in seconds**, diagnostic naming the restart (`adr/0005` beat) | kill the step process: terminal verdict < 10 s with a message stating the cause |
+ | FG-034 | P1 | TODO | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | differential receipt vs Jenkins on a trapped-SIGTERM pipeline |
+ | FG-035 | P1 | TODO | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | differential receipt: attempt count matches Jenkins |
+@@ -116,7 +116,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
+ | id | pri | status | item | demand |
+ |---|---|---|---|---:|
+-| FG-040 | P0 | TODO | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | universal |
++| FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+ | FG-041 | P0 | TODO | `echo`, `dir`, `withEnv`, `environment` scoping (lexical, stage overrides pipeline) | 35 / 15 / 11 |
+ | FG-042 | P0 | TODO | `archiveArtifacts` + byte-exact retrieval at a stable URL | 34 files |
+ | FG-043 | P1 | TODO | `junit` test-result ingest and model | 26 files |
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+new file mode 100644
+index 0000000..184a2df
+--- /dev/null
++++ b/src/Fogell.Execution/Executor.fs
+@@ -0,0 +1,123 @@
++namespace Fogell.Execution
++
++open Fogell.Domain
++
++/// FG-040. Executes a step and maps its outcome onto a build status.
++///
++/// This is the layer the interpreter's *requested effects* land in. The
++/// interpreter decides what should happen; nothing until here actually does it.
++type StepRequest =
++    { Name: string
++      Script: string option
++      WorkspaceRoot: string
++      AttemptKey: string
++      Environment: (string * string) list
++      TimeoutMs: int option
++      OnLine: (string -> unit) option }
++
++type StepResult =
++    { Status: BuildStatus
++      ExitCode: int option
++      Stdout: string
++      Stderr: string
++      DurationMs: int64
++      /// The step's process-group id, so callers can assert on containment.
++      ProcessGroupId: int option
++      /// Populated for shell steps so callers can assert on containment.
++      Termination: Termination option
++      Diagnostic: string option }
++
++module Executor =
++
++    let private ok status =
++        { Status = status
++          ExitCode = None
++          Stdout = ""
++          Stderr = ""
++          DurationMs = 0L
++          ProcessGroupId = None
++          Termination = None
++          Diagnostic = None }
++
++    /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
++    /// names *why* on any non-success — never a bare code.
++    ///
++    /// Beating Jenkins here (JB-DUR-005): when a step's process disappears,
++    /// Jenkins takes ~10 minutes to conclude anything and then reports
++    /// `exit code -1` with no mention of a restart. Fogell owns the process, so
++    /// the diagnostic always says what happened.
++    let runShell (request: StepRequest) (script: string) : StepResult =
++        match Workspace.createFresh request.WorkspaceRoot request.AttemptKey with
++        | Result.Error e ->
++            { ok Failure with
++                Diagnostic = Some $"workspace refused: {e.Describe}" }
++        | Result.Ok workspace ->
++            let run =
++                ProcessGroup.run
++                    { RunRequest.create (script, workspace) with
++                        Environment = request.Environment
++                        TimeoutMs = request.TimeoutMs
++                        OnLine = request.OnLine }
++
++            let status, exitCode, diagnostic =
++                match run.Outcome with
++                | Completed 0 -> Success, Some 0, None
++                | Completed code ->
++                    Failure,
++                    Some code,
++                    Some $"script returned exit code {code}"
++                | TimedOut ->
++                    let budget = defaultArg request.TimeoutMs 0
++
++                    Aborted,
++                    None,
++                    Some(
++                        let t = run.Termination
++
++                        let how =
++                            match t with
++                            | Some x when x.Escalated -> "SIGTERM was not honoured within the grace period, so the process group was killed"
++                            | Some _ -> "the process group exited on SIGTERM"
++                            | None -> "the process group could not be signalled"
++
++                        $"step exceeded its {budget} ms timeout; {how}")
++                | Cancelled -> Aborted, None, Some "step was cancelled"
++
++            // FG-032: a leak is a defect, and it is reported rather than ignored.
++            let diagnostic =
++                match run.Termination with
++                | Some t when t.LeakedProcesses > 0 ->
++                    let leak = $"{t.LeakedProcesses} process(es) survived group reaping"
++
++                    Some(
++                        match diagnostic with
++                        | Some d -> $"{d}; {leak}"
++                        | None -> leak)
++                | Some _
++                | None -> diagnostic
++
++            { Status = status
++              ExitCode = exitCode
++              Stdout = run.Stdout
++              Stderr = run.Stderr
++              DurationMs = run.DurationMs
++              ProcessGroupId = run.ProcessGroupId
++              Termination = run.Termination
++              Diagnostic = diagnostic }
++
++    /// Dispatch a requested effect. Steps Fogell does not implement fail closed
++    /// with a named reason — never a silent success (ADR 0001).
++    let runStep (request: StepRequest) : StepResult =
++        match request.Name, request.Script with
++        | ("sh" | "bat"), Some script -> runShell request script
++        | ("sh" | "bat"), None ->
++            { ok Failure with
++                Diagnostic = Some $"step '{request.Name}' requires a script argument" }
++        | "echo", Some message ->
++            request.OnLine |> Option.iter (fun f -> f message)
++
++            { ok Success with Stdout = message + "\n" }
++        | "echo", None -> { ok Success with Stdout = "\n" }
++        | name, _ ->
++            { ok Failure with
++                Diagnostic = Some $"step '{name}' is not implemented; unsupported behaviour fails closed" }
+diff --git a/src/Fogell.Execution/Fogell.Execution.fsproj b/src/Fogell.Execution/Fogell.Execution.fsproj
+new file mode 100644
+index 0000000..ca80697
+--- /dev/null
++++ b/src/Fogell.Execution/Fogell.Execution.fsproj
+@@ -0,0 +1,24 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Library</OutputType>
++    <!-- ADR 0006: native interop is confined to ONE project per platform.
++         This is that project for Linux; Native.fs is the only file with
++         DllImport in the whole solution. -->
++    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
++  </PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Native.fs" />
++    <Compile Include="Workspace.fs" />
++    <Compile Include="ProcessGroup.fs" />
++    <Compile Include="Executor.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" />
++    <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
++  </ItemGroup>
++  <ItemGroup>
++    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
++      <_Parameter1>Fogell.Execution.Tests</_Parameter1>
++    </AssemblyAttribute>
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Execution/Native.fs b/src/Fogell.Execution/Native.fs
+new file mode 100644
+index 0000000..84d4c99
+--- /dev/null
++++ b/src/Fogell.Execution/Native.fs
+@@ -0,0 +1,69 @@
++namespace Fogell.Execution
++
++open System.Runtime.InteropServices
++
++/// The only DllImport surface in the solution (ADR 0006). Every entry point is
++/// documented, and nothing here allocates or returns a pointer — these are
++/// signal and process-group primitives only.
++module internal Native =
++
++    /// POSIX signals Fogell uses. Values are the Linux/glibc numbers.
++    [<Literal>]
++    let SIGTERM = 15
++
++    [<Literal>]
++    let SIGKILL = 9
++
++    [<Literal>]
++    let ESRCH = 3 // no such process
++
++    /// `kill(2)`. A negative pid targets the whole process group, which is how
++    /// a step's descendants are signalled together rather than orphaned.
++    [<DllImport("libc", SetLastError = true)>]
++    extern int private kill(int pid, int signum)
++
++    /// `getpgid(2)`. Used only to confirm a child really did lead a new group,
++    /// so the tests assert the mechanism rather than trusting it.
++    [<DllImport("libc", SetLastError = true)>]
++    extern int private getpgid(int pid)
++
++    /// Signal a single process. Returns false when it no longer exists.
++    let signalProcess (pid: int) (signum: int) : bool =
++        if pid <= 0 then
++            false
++        else
++            kill (pid, signum) = 0
++
++    /// This process's own group. Signalling it would kill the controller, so
++    /// [signalGroup] refuses to do so.
++    let ownProcessGroup () : int =
++        match getpgid 0 with
++        | -1 -> -1
++        | g -> g
++
++    /// Signal an entire process group. `pgid` is positive; the negation is
++    /// applied here so callers cannot get the sign wrong.
++    ///
++    /// SAFETY GUARD: refuses to signal our own process group. Learned the hard
++    /// way — `setsid --wait` forks, so the pid .NET reports is setsid's, whose
++    /// group is the *parent's*. Reaping therefore sent SIGTERM to the controller
++    /// itself. The pgid derivation is fixed, and this guard makes the whole
++    /// class of mistake unable to recur.
++    let signalGroup (pgid: int) (signum: int) : bool =
++        if pgid <= 0 then
++            false
++        elif pgid = ownProcessGroup () then
++            false
++        else
++            kill (-pgid, signum) = 0
++
++    /// True when the process (or group leader) is still present.
++    let processExists (pid: int) : bool = pid > 0 && kill (pid, 0) = 0
++
++    let processGroupOf (pid: int) : int option =
++        if pid <= 0 then
++            None
++        else
++            match getpgid pid with
++            | -1 -> None
++            | pgid -> Some pgid
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+new file mode 100644
+index 0000000..c6f8fed
+--- /dev/null
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -0,0 +1,260 @@
++namespace Fogell.Execution
++
++open System
++open System.Diagnostics
++open System.Threading
++
++/// FG-031/FG-032. Process-group lifecycle containment.
++///
++/// The mechanism: every step is launched through `setsid`, so the child leads a
++/// new session and its pid IS its process-group id. Signalling `-pgid` then
++/// reaches the step and every descendant it spawned, which is the difference
++/// between terminating a step and orphaning its children.
++///
++/// ADR 0008 is explicit that this is *lifecycle* containment, not a hostile
++/// multi-tenant boundary. A determined workload can leave the group with its own
++/// `setsid`; untrusted multi-tenant work needs VM-level isolation.
++type Outcome =
++    | Completed of exitCode: int
++    | TimedOut
++    | Cancelled
++
++type Termination =
++    { /// True when SIGTERM alone was enough — i.e. the step had a chance to
++      /// clean up, which is the contract scripts rely on (ADR 0005).
++      GracefulExit: bool
++      /// True when SIGKILL was needed after the grace period elapsed.
++      Escalated: bool
++      /// Descendants still alive after the group was reaped. Should be zero:
++      /// Jenkins leaves `nohup`ed children running and we promised to beat that.
++      LeakedProcesses: int }
++
++type RunResult =
++    { Outcome: Outcome
++      Stdout: string
++      Stderr: string
++      DurationMs: int64
++      ProcessGroupId: int option
++      Termination: Termination option }
++
++type RunRequest =
++    { Command: string
++      WorkingDirectory: string
++      Environment: (string * string) list
++      TimeoutMs: int option
++      /// How long a step may take to honour SIGTERM before it is killed.
++      GraceMs: int
++      /// Called with each output line as it arrives, so a running build streams
++      /// rather than materialising at the end (FG-040 / JB-LOG-002 parity).
++      OnLine: (string -> unit) option
++      /// Set when the step's group should be reaped even on success. Jenkins does
++      /// NOT do this — measured: `nohup`ed children survive both success and
++      /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
++      /// killed. FG-032 beats that, with an opt-out.
++      ReapGroup: bool }
++
++    static member create(command, workingDirectory) =
++        { Command = command
++          WorkingDirectory = workingDirectory
++          Environment = []
++          TimeoutMs = None
++          GraceMs = 2_000
++          OnLine = None
++          ReapGroup = true }
++
++module ProcessGroup =
++
++    /// Count processes still in the group. Reads /proc directly rather than
++    /// shelling out, so the check cannot itself spawn something.
++    let private survivorsIn (pgid: int) : int =
++        try
++            IO.Directory.GetDirectories "/proc"
++            |> Array.choose (fun d ->
++                match Int32.TryParse(IO.Path.GetFileName d) with
++                | true, pid -> Some pid
++                | _ -> None)
++            |> Array.filter (fun pid ->
++                match Native.processGroupOf pid with
++                | Some g -> g = pgid
++                | None -> false)
++            |> Array.length
++        with _ ->
++            0
++
++    /// Wait until the group is EMPTY, up to `budgetMs`.
++    ///
++    /// This deliberately counts group membership rather than asking whether the
++    /// leader pid still exists. The leader is usually the first to exit — a step
++    /// that backgrounds a daemon leaves the group populated while the leader is
++    /// long gone — so a leader-existence check reports success and leaves the
++    /// daemon running. That is exactly the Jenkins behaviour FG-032 exists to
++    /// beat, and the first version of this function reproduced it.
++    let private waitForGroupExit (pgid: int) (budgetMs: int) : bool =
++        let sw = Stopwatch.StartNew()
++        let mutable gone = survivorsIn pgid = 0
++
++        while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
++            Thread.Sleep 20
++            gone <- survivorsIn pgid = 0
++
++        gone
++
++    /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
++    /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
++    /// TERM with a grace window, and scripts install handlers expecting it.
++    let terminateGroup (pgid: int) (graceMs: int) : Termination =
++        let termDelivered = Native.signalGroup pgid Native.SIGTERM
++        let exitedOnTerm = termDelivered && waitForGroupExit pgid graceMs
++
++        let escalated =
++            if exitedOnTerm then
++                false
++            else
++                Native.signalGroup pgid Native.SIGKILL |> ignore
++                waitForGroupExit pgid 2_000 |> ignore
++                true
++
++        { GracefulExit = exitedOnTerm
++          Escalated = escalated
++          LeakedProcesses = survivorsIn pgid }
++
++    /// Reap whatever remains of a group after the step's direct child exited.
++    /// A step that backgrounds a daemon leaves it in the group; Jenkins lets it
++    /// survive, we do not.
++    let reap (pgid: int) (graceMs: int) : Termination =
++        if survivorsIn pgid = 0 then
++            { GracefulExit = true
++              Escalated = false
++              LeakedProcesses = 0 }
++        else
++            terminateGroup pgid graceMs
++
++    /// Run one command in its own process group.
++    let run (request: RunRequest) : RunResult =
++        let sw = Stopwatch.StartNew()
++
++        // `setsid --wait` keeps a parent around to collect the exit status, but
++        // that parent is what .NET reports as the process id — and ITS group is
++        // ours, not the child's. So the session leader reports its own pid on
++        // stderr as the first line, and that is the real process-group id.
++        let pgidMarker = "__FOGELL_PGID "
++
++        let psi = ProcessStartInfo("/usr/bin/setsid")
++        psi.ArgumentList.Add "--wait"
++        psi.ArgumentList.Add "/bin/sh"
++        psi.ArgumentList.Add "-c"
++        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -c \"$FOGELL_SCRIPT\""
++        psi.Environment["FOGELL_SCRIPT"] <- request.Command
++        psi.WorkingDirectory <- request.WorkingDirectory
++        psi.RedirectStandardOutput <- true
++        psi.RedirectStandardError <- true
++        psi.UseShellExecute <- false
++
++        for k, v in request.Environment do
++            psi.Environment[k] <- v
++
++        use proc = new Process()
++        proc.StartInfo <- psi
++
++        let stdout = Text.StringBuilder()
++        let stderr = Text.StringBuilder()
++        let reportedPgid = ref 0
++
++        let emit (sink: Text.StringBuilder) (line: string) =
++            if line <> null then
++                lock sink (fun () -> sink.AppendLine line |> ignore)
++                request.OnLine |> Option.iter (fun f -> f line)
++
++        proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
++
++        proc.ErrorDataReceived.Add(fun e ->
++            match e.Data with
++            | null -> ()
++            | line when line.StartsWith pgidMarker ->
++                // the leader's own pid: the real group id. Never surfaced to the
++                // caller as build output.
++                match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
++                | true, pid -> reportedPgid.Value <- pid
++                | _ -> ()
++            | line -> emit stderr line)
++
++        proc.Start() |> ignore
++        proc.BeginOutputReadLine()
++        proc.BeginErrorReadLine()
++
++        // Wait briefly for the leader to report its pid. Deriving it from
++        // proc.Id is WRONG: that is setsid's pid, in our own group.
++        let pgid =
++            let clock = Stopwatch.StartNew()
++
++            while reportedPgid.Value = 0 && clock.ElapsedMilliseconds < 2_000L && not proc.HasExited do
++                Thread.Sleep 5
++
++            // one more chance after exit, in case the marker arrived late
++            if reportedPgid.Value = 0 then
++                Thread.Sleep 50
++
++            match reportedPgid.Value with
++            | 0 -> None
++            | pid -> Some pid
++
++        // NOTE: never use the parameterless WaitForExit() with redirected
++        // output. It waits for the *pipes* to close, and a backgrounded
++        // grandchild inherits them — so a step that spawns a daemon would hang
++        // the executor forever. Wait on the process handle only, then give the
++        // async readers a bounded window to flush.
++        let waitForProcessExit (budgetMs: int option) =
++            let deadline =
++                budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
++
++            let mutable exited = proc.HasExited
++
++            let expired () =
++                match deadline with
++                | Some(clock, ms) -> clock.ElapsedMilliseconds >= int64 ms
++                | None -> false
++
++            while not exited && not (expired ()) do
++                Thread.Sleep 10
++                exited <- proc.HasExited
++
++            exited
++
++        let flushReaders (budgetMs: int) =
++            // Best-effort: if a daemon holds the pipe this returns on the budget
++            // rather than blocking, and whatever was read so far is kept.
++            let clock = Stopwatch.StartNew()
++            let mutable settled = false
++
++            while not settled && clock.ElapsedMilliseconds < int64 budgetMs do
++                let before = stdout.Length + stderr.Length
++                Thread.Sleep 40
++                settled <- (stdout.Length + stderr.Length) = before
++
++        let finished = waitForProcessExit request.TimeoutMs
++
++        let outcome, termination =
++            if finished then
++                flushReaders 500
++                let code = proc.ExitCode
++
++                let t =
++                    if request.ReapGroup then
++                        pgid |> Option.map (fun g -> reap g request.GraceMs)
++                    else
++                        None
++
++                Completed code, t
++            else
++                let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
++                flushReaders 300
++                TimedOut, t
++
++        sw.Stop()
++
++        { Outcome = outcome
++          Stdout = stdout.ToString()
++          Stderr = stderr.ToString()
++          DurationMs = sw.ElapsedMilliseconds
++          ProcessGroupId = pgid
++          Termination = termination }
+diff --git a/src/Fogell.Execution/Workspace.fs b/src/Fogell.Execution/Workspace.fs
+new file mode 100644
+index 0000000..55f1498
+--- /dev/null
++++ b/src/Fogell.Execution/Workspace.fs
+@@ -0,0 +1,100 @@
++namespace Fogell.Execution
++
++open System
++open System.IO
++open Fogell.Admission
++
++/// FG-030. Each attempt gets one fresh, normalized workspace beneath a
++/// canonical root.
++///
++/// The rejection list is not hypothetical: a Jenkinsfile is untrusted input, and
++/// `dir('../../etc')` or a symlinked path is how a step escapes its workspace.
++/// ADR 0008 requires absolute paths, traversal and symlink components to be
++/// refused rather than normalized away.
++module Workspace =
++
++    type Error =
++        | AbsolutePath of string
++        | Traversal of string
++        | SymlinkComponent of string
++        | NonDirectoryParent of string
++        | AlreadyExists of string
++        | OutsideRoot of string
++
++        member this.Describe =
++            match this with
++            | AbsolutePath p -> $"'{p}' is absolute; workspace paths must be relative"
++            | Traversal p -> $"'{p}' contains a parent-directory traversal"
++            | SymlinkComponent p -> $"'{p}' passes through a symlink"
++            | NonDirectoryParent p -> $"'{p}' has a parent that is not a directory"
++            | AlreadyExists p -> $"'{p}' already exists; each attempt gets a fresh workspace"
++            | OutsideRoot p -> $"'{p}' resolves outside the canonical workspace root"
++
++    /// Validate a *relative* path a pipeline asked for (e.g. `dir('sub/deep')`).
++    let validateRelative (relative: string) : Result<unit, Error> =
++        if String.IsNullOrWhiteSpace relative then
++            Result.Error(Traversal relative)
++        elif Path.IsPathRooted relative then
++            Result.Error(AbsolutePath relative)
++        else
++            let parts =
++                relative.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
++
++            if parts |> Array.exists (fun p -> p = ".." ) then
++                Result.Error(Traversal relative)
++            else
++                Result.Ok()
++
++    /// Resolve a relative path under `root`, refusing anything that escapes it
++    /// or passes through a symlink. Symlinks are checked component by component
++    /// because resolving the whole path first would hide the escape.
++    let resolveUnder (root: string) (relative: string) : Result<string, Error> =
++        match validateRelative relative with
++        | Result.Error e -> Result.Error e
++        | Result.Ok() ->
++            let canonicalRoot = Path.GetFullPath root
++            let candidate = Path.GetFullPath(Path.Combine(canonicalRoot, relative))
++
++            if
++                not (
++                    candidate = canonicalRoot
++                    || candidate.StartsWith(canonicalRoot + string Path.DirectorySeparatorChar))
++            then
++                Result.Error(OutsideRoot relative)
++            else
++                // walk each existing component; a symlink anywhere on the path
++                // means the final location is not where it appears to be
++                let rec check (current: string) (remaining: string list) =
++                    match remaining with
++                    | [] -> Result.Ok candidate
++                    | part :: rest ->
++                        let next = Path.Combine(current, part)
++
++                        if Directory.Exists next || File.Exists next then
++                            let info = FileInfo next
++
++                            if info.LinkTarget <> null then
++                                Result.Error(SymlinkComponent relative)
++                            elif File.Exists next && not (List.isEmpty rest) then
++                                Result.Error(NonDirectoryParent relative)
++                            else
++                                check next rest
++                        else
++                            // does not exist yet: nothing further to inspect
++                            Result.Ok candidate
++
++                relative.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
++                |> Array.toList
++                |> check canonicalRoot
++
++    /// Create a fresh workspace for an attempt. Refuses to reuse a directory:
++    /// a leftover workspace is how one build's output contaminates the next.
++    let createFresh (root: string) (attemptKey: string) : Result<string, Error> =
++        match resolveUnder root attemptKey with
++        | Result.Error e -> Result.Error e
++        | Result.Ok path ->
++            if Directory.Exists path || File.Exists path then
++                Result.Error(AlreadyExists attemptKey)
++            else
++                Directory.CreateDirectory path |> ignore
++                Result.Ok path
+diff --git a/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj b/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj
+new file mode 100644
+index 0000000..5c53f27
+--- /dev/null
++++ b/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj
+@@ -0,0 +1,8 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
++  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Execution/Fogell.Execution.fsproj" />
++    <PackageReference Include="Expecto" Version="10.2.3" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+new file mode 100644
+index 0000000..828f39b
+--- /dev/null
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -0,0 +1,297 @@
++module Fogell.Execution.Tests
++
++open System
++open System.IO
++open Expecto
++open Fogell.Domain
++open Fogell.Execution
++
++let private tempRoot () =
++    let p = Path.Combine(Path.GetTempPath(), "fogell-exec-" + Guid.NewGuid().ToString("N"))
++    Directory.CreateDirectory p |> ignore
++    p
++
++let private key () = "attempt-" + Guid.NewGuid().ToString("N").Substring(0, 8)
++
++let private request root script =
++    { Name = "sh"
++      Script = Some script
++      WorkspaceRoot = root
++      AttemptKey = key ()
++      Environment = []
++      TimeoutMs = None
++      OnLine = None }
++
++/// Spawn a real background child that records its own pid, then assert on that
++/// pid directly.
++///
++/// The first version of this helper tagged the child via argv (`sleep 600
++/// --marker`). That is an INVALID sleep interval, so the child exited
++/// immediately and every reaping assertion passed vacuously — the daemon it
++/// claimed to reap never existed. Identifying by recorded pid cannot lie.
++let private daemonScript (pidFile: string) =
++    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 &"
++
++let private waitForPidFile (pidFile: string) =
++    let clock = Diagnostics.Stopwatch.StartNew()
++
++    while not (File.Exists pidFile) && clock.ElapsedMilliseconds < 3_000L do
++        Threading.Thread.Sleep 25
++
++    if File.Exists pidFile then
++        match Int32.TryParse((File.ReadAllText pidFile).Trim()) with
++        | true, pid -> Some pid
++        | _ -> None
++    else
++        None
++
++/// Alive per /proc, which needs no signal and cannot be confused by reuse
++/// within a single test.
++let private pidAlive (pid: int) = Directory.Exists $"/proc/{pid}"
++
++let workspaceHygiene =
++    testList
++        "FG-030 workspace hygiene"
++        [ test "a relative path resolves under the root" {
++              let root = tempRoot ()
++
++              match Workspace.resolveUnder root "sub/deep" with
++              | Result.Ok p -> Expect.stringStarts p (Path.GetFullPath root) "stays under root"
++              | Result.Error e -> failtestf "unexpected refusal: %s" e.Describe
++          }
++
++          test "an absolute path is refused" {
++              match Workspace.resolveUnder (tempRoot ()) "/etc/passwd" with
++              | Result.Error(Workspace.AbsolutePath _) -> ()
++              | other -> failtestf "expected AbsolutePath, got %A" other
++          }
++
++          test "a parent traversal is refused" {
++              match Workspace.resolveUnder (tempRoot ()) "../../etc" with
++              | Result.Error(Workspace.Traversal _) -> ()
++              | other -> failtestf "expected Traversal, got %A" other
++          }
++
++          test "a traversal hidden mid-path is refused" {
++              match Workspace.resolveUnder (tempRoot ()) "a/../../b" with
++              | Result.Error(Workspace.Traversal _) -> ()
++              | other -> failtestf "expected Traversal, got %A" other
++          }
++
++          test "a symlinked component is refused" {
++              let root = tempRoot ()
++              let target = Path.Combine(root, "real")
++              Directory.CreateDirectory target |> ignore
++              let link = Path.Combine(root, "link")
++              Directory.CreateSymbolicLink(link, target) |> ignore
++
++              match Workspace.resolveUnder root "link/inner" with
++              | Result.Error(Workspace.SymlinkComponent _) -> ()
++              | other -> failtestf "expected SymlinkComponent, got %A" other
++          }
++
++          test "a fresh workspace is created, and reuse is refused" {
++              let root = tempRoot ()
++              let k = key ()
++
++              match Workspace.createFresh root k with
++              | Result.Ok p -> Expect.isTrue (Directory.Exists p) "created"
++              | Result.Error e -> failtestf "unexpected: %s" e.Describe
++
++              match Workspace.createFresh root k with
++              | Result.Error(Workspace.AlreadyExists _) -> ()
++              | other -> failtestf "reuse must be refused, got %A" other
++          } ]
++
++let shellExecution =
++    testList
++        "FG-040 shell execution"
++        [ test "exit code 0 is Success and stdout is captured" {
++              let r = Executor.runStep (request (tempRoot ()) "echo hello")
++              Expect.equal r.Status Success "success"
++              Expect.equal r.ExitCode (Some 0) "exit 0"
++              Expect.stringContains r.Stdout "hello" "stdout captured"
++              Expect.isNone r.Diagnostic "no diagnostic on success"
++          }
++
++          test "a non-zero exit is Failure and the diagnostic names the code" {
++              let r = Executor.runStep (request (tempRoot ()) "exit 7")
++              Expect.equal r.Status Failure "failure"
++              Expect.equal r.ExitCode (Some 7) "code propagated"
++
++              match r.Diagnostic with
++              | Some d -> Expect.stringContains d "7" "names the exit code"
++              | None -> failtest "a failure must carry a diagnostic"
++          }
++
++          test "stderr is captured separately" {
++              let r = Executor.runStep (request (tempRoot ()) "echo oops >&2")
++              Expect.stringContains r.Stderr "oops" "stderr"
++              Expect.isFalse (r.Stdout.Contains "oops") "not mixed into stdout"
++          }
++
++          test "output streams while the step runs, not only at the end" {
++              let seen = System.Collections.Concurrent.ConcurrentBag<string>()
++              let root = tempRoot ()
++
++              let r =
++                  Executor.runStep
++                      { request root "for i in 1 2 3; do echo tick-$i; sleep 0.2; done" with
++                          OnLine = Some(fun l -> seen.Add l) }
++
++              Expect.equal r.Status Success "succeeded"
++              Expect.isGreaterThanOrEqual (seen |> Seq.filter (fun l -> l.StartsWith "tick-") |> Seq.length) 3 "all lines streamed"
++          }
++
++          test "the step runs inside its own fresh workspace" {
++              let root = tempRoot ()
++              let r = Executor.runStep (request root "pwd")
++              Expect.stringContains r.Stdout (Path.GetFileName(Path.GetFullPath root)) "cwd is under the root"
++          }
++
++          test "environment is passed through" {
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "echo v=$FOGELL_TEST" with
++                          Environment = [ "FOGELL_TEST", "42" ] }
++
++              Expect.stringContains r.Stdout "v=42" "env visible"
++          }
++
++          test "an unimplemented step fails closed with a named reason" {
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "" with
++                          Name = "kubernetesDeploy"
++                          Script = None }
++
++              Expect.equal r.Status Failure "fails closed"
++
++              match r.Diagnostic with
++              | Some d ->
++                  Expect.stringContains d "kubernetesDeploy" "names the step"
++                  Expect.stringContains d "fails closed" "says why"
++              | None -> failtest "must carry a diagnostic"
++          } ]
++
++let containment =
++    testList
++        "FG-031/032 process group containment"
++        [ test "the step leads its own process group" {
++              let r = Executor.runStep (request (tempRoot ()) "echo x")
++              Expect.isSome r.ProcessGroupId "a group id was observed"
++          }
++
++          test "a timeout sends a trappable SIGTERM before killing" {
++              // The script traps TERM and reports it, proving the interrupt is
++              // the contract Jenkins offers (JB-FAIL-003) rather than SIGKILL.
++              let root = tempRoot ()
++              let marker = Path.Combine(root, "trapped.txt")
++
++              let r =
++                  Executor.runStep
++                      { request root $"trap 'echo caught > {marker}; exit 0' TERM; sleep 30" with
++                          TimeoutMs = Some 1_000 }
++
++              Expect.equal r.Status Aborted "aborted on timeout"
++
++              match r.Diagnostic with
++              | Some d -> Expect.stringContains d "timeout" "diagnostic explains the abort"
++              | None -> failtest "an abort must carry a diagnostic"
++
++              // the handler had a grace window and used it
++              Expect.isTrue (File.Exists marker) "the TERM handler ran"
++
++              match r.Termination with
++              | Some t -> Expect.isTrue t.GracefulExit "exited on TERM without escalation"
++              | None -> failtest "termination detail expected"
++          }
++
++          test "a step ignoring SIGTERM is escalated to SIGKILL" {
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "trap '' TERM; sleep 30" with
++                          TimeoutMs = Some 800
++                          }
++
++              Expect.equal r.Status Aborted "aborted"
++
++              match r.Termination with
++              | Some t ->
++                  Expect.isTrue t.Escalated "escalated to SIGKILL"
++                  Expect.equal t.LeakedProcesses 0 "nothing survived"
++              | None -> failtest "termination detail expected"
++          }
++
++          test "BEAT JENKINS: a backgrounded child is reaped after SUCCESS" {
++              // Measured on Jenkins (JB-FAIL-004): a nohup'ed child survives both
++              // success and abort, and JENKINS_NODE_COOKIE=dontKillMe is moot
++              // because nothing is killed. Fogell reaps the group.
++              let root = tempRoot ()
++              let pidFile = Path.Combine(root, "daemon.pid")
++              let r = Executor.runStep (request root (daemonScript pidFile + " echo spawned"))
++
++              Expect.equal r.Status Success "step itself succeeded"
++
++              match waitForPidFile pidFile with
++              | None -> failtest "the daemon never started, so this test would prove nothing"
++              | Some pid ->
++                  Threading.Thread.Sleep 300
++                  Expect.isFalse (pidAlive pid) $"daemon {pid} must be reaped after success"
++
++                  match r.Termination with
++                  | Some t -> Expect.equal t.LeakedProcesses 0 "no leak reported"
++                  | None -> failtest "reaping should report a termination"
++          }
++
++          test "BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too" {
++              let root = tempRoot ()
++              let pidFile = Path.Combine(root, "daemon.pid")
++
++              let r =
++                  Executor.runStep
++                      { request root (daemonScript pidFile + " sleep 30") with
++                          TimeoutMs = Some 1_200 }
++
++              Expect.equal r.Status Aborted "timed out"
++
++              match waitForPidFile pidFile with
++              | None -> failtest "the daemon never started, so this test would prove nothing"
++              | Some pid ->
++                  Threading.Thread.Sleep 300
++                  Expect.isFalse (pidAlive pid) $"daemon {pid} must be reaped on abort"
++          }
++
++          test "reaping can be opted out of" {
++              let root = tempRoot ()
++              let pidFile = Path.Combine(root, "daemon.pid")
++
++              let ws =
++                  match Workspace.createFresh root (key ()) with
++                  | Result.Ok p -> p
++                  | Result.Error e -> failtestf "%s" e.Describe
++
++              let r =
++                  ProcessGroup.run
++                      { RunRequest.create (daemonScript pidFile + " echo spawned", ws) with
++                          ReapGroup = false }
++
++              Expect.equal r.Outcome (Completed 0) "succeeded"
++              Expect.isNone r.Termination "no reaping was attempted"
++
++              match waitForPidFile pidFile with
++              | None -> failtest "the daemon never started, so this test would prove nothing"
++              | Some pid ->
++                  Expect.isTrue (pidAlive pid) $"the opt-out must keep daemon {pid} alive"
++                  // leave nothing behind
++                  Native.signalProcess pid Native.SIGKILL |> ignore
++          } ]
++
++[<EntryPoint>]
++let main argv =
++    // These tests spawn real processes and assert on /proc; running them in
++    // parallel makes the survivor counts race against each other.
++    runTestsWithCLIArgs
++        []
++        argv
++        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment ]))

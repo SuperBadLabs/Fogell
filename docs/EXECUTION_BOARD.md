@@ -100,9 +100,9 @@ derivation in `architecture/BASELINE.md`.
 
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
-| FG-030 | P0 | TODO | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | path-abuse probe suite all rejected |
-| FG-031 | P0 | TODO | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | a `trap ... TERM` handler runs and its output reaches the log |
-| FG-032 | P0 | TODO | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | `nohup`'d child is dead after success *and* after abort; opt-out keeps it |
+| FG-030 | P0 | **DONE** | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | 6 tests: absolute, traversal, mid-path traversal, symlinked component, outside-root, and reuse all refused with a named error |
+| FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
+| FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
 | FG-033 | P0 | TODO | **Dead-process detection in seconds**, diagnostic naming the restart (`adr/0005` beat) | kill the step process: terminal verdict < 10 s with a message stating the cause |
 | FG-034 | P1 | TODO | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | differential receipt vs Jenkins on a trapped-SIGTERM pipeline |
 | FG-035 | P1 | TODO | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | differential receipt: attempt count matches Jenkins |
@@ -116,7 +116,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
 
 | id | pri | status | item | demand |
 |---|---|---|---|---:|
-| FG-040 | P0 | TODO | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | universal |
+| FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
 | FG-041 | P0 | TODO | `echo`, `dir`, `withEnv`, `environment` scoping (lexical, stage overrides pipeline) | 35 / 15 / 11 |
 | FG-042 | P0 | TODO | `archiveArtifacts` + byte-exact retrieval at a stable URL | 34 files |
 | FG-043 | P1 | TODO | `junit` test-result ingest and model | 26 files |

@@ -1,0 +1,10 @@
+ Fogell.slnx                                        |   2 +
+ docs/EXECUTION_BOARD.md                            |   8 +-
+ src/Fogell.Execution/Executor.fs                   | 123 +++++++++
+ src/Fogell.Execution/Fogell.Execution.fsproj       |  24 ++
+ src/Fogell.Execution/Native.fs                     |  69 +++++
+ src/Fogell.Execution/ProcessGroup.fs               | 260 ++++++++++++++++++
+ src/Fogell.Execution/Workspace.fs                  | 100 +++++++
+ .../Fogell.Execution.Tests.fsproj                  |   8 +
+ tests/Fogell.Execution.Tests/Tests.fs              | 297 +++++++++++++++++++++
+ 9 files changed, 887 insertions(+), 4 deletions(-)

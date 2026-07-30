@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <!-- ADR 0006: native interop is confined to ONE project per platform.
+         This is that project for Linux; Native.fs is the only file with
+         DllImport in the whole solution. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Native.fs" />
+    <Compile Include="Workspace.fs" />
+    <Compile Include="ProcessGroup.fs" />
+    <Compile Include="Executor.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" />
+    <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Execution.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
