@@ -1,0 +1,8 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? differential/cases/parallel-post-selection.Jenkinsfile
+?? differential/receipts/parallel-post-selection.receipt.txt
+?? evidence/20260729T234950Z-fg-048-049-041b-rev3/

@@ -147,6 +147,34 @@ let structure =
               Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
           }
 
+          test "a named when argument that is not `pattern` fails closed" {
+              // REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
+              // `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a
+              // silently wrong gate, which is the failure mode this whole area
+              // keeps producing.
+              let t = ok (mk "    stage('a') { when { tag comparator: 'REGEXP' } steps { echo 'x' } }")
+
+              match t.Stages.[0].When with
+              | Some(WhenUnmodelled("tag", _)) -> ()
+              | other -> failtest $"an unknown named arg must not become the pattern, got {other}"
+
+              let ok' = ok (mk "    stage('a') { when { tag pattern: 'v*' } steps { echo 'x' } }")
+              Expect.equal ok'.Stages.[0].When (Some(WhenTag "v*")) "pattern: is accepted"
+          }
+
+          test "equals keeps operand source form so a string is not an int" {
+              // Jenkins compares objects: Integer 2 != String '2'. Storing both as
+              // bare text made them compare equal and ran a stage Jenkins skips.
+              let same = ok (mk "    stage('a') { when { equals expected: 2, actual: 2 } steps { echo 'x' } }")
+              Expect.equal same.Stages.[0].When (Some(WhenEquals("2", "2"))) "both bare"
+
+              let mixed = ok (mk "    stage('a') { when { equals expected: 2, actual: '2' } steps { echo 'x' } }")
+
+              match mixed.Stages.[0].When with
+              | Some(WhenEquals(e, a)) -> Expect.notEqual e a "a quoted 2 differs from a bare 2"
+              | other -> failtest $"expected WhenEquals, got {other}"
+          }
+
           test "failFast is a STAGE-level directive, as Jenkins requires" {
               // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
               // parallel block with "Expected a stage". The accepted form is a

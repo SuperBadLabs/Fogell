@@ -1,0 +1,179 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index a30f1f2..a73468d 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
++seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -44,5 +44,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-quick
+     | from-slow
++    | from-quick
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 6ac191f..92876f5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **24/24 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **25/25 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 2c99f16..c663ee9 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -218,8 +218,15 @@ module FogellSide =
+                     | Some p -> p ()
+                     | None -> false)
+ 
+-            /// Ant-style glob as `when { branch }` / `when { tag }` use it. An
+-            /// absent variable is never a match: MEASURED, Jenkins skips the stage.
++            /// `*` wildcard matching for `when { branch }` / `when { tag }`.
++            ///
++            /// REVIEW FIX (Copilot, PR #13): this said "Ant-style glob", which it is
++            /// not — only `*` is expanded, and Ant also has `?` and `**`. Claiming a
++            /// pattern language we do not implement is the same over-claim the whole
++            /// project exists to avoid. Corpus patterns are `main`, `v*`, `release/*`,
++            /// which `*` covers; `?`/`**` remain unimplemented and unclaimed.
++            ///
++            /// An absent variable is never a match: MEASURED, Jenkins skips the stage.
+             let matchesGlob (pattern: string) (value: string option) =
+                 match value with
+                 | None -> false
+@@ -258,6 +265,14 @@ module FogellSide =
+                 | WhenBranch pattern -> Some(matchesGlob pattern (Map.tryFind "BRANCH_NAME" env))
+                 | WhenTag pattern -> Some(matchesGlob pattern (Map.tryFind "TAG_NAME" env))
+ 
++                // REVIEW FIX (Codex, PR #13): both operands were stored as bare text,
++                // so `equals expected: 2, actual: '2'` compared equal and ran a stage
++                // Jenkins skips — Jenkins compares the underlying objects, and an
++                // Integer is not a String. The parser now keeps each operand's SOURCE
++                // form (quotes included), so a quoted and an unquoted 2 differ.
++                // This is a source-level approximation of Jenkins' object comparison,
++                // not the real thing: `equals expected: 2, actual: 2.0` would still
++                // be called unequal. Stated rather than implied.
+                 | WhenEquals(expected, actual) -> Some(expected.Trim() = actual.Trim())
+ 
+                 | WhenNot inner -> evalWhen stage inner |> Option.map not
+@@ -580,7 +595,16 @@ module FogellSide =
+                             |> List.map (fun branch ->
+                                 let branchCtx =
+                                     { Failed = ref false
+-                                      Sink = bump
++                                      // REVIEW FIX (Codex, PR #13): this sent branch
++                                      // status straight to the GLOBAL sink, bypassing
++                                      // the enclosing stage's. `stageStatus` therefore
++                                      // stayed Success on a failed parallel, so the
++                                      // stage's `post { success { … } }` ran and
++                                      // `post { failure { … } }` did not — i.e. a
++                                      // publish or deploy step firing on a red build.
++                                      // The build status still gets it: ctx.Sink
++                                      // forwards upward to `bump`.
++                                      Sink = ctx.Sink
+                                       EnvOverlay = ctx.EnvOverlay
+                                       Interrupt =
+                                         if failFast then
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 922394b..39df897 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -152,18 +152,27 @@ let private whenEnvironmentCondition: P<WhenCondition> =
+                 WhenUnmodelled("environment", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
+ 
+ /// `when { tag 'v*' }` — also accepts the named form `tag pattern: 'v*'`.
++/// REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
++/// `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a silently wrong
++/// gate. Only `pattern:` is accepted; anything else is unmodelled and fails closed.
+ let private whenTagCondition: P<WhenCondition> =
+     keyword "tag"
+-    >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral)
++    >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
++          |>> fun (k, v) -> if k = "pattern" then WhenTag v else WhenUnmodelled("tag", $"{k}: {v}"))
++         <|> (stringLiteral |>> WhenTag))
+     .>> ws
+-    |>> WhenTag
+ 
+ /// `when { equals expected: 2, actual: 2 }` — a pure comparison, so it is worth
+ /// modelling rather than failing closed on.
+ let private whenEqualsCondition: P<WhenCondition> =
+     keyword "equals"
+-    >>. sepBy1 (identifier .>> symbol ":" .>>. (attempt stringLiteral <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.') .>> ws)))
+-        (symbol ",")
++    // Operands keep their SOURCE form, quotes included, so a quoted "2" and a bare
++    // 2 are distinguishable — Jenkins compares objects, and String != Integer.
++    >>. sepBy1
++            (identifier .>> symbol ":"
++             .>>. (attempt (stringLiteral |>> fun v -> $"'{v}'")
++                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || isLetter c) .>> ws)))
++            (symbol ",")
+     .>> ws
+     |>> fun pairs ->
+             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
+@@ -176,7 +185,14 @@ let rec private whenCondition: P<WhenCondition> =
+     parse {
+         let! _ = ws
+         return! choice
+-                    [ attempt (keyword "branch" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenBranch)
++                    // Same key validation as `tag`: a named argument that is not
++                    // `pattern:` must not be mistaken for the branch pattern.
++                    [ attempt (
++                          keyword "branch"
++                          >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
++                                |>> fun (k, v) -> if k = "pattern" then WhenBranch v else WhenUnmodelled("branch", $"{k}: {v}"))
++                               <|> (stringLiteral |>> WhenBranch))
++                          .>> ws)
+                       attempt whenTagCondition
+                       attempt whenEqualsCondition
+                       attempt whenEnvironmentCondition
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index 0598509..01622b4 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -147,6 +147,34 @@ let structure =
+               Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
+           }
+ 
++          test "a named when argument that is not `pattern` fails closed" {
++              // REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
++              // `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a
++              // silently wrong gate, which is the failure mode this whole area
++              // keeps producing.
++              let t = ok (mk "    stage('a') { when { tag comparator: 'REGEXP' } steps { echo 'x' } }")
++
++              match t.Stages.[0].When with
++              | Some(WhenUnmodelled("tag", _)) -> ()
++              | other -> failtest $"an unknown named arg must not become the pattern, got {other}"
++
++              let ok' = ok (mk "    stage('a') { when { tag pattern: 'v*' } steps { echo 'x' } }")
++              Expect.equal ok'.Stages.[0].When (Some(WhenTag "v*")) "pattern: is accepted"
++          }
++
++          test "equals keeps operand source form so a string is not an int" {
++              // Jenkins compares objects: Integer 2 != String '2'. Storing both as
++              // bare text made them compare equal and ran a stage Jenkins skips.
++              let same = ok (mk "    stage('a') { when { equals expected: 2, actual: 2 } steps { echo 'x' } }")
++              Expect.equal same.Stages.[0].When (Some(WhenEquals("2", "2"))) "both bare"
++
++              let mixed = ok (mk "    stage('a') { when { equals expected: 2, actual: '2' } steps { echo 'x' } }")
++
++              match mixed.Stages.[0].When with
++              | Some(WhenEquals(e, a)) -> Expect.notEqual e a "a quoted 2 differs from a bare 2"
++              | other -> failtest $"expected WhenEquals, got {other}"
++          }
++
+           test "failFast is a STAGE-level directive, as Jenkins requires" {
+               // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
+               // parallel block with "Expected a stage". The accepted form is a

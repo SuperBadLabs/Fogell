@@ -152,18 +152,27 @@ let private whenEnvironmentCondition: P<WhenCondition> =
                 WhenUnmodelled("environment", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
 
 /// `when { tag 'v*' }` — also accepts the named form `tag pattern: 'v*'`.
+/// REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
+/// `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a silently wrong
+/// gate. Only `pattern:` is accepted; anything else is unmodelled and fails closed.
 let private whenTagCondition: P<WhenCondition> =
     keyword "tag"
-    >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral)
+    >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
+          |>> fun (k, v) -> if k = "pattern" then WhenTag v else WhenUnmodelled("tag", $"{k}: {v}"))
+         <|> (stringLiteral |>> WhenTag))
     .>> ws
-    |>> WhenTag
 
 /// `when { equals expected: 2, actual: 2 }` — a pure comparison, so it is worth
 /// modelling rather than failing closed on.
 let private whenEqualsCondition: P<WhenCondition> =
     keyword "equals"
-    >>. sepBy1 (identifier .>> symbol ":" .>>. (attempt stringLiteral <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.') .>> ws)))
-        (symbol ",")
+    // Operands keep their SOURCE form, quotes included, so a quoted "2" and a bare
+    // 2 are distinguishable — Jenkins compares objects, and String != Integer.
+    >>. sepBy1
+            (identifier .>> symbol ":"
+             .>>. (attempt (stringLiteral |>> fun v -> $"'{v}'")
+                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || isLetter c) .>> ws)))
+            (symbol ",")
     .>> ws
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
@@ -176,7 +185,14 @@ let rec private whenCondition: P<WhenCondition> =
     parse {
         let! _ = ws
         return! choice
-                    [ attempt (keyword "branch" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenBranch)
+                    // Same key validation as `tag`: a named argument that is not
+                    // `pattern:` must not be mistaken for the branch pattern.
+                    [ attempt (
+                          keyword "branch"
+                          >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
+                                |>> fun (k, v) -> if k = "pattern" then WhenBranch v else WhenUnmodelled("branch", $"{k}: {v}"))
+                               <|> (stringLiteral |>> WhenBranch))
+                          .>> ws)
                       attempt whenTagCondition
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition

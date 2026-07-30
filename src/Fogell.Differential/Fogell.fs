@@ -218,8 +218,15 @@ module FogellSide =
                     | Some p -> p ()
                     | None -> false)
 
-            /// Ant-style glob as `when { branch }` / `when { tag }` use it. An
-            /// absent variable is never a match: MEASURED, Jenkins skips the stage.
+            /// `*` wildcard matching for `when { branch }` / `when { tag }`.
+            ///
+            /// REVIEW FIX (Copilot, PR #13): this said "Ant-style glob", which it is
+            /// not — only `*` is expanded, and Ant also has `?` and `**`. Claiming a
+            /// pattern language we do not implement is the same over-claim the whole
+            /// project exists to avoid. Corpus patterns are `main`, `v*`, `release/*`,
+            /// which `*` covers; `?`/`**` remain unimplemented and unclaimed.
+            ///
+            /// An absent variable is never a match: MEASURED, Jenkins skips the stage.
             let matchesGlob (pattern: string) (value: string option) =
                 match value with
                 | None -> false
@@ -258,6 +265,14 @@ module FogellSide =
                 | WhenBranch pattern -> Some(matchesGlob pattern (Map.tryFind "BRANCH_NAME" env))
                 | WhenTag pattern -> Some(matchesGlob pattern (Map.tryFind "TAG_NAME" env))
 
+                // REVIEW FIX (Codex, PR #13): both operands were stored as bare text,
+                // so `equals expected: 2, actual: '2'` compared equal and ran a stage
+                // Jenkins skips — Jenkins compares the underlying objects, and an
+                // Integer is not a String. The parser now keeps each operand's SOURCE
+                // form (quotes included), so a quoted and an unquoted 2 differ.
+                // This is a source-level approximation of Jenkins' object comparison,
+                // not the real thing: `equals expected: 2, actual: 2.0` would still
+                // be called unequal. Stated rather than implied.
                 | WhenEquals(expected, actual) -> Some(expected.Trim() = actual.Trim())
 
                 | WhenNot inner -> evalWhen stage inner |> Option.map not
@@ -580,7 +595,16 @@ module FogellSide =
                             |> List.map (fun branch ->
                                 let branchCtx =
                                     { Failed = ref false
-                                      Sink = bump
+                                      // REVIEW FIX (Codex, PR #13): this sent branch
+                                      // status straight to the GLOBAL sink, bypassing
+                                      // the enclosing stage's. `stageStatus` therefore
+                                      // stayed Success on a failed parallel, so the
+                                      // stage's `post { success { … } }` ran and
+                                      // `post { failure { … } }` did not — i.e. a
+                                      // publish or deploy step firing on a red build.
+                                      // The build status still gets it: ctx.Sink
+                                      // forwards upward to `bump`.
+                                      Sink = ctx.Sink
                                       EnvOverlay = ctx.EnvOverlay
                                       Interrupt =
                                         if failFast then

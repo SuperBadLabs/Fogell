@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+seal:         67e66c733db5a6e1d1cd6804de635f7059ad8e4ab627065905b76a81c290f69c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -35,14 +35,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-quick
-    | from-slow
+  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+  output (0 lines):
+  workspace:
+    8ecc5f94c57b  fine.txt
+    844cd17a64df  right-arm.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-slow
-    | from-quick
+  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+  output (0 lines):
+  workspace:
+    8ecc5f94c57b  fine.txt
+    844cd17a64df  right-arm.txt
