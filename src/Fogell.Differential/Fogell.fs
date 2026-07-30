@@ -26,6 +26,11 @@ type BranchCtx =
       /// must not leave a permanent mark on the build, and the build status is a
       /// monotone worst-of that could never be walked back.
       Sink: BuildStatus -> unit
+      /// FG-101. Elapsed-ms at which a failFast sibling signalled, if it has. The
+      /// cancellation model claims the EARLIER event wins; without a timestamp that claim
+      /// was unbackable and the code simply let expiry win every tie — a comment promising
+      /// more than the code does, which is the FG-104 defect appearing inside FG-101.
+      SiblingFailedAt: int64 ref
       /// FG-044. Credential bindings live for this scope, so output is masked.
       Secrets: SecretBinding list
       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
@@ -361,9 +366,18 @@ module FogellSide =
                     | Some p -> (try p () with _ -> false)
                     | None -> false
 
-                if expiredNow then DeadlineExpired
-                elif siblingNow then SiblingFailed
-                else Running
+                match expiredNow, siblingNow with
+                | false, false -> Running
+                | true, false -> DeadlineExpired
+                | false, true -> SiblingFailed
+                | true, true ->
+                    // Both hold: the EARLIER event is the cause. The sibling records when
+                    // it signalled; the deadline's instant is the deadline itself.
+                    let siblingAt = ctx.SiblingFailedAt.Value
+                    let deadlineAt = defaultArg deadline Int64.MaxValue
+
+                    if siblingAt > 0L && siblingAt < deadlineAt then SiblingFailed
+                    else DeadlineExpired
 
             /// Emit the reason, mark the branch failed, and sink the status the CAUSE
             /// dictates. Every cancellable step routes through this so the classification
@@ -1581,6 +1595,7 @@ module FogellSide =
                         // works. A CancellationTokenSource is the synchronised
                         // signal this needs.
                         use siblingFailed = new System.Threading.CancellationTokenSource()
+                        let siblingFailedAt = ref 0L
 
                         let branches =
                             stage.Nested
@@ -1599,6 +1614,7 @@ module FogellSide =
                                       Sink = ctx.Sink
                                       EnvOverlay = ctx.EnvOverlay
                                       Secrets = ctx.Secrets
+                                      SiblingFailedAt = siblingFailedAt
                                       Interrupt =
                                         if failFast then
                                             Some(fun () -> siblingFailed.IsCancellationRequested)
@@ -1616,6 +1632,9 @@ module FogellSide =
                                         // false-PROVEN path, and this sentence is real
                                         // information a reader wants.
                                         emit $"Failed in branch {branch.Name}"
+                                        // Stamp the instant, so "earlier wins" is decidable
+                                        // rather than merely asserted.
+                                        siblingFailedAt.Value <- runClock.ElapsedMilliseconds
                                         siblingFailed.Cancel()))
 
                         // Every branch is awaited even under failFast: an
@@ -1634,7 +1653,13 @@ module FogellSide =
                         for nested in stage.Nested do
                             runStage ctx cwd deadline nested
 
-            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+            let root =
+                { Interrupt = None
+                  Failed = ref false
+                  Sink = bump
+                  EnvOverlay = []
+                  Secrets = []
+                  SiblingFailedAt = ref 0L }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
