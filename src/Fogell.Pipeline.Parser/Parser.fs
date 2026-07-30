@@ -132,23 +132,85 @@ let private postSection: P<(PostCondition * Step list) list> =
     >>. between (symbol "{") (symbol "}") (
         ws >>. many (attempt (postConditionName .>>. stepBlock)))
 
+/// `when { environment name: 'FOO', value: 'bar' }`.
+///
+/// MEASURED shape. The first version expected `environment FOO = 'bar'`, which
+/// Jenkins does not accept — so every real `environment` condition fell through
+/// to the unmodelled branch, and from there (see below) out of the `when`
+/// section entirely. Named arguments, in either order.
+let private whenEnvironmentCondition: P<WhenCondition> =
+    keyword "environment"
+    >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
+    |>> fun pairs ->
+            let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
+
+            match get "name", get "value" with
+            | Some n, Some v -> WhenEnvironment(n, v)
+            | _ ->
+                // Recognised the keyword but not its arguments: unmodelled, so
+                // evaluation fails closed rather than assuming a direction.
+                WhenUnmodelled("environment", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
+
+/// `when { tag 'v*' }` — also accepts the named form `tag pattern: 'v*'`.
+let private whenTagCondition: P<WhenCondition> =
+    keyword "tag"
+    >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral)
+    .>> ws
+    |>> WhenTag
+
+/// `when { equals expected: 2, actual: 2 }` — a pure comparison, so it is worth
+/// modelling rather than failing closed on.
+let private whenEqualsCondition: P<WhenCondition> =
+    keyword "equals"
+    >>. sepBy1 (identifier .>> symbol ":" .>>. (attempt stringLiteral <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.') .>> ws)))
+        (symbol ",")
+    .>> ws
+    |>> fun pairs ->
+            let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
+
+            match get "expected", get "actual" with
+            | Some e, Some a -> WhenEquals(e, a)
+            | _ -> WhenUnmodelled("equals", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
+
 let rec private whenCondition: P<WhenCondition> =
     parse {
         let! _ = ws
         return! choice
-                    [ attempt (keyword "branch" >>. stringLiteral |>> WhenBranch)
-                      attempt (keyword "environment" >>. (
-                          identifier .>> symbol "=" .>>. stringLiteral |>> WhenEnvironment))
-                      attempt (keyword "expression" >>. balancedBody '{' '}' |>> WhenExpression)
-                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAllOf)
-                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAnyOf)
-                      attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition |>> WhenNot)
-                      (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')') <|> (restOfLine true |>> fun s -> s.Trim()))
+                    [ attempt (keyword "branch" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenBranch)
+                      attempt whenTagCondition
+                      attempt whenEqualsCondition
+                      attempt whenEnvironmentCondition
+                      attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
+                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAllOf)
+                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAnyOf)
+                      attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
+                      // Unrecognised condition. `.>> ws` is load-bearing: without
+                      // it this branch ends mid-line, the enclosing `}` fails to
+                      // match, and the ENTIRE `when` section falls through to the
+                      // stage's generic section fallback — which means a stage
+                      // with an unparseable `when` runs unconditionally. Silently
+                      // running a stage Jenkins skips is the worst failure mode
+                      // available here, and it was live until a receipt exposed it.
+                      ((identifier
+                        .>>. (attempt (balancedRaw '{' '}')
+                              <|> attempt (balancedRaw '(' ')')
+                              // NOT `restOfLine`: on a single-line `when { unknown x: 'y' }`
+                              // that swallowed the closing braces and destroyed the
+                              // whole pipeline parse. Stop at the enclosing brace or
+                              // the newline, whichever comes first.
+                              <|> (manySatisfy (fun c -> c <> '\n' && c <> '}') |>> fun s -> s.Trim())))
+                       .>> ws
                        |>> WhenUnmodelled) ]
     }
 
 let private whenSection: P<WhenCondition> =
     keyword "when" >>. between (symbol "{") (symbol "}") (ws >>. whenCondition)
+
+/// Backstop. If the structured parse above fails for ANY reason, the `when`
+/// must still be recorded — as unmodelled, so evaluation fails closed. It must
+/// never be allowed to disappear and leave the stage unconditional.
+let private whenSectionOpaque: P<WhenCondition> =
+    keyword "when" >>. balancedRaw '{' '}' |>> fun raw -> WhenUnmodelled("when", raw)
 
 // ---------------------------------------------------------------------------
 // Stages
@@ -203,6 +265,7 @@ stageRef.Value <-
                       attempt (environmentSection |>> SecEnv)
                       attempt (keyword "steps" >>. stepBlock |>> SecSteps)
                       attempt (whenSection |>> SecWhen)
+                      attempt (whenSectionOpaque |>> SecWhen)
                       attempt (postSection |>> SecPost)
                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))

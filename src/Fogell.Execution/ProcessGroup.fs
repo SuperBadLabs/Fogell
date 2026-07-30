@@ -265,10 +265,21 @@ module ProcessGroup =
                     else
                         None
 
-                // On Linux a process killed by signal N reports 128+N. Reporting
-                // that as an ordinary exit code is how "exit code -1" happens.
+                // On Linux a process killed by signal N exits 128+N.
+                //
+                // REVIEW FIXES (Codex P2 + Copilot, PR #11), both correct:
+                //  * the range stopped at 164, covering signals 1..36, but Linux
+                //    has signals up to 64 (exit 192), so a high-numbered signal was
+                //    silently reported as an ordinary exit code;
+                //  * this is a HEURISTIC and cannot be otherwise here. `setsid
+                //    --wait` propagates "the same return", so the wait-status bit
+                //    that distinguishes "killed by signal 9" from "exited 137" is
+                //    already gone by the time .NET reports ExitCode. A script that
+                //    deliberately calls `exit 137` is indistinguishable from one
+                //    that was SIGKILLed. The diagnostic must therefore say "likely",
+                //    and FG-033's claim is corrected accordingly — see the board.
                 let outcome =
-                    if code > 128 && code < 165 then Signalled(code - 128) else Completed code
+                    if code > 128 && code <= 192 then Signalled(code - 128) else Completed code
 
                 outcome, t
             else

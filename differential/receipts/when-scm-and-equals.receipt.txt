@@ -1,7 +1,7 @@
-# Differential receipt — junit-failing.Jenkinsfile
+# Differential receipt — when-scm-and-equals.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0d59bc0f4e65aa119566858f3a7bdcab4b5f78779be2d9bead37c477e4526ede
+seal:         3cd6e10ee583e41e92087d45c2764229689a93ee5a9faab436b3343e2fb7ea3e
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -23,17 +23,21 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (5 lines):
+    | Stage "Branch main" skipped due to when conditional
+    | Stage "Tag v-star" skipped due to when conditional
+    | equals-matched
+    | Stage "Equals mismatch" skipped due to when conditional
+    | always-ran
 
 ## Fogell
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (5 lines):
+    | Stage "Branch main" skipped due to when conditional
+    | Stage "Tag v-star" skipped due to when conditional
+    | equals-matched
+    | Stage "Equals mismatch" skipped due to when conditional
+    | always-ran

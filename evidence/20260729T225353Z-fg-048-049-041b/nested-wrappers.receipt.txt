@@ -1,7 +1,7 @@
-# Differential receipt — junit-failing.Jenkinsfile
+# Differential receipt — nested-wrappers.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0d59bc0f4e65aa119566858f3a7bdcab4b5f78779be2d9bead37c477e4526ede
+seal:         c624044b02d55d4080d131307b761d4491eb8a4140ca6a33a51069b771aba8ac
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -23,17 +23,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
+  result:         failure
+  workspace-hash: f43d97e07d18578c2315da574449fa84834d47c31b8531c12277073b798564e0
   output (1 lines):
-    | Recording test results
+    | Retrying
   workspace:
-    b2aa877b610b  reports/results.xml
+    381aca7a98c6  work/attempts.txt
 
 ## Fogell
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
+  result:         failure
+  workspace-hash: f43d97e07d18578c2315da574449fa84834d47c31b8531c12277073b798564e0
   output (1 lines):
-    | Recording test results
+    | Retrying
   workspace:
-    b2aa877b610b  reports/results.xml
+    381aca7a98c6  work/attempts.txt

@@ -1,0 +1,42 @@
+ M differential/receipts/archive-artifacts.receipt.txt
+ M differential/receipts/archive-empty-fails.receipt.txt
+ M differential/receipts/echo-only.receipt.txt
+ M differential/receipts/env-scoping.receipt.txt
+ M differential/receipts/junit-failing.receipt.txt
+ M differential/receipts/junit-passing.receipt.txt
+ M differential/receipts/nonzero-exit.receipt.txt
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M differential/receipts/parallel-failfast.receipt.txt
+ M differential/receipts/parallel-siblings-finish.receipt.txt
+ M differential/receipts/retry-exhausts.receipt.txt
+ M differential/receipts/retry-succeeds.receipt.txt
+ M differential/receipts/shell-and-file.receipt.txt
+ M differential/receipts/timeout-seconds.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.Differential.fsproj
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Execution/ProcessGroup.fs
+ M src/Fogell.Execution/Secrets.fs
+ M src/Fogell.Groovy.Interpreter/Interpreter.fs
+ M src/Fogell.Ir/Pipeline.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? differential/cases/nested-wrappers.Jenkinsfile
+?? differential/cases/post-order-failure.Jenkinsfile
+?? differential/cases/post-order-success.Jenkinsfile
+?? differential/cases/timeout-block-deadline.Jenkinsfile
+?? differential/cases/when-conditions.Jenkinsfile
+?? differential/cases/when-scm-and-equals.Jenkinsfile
+?? differential/cases/withenv-scoping.Jenkinsfile
+?? differential/receipts/nested-wrappers.receipt.txt
+?? differential/receipts/post-order-failure.receipt.txt
+?? differential/receipts/post-order-success.receipt.txt
+?? differential/receipts/timeout-block-deadline.receipt.txt
+?? differential/receipts/when-conditions.receipt.txt
+?? differential/receipts/when-scm-and-equals.receipt.txt
+?? differential/receipts/withenv-scoping.receipt.txt
+?? evidence/20260729T225353Z-fg-048-049-041b/

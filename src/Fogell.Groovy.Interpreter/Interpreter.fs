@@ -19,7 +19,14 @@ type Fault =
 type Outcome =
     { Effects: Effect list
       Fault: Fault option
-      Env: Env }
+      Env: Env
+      /// FG-048. The script's VALUE, when it has one — needed because
+      /// `when { expression { … } }` is a predicate, not a side effect. Two
+      /// shapes occur in the corpus and both must work: an explicit `return X`,
+      /// and a bare trailing expression (Groovy's last-expression-is-the-value).
+      /// None means the script produced no value, which is NOT the same as
+      /// producing false, and a `when` must not treat it as such.
+      Returned: Value option }
 
 /// Evaluation budgets. An untrusted script must not be able to spin forever or
 /// allocate without bound — the interpreter is on the admission path, so a
@@ -413,20 +420,36 @@ module Interpreter =
                 env
 
         try
-            let final = execBlock st hoisted script
+            // A script that is exactly one expression has that expression's
+            // value. Threading a value out of execBlock would change every
+            // statement's signature for the sake of one caller, so the single
+            // shape that needs it is handled here.
+            match script with
+            | [ SExpr e ] ->
+                let v = evalExpr st hoisted e
 
-            { Effects = List.rev st.Effects
-              Fault = None
-              Env = final }
+                { Effects = List.rev st.Effects
+                  Fault = None
+                  Env = hoisted
+                  Returned = Some v }
+            | _ ->
+                let final = execBlock st hoisted script
+
+                { Effects = List.rev st.Effects
+                  Fault = None
+                  Env = final
+                  Returned = None }
         with
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f
-              Env = hoisted }
-        | ReturnSignal _ ->
+              Env = hoisted
+              Returned = None }
+        | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = hoisted }
+              Env = hoisted
+              Returned = Some v }
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script

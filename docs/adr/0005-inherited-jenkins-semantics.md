@@ -30,6 +30,23 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
     and letting it dominate reports the wrong terminal state.
   (Proven: `parallel-siblings-finish`, `parallel-failfast`,
   `parallel-always-failfast` receipts.)
+- `post` **selection and order**, measured across four consecutive builds of one
+  job rather than read from documentation. Order:
+  **always → changed → fixed → regression → result-arm → cleanup**.
+  `changed` fires on a **first** build — with no previous result, Jenkins treats
+  the result as changed. `fixed` needs a previous FAILURE/UNSTABLE and a current
+  SUCCESS; `regression` needs a previous SUCCESS and anything worse now.
+  (Proven for build #1 by `post-order-failure`/`post-order-success`; the
+  history-dependent arms are measured but not receipt-proven — FG-049b.)
+- A `when`-skipped stage leaves the build **SUCCESS** and its **`post` block does
+  not run**. (Proven: `when-conditions`.)
+- On a plain (non-multibranch) job, `when { branch … }` and `when { tag … }` are
+  **skipped**, because `BRANCH_NAME`/`TAG_NAME` do not exist. This is what allows
+  them to be modelled rather than refused. (Proven: `when-scm-and-equals`.)
+- `withEnv` is genuinely block-scoped: after the block an added variable is
+  **unset** and a shadowed one **reverts**. (Proven: `withenv-scoping`.)
+- `timeout` bounds the **block**, not each step inside it. (Proven:
+  `timeout-block-deadline`.)
 - Approval/`input` state survives a controller restart.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a
   46 s network partition cost **zero** log lines.

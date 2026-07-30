@@ -53,8 +53,13 @@ module Secrets =
     let private detectableForms (value: string) =
         let bytes = Text.Encoding.UTF8.GetBytes value
 
+        // REVIEW FIX (Copilot, PR #11): only the lowercase hex form was generated,
+        // so a secret hex-encoded by anything using .NET's default casing — which
+        // is UPPERCASE — went undetected while the report claimed hex was covered.
+        // A detector with a hole it does not admit to is worse than no detector.
         [ "reversed", String(value.ToCharArray() |> Array.rev)
           "hex", Convert.ToHexString(bytes).ToLowerInvariant()
+          "hex-upper", Convert.ToHexString bytes
           "char-split", String.Join("_", value.ToCharArray()) ]
         |> List.filter (fun (_, v) -> v.Length > 3)
 

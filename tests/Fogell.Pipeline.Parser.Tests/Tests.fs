@@ -110,6 +110,43 @@ let structure =
               Expect.contains (step.Named |> List.map fst) "artifacts" "named arg present"
           }
 
+          test "when { environment name: 'X', value: 'Y' } parses — the shape Jenkins accepts" {
+              // Found by a differential receipt: the parser expected
+              // `environment X = 'Y'`, which Jenkins REJECTS, so every real
+              // condition fell through to the unmodelled branch and from there
+              // out of the `when` section entirely.
+              let p = ok (mk "    stage('a') { when { environment name: 'FOO', value: 'bar' } steps { echo 'x' } }")
+              Expect.equal p.Stages.[0].When (Some(WhenEnvironment("FOO", "bar"))) "modelled condition"
+          }
+
+          test "an unparseable when is recorded as unmodelled, never dropped" {
+              // THE dangerous case. Before the backstop, a `when` the parser could
+              // not understand vanished into the stage's generic section fallback,
+              // leaving the stage unconditional — silently running a stage Jenkins
+              // skips. A refusal is recoverable; a silent wrong answer is not.
+              let p = ok (mk "    stage('a') { when { someFutureCondition foo: 'bar' } steps { echo 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtest $"an unrecognised when must be Some(WhenUnmodelled …), got {other}"
+          }
+
+          test "allOf composes not and environment" {
+              let p = ok (mk "    stage('a') { when { allOf { environment name: 'FOO', value: 'bar'\n not { environment name: 'FOO', value: 'no' } } } steps { echo 'x' } }")
+              Expect.equal
+                  p.Stages.[0].When
+                  (Some(WhenAllOf [ WhenEnvironment("FOO", "bar"); WhenNot(WhenEnvironment("FOO", "no")) ]))
+                  "nested composition"
+          }
+
+          test "tag and equals conditions are modelled" {
+              let t = ok (mk "    stage('a') { when { tag 'v*' } steps { echo 'x' } }")
+              Expect.equal t.Stages.[0].When (Some(WhenTag "v*")) "tag pattern"
+
+              let e = ok (mk "    stage('a') { when { equals expected: 2, actual: 2 } steps { echo 'x' } }")
+              Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
+          }
+
           test "failFast is a STAGE-level directive, as Jenkins requires" {
               // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
               // parallel block with "Expected a stage". The accepted form is a

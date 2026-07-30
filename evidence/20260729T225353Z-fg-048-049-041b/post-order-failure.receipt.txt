@@ -1,7 +1,7 @@
-# Differential receipt — junit-failing.Jenkinsfile
+# Differential receipt — post-order-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0d59bc0f4e65aa119566858f3a7bdcab4b5f78779be2d9bead37c477e4526ede
+seal:         a0d8a9137941405aa12b759053cf08af8f41d311d4bd793cbb06b1c9a54e09d9
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -23,17 +23,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | POST-always
+    | POST-changed
+    | POST-failure
+    | POST-cleanup
 
 ## Fogell
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | POST-always
+    | POST-changed
+    | POST-failure
+    | POST-cleanup

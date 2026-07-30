@@ -158,7 +158,6 @@ module Trace =
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
-        || t = "Terminated"
         || t.StartsWith "Failed in branch "
         || t.StartsWith "Aborted by "
         // The timeout plugin appends an opaque correlation id. It carries no
@@ -183,6 +182,12 @@ module Trace =
             None
         // Jenkins pipeline-graph annotations: pure structure, no output
         elif t.StartsWith "[Pipeline]" then None
+        // FG-049. `Post stage` is the declarative graph's label for the synthetic
+        // stage that wraps a post section — the same category as [Pipeline]
+        // annotations: structure, not output. Excluded rather than imitated,
+        // because inventing Jenkins' internal narration is what went wrong with
+        // the `[branch]` prefix in FG-036.
+        elif t = "Post stage" then None
         // Jenkins node/workspace banners
         elif t.StartsWith "Running on " || t.StartsWith "Running in " then None
         elif t.StartsWith "Started by " then None
@@ -203,11 +208,35 @@ module Trace =
         elif isDiagnosticLine t then None
         else Some t
 
+    /// REVIEW FIX (Codex P2, PR #12): `Terminated` was excluded by an
+    /// unconditional text match, so a build whose own script printed that word
+    /// silently lost the line — and a lost line on one side only is how a FALSE
+    /// `PROVEN` happens. Jenkins emits it only as the second half of
+    /// "Sending interrupt signal to process" / "Terminated", so it is excluded
+    /// ONLY when such an interrupt was actually narrated earlier in the run.
+    /// Everywhere else it is ordinary user output and is compared.
     let normaliseOutput (lines: string seq) : string list =
-        lines |> Seq.choose normaliseLine |> List.ofSeq
+        let mutable interruptNarrated = false
+
+        [ for line in lines do
+            let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+
+            if raw.StartsWith "Sending interrupt signal to process"
+               || raw.StartsWith "Cancelling nested steps"
+               || raw.StartsWith "Timeout has been exceeded" then
+                interruptNarrated <- true
+
+            if raw = "Terminated" && interruptNarrated then
+                ()
+            else
+                match normaliseLine line with
+                | Some l -> yield l
+                | None -> () ]
 
     /// Did the engine explain itself? Computed over RAW lines, before the
     /// diagnostic-stripping normaliser removes them.
+    /// `Terminated` on its own is only a reason when an interrupt was narrated
+    /// with it; see [normaliseOutput].
     let reportedFailureReason (lines: string seq) : bool =
         lines
         |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
@@ -220,7 +249,7 @@ module Trace =
           "compared: ordered normalised output lines"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps, ANSI escapes, blank lines"
-          "excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines"
+          "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"
           "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
           "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"

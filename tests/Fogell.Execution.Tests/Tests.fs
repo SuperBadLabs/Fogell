@@ -28,6 +28,7 @@ let private request root script =
       Environment = []
       TimeoutMs = None
       Interrupt = None
+      Secrets = []
       OnLine = None
       Named = []
       Artifacts = None
@@ -536,6 +537,59 @@ let externalInterrupt =
           } ]
 
 
+
+let maskingOnOutputPath =
+    testList
+        "FG-071 masking is ON the output path, not merely available"
+        [ test "a secret echoed by the step is masked in BOTH streamed and buffered output" {
+              // REVIEW FIX (Codex P1, PR #11). The masker existed and was unit
+              // tested, but nothing called it, so a step that printed the secret
+              // leaked it while the board claimed masking was done. This test
+              // fails if the wiring is ever removed again.
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
+              let streamed = System.Collections.Generic.List<string>()
+
+              let r =
+                  Executor.runStep
+                      { request root "echo \"leaking s3cr3t-value now\"" with
+                          Secrets = [ binding ]
+                          OnLine = Some(fun l -> streamed.Add l) }
+
+              Expect.equal r.Status Success "step ran"
+
+              let streamedText = String.Join("\n", streamed)
+
+              Expect.isFalse (streamedText.Contains "s3cr3t-value") "STREAMED output must not carry the secret"
+              Expect.isFalse (r.Stdout.Contains "s3cr3t-value") "BUFFERED output must not carry the secret"
+              Expect.stringContains streamedText "leaking" "the rest of the line survives"
+          }
+
+          test "an encoding masking cannot cover is NAMED in the output" {
+              // The FG-071 promise is not that nothing leaks — it is that a leak
+              // is never silent. `rev` defeats the mask, so the engine must say so.
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
+              let streamed = System.Collections.Generic.List<string>()
+
+              Executor.runStep
+                  { request root "printf '%s\\n' \"$(echo s3cr3t-value | rev)\"" with
+                      Secrets = [ binding ]
+                      OnLine = Some(fun l -> streamed.Add l) }
+              |> ignore
+
+              let streamedText = String.Join("\n", streamed)
+
+              Expect.stringContains streamedText "TOKEN" "the warning names the variable"
+              Expect.stringContains streamedText "reversed" "the warning names the defeating encoding"
+          }
+
+          test "no secrets configured means output is untouched" {
+              // Guards against a masker that mangles ordinary builds.
+              let r = Executor.runStep (request (tempRoot ()) "echo plain-output")
+              Expect.stringContains r.Stdout "plain-output" "unchanged"
+          } ]
+
 [<EntryPoint>]
 let main argv =
     // These tests spawn real processes and assert on /proc; running them in
@@ -543,4 +597,4 @@ let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt ]))
+        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt; maskingOnOutputPath ]))

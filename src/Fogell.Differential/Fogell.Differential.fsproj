@@ -9,5 +9,9 @@
   <ItemGroup>
     <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
     <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
+    <!-- FG-048: `when { expression { … } }` is evaluated by the bounded
+         interpreter (ADR 0002), so the differential engine needs it. -->
+    <ProjectReference Include="../Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+    <ProjectReference Include="../Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
   </ItemGroup>
 </Project>

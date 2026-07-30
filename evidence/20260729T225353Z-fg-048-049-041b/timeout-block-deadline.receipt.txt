@@ -1,7 +1,7 @@
-# Differential receipt — junit-failing.Jenkinsfile
+# Differential receipt — timeout-block-deadline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0d59bc0f4e65aa119566858f3a7bdcab4b5f78779be2d9bead37c477e4526ede
+seal:         b069a1da9f5fff948eee4a0c4b92a414dbdc61295869265fb3c2e067f59eb1d0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -23,17 +23,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
+  result:         aborted
+  workspace-hash: b504e1680450dac54440ae8e40f7076371ce998b6c6bf5c50907cb2c953201aa
+  output (0 lines):
   workspace:
-    b2aa877b610b  reports/results.xml
+    2c8b08da5ce6  first.txt
 
 ## Fogell
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (1 lines):
-    | Recording test results
+  result:         aborted
+  workspace-hash: b504e1680450dac54440ae8e40f7076371ce998b6c6bf5c50907cb2c953201aa
+  output (0 lines):
   workspace:
-    b2aa877b610b  reports/results.xml
+    2c8b08da5ce6  first.txt
