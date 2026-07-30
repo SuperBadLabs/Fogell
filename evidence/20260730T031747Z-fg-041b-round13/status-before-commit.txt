@@ -1,0 +1,7 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.fs
+?? differential/cases/withenv-escaped-dollar.Jenkinsfile
+?? differential/receipts/withenv-escaped-dollar.receipt.txt
+?? evidence/20260730T031747Z-fg-041b-round13/

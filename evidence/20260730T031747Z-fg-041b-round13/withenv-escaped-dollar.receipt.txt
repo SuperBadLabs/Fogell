@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — withenv-escaped-dollar.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+seal:         a73a35933a8c533210d04f89e02b39b4be386b6c24278f9665cd5e3373fa2bf8
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -27,22 +27,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-quick
-    | from-slow
+  result:         success
+  workspace-hash: d95ddfed2e43af85c4b29a55ad7afea19e0d90835b5792939582c9895c378f07
+  output (0 lines):
+  workspace:
+    14e0b6662f2a  kept.txt
+    13111b0432d2  live.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
-    | from-slow
-    | from-quick
+  result:         success
+  workspace-hash: d95ddfed2e43af85c4b29a55ad7afea19e0d90835b5792939582c9895c378f07
+  output (0 lines):
+  workspace:
+    14e0b6662f2a  kept.txt
+    13111b0432d2  live.txt

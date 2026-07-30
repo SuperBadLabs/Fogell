@@ -93,7 +93,9 @@ module FogellSide =
                 //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
                 //    while the braced dotted form was not matched at all.
                 let resolveName (name: string) =
-                    // `env.X` and `env['X']` are the same variable as a bare `X`.
+                    // `env.X` is the same variable as a bare `X`. The bracketed
+                    // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
+                    // rejects it outright (measured — see the pattern below).
                     let bare =
                         if name.StartsWith "env." then name.Substring 4
                         else name
@@ -108,7 +110,20 @@ module FogellSide =
                 let pattern =
                     // ${ dotted } | $dotted. An escaped dollar never reaches here: the
                     // parser replaced it with a NUL sentinel, restored below.
-                    @"\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+                    //
+                    // A Codex review (PR #14 round 13) asked for the bracketed
+                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
+                    // Jenkins, that request is wrong: the sandbox REJECTS it —
+                    //   Scripts not permitted to use staticMethod
+                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
+                    // and the build fails. Supporting it would make Fogell RUN what
+                    // Jenkins REFUSES, which is the same divergence direction rejected
+                    // for stage-level failFast: a pipeline that works here would fail
+                    // there. Dotted only, and the comment on `resolveName` no longer
+                    // claims otherwise.
+                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
+                    let dotted = ident + "(?:\." + ident + ")*"
+                    @"\${(" + dotted + @")}|\$(" + dotted + ")"
 
                 let expanded =
                     Text.RegularExpressions.Regex.Replace(
@@ -677,9 +692,17 @@ module FogellSide =
                                     let name = entry.Substring(0, i)
                                     let raw = entry.Substring(i + 1)
 
+                                    // REVIEW FIX (Codex, PR #14 round 13): `withEnv`
+                                    // extracts its entries with a regex and never goes
+                                    // through the lexer, so the NUL-sentinel handling
+                                    // that protects `"\$X"` in an `environment` block
+                                    // did not apply here — `withEnv(["X=\$BUILD_NUMBER"])`
+                                    // was expanded where Groovy keeps it literal. Apply
+                                    // the same substitution before interpolating.
                                     let value =
                                         if interpolates then
-                                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
+                                            raw.Replace("\\$", "\u0000")
+                                            |> interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList)
                                         else
                                             raw
 
