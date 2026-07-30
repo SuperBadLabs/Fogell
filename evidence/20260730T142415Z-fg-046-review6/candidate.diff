@@ -1,0 +1,317 @@
+diff --git a/differential/cases/withenv-path-last-wins.Jenkinsfile b/differential/cases/withenv-path-last-wins.Jenkinsfile
+index 1dd3928..603da94 100644
+--- a/differential/cases/withenv-path-last-wins.Jenkinsfile
++++ b/differential/cases/withenv-path-last-wins.Jenkinsfile
+@@ -3,13 +3,17 @@
+ // last-wins. Picking the first produced `/tools:/first` and discarded the effective
+ // `/second`. Only the first two entries are compared: the tail legitimately differs
+ // between a Jenkins container and this host.
++//
++// No PIPE: Jenkins' `sh -x` traces each pipeline component and the continuation does not
++// start with '+ ', which is the FG-002c gap — the sibling PATH case was rewritten for the
++// same reason. The claim is about PATH ordering, not trace formatting.
+ pipeline {
+     agent any
+     stages {
+         stage('Last wins') {
+             steps {
+                 withEnv(['PATH=/first:/usr/bin:/bin', 'PATH=/second:/usr/bin:/bin', 'PATH+TOOLS=/opt/tools/bin']) {
+-                    sh 'echo "$PATH" | cut -d: -f1,2 > head.txt'
++                    sh 'printf "%s:%s\\n" "${PATH%%:*}" "$(x=${PATH#*:}; printf %s "${x%%:*}")" > head.txt'
+                 }
+             }
+         }
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 382fd56..cc532e2 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **58/58 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **59/59 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 27b2872..1b7048e 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -179,42 +179,16 @@ module FogellSide =
+                         | null -> ""
+                         | v -> v
+ 
+-                let pattern =
+-                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
+-                    // parser replaced it with a NUL sentinel, restored below.
+-                    //
+-                    // A Codex review (PR #14 round 13) asked for the bracketed
+-                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
+-                    // Jenkins, that request is wrong: the sandbox REJECTS it —
+-                    //   Scripts not permitted to use staticMethod
+-                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
+-                    // and the build fails. Supporting it would make Fogell RUN what
+-                    // Jenkins REFUSES, which is the same divergence direction rejected
+-                    // for stage-level failFast: a pipeline that works here would fail
+-                    // there. Dotted only, and the comment on `resolveName` no longer
+-                    // claims otherwise.
+-                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
+-                    let dotted = ident + "(?:\." + ident + ")*"
+-                    // The BRACED form captures ANY content: `${1 + 1}` is a legal GString
+-                    // and Jenkins evaluates it. Restricting the MATCH to identifiers meant
+-                    // such a placeholder never reached the callback at all, so it was
+-                    // emitted verbatim — the callback's expression branch was unreachable
+-                    // code. The bare `$name` form stays identifier-only, as Groovy does.
+-                    @"\${([^}]*)}|\$(" + dotted + ")"
+-
+-                // `${...}` may hold a real Groovy expression, not just a variable path —
+-                // `input message: "Approve build ${1 + 1}?"` displays "Approve build 2?".
+-                // The identifier-only regex left such text verbatim. The bounded
+-                // interpreter already in this project evaluates it, with an EMPTY step
+-                // vocabulary so a prompt cannot invoke build steps.
++                // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
++                // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
++                // Jenkins. The bounded interpreter already in this project evaluates it,
++                // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
+                 let evalExpression (source: string) =
+                     match Fogell.Groovy.Parser.Parser.parse source with
+                     | Result.Error _ -> None
+                     | Result.Ok script ->
+-                        let bindings =
+-                            known
+-                            |> Map.map (fun _ v -> VStr v)
+-                            |> fun m -> m |> Map.add "env" (VMap(known |> Map.map (fun _ v -> VStr v)))
++                        let asValues = known |> Map.map (fun _ v -> VStr v)
++                        let bindings = asValues |> Map.add "env" (VMap asValues)
+ 
+                         let outcome =
+                             Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
+@@ -223,24 +197,74 @@ module FogellSide =
+                         | None, Some v -> Some(Value.toDisplay v)
+                         | _ -> None
+ 
+-                let expanded =
+-                    Text.RegularExpressions.Regex.Replace(
+-                        value,
+-                        pattern,
+-                        fun m ->
+-                            if m.Groups[1].Success then
+-                                let inner = m.Groups[1].Value
++                // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
++                // the first `}` even when it belongs to a nested expression or a quoted
++                // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
++                // Groovy's boundary is the BALANCED brace, with quotes respected.
++                let findClose (text: string) (openIdx: int) =
++                    let mutable i = openIdx + 2 // past "${"
++                    let mutable depth = 1
++                    let mutable quote = '\000'
++                    let mutable closeAt = -1
+ 
+-                                // A bare or dotted identifier resolves from the
+-                                // environment; anything else is an expression.
+-                                if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
+-                                    resolveName inner
+-                                else
+-                                    match evalExpression inner with
+-                                    | Some v -> v
+-                                    | None -> m.Value
++                    while closeAt < 0 && i < text.Length do
++                        let c = text[i]
++
++                        if quote <> '\000' then
++                            if c = '\\' then i <- i + 1
++                            elif c = quote then quote <- '\000'
++                        elif c = '\'' || c = '"' then
++                            quote <- c
++                        elif c = '{' then
++                            depth <- depth + 1
++                        elif c = '}' then
++                            depth <- depth - 1
++                            if depth = 0 then closeAt <- i
++
++                        i <- i + 1
++
++                    closeAt
++
++                let expanded =
++                    let sb = Text.StringBuilder()
++                    let mutable i = 0
++
++                    while i < value.Length do
++                        if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
++                            match findClose value i with
++                            | -1 ->
++                                sb.Append value[i] |> ignore
++                                i <- i + 1
++                            | closeAt ->
++                                let inner = value.Substring(i + 2, closeAt - i - 2)
++
++                                let rendered =
++                                    if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
++                                        resolveName inner
++                                    else
++                                        match evalExpression inner with
++                                        | Some v -> v
++                                        | None -> value.Substring(i, closeAt - i + 1)
++
++                                sb.Append rendered |> ignore
++                                i <- closeAt + 1
++                        elif value[i] = '$' then
++                            // Bare `$name` stays identifier-only, as Groovy does.
++                            let m =
++                                Text.RegularExpressions.Regex.Match(
++                                    value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
++
++                            if m.Success then
++                                sb.Append(resolveName m.Groups[1].Value) |> ignore
++                                i <- i + m.Length
+                             else
+-                                resolveName m.Groups[2].Value)
++                                sb.Append value[i] |> ignore
++                                i <- i + 1
++                        else
++                            sb.Append value[i] |> ignore
++                            i <- i + 1
++
++                    sb.ToString()
+ 
+                 // Restore escaped dollars as literal text, after expansion so they
+                 // cannot themselves be expanded.
+@@ -1273,11 +1297,20 @@ module FogellSide =
+                     let messageKey =
+                         if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
+ 
++                    // Three kinds, not two. A single-quoted argument is literal text; a
++                    // double-quoted one is a GString to interpolate; an UNQUOTED one is a
++                    // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
++                    // evaluates and which was being displayed as its own source text.
+                     let render (isLiteral: bool) (argName: string) (raw: string) =
+-                        if isLiteral then
+-                            raw
++                        let env = envForWith ctx.EnvOverlay stage |> Map.ofList
++
++                        if isLiteral then raw
++                        elif step.ExpressionArgs.Contains argName then
++                            // Wrapped so the whole argument is evaluated, not scanned for
++                            // placeholders it does not contain.
++                            interpolate env ("${" + raw + "}")
+                         else
+-                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) (sourceOf argName raw)
++                            interpolate env (sourceOf argName raw)
+ 
+                     emit (render messageIsLiteral messageKey message)
+                     emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index f07010a..cdbc9b8 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -41,6 +41,10 @@ type Step =
+       /// should not have been, which is cosmetic, whereas one that forgets to strip a
+       /// sentinel corrupts a command.
+       InterpolationSource: (string * string) list
++      /// Argument names (or `#0`, `#1`…) whose value was written UNQUOTED, and is
++      /// therefore a Groovy EXPRESSION rather than text — `input message: env.TARGET`.
++      /// Jenkins evaluates it; emitting the source text shows `env.TARGET` to the user.
++      ExpressionArgs: Set<string>
+       /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
+       /// is literal on Jenkins, and the positional form is as common as the named one.
+       LiteralPositionalArgs: Set<int>
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index b0fd553..9f799ed 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -26,7 +26,7 @@ let private namedArgWithKind: P<string * string * string * bool> =
+             (stringLiteralWithKindBoth
+              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
+             <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+-                 |>> fun s -> s.Trim(), s.Trim(), false)))
++                 |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
+     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
+ 
+ let private namedArg: P<string * string> =
+@@ -44,7 +44,7 @@ let private positionalArgWithKind: P<string * string * bool> =
+      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
+     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
+     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+-         |>> fun s -> s.Trim(), s.Trim(), false)
++         |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
+ 
+ let private positionalArg: P<string> =
+     stringLiteral
+@@ -52,7 +52,7 @@ let private positionalArg: P<string> =
+     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+          |>> fun s -> s.Trim())
+ 
+-let private argList: P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list> =
++let private argList: P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string>> =
+     let one =
+         (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
+ 
+@@ -61,7 +61,14 @@ let private argList: P<(string * string) list * string list * Set<string> * Set<
+             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
+             let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
+             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
+-            let namedSource = namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc)
++            // An UNQUOTED value is marked at capture; the marker never escapes this
++            // function — it becomes membership of ExpressionArgs instead.
++            let namedSource =
++                namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc.TrimStart '\u0001')
++
++            let namedExpr =
++                namedWithKind
++                |> List.choose (fun (n, _, esc, _) -> if esc.StartsWith "\u0001" then Some n else None)
+             let posWithKind = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
+             let pos = posWithKind |> List.map (fun (v, _, _) -> v)
+ 
+@@ -74,9 +81,14 @@ let private argList: P<(string * string) list * string list * Set<string> * Set<
+             // The `#0`, `#1`… entries the Step doc describes. They were documented and
+             // never produced, so a positional prompt fell back to the plain value and
+             // expanded an escaped dollar.
+-            let posSource = posWithKind |> List.mapi (fun i (_, esc, _) -> $"#{i}", esc)
++            let posSource = posWithKind |> List.mapi (fun i (_, esc, _) -> $"#{i}", esc.TrimStart '\u0001')
+ 
+-            named, pos, literal, literalPos, namedSource @ posSource
++            let posExpr =
++                posWithKind
++                |> List.mapi (fun i (_, esc, _) -> i, esc)
++                |> List.choose (fun (i, esc) -> if esc.StartsWith "\u0001" then Some $"#{i}" else None)
++
++            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr)
+ 
+ let private stepBlock: P<Step list> =
+     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
+@@ -102,20 +114,20 @@ stepRef.Value <-
+             (choice
+                 [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
+                   attempt (hspaces >>. argList) |>> Choice2Of2
+-                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [])) ])
++                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [], Set.empty)) ])
+             (fun pos name args -> pos, name, args)
+     .>>. opt (attempt stepBlock)
+     |>> fun ((pos, name, args), block) ->
+-            let named, positional, literalNamed, literalPositional, interpolationSource =
++            let named, positional, literalNamed, literalPositional, interpolationSource, expressionArgs =
+                 match args with
+                 | Choice1Of2 raw ->
+                     // re-parse the captured paren body for named/positional
+                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
+-                    | ParserResult.Success((n, p, lit, litPos, src), _, _) -> n, p, lit, litPos, src
++                    | ParserResult.Success((n, p, lit, litPos, src, expr), _, _) -> n, p, lit, litPos, src, expr
+                     | ParserResult.Failure _ ->
+-                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty, []
+-                | Choice2Of2(n, p, lit, litPos, src) -> n, p, lit, litPos, src
++                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty, [], Set.empty
++                | Choice2Of2(n, p, lit, litPos, src, expr) -> n, p, lit, litPos, src, expr
+ 
+             { Name = name
+               Positional = positional
+@@ -123,6 +135,7 @@ stepRef.Value <-
+               LiteralNamedArgs = literalNamed
+               LiteralPositionalArgs = literalPositional
+               InterpolationSource = interpolationSource
++              ExpressionArgs = expressionArgs
+               Block = defaultArg block []
+               RawArgs =
+                 match args with

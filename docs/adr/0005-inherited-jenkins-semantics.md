@@ -85,6 +85,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   expression, isRestartedRun, not, tag, triggeredBy — all fourteen are modelled.
 - A `when` block containing only directives and no condition is **rejected**:
   *"Empty when closure, remove the property or add some content."* (Measured.)
+- `input` prints its message and `Proceed or Abort` and then WAITS. Under a `timeout`,
+  the deadline expiring makes the build **ABORTED** and the following step does not run.
+  (Proven: `input-timeout-aborts`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

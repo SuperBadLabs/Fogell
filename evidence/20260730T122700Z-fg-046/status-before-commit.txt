@@ -1,0 +1,6 @@
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.fs
+?? differential/cases/input-timeout-aborts.Jenkinsfile
+?? differential/receipts/input-timeout-aborts.receipt.txt
+?? evidence/20260730T122700Z-fg-046/

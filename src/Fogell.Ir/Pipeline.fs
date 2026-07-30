@@ -21,6 +21,33 @@ type Step =
       Positional: string list
       Named: (string * string) list
       Block: Step list
+      /// Named arguments whose value was SINGLE-quoted, and so is literal.
+      ///
+      /// FG-046. Groovy interpolates a double-quoted GString and leaves a
+      /// single-quoted string alone, and a step that renders text itself — `input`'s
+      /// message and confirmation label — has to honour that. Shell steps get away
+      /// without it because the shell performs its own `$VAR` expansion, which
+      /// coincides with Groovy's for the common case; `input` has no shell.
+      /// Mirrors Stage.EnvironmentLiteralNames.
+      LiteralNamedArgs: Set<string>
+      /// Argument values with escaped dollars PRESERVED, for consumers that
+      /// interpolate. Keyed by argument name, or `#0`, `#1`… for positionals.
+      ///
+      /// FG-046. `Named`/`Positional` deliberately hold the plain value, because the NUL
+      /// sentinel that marks an escaped dollar must never reach a consumer that forwards
+      /// text verbatim — it once reached a shell. But `input` renders its prompt itself
+      /// and must show `\$TARGET` literally, so it needs the escape-preserving form. This
+      /// is ADDITIVE on purpose: a consumer that forgets it shows a `$` expanded that
+      /// should not have been, which is cosmetic, whereas one that forgets to strip a
+      /// sentinel corrupts a command.
+      InterpolationSource: (string * string) list
+      /// Argument names (or `#0`, `#1`…) whose value was written UNQUOTED, and is
+      /// therefore a Groovy EXPRESSION rather than text — `input message: env.TARGET`.
+      /// Jenkins evaluates it; emitting the source text shows `env.TARGET` to the user.
+      ExpressionArgs: Set<string>
+      /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
+      /// is literal on Jenkins, and the positional form is as common as the named one.
+      LiteralPositionalArgs: Set<int>
       /// Raw source of the arguments, retained because ADR 0002 says the
       /// interpreter — not the parser — decides what an expression means.
       RawArgs: string

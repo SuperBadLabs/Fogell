@@ -1,0 +1,6 @@
+ .../cases/withenv-path-last-wins.Jenkinsfile       |   6 +-
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ src/Fogell.Differential/Fogell.fs                  | 135 +++++++++++++--------
+ src/Fogell.Ir/Pipeline.fs                          |   4 +
+ src/Fogell.Pipeline.Parser/Parser.fs               |  35 ++++--
+ 5 files changed, 118 insertions(+), 64 deletions(-)

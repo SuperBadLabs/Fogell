@@ -112,6 +112,39 @@ let stringLiteralWithKind: P<string * bool> =
               // expand. Only single-quoted forms are literal.
               attempt (quoted "/" |>> fun s -> s, true) ])
 
+/// Quote KIND without the NUL sentinel, for consumers that forward the value verbatim
+/// instead of interpolating it.
+///
+/// REVIEW FIX (Codex, PR #17 round 4): using [stringLiteralWithKind] for every step's
+/// named arguments put the sentinel into values that nothing restores — only the `input`
+/// rendering path calls `interpolate` — so `sh(script: "echo \$BUILD_NUMBER")` handed
+/// the shell an embedded NUL. The sentinel exists solely to survive interpolation, so it
+/// must not be written where interpolation never happens.
+/// Both forms of a string literal at once: the PLAIN value (escaped dollars already
+/// collapsed, safe to forward verbatim) and the ESCAPE-PRESERVING value (NUL sentinel,
+/// safe only for a consumer that interpolates), plus whether it is a GString.
+///
+/// FG-046. `input` renders its own prompt, so it must show a literal \$TARGET while a
+/// shell step must never see the sentinel. Producing both at the parse site is the only
+/// place the distinction is still available.
+let stringLiteralWithKindBoth: P<string * string * bool> =
+    lexeme (
+        choice
+            [ attempt (tripleQuoted "'''" |>> fun s -> s, s, false)
+              attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
+              attempt (quoted "'" |>> fun s -> s, s, false)
+              attempt (quotedKeepingDollar "\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
+              attempt (quoted "/" |>> fun s -> s, s, true) ])
+
+let stringLiteralWithKindPlain: P<string * bool> =
+    lexeme (
+        choice
+            [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
+              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
+              attempt (quoted "'" |>> fun s -> s, false)
+              attempt (quoted "\"" |>> fun s -> s, true)
+              attempt (quoted "/" |>> fun s -> s, true) ])
+
 let stringLiteral: P<string> =
     lexeme (
         choice

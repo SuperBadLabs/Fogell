@@ -179,31 +179,114 @@ module FogellSide =
                         | null -> ""
                         | v -> v
 
-                let pattern =
-                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
-                    // parser replaced it with a NUL sentinel, restored below.
-                    //
-                    // A Codex review (PR #14 round 13) asked for the bracketed
-                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
-                    // Jenkins, that request is wrong: the sandbox REJECTS it —
-                    //   Scripts not permitted to use staticMethod
-                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
-                    // and the build fails. Supporting it would make Fogell RUN what
-                    // Jenkins REFUSES, which is the same divergence direction rejected
-                    // for stage-level failFast: a pipeline that works here would fail
-                    // there. Dotted only, and the comment on `resolveName` no longer
-                    // claims otherwise.
-                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
-                    let dotted = ident + "(?:\." + ident + ")*"
-                    @"\${(" + dotted + @")}|\$(" + dotted + ")"
+                // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
+                // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
+                // Jenkins. The bounded interpreter already in this project evaluates it,
+                // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
+                let evalExpression (source: string) =
+                    match Fogell.Groovy.Parser.Parser.parse source with
+                    | Result.Error _ -> None
+                    | Result.Ok script ->
+                        let asValues = known |> Map.map (fun _ v -> VStr v)
+                        let bindings = asValues |> Map.add "env" (VMap asValues)
+
+                        let outcome =
+                            Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
+
+                        match outcome.Fault, outcome.Returned with
+                        | None, Some v -> Some(Value.toDisplay v)
+                        | _ -> None
+
+                // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
+                // the first `}` even when it belongs to a nested expression or a quoted
+                // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
+                // Groovy's boundary is the BALANCED brace, with quotes respected.
+                /// Does a `/` at this position OPEN a slashy string, or divide?
+                /// Groovy decides by what precedes it: a value (identifier, digit, closing
+                /// bracket) means division; anything else opens a literal.
+                let slashOpensLiteral (text: string) (idx: int) =
+                    let mutable j = idx - 1
+
+                    while j >= 0 && (text[j] = ' ' || text[j] = '\t') do
+                        j <- j - 1
+
+                    if j < 0 then
+                        true
+                    else
+                        let p = text[j]
+                        not (Char.IsLetterOrDigit p || p = '_' || p = ')' || p = ']' || p = '}')
+
+                let findClose (text: string) (openIdx: int) =
+                    let mutable i = openIdx + 2 // past "${"
+                    let mutable depth = 1
+                    let mutable quote = '\000'
+                    let mutable closeAt = -1
+
+                    while closeAt < 0 && i < text.Length do
+                        let c = text[i]
+
+                        if quote <> '\000' then
+                            if c = '\\' then i <- i + 1
+                            elif c = quote then quote <- '\000'
+                        elif c = '\'' || c = '"' then
+                            quote <- c
+                        elif c = '/' && slashOpensLiteral text i then
+                            // `/` opens a SLASHY string — `${/}/}` holds a literal whose
+                            // `}` is content — but it is also DIVISION. Groovy disambiguates
+                            // by what precedes it: after a value (identifier, number,
+                            // closing bracket) a slash is an operator, otherwise it opens a
+                            // literal. Treating every slash as a quote broke `${a / b}`.
+                            quote <- c
+                        elif c = '{' then
+                            depth <- depth + 1
+                        elif c = '}' then
+                            depth <- depth - 1
+                            if depth = 0 then closeAt <- i
+
+                        i <- i + 1
+
+                    closeAt
 
                 let expanded =
-                    Text.RegularExpressions.Regex.Replace(
-                        value,
-                        pattern,
-                        fun m ->
-                            if m.Groups[1].Success then resolveName m.Groups[1].Value
-                            else resolveName m.Groups[2].Value)
+                    let sb = Text.StringBuilder()
+                    let mutable i = 0
+
+                    while i < value.Length do
+                        if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
+                            match findClose value i with
+                            | -1 ->
+                                sb.Append value[i] |> ignore
+                                i <- i + 1
+                            | closeAt ->
+                                let inner = value.Substring(i + 2, closeAt - i - 2)
+
+                                let rendered =
+                                    if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
+                                        resolveName inner
+                                    else
+                                        match evalExpression inner with
+                                        | Some v -> v
+                                        | None -> value.Substring(i, closeAt - i + 1)
+
+                                sb.Append rendered |> ignore
+                                i <- closeAt + 1
+                        elif value[i] = '$' then
+                            // Bare `$name` stays identifier-only, as Groovy does.
+                            let m =
+                                Text.RegularExpressions.Regex.Match(
+                                    value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
+
+                            if m.Success then
+                                sb.Append(resolveName m.Groups[1].Value) |> ignore
+                                i <- i + m.Length
+                            else
+                                sb.Append value[i] |> ignore
+                                i <- i + 1
+                        else
+                            sb.Append value[i] |> ignore
+                            i <- i + 1
+
+                    sb.ToString()
 
                 // Restore escaped dollars as literal text, after expansion so they
                 // cannot themselves be expanded.
@@ -1180,6 +1263,145 @@ module FogellSide =
                                 emit "ERROR: deleteDir aborted: the step's deadline expired"
                                 ctx.Failed.Value <- true
                                 ctx.Sink BuildStatus.Aborted
+
+                // FG-046. `input` — human approval. MEASURED: Jenkins prints the message
+                // and "Proceed or Abort", then waits. Under a `timeout` the deadline
+                // expiring makes the build ABORTED and the following steps do not run.
+                //
+                // 22 corpus files use `input`; 10 of them wrap it in a timeout. Without a
+                // deadline Jenkins waits FOREVER for a human — faithful to reproduce, but
+                // there is no approver in this engine and no receipt can be taken of a
+                // pipeline that never ends. So the un-timed form fails closed with a named
+                // reason rather than silently inventing an approval or an abort: a
+                // DELIBERATE, documented divergence (see FG-046b for real approval).
+                | "input", _ ->
+                    let message =
+                        step.Positional
+                        |> List.tryHead
+                        |> Option.orElse (
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "message" then Some v else None))
+                        |> Option.defaultValue "Proceed?"
+
+                    // MEASURED: the confirmation label is configurable and Jenkins prints
+                    // it — `ok: 'Ship it'` yields "Ship it or Abort". Hardcoding "Proceed"
+                    // diverged on any pipeline that customises it.
+                    let okLabel =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+                        |> Option.defaultValue "Proceed"
+
+                    // REVIEW FIX (Codex, PR #17 round 3): Jenkins evaluates a GString
+                    // before showing the prompt, so `input message: "Build ${env.X}?"`
+                    // displays the VALUE. Emitting the parser's raw text diverged. A
+                    // single-quoted argument stays literal, which is why the parser now
+                    // records which named args were single-quoted — shell steps never
+                    // needed this because the shell does its own expansion.
+                    // `message` may arrive positionally (`input 'Deploy ${X}?'`) or named,
+                    // and Jenkins treats a single-quoted one as LITERAL either way. The
+                    // named-only check interpolated every positional prompt.
+                    let messageIsLiteral =
+                        if step.Named |> List.exists (fun (k, _) -> k = "message") then
+                            step.LiteralNamedArgs.Contains "message"
+                        else
+                            step.LiteralPositionalArgs.Contains 0
+
+                    // Interpolating consumers read the ESCAPE-PRESERVING form, so
+                    // `input message: "Deploy \$TARGET?"` shows a literal $TARGET as
+                    // Jenkins does. `Named` keeps the plain value because a sentinel must
+                    // never reach a step that forwards text verbatim.
+                    let sourceOf (argName: string) (fallback: string) =
+                        step.InterpolationSource
+                        |> List.tryPick (fun (k, v) -> if k = argName then Some v else None)
+                        |> Option.defaultValue fallback
+
+                    // A positional prompt's provenance lives under `#0`.
+                    let messageKey =
+                        if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
+
+                    // Three kinds, not two. A single-quoted argument is literal text; a
+                    // double-quoted one is a GString to interpolate; an UNQUOTED one is a
+                    // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
+                    // evaluates and which was being displayed as its own source text.
+                    let render (isLiteral: bool) (argName: string) (raw: string) =
+                        let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                        if isLiteral then raw
+                        elif step.ExpressionArgs.Contains argName then
+                            // Wrapped so the whole argument is evaluated, not scanned for
+                            // placeholders it does not contain.
+                            interpolate env ("${" + raw + "}")
+                        else
+                            interpolate env (sourceOf argName raw)
+
+                    emit (render messageIsLiteral messageKey message)
+                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
+
+                    match deadline with
+                    | None ->
+                        emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some _ ->
+                        // Wait out the deadline exactly as an unanswered prompt would.
+                        //
+                        // REVIEW FIX (both reviewers, PR #17): the loop exited on EITHER
+                        // the deadline or a sibling interrupt and then reported Aborted
+                        // unconditionally — so a failFast sibling's FAILURE became an
+                        // abort. That is the collateral-outranks-cause bug for the FOURTH
+                        // time in this project (shell steps, stash, unstash, deleteDir),
+                        // which is the argument for FG-002e being a sweep rather than a
+                        // queue of instances.
+                        //
+                        // Polling backs off instead of spinning at 50 ms: an `input` under
+                        // an hour-long timeout woke ~72,000 times for nothing.
+                        let interruptedBySibling () =
+                            match ctx.Interrupt with
+                            | Some p -> (try p () with _ -> false)
+                            | None -> false
+
+                        let mutable stop = false
+                        let mutable bySibling = false
+
+                        while not stop do
+                            // REVIEW FIX (Codex, PR #17 round 3): narrowing to int here
+                            // wrapped negative for a deadline past Int32.MaxValue ms — a
+                            // `timeout(time: 30, unit: 'DAYS') { input … }` satisfied
+                            // `left <= 1` and aborted the prompt IMMEDIATELY. Compare at
+                            // full width; only the sleep interval is narrowed, and it is
+                            // bounded by 250 anyway.
+                            let left = defaultArg (remainingMs deadline) 0L
+
+                            // Record WHICH EVENT HAPPENED, not which branch is tested
+                            // first. Round 8 checked expiry first, so a sibling failing in
+                            // the final sleep lost; reordering merely swapped the bias, and
+                            // a deadline that genuinely expired first would then be
+                            // reported as a sibling interruption. Both are wrong for the
+                            // same reason — the priority of a test is not evidence about
+                            // the order of events.
+                            let siblingNow = interruptedBySibling ()
+                            let expiredNow = left <= 1L
+
+                            if siblingNow || expiredNow then
+                                stop <- true
+                                // A deadline that had ALREADY passed on the previous wake
+                                // is the earlier event; a sibling seen first this wake wins
+                                // only when the deadline has not yet passed.
+                                bySibling <- siblingNow && not expiredNow
+                            else
+                                System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+
+                        // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
+                        // timeout, and a silent abort here would be the defect this
+                        // project exists to beat. `ERROR:` lines are diagnostics — kept
+                        // out of the compared output, counted as a reported reason.
+                        ctx.Failed.Value <- true
+
+                        if bySibling then
+                            emit "ERROR: input interrupted: a failFast sibling failed"
+                        else
+                            emit "ERROR: input aborted: the approval deadline expired with no response"
+                            ctx.Sink BuildStatus.Aborted
 
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive

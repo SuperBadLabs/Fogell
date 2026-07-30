@@ -1,0 +1,9 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Ir/Pipeline.fs
+ M src/Fogell.Pipeline.Parser/Lexeme.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+?? differential/cases/input-escaped-dollar.Jenkinsfile
+?? differential/receipts/input-escaped-dollar.receipt.txt
+?? evidence/20260730T134032Z-fg-046-review4/

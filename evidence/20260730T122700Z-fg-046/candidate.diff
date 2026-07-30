@@ -1,0 +1,103 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 1a9a771..21e5426 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **49/49 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **50/50 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -138,7 +138,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape), `credentials-userpass` (12) and `credentials-file` (3) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file), a missing credential id, a request that parses to NO bindings, and a **credential type mismatch** all fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+ | FG-045 | P1 | **DONE** | `timeout`, `retry` (see FG-034/035) | The step forms were proven by FG-034/035, but surveying the corpus's ACTUAL shapes rather than assuming the ticket was a formality found a real gap: `timeout` is also declared as a pipeline or stage **option** (`options { timeout(time: 1, unit: 'HOURS') }`), and stage options were discarded by the parser outright. MEASURED: Jenkins **aborts** when an options timeout expires — the following stage never runs. Fogell ignored them, so such a pipeline ran **unbounded** and reported success; the probe's 60-second sleep completed against a 4-second declared timeout. Two receipts PROVEN tier-1 (`options-timeout-pipeline`, `options-timeout-stage`); a nested deadline can only tighten an inherited one. Corpus survey: 55 `timeout` occurrences, of which `time:/unit:` 55, bare `timeout(N)` 5, `DAYS` 6. `retry(count:, conditions: [...])` (5 files) is noted in FG-045b |
+ | FG-045b | P2 | TODO | `retry(conditions: [...])` — retry only on matching conditions | 5 corpus files use the plugin's conditional form (`agent()`, `kubernetesAgent()`). Fogell retries unconditionally, which retries MORE than Jenkins would. Not a refusal, but a named divergence rather than a silent one |
+-| FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
++| FG-046 | P1 | **PARTIAL** | `input` with **durable** approval state across restart (`adr/0005` match) | The **timeout path is PROVEN tier-1** (`input-timeout-aborts`): Jenkins prints the message and `Proceed or Abort`, waits, and the deadline expiring makes the build **ABORTED** with the following step never running. 22 corpus files use `input`; **10 wrap it in a timeout**, which is the shape this receipt covers. The **un-timed** form waits for a human FOREVER on Jenkins — faithful to reproduce, but there is no approver here and no receipt can be taken of a pipeline that never ends, so it fails **closed with a named reason** rather than inventing an approval or a silent abort. That is a deliberate, documented divergence, not a gap I am hiding. Durable approval across restart — the half this ticket is actually named for — is FG-046b |
++| FG-046b | P1 | TODO | Durable `input` approval surviving a controller restart | Needs the controller API to accept an approval and the store to persist it, then a real SIGKILL/restart to prove the pending gate resumes. `adr/0005` records the measured Jenkins behaviour (approval state survives a restart); nothing here proves it yet. Until then FG-046 covers only the unattended-timeout shape |
+ | FG-047 | P1 | **DONE** | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | `stash-unstash` receipt PROVEN tier-1, and the property that matters is the one tested: the stash is stored with the BUILD (outside the workspace), so it survives `deleteDir()`. Storing it under the workspace would pass a naive round-trip and fail this. A missing stash name FAILS rather than silently restoring nothing. `deleteDir()` implemented alongside, since the test is meaningless without it. Writing this receipt is what exposed the step-swallowing parser bug (FG-010b) |
+ | FG-048 | P1 | **DONE** | `when` conditions incl. `expression` via the bounded interpreter | Two receipts PROVEN tier-1. `when-conditions`: `expression { return false }` skips, `environment name/value` matches and mismatches correctly, `allOf` + `not` composes; a skipped stage leaves the build **SUCCESS** and its **`post` block does not run** (both measured). `when-scm-and-equals`: MEASURED that on a plain job Jenkins **skips** `branch` and `tag` stages because `BRANCH_NAME`/`TAG_NAME` do not exist — which is what lets those two be modelled rather than refused, and they are the corpus's heaviest `when` users. `equals` is a plain comparison. **Two parser bugs found by receipt:** `when { environment name: 'X', value: 'Y' }` did not parse at all (the code expected `environment X = 'Y'`, which Jenkins rejects), and an unparseable `when` fell through the stage's generic section fallback so the stage ran **unconditionally** — silently running a stage Jenkins skips, the worst failure mode available. A backstop now records any unrecognised `when` as unmodelled so evaluation fails closed. Unmodelled conditions: FG-048b |
+ | FG-049 | P1 | **DONE** | `post` blocks: correct *selection*, not just presence — Jenkins prints all branches in the console | Two receipts PROVEN tier-1 (`post-order-failure`, `post-order-success`), each declaring all nine conditions so the receipt proves which fire AND in what order. Selection and order were MEASURED across four consecutive builds of one job, not read from documentation: order is **always → changed → fixed → regression → result-arm → cleanup**, and `changed` **fires on a first build** (no previous result to differ from) — not what I would have guessed. Stage post is selected against the STAGE result, pipeline post against the BUILD result. Before this ticket the walker parsed `post` and then **ignored it entirely**. `changed`/`fixed`/`regression` on later builds: FG-049b |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index fad42e1..1a49da1 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -85,6 +85,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   expression, isRestartedRun, not, tag, triggeredBy — all fourteen are modelled.
+ - A `when` block containing only directives and no condition is **rejected**:
+   *"Empty when closure, remove the property or add some content."* (Measured.)
++- `input` prints its message and `Proceed or Abort` and then WAITS. Under a `timeout`,
++  the deadline expiring makes the build **ABORTED** and the following step does not run.
++  (Proven: `input-timeout-aborts`.)
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 8a6ca93..9abfc97 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1181,6 +1181,61 @@ module FogellSide =
+                                 ctx.Failed.Value <- true
+                                 ctx.Sink BuildStatus.Aborted
+ 
++                // FG-046. `input` — human approval. MEASURED: Jenkins prints the message
++                // and "Proceed or Abort", then waits. Under a `timeout` the deadline
++                // expiring makes the build ABORTED and the following steps do not run.
++                //
++                // 22 corpus files use `input`; 10 of them wrap it in a timeout. Without a
++                // deadline Jenkins waits FOREVER for a human — faithful to reproduce, but
++                // there is no approver in this engine and no receipt can be taken of a
++                // pipeline that never ends. So the un-timed form fails closed with a named
++                // reason rather than silently inventing an approval or an abort: a
++                // DELIBERATE, documented divergence (see FG-046b for real approval).
++                | "input", _ ->
++                    let message =
++                        step.Positional
++                        |> List.tryHead
++                        |> Option.orElse (
++                            step.Named
++                            |> List.tryPick (fun (k, v) -> if k = "message" then Some v else None))
++                        |> Option.defaultValue "Proceed?"
++
++                    emit message
++                    emit "Proceed or Abort"
++
++                    match deadline with
++                    | None ->
++                        emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    | Some _ ->
++                        // Wait out the deadline exactly as an unanswered prompt would.
++                        let mutable waiting = true
++
++                        while waiting do
++                            let expired =
++                                match remainingMs deadline with
++                                | Some ms -> ms <= 1
++                                | None -> true
++
++                            let interrupted =
++                                match ctx.Interrupt with
++                                | Some p -> (try p () with _ -> false)
++                                | None -> false
++
++                            if expired || interrupted then
++                                waiting <- false
++                            else
++                                System.Threading.Thread.Sleep 50
++
++                        // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
++                        // timeout, and a silent abort here would be the defect this
++                        // project exists to beat. `ERROR:` lines are diagnostics — kept
++                        // out of the compared output, counted as a reported reason.
++                        emit "ERROR: input aborted: the approval deadline expired with no response"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Aborted
++
+                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
+                 // artifact root, NOT the workspace — which is what makes a stash survive
+                 // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
