@@ -58,7 +58,23 @@ module Compare =
         |> Convert.ToHexString
         |> fun s -> s.ToLowerInvariant()
 
-    let private compareOutput (jenkins: string list) (fogell: string list) =
+    /// FG-036. Ordering relaxation for parallel runs, stated rather than hidden.
+    ///
+    /// Two concurrent branches produce their lines in whatever order the OS
+    /// scheduler chose. Comparing that as a SEQUENCE would make the receipt a
+    /// race: it would pass or fail on scheduling, not on semantics. So for a
+    /// pipeline containing a `parallel` block, output is compared as a sorted
+    /// MULTISET — every line must still be present, exactly as many times — but
+    /// the interleaving is not compared.
+    ///
+    /// MEASURED: declarative Jenkins does NOT prefix branch output with
+    /// `[branchName]`. That prefix belongs to the SCRIPTED `parallel` map form.
+    /// An earlier version of Fogell emitted it and produced a divergence on every
+    /// parallel case; the fix was to stop inventing attribution Jenkins does not
+    /// provide. It also means the relaxation genuinely loses information — with
+    /// no prefix, a line cannot be attributed to a branch at all — which is why
+    /// the parallel receipts lean on the WORKSPACE hash for their real claim.
+    let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
         let rec walk i j f =
             match j, f with
             | [], [] -> None
@@ -68,7 +84,10 @@ module Compare =
             | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
             | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
 
-        walk 0 jenkins fogell
+        if concurrent then
+            walk 0 (List.sort jenkins) (List.sort fogell)
+        else
+            walk 0 jenkins fogell
 
     /// Compare two traces. Workspace hashes are only compared when BOTH sides
     /// collected one — claiming a match against "not-collected" would be exactly
@@ -82,7 +101,7 @@ module Compare =
             [ if jenkins.Result <> fogell.Result then
                   ResultDiffers(jenkins.Result, fogell.Result)
 
-              match compareOutput jenkins.Output fogell.Output with
+              match compareOutput (jenkins.Concurrent || fogell.Concurrent) jenkins.Output fogell.Output with
               | Some d -> d
               | None -> ()
 
@@ -127,7 +146,16 @@ module Compare =
           JenkinsCore = core
           Jenkins = j
           Fogell = f
-          ComparisonContract = Trace.comparisonContract
+          ComparisonContract =
+            Trace.comparisonContract
+            @ (if [ j; f ] |> List.choose id |> List.exists (fun t -> t.Concurrent) then
+                   [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
+                     "  branches interleave nondeterministically, so a sequence comparison would"
+                     "  pass or fail on OS scheduling. Line content and multiplicity ARE compared;"
+                     "  order is NOT, and declarative Jenkins emits no branch prefix to attribute"
+                     "  a line by. The load-bearing claim for these cases is the workspace hash." ]
+               else
+                   [])
           Seal = sha256Text comparable }
 
     /// Render a receipt as text. Deliberately plain so it can be committed,

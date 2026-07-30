@@ -27,6 +27,7 @@ let private request root script =
       Workspace = ws
       Environment = []
       TimeoutMs = None
+      Interrupt = None
       OnLine = None
       Named = []
       Artifacts = None
@@ -475,6 +476,66 @@ let deadProcessDetection =
               | None -> failtest "expected a diagnostic"
           } ]
 
+let externalInterrupt =
+    testList
+        "FG-036 external interruption of a running step"
+        [ test "an interrupt stops a running step and reports Aborted, not TimedOut" {
+              // failFast needs to stop a sibling that is ALREADY running. A flag
+              // checked only between steps cannot do that, so the interrupt is
+              // polled while the process runs and takes the same
+              // SIGTERM -> grace -> SIGKILL path a timeout takes (JB-FAIL-003).
+              let root = tempRoot ()
+              let marker = Path.Combine(root, "trapped.txt")
+              let stop = ref false
+
+              // Release the interrupt shortly after the step starts, so the
+              // step is genuinely mid-flight and not merely never launched.
+              let releaser =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      System.Threading.Thread.Sleep 700
+                      stop.Value <- true)
+
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              let r =
+                  Executor.runStep
+                      { request root $"trap 'echo caught > {marker}; exit 0' TERM; sleep 30" with
+                          // 60s: far longer than the test tolerates, so a pass
+                          // cannot come from the timeout path by accident.
+                          TimeoutMs = Some 60_000
+                          Interrupt = Some(fun () -> stop.Value) }
+
+              sw.Stop()
+              releaser.Wait()
+
+              Expect.equal r.Status Aborted "interrupted step is aborted"
+              Expect.isLessThan sw.ElapsedMilliseconds 15_000L "interrupted promptly, not on the 60s timeout"
+              Expect.isTrue (File.Exists marker) "the TERM handler ran — the interrupt is trappable"
+
+              match r.Diagnostic with
+              | Some d ->
+                  // The cause must not be misreported. A step interrupted by a
+                  // sibling did not run out of time, and calling it a timeout
+                  // sends the operator to the wrong place.
+                  Expect.isFalse (d.ToLowerInvariant().Contains "timeout") $"cause is not a timeout: {d}"
+              | None -> failtest "an abort must carry a diagnostic"
+          }
+
+          test "an interrupt that never fires leaves the step alone" {
+              // Guard against the previous class of vacuous test: if the poll
+              // were treated as truthy, or called once at the wrong moment, the
+              // test above would still pass. This one fails if it is.
+              let r =
+                  Executor.runStep
+                      { request (tempRoot ()) "echo done" with
+                          TimeoutMs = Some 30_000
+                          Interrupt = Some(fun () -> false) }
+
+              Expect.equal r.Status Success "an un-fired interrupt changes nothing"
+              Expect.stringContains r.Stdout "done" "the step ran to completion"
+          } ]
+
+
 [<EntryPoint>]
 let main argv =
     // These tests spawn real processes and assert on /proc; running them in
@@ -482,4 +543,4 @@ let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection ]))
+        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt ]))

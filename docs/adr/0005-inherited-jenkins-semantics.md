@@ -10,8 +10,26 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 
 - Interrupt is a **trappable SIGTERM** with a grace window before hard kill
   (measured ~4 s); scripts rely on trapping it.
-- `retry(N)` is N total attempts, no backoff.
-- `parallel` lets siblings finish; `failFast` interrupts them.
+- `retry(N)` is N total attempts, no backoff. A body that fails once and then
+  succeeds is a **SUCCESS** build: a retried failure leaves no mark on the
+  result. (Proven: `retry-exhausts`, `retry-succeeds` receipts.)
+- `timeout`'s default unit is **MINUTES**, not seconds. `timeout(3)` is three
+  minutes; an engine that assumes seconds is wrong by 60x in the direction that
+  kills working builds. (Proven: `timeout-seconds` receipt.)
+- `parallel` lets siblings finish; `failFast` interrupts them. Three things about
+  it were **measured, not assumed**, and each corrected a wrong implementation:
+  - `failFast true` is a **stage-level** directive, a sibling of `parallel`.
+    Jenkins *rejects* it inside the `parallel { }` block —
+    `Expected a stage @ line 9`. `parallelsAlwaysFailFast()` is the
+    pipeline-wide equivalent.
+  - Declarative Jenkins emits **no `[branchName]` prefix** on parallel branch
+    output; that belongs to the scripted `parallel` map form. Adding one is not
+    a courtesy, it is a divergence.
+  - A build whose sibling was interrupted by `failFast` is **FAILURE**, not
+    ABORTED. The failing branch is the cause; the interruption is collateral,
+    and letting it dominate reports the wrong terminal state.
+  (Proven: `parallel-siblings-finish`, `parallel-failfast`,
+  `parallel-always-failfast` receipts.)
 - Approval/`input` state survives a controller restart.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a
   46 s network partition cost **zero** log lines.

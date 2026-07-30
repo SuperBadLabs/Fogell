@@ -159,6 +159,21 @@ let private stageParser, private stageRef = createParserForwardedToRef<Stage, un
 let private stagesBody: P<Stage list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stageParser))
 
+/// `failFast true` — a STAGE-level directive, sibling of `parallel`.
+///
+/// MEASURED, not assumed. The first version parsed it INSIDE the `parallel { }`
+/// block; real Jenkins 2.568.1 rejects that outright:
+///
+///   WorkflowScript: 9: Expected a stage @ line 9, column 17.
+///   failFast true
+///
+/// A differential receipt caught it. Accepting a form the reference engine
+/// refuses is not leniency — it means a pipeline that runs here fails there,
+/// which is the exact opposite of the lift-and-shift promise.
+let private failFastDirective: P<bool> =
+    keyword "failFast" >>. ws >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
+    .>> ws
+
 /// One `stage('Name') { … }`. Sections may appear in any order, so this
 /// accumulates whatever it finds rather than demanding a fixed sequence — which
 /// is also what makes an unknown section a *named* rejection instead of a
@@ -170,6 +185,7 @@ type private StageSection =
     | SecWhen of WhenCondition
     | SecPost of (PostCondition * Step list) list
     | SecNested of Stage list * bool
+    | SecFailFast of bool
     | SecOther of string
 
 stageRef.Value <-
@@ -190,6 +206,7 @@ stageRef.Value <-
                       attempt (postSection |>> SecPost)
                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
+                      attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
                       attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
@@ -206,6 +223,7 @@ stageRef.Value <-
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []
               IsParallel = defaultArg (pick (function SecNested(_, p) -> Some p | _ -> None)) false
+              FailFast = defaultArg (pick (function SecFailFast f -> Some f | _ -> None)) false
               Position = pos }
 
 // ---------------------------------------------------------------------------

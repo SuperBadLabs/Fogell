@@ -110,6 +110,46 @@ let structure =
               Expect.contains (step.Named |> List.map fst) "artifacts" "named arg present"
           }
 
+          test "failFast is a STAGE-level directive, as Jenkins requires" {
+              // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
+              // parallel block with "Expected a stage". The accepted form is a
+              // sibling of `parallel`, and a differential receipt is what
+              // corrected the first implementation.
+              let src =
+                  mk
+                      "    stage('outer') {\n      failFast true\n      parallel {\n        stage('a') { steps { echo 'a' } }\n        stage('b') { steps { echo 'b' } }\n      }\n    }"
+
+              let p = ok src
+              Expect.isTrue p.Stages.[0].IsParallel "marked parallel"
+              Expect.isTrue p.Stages.[0].FailFast "failFast recorded"
+              Expect.equal p.Stages.[0].Nested.Length 2 "both branches present"
+          }
+
+          test "a parallel block without failFast defaults to false" {
+              let src =
+                  mk
+                      "    stage('outer') {\n      parallel {\n        stage('a') { steps { echo 'a' } }\n      }\n    }"
+
+              Expect.isFalse (ok src).Stages.[0].FailFast "default is let siblings finish"
+          }
+
+          test "failFast false is honoured as written" {
+              let src =
+                  mk
+                      "    stage('outer') {\n      failFast false\n      parallel {\n        stage('a') { steps { echo 'a' } }\n      }\n    }"
+
+              let p = ok src
+              Expect.isFalse p.Stages.[0].FailFast "explicit false"
+              Expect.equal p.Stages.[0].Nested.Length 1 "branch survived"
+          }
+
+          test "parallelsAlwaysFailFast is captured as a pipeline option" {
+              let src =
+                  "pipeline {\n  agent any\n  options {\n    parallelsAlwaysFailFast()\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
+
+              Expect.contains ((ok src).Options |> List.map (fun o -> o.Name)) "parallelsAlwaysFailFast" "option recorded"
+          }
+
           test "nested parallel stages are recorded and flattened" {
               let src =
                   mk

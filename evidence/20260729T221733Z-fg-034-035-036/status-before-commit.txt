@@ -1,0 +1,33 @@
+ M differential/receipts/archive-artifacts.receipt.txt
+ M differential/receipts/archive-empty-fails.receipt.txt
+ M differential/receipts/echo-only.receipt.txt
+ M differential/receipts/env-scoping.receipt.txt
+ M differential/receipts/junit-failing.receipt.txt
+ M differential/receipts/junit-passing.receipt.txt
+ M differential/receipts/nonzero-exit.receipt.txt
+ M differential/receipts/shell-and-file.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Compare.fs
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Jenkins.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Execution/ProcessGroup.fs
+ M src/Fogell.Ir/Pipeline.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? differential/cases/parallel-always-failfast.Jenkinsfile
+?? differential/cases/parallel-failfast.Jenkinsfile
+?? differential/cases/parallel-siblings-finish.Jenkinsfile
+?? differential/cases/retry-exhausts.Jenkinsfile
+?? differential/cases/retry-succeeds.Jenkinsfile
+?? differential/cases/timeout-seconds.Jenkinsfile
+?? differential/receipts/parallel-always-failfast.receipt.txt
+?? differential/receipts/parallel-failfast.receipt.txt
+?? differential/receipts/parallel-siblings-finish.receipt.txt
+?? differential/receipts/retry-exhausts.receipt.txt
+?? differential/receipts/retry-succeeds.receipt.txt
+?? differential/receipts/timeout-seconds.receipt.txt
+?? evidence/20260729T221733Z-fg-034-035-036/

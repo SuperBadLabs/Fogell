@@ -57,6 +57,10 @@ type Stage =
       /// Nested `stages { }` (sequential) and `parallel { }` children.
       Nested: Stage list
       IsParallel: bool
+      /// `failFast true` inside a `parallel { }` block, or inherited from the
+      /// top-level `parallelsAlwaysFailFast()` option. Only meaningful when
+      /// IsParallel is true.
+      FailFast: bool
       Position: Position }
 
 type Pipeline =

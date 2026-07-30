@@ -119,6 +119,9 @@ module Jenkins =
                           Output = Trace.normaliseOutput rawLines
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
+                          // Jenkins does not tell us whether the script had a
+                          // parallel block; the side that parses does.
+                          Concurrent = false
                           ReportedFailureReason = Trace.reportedFailureReason rawLines }
 
                     post $"/job/{jobName}/doDelete" None |> ignore

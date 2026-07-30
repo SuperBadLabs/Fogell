@@ -1,0 +1,21 @@
+ .../receipts/archive-artifacts.receipt.txt         |   2 +
+ .../receipts/archive-empty-fails.receipt.txt       |   2 +
+ differential/receipts/echo-only.receipt.txt        |   2 +
+ differential/receipts/env-scoping.receipt.txt      |   2 +
+ differential/receipts/junit-failing.receipt.txt    |   2 +
+ differential/receipts/junit-passing.receipt.txt    |   2 +
+ differential/receipts/nonzero-exit.receipt.txt     |   2 +
+ differential/receipts/shell-and-file.receipt.txt   |   2 +
+ docs/EXECUTION_BOARD.md                            |  12 +-
+ docs/adr/0005-inherited-jenkins-semantics.md       |  22 +-
+ src/Fogell.Differential/Compare.fs                 |  36 ++-
+ src/Fogell.Differential/Fogell.fs                  | 250 +++++++++++++++++++--
+ src/Fogell.Differential/Jenkins.fs                 |   3 +
+ src/Fogell.Differential/Trace.fs                   |  26 +++
+ src/Fogell.Execution/Executor.fs                   |   4 +
+ src/Fogell.Execution/ProcessGroup.fs               |  24 +-
+ src/Fogell.Ir/Pipeline.fs                          |   4 +
+ src/Fogell.Pipeline.Parser/Parser.fs               |  18 ++
+ tests/Fogell.Execution.Tests/Tests.fs              |  63 +++++-
+ tests/Fogell.Pipeline.Parser.Tests/Tests.fs        |  40 ++++
+ 20 files changed, 484 insertions(+), 34 deletions(-)
