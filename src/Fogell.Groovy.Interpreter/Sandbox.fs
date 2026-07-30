@@ -1,0 +1,79 @@
+namespace Fogell.Groovy.Interpreter
+
+/// The interpreter's capability boundary.
+///
+/// ADR 0002 accepted interpretation to reach coverage a static IR cannot, and
+/// explicitly accepted the consequence: interpreting untrusted Groovy inherits
+/// Jenkins' script-security problem. Jenkins answered with a script-approval
+/// plugin and a whitelist. Fogell answers with a *closed* value type (no case
+/// wraps a .NET object) plus this deny-by-default gate on every call.
+///
+/// The rule: a free call is either a registered pipeline step, a function the
+/// script defined itself, or a rejection. There is no reflective escape,
+/// because there is nothing to reflect over.
+type Capability =
+    /// A pipeline step the host implements (`sh`, `echo`, `archiveArtifacts`).
+    | Step of string
+    /// A pure helper the interpreter itself provides.
+    | Builtin of string
+
+type Denial =
+    { Attempted: string
+      Reason: string }
+
+module Sandbox =
+
+    /// Pure helpers that cannot touch the outside world. Everything here is
+    /// string/collection manipulation over the closed [Value] type.
+    let builtins: Set<string> =
+        set
+            [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
+              "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
+              "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
+              "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus" ]
+
+    /// Names that are unambiguously an escape attempt. Kept as an explicit
+    /// deny-list purely so the *diagnostic* names what was tried; the closed
+    /// Value type is what actually makes them impossible.
+    let knownEscapes: Set<string> =
+        set
+            [ "File"; "FileInputStream"; "FileOutputStream"; "RandomAccessFile"
+              "ProcessBuilder"; "Runtime"; "System"; "Class"; "ClassLoader"
+              "GroovyShell"; "GroovyClassLoader"; "Eval"; "evaluate"
+              "URL"; "URLConnection"; "Socket"; "ServerSocket"; "HttpURLConnection"
+              "Thread"; "Unsafe"; "MethodHandles"; "getClass"; "forName"; "newInstance"
+              "getDeclaredMethod"; "getDeclaredField"; "setAccessible"; "invoke"
+              "execute"; "exec" ]
+
+    /// Decide whether a free call is admissible.
+    let admitCall (registeredSteps: Set<string>) (definedFunctions: Set<string>) (name: string) =
+        // a constructor expression is parsed as `new X`; never admissible
+        let bare = if name.StartsWith "new " then name.Substring 4 else name
+
+        if definedFunctions.Contains name then Ok(Builtin name)
+        elif registeredSteps.Contains name then Ok(Step name)
+        elif builtins.Contains name then Ok(Builtin name)
+        elif knownEscapes.Contains bare || name.StartsWith "new " then
+            Error
+                { Attempted = name
+                  Reason =
+                    "reflection, file, process and network access are not reachable from a pipeline script; \
+                     the interpreter's value type cannot represent a host object" }
+        else
+            Error
+                { Attempted = name
+                  Reason = "not a registered step, a script-defined function, or a pure builtin" }
+
+    /// Method dispatch on a value. Only pure builtins are reachable — there is
+    /// no path to an arbitrary member, by construction.
+    let admitMethod (name: string) =
+        if builtins.Contains name then
+            Ok(Builtin name)
+        elif knownEscapes.Contains name then
+            Error
+                { Attempted = name
+                  Reason = "host reflection is not reachable from a pipeline script" }
+        else
+            Error
+                { Attempted = name
+                  Reason = "not a pure builtin; host methods are not reachable" }

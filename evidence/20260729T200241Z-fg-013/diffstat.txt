@@ -1,0 +1,16 @@
+ Fogell.slnx                                        |   4 +
+ corpus/BASELINE-DECLARATIVE-SCORE.tsv              | 270 ++++++------
+ docs/EXECUTION_BOARD.md                            |   9 +-
+ .../Fogell.Groovy.Interpreter.fsproj               |  12 +
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       | 432 +++++++++++++++++++
+ src/Fogell.Groovy.Interpreter/Sandbox.fs           |  79 ++++
+ src/Fogell.Groovy.Interpreter/Value.fs             |  58 +++
+ .../Fogell.Groovy.Parser.fsproj                    |   9 +
+ src/Fogell.Groovy.Parser/Parser.fs                 | 464 +++++++++++++++++++++
+ src/Fogell.Groovy/Ast.fs                           | 187 +++++++++
+ src/Fogell.Groovy/Fogell.Groovy.fsproj             |   5 +
+ .../Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj |   9 +
+ tests/Fogell.Groovy.Tests/Tests.fs                 | 209 ++++++++++
+ .../Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj |   1 +
+ tools/Fogell.Corpus.Score/Program.fs               |  10 +-
+ 15 files changed, 1619 insertions(+), 139 deletions(-)

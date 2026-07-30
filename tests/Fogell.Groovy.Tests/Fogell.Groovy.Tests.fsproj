@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+    <ProjectReference Include="../../src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
+    <PackageReference Include="Expecto" Version="10.2.3" />
+  </ItemGroup>
+</Project>

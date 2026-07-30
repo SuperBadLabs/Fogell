@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="Parser.fs" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Groovy/Fogell.Groovy.fsproj" />
+    <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
+    <PackageReference Include="FParsec" Version="1.1.1" />
+  </ItemGroup>
+</Project>

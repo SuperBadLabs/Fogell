@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="Ast.fs" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../Fogell.Ir/Fogell.Ir.fsproj" /></ItemGroup>
+</Project>

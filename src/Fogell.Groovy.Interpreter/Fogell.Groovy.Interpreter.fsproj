@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Value.fs" />
+    <Compile Include="Sandbox.fs" />
+    <Compile Include="Interpreter.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Groovy/Fogell.Groovy.fsproj" />
+    <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
+  </ItemGroup>
+</Project>

@@ -34,7 +34,15 @@ let main argv =
         let src = File.ReadAllText path
 
         if not (Parser.looksDeclarative src) then
-            printfn $"{name}\tnot-declarative\t-\t-\t-\t-"
+            // scripted path: the Groovy escape hatch (ADR 0002)
+            match Fogell.Groovy.Parser.Parser.parse src with
+            | Ok script ->
+                let stmts = Fogell.Groovy.Ast.countStmts script
+                let calls = Fogell.Groovy.Ast.freeCalls script |> Set.count
+                printfn $"{name}\tscripted-ok\t-\t{stmts}\t{calls}\t-"
+            | Error e ->
+                let d = e.Message.Replace("\t", " ")
+                printfn $"{name}\tscripted-err\t{ErrorCode.toWireString e.Code}\t-\t-\t{d} @{e.Position}"
         else
             match Parser.parse src with
             | Ok p ->

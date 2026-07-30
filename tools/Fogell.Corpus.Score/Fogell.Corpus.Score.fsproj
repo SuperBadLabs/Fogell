@@ -7,5 +7,6 @@
   <ItemGroup><Compile Include="Program.fs" /></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+    <ProjectReference Include="../../src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
   </ItemGroup>
 </Project>
