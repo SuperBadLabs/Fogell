@@ -1,0 +1,21 @@
+ .../receipts/parallel-always-failfast.receipt.txt  |    4 +-
+ docs/EXECUTION_BOARD.md                            |    4 +
+ evidence/20260730T161459Z-fg-101/SHA256SUMS        |   16 -
+ evidence/20260730T161459Z-fg-101/base-commit.txt   |    1 -
+ evidence/20260730T161459Z-fg-101/build.log         |   20 -
+ .../cancellation-selects-post-arm.receipt.txt      |   49 -
+ evidence/20260730T161459Z-fg-101/candidate.diff    |  397 -------
+ evidence/20260730T161459Z-fg-101/corpus-gate.log   |    1 -
+ evidence/20260730T161459Z-fg-101/diffstat.txt      |    5 -
+ .../status-before-commit.txt                       |    7 -
+ .../tests-Fogell.Controller.Api.Tests.log          |    1 -
+ .../tests-Fogell.Differential.Tests.log            |    1 -
+ .../tests-Fogell.Domain.Tests.log                  |    1 -
+ .../tests-Fogell.Execution.Tests.log               |    1 -
+ .../tests-Fogell.Groovy.Tests.log                  |    1 -
+ .../tests-Fogell.Journal.Tests.log                 |    1 -
+ .../tests-Fogell.Pipeline.Parser.Tests.log         |    1 -
+ .../tests-Fogell.Store.Tests.log                   |    1 -
+ evidence/20260730T161459Z-fg-101/tree.txt          | 1096 --------------------
+ src/Fogell.Differential/Fogell.fs                  |   26 +-
+ 20 files changed, 21 insertions(+), 1613 deletions(-)

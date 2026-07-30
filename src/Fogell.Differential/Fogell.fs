@@ -366,18 +366,22 @@ module FogellSide =
                     | Some p -> (try p () with _ -> false)
                     | None -> false
 
-                match expiredNow, siblingNow with
-                | false, false -> Running
-                | true, false -> DeadlineExpired
-                | false, true -> SiblingFailed
-                | true, true ->
-                    // Both hold: the EARLIER event is the cause. The sibling records when
-                    // it signalled; the deadline's instant is the deadline itself.
-                    let siblingAt = ctx.SiblingFailedAt.Value
-                    let deadlineAt = defaultArg deadline Int64.MaxValue
+                // The two predicates are sampled SEPARATELY, so the boolean pair cannot be
+                // trusted to describe ordering: the deadline can pass between reading
+                // `expiredNow` and reading `siblingNow`, and the sibling stamps its time
+                // BEFORE calling Cancel(), so a stamp can exist while the token still reads
+                // clear. Both windows produce a tuple that says one thing and a clock that
+                // says another.
+                //
+                // So once EITHER event is observed, classify by the recorded TIMES.
+                let siblingAt = ctx.SiblingFailedAt.Value
+                let deadlineAt = defaultArg deadline Int64.MaxValue
+                let siblingObserved = siblingNow || siblingAt >= 0L
 
-                    if siblingAt >= 0L && siblingAt < deadlineAt then SiblingFailed
-                    else DeadlineExpired
+                if not (expiredNow || siblingObserved) then Running
+                elif siblingObserved && siblingAt >= 0L && siblingAt < deadlineAt then SiblingFailed
+                elif expiredNow then DeadlineExpired
+                else SiblingFailed
 
             /// Emit the reason, mark the branch failed, and sink the status the CAUSE
             /// dictates. Every cancellable step routes through this so the classification

@@ -7,6 +7,7 @@ corpus/CORPUS-SHA256SUMS
 corpus/README.md
 differential/cases/archive-artifacts.Jenkinsfile
 differential/cases/archive-empty-fails.Jenkinsfile
+differential/cases/cancellation-selects-post-arm.Jenkinsfile
 differential/cases/credentials-file.Jenkinsfile
 differential/cases/credentials-string.Jenkinsfile
 differential/cases/credentials-userpass-masking.Jenkinsfile
@@ -69,6 +70,7 @@ differential/cases/withenv-path-same-list.Jenkinsfile
 differential/cases/withenv-scoping.Jenkinsfile
 differential/receipts/archive-artifacts.receipt.txt
 differential/receipts/archive-empty-fails.receipt.txt
+differential/receipts/cancellation-selects-post-arm.receipt.txt
 differential/receipts/credentials-file.receipt.txt
 differential/receipts/credentials-string.receipt.txt
 differential/receipts/credentials-userpass-masking.receipt.txt

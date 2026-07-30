@@ -30,6 +30,10 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
   workspace.
 - Incomplete pattern matches fail the build (FS0025/FS0026).
 - No scalar compatibility percentage is ever published.
+- **Seal evidence LAST**, after the final review round. A bundle sealed mid-review attests
+  to a snapshot that was never merged: FG-101's first seal recorded the pre-review
+  implementation, and FG-104's omitted its own deliverable. The checksum makes a stale
+  bundle look more trustworthy than no bundle at all.
 
 ### Batch composition (measured, not assumed)
 

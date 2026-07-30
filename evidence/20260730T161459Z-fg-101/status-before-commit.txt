@@ -1,7 +1,0 @@
- M differential/receipts/parallel-always-failfast.receipt.txt
- M docs/EXECUTION_BOARD.md
- M docs/adr/0005-inherited-jenkins-semantics.md
- M src/Fogell.Differential/Fogell.fs
-?? differential/cases/cancellation-selects-post-arm.Jenkinsfile
-?? differential/receipts/cancellation-selects-post-arm.receipt.txt
-?? evidence/20260730T161459Z-fg-101/
