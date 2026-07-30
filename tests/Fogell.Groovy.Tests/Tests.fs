@@ -250,6 +250,12 @@ let predicateValues =
               Expect.equal (run "true\nwhile (false) { 1 }").Returned None "loop that never runs clears it"
           }
 
+          test "an uninitialised trailing declaration yields null, not the previous value" {
+              // Round-6 finding: value tracking covered only INITIALISED declarations,
+              // so `true; def x` left `true` in place and `[1].any { … }` was true.
+              Expect.equal (run "true\ndef x").Returned (Some VNull) "uninitialised def is null"
+          }
+
           test "a closure returns its trailing expression without `return`" {
               // `[1].any { it == 1 }` was FALSE because applyClosure discarded the
               // block's value unless an explicit `return` appeared.
