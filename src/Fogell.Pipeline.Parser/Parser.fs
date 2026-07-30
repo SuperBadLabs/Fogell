@@ -76,19 +76,24 @@ stepRef.Value <-
 // Sections
 // ---------------------------------------------------------------------------
 
-let private keyValueBody: P<(string * string) list> =
-    // `NAME = value` lines inside environment { } / tools { }
+/// `NAME = value` lines inside environment { } / tools { }, carrying whether the
+/// value interpolates. An unquoted value is a Groovy expression, so it does.
+let private keyValueBodyWithKind: P<(string * string * bool) list> =
     many (
         attempt (
             ws
             >>. identifier
             .>> symbol "="
-            .>>. (stringLiteral
-                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))
-            .>> ws))
+            .>>. (stringLiteralWithKind
+                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim(), true))
+            .>> ws
+            |>> fun (n, (v, interpolates)) -> n, v, interpolates))
 
-let private environmentSection: P<(string * string) list> =
-    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBody
+let private keyValueBody: P<(string * string) list> =
+    keyValueBodyWithKind |>> List.map (fun (n, v, _) -> n, v)
+
+let private environmentSection: P<(string * string * bool) list> =
+    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
 
 let private toolsSection: P<(string * string) list> =
     keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
@@ -269,7 +274,7 @@ let private failFastDirective: P<bool> =
 /// generic syntax error.
 type private StageSection =
     | SecAgent of AgentSpec
-    | SecEnv of (string * string) list
+    | SecEnv of (string * string * bool) list
     | SecSteps of Step list
     | SecWhen of WhenCondition
     | SecPost of (PostCondition * Step list) list
@@ -307,7 +312,14 @@ stageRef.Value <-
             let pick f = sections |> List.tryPick f
             { Name = name
               Agent = pick (function SecAgent a -> Some a | _ -> None)
-              Environment = defaultArg (pick (function SecEnv e -> Some e | _ -> None)) []
+              Environment =
+                defaultArg (pick (function SecEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
+              EnvironmentLiteralNames =
+                defaultArg
+                    (pick (function
+                        | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
+                        | _ -> None))
+                    Set.empty
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
@@ -322,7 +334,7 @@ stageRef.Value <-
 
 type private TopSection =
     | TopAgent of AgentSpec
-    | TopEnv of (string * string) list
+    | TopEnv of (string * string * bool) list
     | TopTools of (string * string) list
     | TopOptions of Step list
     | TopParameters of Step list
@@ -383,7 +395,14 @@ let private pipelineParser: P<Pipeline> =
     |>> fun sections ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
-              Environment = defaultArg (pick (function TopEnv e -> Some e | _ -> None)) []
+              Environment =
+                defaultArg (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
+              EnvironmentLiteralNames =
+                defaultArg
+                    (pick (function
+                        | TopEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
+                        | _ -> None))
+                    Set.empty
               Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
               Options = defaultArg (pick (function TopOptions o -> Some o | _ -> None)) []
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []

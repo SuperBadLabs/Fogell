@@ -99,8 +99,17 @@ module FogellSide =
                             | v -> v)
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
+                // Names whose value Groovy keeps VERBATIM. `withEnv` entries are
+                // handled at their own site, where the quote form is still visible.
+                let literal =
+                    Set.union pipeline.EnvironmentLiteralNames stage.EnvironmentLiteralNames
+
                 (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
-                |> List.fold (fun acc (k, v) -> Map.add k (interpolate acc v) acc) Map.empty
+                |> List.fold
+                    (fun acc (k, v) ->
+                        let resolved = if Set.contains k literal then v else interpolate acc v
+                        Map.add k resolved acc)
+                    Map.empty
                 |> Map.toList
 
             let mutable status = BuildStatus.Success
@@ -618,14 +627,28 @@ module FogellSide =
                     // any value containing one — `withEnv(['CSV=a,b'])` bound
                     // `CSV=a` while Jenkins exposes `a,b`. Match the QUOTED list
                     // elements instead, so commas inside an element are content.
+                    // Group 1 is single-quoted (LITERAL in Groovy), group 2 is
+                    // double-quoted (a GString, so it interpolates). Keeping the
+                    // distinction here is the same fix as for `environment { }`.
                     let bindings =
                         step.Positional
                         |> List.collect (fun raw ->
                             [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
-                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ]
-                            |> List.choose (fun entry ->
+                                if m.Groups[1].Success then m.Groups[1].Value, false
+                                else m.Groups[2].Value, true ]
+                            |> List.choose (fun (entry, interpolates) ->
                                 match entry.IndexOf '=' with
-                                | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
+                                | i when i > 0 ->
+                                    let name = entry.Substring(0, i)
+                                    let raw = entry.Substring(i + 1)
+
+                                    let value =
+                                        if interpolates then
+                                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
+                                        else
+                                            raw
+
+                                    Some(name, value)
                                 | _ -> None))
 
                     // REVIEW FIX (Codex, PR #13 round 2): `PATH+TOOLS=/opt/tools/bin`
@@ -790,6 +813,7 @@ module FogellSide =
                     { Name = ""
                       Agent = None
                       Environment = []
+                      EnvironmentLiteralNames = Set.empty
                       Steps = []
                       When = None
                       Post = pipeline.Post

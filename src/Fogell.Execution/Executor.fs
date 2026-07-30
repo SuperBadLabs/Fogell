@@ -265,14 +265,16 @@ module Executor =
                 // That is the same "partial result reported as success" shape as the
                 // parallel-sink and post-arm bugs. Detecting an interruption and
                 // discarding it from the StepResult is worse than not detecting it.
-                request.OnLine
-                |> Option.iter (fun f ->
-                    f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
-
+                // REVIEW FIX (Codex, PR #14 round 4), two errors in one place:
+                //  * emitting here AND returning a Diagnostic printed the failure
+                //    twice for one event, because runStepInner emits it as well;
+                //  * it asserted the DEADLINE expired, but under `parallel` failFast
+                //    the interrupt comes from a failed sibling. The engine does not
+                //    know which, so it must not name one.
                 { ok Aborted with
                     Diagnostic =
                         Some
-                            $"archiving aborted after {published.Length} file(s); the deadline expired and the artifact set is incomplete" }
+                            $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
             elif List.isEmpty published && not allowEmpty then
                 // Jenkins fails the build here rather than passing quietly, and
                 // a silent empty archive is the worst outcome for a user.

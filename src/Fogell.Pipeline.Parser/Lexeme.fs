@@ -57,6 +57,26 @@ let private tripleQuoted (q: string) : P<string> =
         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
 
 /// Any Groovy string form Jenkinsfiles use, including slashy strings.
+/// A string literal PLUS whether Groovy would interpolate it.
+///
+/// REVIEW FIX (Codex, PR #14 round 4): quote type was discarded, so a
+/// single-quoted `LITERAL = '$BUILD_NUMBER'` — which Groovy keeps VERBATIM —
+/// was interpolated anyway. That runs a stage or command with a different value
+/// than Jenkins and can produce a FALSE differential match, the one outcome this
+/// harness must never produce. Measured 53 single-quoted dollar-bearing
+/// assignments in the 228-file corpus, so it is not hypothetical.
+///
+/// Single-quoted and slashy strings are literal; double-quoted and triple-double
+/// are GStrings and interpolate.
+let stringLiteralWithKind: P<string * bool> =
+    lexeme (
+        choice
+            [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
+              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
+              attempt (quoted "'" |>> fun s -> s, false)
+              attempt (quoted "\"" |>> fun s -> s, true)
+              attempt (quoted "/" |>> fun s -> s, false) ])
+
 let stringLiteral: P<string> =
     lexeme (
         choice

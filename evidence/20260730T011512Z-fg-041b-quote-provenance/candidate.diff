@@ -1,0 +1,281 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 966c76b..ab3860b 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **30/30 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **31/31 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/scripts/review-rounds.bb b/scripts/review-rounds.bb
+index 9abefc9..e294c8b 100755
+--- a/scripts/review-rounds.bb
++++ b/scripts/review-rounds.bb
+@@ -21,8 +21,22 @@
+     (System/exit 2))
+ 
+   (defn gh [path]
+-    (-> (shell {:out :string} "gh" "api" (str "repos/" repo path) "--paginate")
+-        :out json/parse-string))
++    ;; REVIEW FIX (Codex, PR #14 round 4), and it is pointed: `gh api --paginate`
++    ;; emits ONE JSON VALUE PER PAGE, so `parse-string` on the combined stream sees
++    ;; only the first page. This checker exists precisely to stop me under-reporting
++    ;; review findings, and it could have reported "0 NEW" while omitting newer
++    ;; comments — the failure it was written to prevent, reproduced inside the
++    ;; prevention.
++    ;;
++    ;; Codex suggested `--slurp`; this gh (2.45.0) does not have that flag, so the
++    ;; concatenated values are read as a SEQUENCE instead, which works on every
++    ;; version. Verified against a PR with >1 page by lowering per_page.
++    (->> (shell {:out :string} "gh" "api" (str "repos/" repo path) "--paginate")
++         :out
++         java.io.StringReader.
++         json/parsed-seq
++         (mapcat identity)
++         vec))
+ 
+   (let [comments (gh (str "/pulls/" pr "/comments"))
+         reviews  (gh (str "/pulls/" pr "/reviews"))
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index d8cde0b..8dc4547 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -99,8 +99,17 @@ module FogellSide =
+                             | v -> v)
+ 
+             let envForWith (overlay: (string * string) list) (stage: Stage) =
++                // Names whose value Groovy keeps VERBATIM. `withEnv` entries are
++                // handled at their own site, where the quote form is still visible.
++                let literal =
++                    Set.union pipeline.EnvironmentLiteralNames stage.EnvironmentLiteralNames
++
+                 (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
+-                |> List.fold (fun acc (k, v) -> Map.add k (interpolate acc v) acc) Map.empty
++                |> List.fold
++                    (fun acc (k, v) ->
++                        let resolved = if Set.contains k literal then v else interpolate acc v
++                        Map.add k resolved acc)
++                    Map.empty
+                 |> Map.toList
+ 
+             let mutable status = BuildStatus.Success
+@@ -618,14 +627,28 @@ module FogellSide =
+                     // any value containing one — `withEnv(['CSV=a,b'])` bound
+                     // `CSV=a` while Jenkins exposes `a,b`. Match the QUOTED list
+                     // elements instead, so commas inside an element are content.
++                    // Group 1 is single-quoted (LITERAL in Groovy), group 2 is
++                    // double-quoted (a GString, so it interpolates). Keeping the
++                    // distinction here is the same fix as for `environment { }`.
+                     let bindings =
+                         step.Positional
+                         |> List.collect (fun raw ->
+                             [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
+-                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ]
+-                            |> List.choose (fun entry ->
++                                if m.Groups[1].Success then m.Groups[1].Value, false
++                                else m.Groups[2].Value, true ]
++                            |> List.choose (fun (entry, interpolates) ->
+                                 match entry.IndexOf '=' with
+-                                | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
++                                | i when i > 0 ->
++                                    let name = entry.Substring(0, i)
++                                    let raw = entry.Substring(i + 1)
++
++                                    let value =
++                                        if interpolates then
++                                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
++                                        else
++                                            raw
++
++                                    Some(name, value)
+                                 | _ -> None))
+ 
+                     // REVIEW FIX (Codex, PR #13 round 2): `PATH+TOOLS=/opt/tools/bin`
+@@ -790,6 +813,7 @@ module FogellSide =
+                     { Name = ""
+                       Agent = None
+                       Environment = []
++                      EnvironmentLiteralNames = Set.empty
+                       Steps = []
+                       When = None
+                       Post = pipeline.Post
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 0c28652..34fe650 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -265,14 +265,16 @@ module Executor =
+                 // That is the same "partial result reported as success" shape as the
+                 // parallel-sink and post-arm bugs. Detecting an interruption and
+                 // discarding it from the StepResult is worse than not detecting it.
+-                request.OnLine
+-                |> Option.iter (fun f ->
+-                    f $"ERROR: archiving aborted after {published.Length} file(s) — the step's deadline expired; the artifact set is INCOMPLETE")
+-
++                // REVIEW FIX (Codex, PR #14 round 4), two errors in one place:
++                //  * emitting here AND returning a Diagnostic printed the failure
++                //    twice for one event, because runStepInner emits it as well;
++                //  * it asserted the DEADLINE expired, but under `parallel` failFast
++                //    the interrupt comes from a failed sibling. The engine does not
++                //    know which, so it must not name one.
+                 { ok Aborted with
+                     Diagnostic =
+                         Some
+-                            $"archiving aborted after {published.Length} file(s); the deadline expired and the artifact set is incomplete" }
++                            $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
+             elif List.isEmpty published && not allowEmpty then
+                 // Jenkins fails the build here rather than passing quietly, and
+                 // a silent empty archive is the worst outcome for a user.
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index 4b37bd3..adf20a4 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -53,6 +53,11 @@ type Stage =
+     { Name: string
+       Agent: AgentSpec option
+       Environment: (string * string) list
++      /// Names whose value was written with a LITERAL quote form (single, triple
++      /// single, or slashy). Groovy does not interpolate those, so neither may we
++      /// — expanding `'$BUILD_NUMBER'` runs a different value than Jenkins and can
++      /// produce a false differential match.
++      EnvironmentLiteralNames: Set<string>
+       Steps: Step list
+       When: WhenCondition option
+       Post: (PostCondition * Step list) list
+@@ -70,6 +75,8 @@ type Stage =
+ type Pipeline =
+     { Agent: AgentSpec
+       Environment: (string * string) list
++      /// See Stage.EnvironmentLiteralNames.
++      EnvironmentLiteralNames: Set<string>
+       Options: Step list
+       Parameters: Step list
+       Triggers: Step list
+@@ -82,6 +89,7 @@ module Pipeline =
+     let empty =
+         { Agent = AgentNone
+           Environment = []
++          EnvironmentLiteralNames = Set.empty
+           Options = []
+           Parameters = []
+           Triggers = []
+diff --git a/src/Fogell.Pipeline.Parser/Lexeme.fs b/src/Fogell.Pipeline.Parser/Lexeme.fs
+index ae78542..5b85401 100644
+--- a/src/Fogell.Pipeline.Parser/Lexeme.fs
++++ b/src/Fogell.Pipeline.Parser/Lexeme.fs
+@@ -57,6 +57,26 @@ let private tripleQuoted (q: string) : P<string> =
+         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
+ 
+ /// Any Groovy string form Jenkinsfiles use, including slashy strings.
++/// A string literal PLUS whether Groovy would interpolate it.
++///
++/// REVIEW FIX (Codex, PR #14 round 4): quote type was discarded, so a
++/// single-quoted `LITERAL = '$BUILD_NUMBER'` — which Groovy keeps VERBATIM —
++/// was interpolated anyway. That runs a stage or command with a different value
++/// than Jenkins and can produce a FALSE differential match, the one outcome this
++/// harness must never produce. Measured 53 single-quoted dollar-bearing
++/// assignments in the 228-file corpus, so it is not hypothetical.
++///
++/// Single-quoted and slashy strings are literal; double-quoted and triple-double
++/// are GStrings and interpolate.
++let stringLiteralWithKind: P<string * bool> =
++    lexeme (
++        choice
++            [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
++              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
++              attempt (quoted "'" |>> fun s -> s, false)
++              attempt (quoted "\"" |>> fun s -> s, true)
++              attempt (quoted "/" |>> fun s -> s, false) ])
++
+ let stringLiteral: P<string> =
+     lexeme (
+         choice
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index b4b625e..8d5ed8f 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -76,19 +76,24 @@ stepRef.Value <-
+ // Sections
+ // ---------------------------------------------------------------------------
+ 
+-let private keyValueBody: P<(string * string) list> =
+-    // `NAME = value` lines inside environment { } / tools { }
++/// `NAME = value` lines inside environment { } / tools { }, carrying whether the
++/// value interpolates. An unquoted value is a Groovy expression, so it does.
++let private keyValueBodyWithKind: P<(string * string * bool) list> =
+     many (
+         attempt (
+             ws
+             >>. identifier
+             .>> symbol "="
+-            .>>. (stringLiteral
+-                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))
+-            .>> ws))
++            .>>. (stringLiteralWithKind
++                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim(), true))
++            .>> ws
++            |>> fun (n, (v, interpolates)) -> n, v, interpolates))
+ 
+-let private environmentSection: P<(string * string) list> =
+-    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBody
++let private keyValueBody: P<(string * string) list> =
++    keyValueBodyWithKind |>> List.map (fun (n, v, _) -> n, v)
++
++let private environmentSection: P<(string * string * bool) list> =
++    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
+ 
+ let private toolsSection: P<(string * string) list> =
+     keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
+@@ -269,7 +274,7 @@ let private failFastDirective: P<bool> =
+ /// generic syntax error.
+ type private StageSection =
+     | SecAgent of AgentSpec
+-    | SecEnv of (string * string) list
++    | SecEnv of (string * string * bool) list
+     | SecSteps of Step list
+     | SecWhen of WhenCondition
+     | SecPost of (PostCondition * Step list) list
+@@ -307,7 +312,14 @@ stageRef.Value <-
+             let pick f = sections |> List.tryPick f
+             { Name = name
+               Agent = pick (function SecAgent a -> Some a | _ -> None)
+-              Environment = defaultArg (pick (function SecEnv e -> Some e | _ -> None)) []
++              Environment =
++                defaultArg (pick (function SecEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
++              EnvironmentLiteralNames =
++                defaultArg
++                    (pick (function
++                        | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
++                        | _ -> None))
++                    Set.empty
+               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
+               When = pick (function SecWhen w -> Some w | _ -> None)
+               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
+@@ -322,7 +334,7 @@ stageRef.Value <-
+ 
+ type private TopSection =
+     | TopAgent of AgentSpec
+-    | TopEnv of (string * string) list
++    | TopEnv of (string * string * bool) list
+     | TopTools of (string * string) list
+     | TopOptions of Step list
+     | TopParameters of Step list
+@@ -383,7 +395,14 @@ let private pipelineParser: P<Pipeline> =
+     |>> fun sections ->
+             let pick f = sections |> List.tryPick f
+             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
+-              Environment = defaultArg (pick (function TopEnv e -> Some e | _ -> None)) []
++              Environment =
++                defaultArg (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
++              EnvironmentLiteralNames =
++                defaultArg
++                    (pick (function
++                        | TopEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
++                        | _ -> None))
++                    Set.empty
+               Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
+               Options = defaultArg (pick (function TopOptions o -> Some o | _ -> None)) []
+               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []

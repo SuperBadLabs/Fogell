@@ -21,8 +21,22 @@
     (System/exit 2))
 
   (defn gh [path]
-    (-> (shell {:out :string} "gh" "api" (str "repos/" repo path) "--paginate")
-        :out json/parse-string))
+    ;; REVIEW FIX (Codex, PR #14 round 4), and it is pointed: `gh api --paginate`
+    ;; emits ONE JSON VALUE PER PAGE, so `parse-string` on the combined stream sees
+    ;; only the first page. This checker exists precisely to stop me under-reporting
+    ;; review findings, and it could have reported "0 NEW" while omitting newer
+    ;; comments — the failure it was written to prevent, reproduced inside the
+    ;; prevention.
+    ;;
+    ;; Codex suggested `--slurp`; this gh (2.45.0) does not have that flag, so the
+    ;; concatenated values are read as a SEQUENCE instead, which works on every
+    ;; version. Verified against a PR with >1 page by lowering per_page.
+    (->> (shell {:out :string} "gh" "api" (str "repos/" repo path) "--paginate")
+         :out
+         java.io.StringReader.
+         json/parsed-seq
+         (mapcat identity)
+         vec))
 
   (let [comments (gh (str "/pulls/" pr "/comments"))
         reviews  (gh (str "/pulls/" pr "/reviews"))
