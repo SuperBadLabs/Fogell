@@ -1,0 +1,7 @@
+ .../receipts/parallel-always-failfast.receipt.txt  |   4 +-
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ src/Fogell.Differential/Fogell.fs                  | 100 ++++++++++++++-------
+ src/Fogell.Differential/Trace.fs                   |   7 +-
+ src/Fogell.Pipeline.Parser/Parser.fs               |  38 ++++++--
+ tests/Fogell.Pipeline.Parser.Tests/Tests.fs        |  29 ++++++
+ 6 files changed, 137 insertions(+), 43 deletions(-)

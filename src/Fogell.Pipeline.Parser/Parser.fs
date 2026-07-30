@@ -213,20 +213,42 @@ let private whenEqualsCondition: P<WhenCondition> =
 /// stages failed closed.
 let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
 
+/// `()` and nothing else. Accepting arbitrary contents and throwing them away is how a
+/// form Jenkins REJECTS gets silently executed.
+let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
+
+/// A condition taking one value, written bare (`changeset '**/*.java'`) or named with
+/// its ONE legal key. A different key is returned as raw text so the caller can record
+/// it unmodelled rather than mistake it for the value.
+let private namedOrBare (key: string) : P<Result<string, string>> =
+    // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
+    // same shadowing that bit this file once before.
+    (attempt (identifier .>> symbol ":" .>>. stringLiteral)
+     |>> fun (k, v) -> if k = key then Result.Ok v else Result.Error $"{k}: {v}")
+    <|> (stringLiteral |>> Result.Ok)
+
 let rec private whenCondition: P<WhenCondition> =
     parse {
         let! _ = ws
         return! choice
                     // Same key validation as `tag`: a named argument that is not
                     // `pattern:` must not be mistaken for the branch pattern.
-                    [ // FG-048b. Context-dependent conditions. The zero-argument forms
-                      // accept optional empty parens, as Jenkinsfiles write them.
-                      attempt (keyword "buildingTag" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenBuildingTag)
-                      attempt (keyword "changeRequest" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenChangeRequest)
-                      attempt (keyword "isRestartedRun" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenIsRestartedRun)
-                      attempt (keyword "changeset" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangeset)
-                      attempt (keyword "changelog" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangelog)
-                      attempt (keyword "triggeredBy" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenTriggeredBy)
+                    [ // FG-048b. Context-dependent conditions.
+                      //
+                      // REVIEW FIXES (both reviewers, PR #16): these accepted ANY balanced
+                      // parentheses and DISCARDED the contents, so `buildingTag('x')` and
+                      // `changeRequest(target: 'main')` were silently modelled as their
+                      // argument-free forms — Jenkins rejects the first and applies a
+                      // filter for the second. Only genuinely EMPTY parens are accepted;
+                      // anything inside falls through to unmodelled and fails closed.
+                      // Named forms validate their key, the same rule already applied to
+                      // `tag` and `branch`, so a wrong key cannot become the pattern.
+                      attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
+                      attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
+                      attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
+                      attempt (keyword "changeset" >>. namedOrBare "glob" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
+                      attempt (keyword "changelog" >>. namedOrBare "regexp" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
+                      attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
                       attempt (
                           keyword "branch"
                           >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)

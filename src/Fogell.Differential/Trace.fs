@@ -168,7 +168,12 @@ module Trace =
         // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
         // `changelog` on a first build. Engine narration about its own evaluation, not
         // build output — and imitating the sentence would be over-fitting again.
-        || t.StartsWith "Warning, empty changelog"
+        // The EXACT sentence, not a prefix. REGRESSION, caught by both reviewers: a broad
+        // prefix match drops any user output beginning with these words and — because
+        // diagnostic lines also set ReportedFailureReason — can mask an engine's silence on
+        // a failed run, producing a FALSE PROVEN. That is precisely the `Terminated` defect
+        // fixed earlier in this file; I reproduced it two rules later.
+        || t = "Warning, empty changelog. Probably because this is the first build."
         // FG-049. A failing `post` step makes Jenkins print a Java exception and
         // stack trace into the build log. It is the engine explaining itself, which
         // is what this predicate is for — and matching a stack trace verbatim would

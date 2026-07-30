@@ -161,6 +161,35 @@ let structure =
               Expect.equal (one "triggeredBy 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "triggeredBy"
           }
 
+          test "a zero-argument when condition rejects arguments" {
+              // These accepted ANY balanced parens and DISCARDED the contents, so
+              // `buildingTag('x')` — which Jenkins rejects — was silently modelled as the
+              // argument-free form, and `changeRequest(target: 'main')` lost its filter.
+              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "empty parens are fine"
+
+              match one "buildingTag('x')" with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtest $"arguments must not be discarded, got {other}"
+
+              match one "changeRequest(target: 'main')" with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtest $"a changeRequest filter must not be dropped, got {other}"
+          }
+
+          test "a wrong named key never becomes the pattern" {
+              // The same failure mode already fixed for `tag`, reintroduced for the three
+              // conditions added in this batch.
+              let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              Expect.equal (one "changeset glob: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the legal key works"
+
+              match one "changeset comparator: 'REGEXP'" with
+              | Some(WhenUnmodelled("changeset", _)) -> ()
+              | other -> failtest $"a wrong key must be unmodelled, got {other}"
+          }
+
           test "semicolon-separated conditions inside anyOf parse" {
               // `anyOf { branch 'a'; branch 'b' }` is idiomatic and appeared in 6 corpus
               // files. `many whenCondition` stopped at the semicolon, the closing brace

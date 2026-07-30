@@ -455,26 +455,37 @@ module FogellSide =
                 // not the real thing: `equals expected: 2, actual: 2.0` would still
                 // be called unequal. Stated rather than implied.
                 | WhenEquals(expected, actual) ->
-                    // An operand is either a LITERAL (quoted, or a bare number) or an
-                    // EXPRESSION such as `env.X` / `params.Y`. Comparing an expression's
-                    // SOURCE TEXT against a literal is silently wrong — `equals
-                    // actual: env.X, expected: 'y'` compared the string "env.X" — so
-                    // expression-shaped operands are resolved from the environment first.
-                    let resolveOperand (raw: string) =
+                    // Jenkins compares OBJECTS: Integer 2 is not String "2". An operand is
+                    // a quoted literal (a String), a bare number (an Integer), or an
+                    // expression like `env.X` — and an environment variable is a String.
+                    //
+                    // REGRESSION, caught by both reviewers: PR #13 round 5 established the
+                    // type distinction by keeping each operand's source form, and my
+                    // expression-resolution fix then stripped the quotes and made
+                    // `equals expected: 2, actual: '2'` equal again. The fix has to
+                    // preserve provenance, not just resolve.
+                    let classify (raw: string) =
                         let t = raw.Trim()
 
                         if t.StartsWith "'" || t.StartsWith "\"" then
-                            t.Trim('\'', '"')
-                        elif t.Length > 0 && (Char.IsDigit t[0] || t[0] = '-') then
-                            t
+                            // a String literal
+                            Choice1Of2(t.Trim('\'', '"'))
+                        elif t.Length > 0 && (Char.IsDigit t[0] || (t[0] = '-' && t.Length > 1)) then
+                            // a numeric literal — a different Groovy type entirely
+                            Choice2Of2 t
                         else
+                            // an expression; environment values are Strings
                             let bare = if t.StartsWith "env." then t.Substring 4 else t
 
                             match Map.tryFind bare env with
-                            | Some v -> v
-                            | None -> t
+                            | Some v -> Choice1Of2 v
+                            | None -> Choice1Of2 t
 
-                    Some(resolveOperand expected = resolveOperand actual)
+                    match classify expected, classify actual with
+                    | Choice1Of2 a, Choice1Of2 b -> Some(a = b)
+                    | Choice2Of2 a, Choice2Of2 b -> Some(a.Trim() = b.Trim())
+                    // A number and a string are never equal, which is the whole point.
+                    | _ -> Some false
 
                 // Neutral: an evaluation-ORDER directive never decides whether a stage runs.
                 | WhenEvaluationOption -> Some true
@@ -495,12 +506,17 @@ module FogellSide =
                 | WhenIsRestartedRun ->
                     // Nothing in this engine restarts a run yet, so this cannot be true.
                     Some false
-                | WhenTriggeredBy cause ->
-                    // The trigger is recorded in BUILD_CAUSE when we know it; absent means
-                    // "started by a user", which no named trigger cause matches.
-                    match Map.tryFind "BUILD_CAUSE" env with
-                    | Some actual -> Some(actual.Trim() = cause.Trim())
-                    | None -> Some false
+                | WhenTriggeredBy _ ->
+                    // MEASURED false on a user-started build, and it stays false until real
+                    // cause metadata exists.
+                    //
+                    // REVIEW FIX (both reviewers, PR #16): reading `BUILD_CAUSE` out of the
+                    // environment made the gate SPOOFABLE — a Jenkinsfile declaring
+                    // `environment { BUILD_CAUSE = 'TimerTrigger' }` would open a stage
+                    // Jenkins skips, and nothing else in the engine ever produces that
+                    // variable. A gate whose input the gated party controls is not a gate.
+                    Some false
+
                 | WhenChangeset _
                 | WhenChangelog _ ->
                     // Both need an SCM changelog. There is none, and Jenkins itself warns
@@ -618,20 +634,27 @@ module FogellSide =
             ///
             /// A nested deadline can only tighten an inherited one, never extend it.
             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
-                let declared =
+                // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
+                // turned into None here, so the declared SAFETY BOUND silently vanished and
+                // the job ran unbounded — while the step form fails closed on the very same
+                // error. Errors are surfaced so the caller can stop the build.
+                let declared, optionError =
                     options
-                    |> List.tryPick (fun o ->
-                        if o.Name = "timeout" then
+                    |> List.filter (fun o -> o.Name = "timeout")
+                    |> List.fold
+                        (fun (acc, err) o ->
                             match timeoutMs o with
-                            | Ok ms -> Some(runClock.ElapsedMilliseconds + ms)
-                            | Error _ -> None
-                        else
-                            None)
+                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms), err)
+                            | Error e -> (acc, Some e))
+                        (None, None)
 
-                match declared, inherited with
-                | Some d, Some i -> Some(min d i)
-                | Some d, None -> Some d
-                | None, i -> i
+                let effective =
+                    match declared, inherited with
+                    | Some d, Some i -> Some(min d i)
+                    | Some d, None -> Some d
+                    | None, i -> i
+
+                effective, optionError
 
             let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
                 if not (List.isEmpty stage.Post) then
@@ -671,7 +694,15 @@ module FogellSide =
 
             and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
                 // A stage's own `options { timeout(...) }` tightens whatever it inherited.
-                let deadline = deadlineFromOptions stage.Options inherited
+                let deadline, optionError = deadlineFromOptions stage.Options inherited
+
+                // A declared bound we cannot understand must stop the build, not vanish.
+                match optionError with
+                | Some e ->
+                    emit $"ERROR: stage '{stage.Name}' declares an unusable timeout option: {e}"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | None ->
 
                 if not (halted ctx) then
                     // FG-048. The `when` gate, before anything else runs.
@@ -1358,7 +1389,14 @@ module FogellSide =
             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            let pipelineDeadline = deadlineFromOptions pipeline.Options None
+            let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+
+            match pipelineOptionError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+            | None -> ()
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then
