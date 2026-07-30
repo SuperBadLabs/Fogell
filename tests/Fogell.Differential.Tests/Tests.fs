@@ -59,6 +59,25 @@ let userOutputSurvives =
               Expect.equal kept [ "real build output" ] "the whole trace is narration, the output is not"
           }
 
+          test "a stack-trace-only failure still counts as a reported reason" {
+              // REVIEW FIX (Codex, PR #16 round 9): moving exception heads and frames out
+              // of isDiagnosticLine into a contextual gate left reportedFailureReason
+              // blind to them. A Jenkins failure explained ONLY by a stack trace would
+              // report NO reason while Fogell's `ERROR:` reported one — a
+              // DiagnosticSilence divergence on an otherwise matching run.
+              let jenkinsFailure =
+                  [ "hudson.AbortException: script returned exit code 4"
+                    "at PluginClassLoader for x//org.Foo.bar(Foo.java:1)" ]
+
+              Expect.isTrue (Trace.reportedFailureReason jenkinsFailure) "the trace IS the explanation"
+              Expect.isEmpty (Trace.normaliseOutput jenkinsFailure) "and it is not compared as output"
+
+              // A build merely printing the class name explains nothing.
+              Expect.isFalse
+                  (Trace.reportedFailureReason [ "hudson.AbortException: printed by a build" ])
+                  "no frame, no trace, no reason"
+          }
+
           test "`Terminated` survives unless an interrupt was just narrated" {
               Expect.contains (Trace.normaliseOutput [ "Terminated" ]) "Terminated" "on its own it is output"
 

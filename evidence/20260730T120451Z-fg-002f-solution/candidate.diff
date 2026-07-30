@@ -1,0 +1,86 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index da7fb9d..adf0ea9 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -20,6 +20,7 @@
+   </Folder>
+   <Folder Name="/tests/">
+     <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />
++    <Project Path="tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj" />
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+     <Project Path="tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj" />
+     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index c41f301..ef69c6d 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -291,12 +291,34 @@ module Trace =
+                 | Some l -> yield l
+                 | None -> () ]
+ 
+-    /// `Terminated` on its own is only a reason when an interrupt was narrated
+-    /// with it; see [normaliseOutput].
++    /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
++    /// see [normaliseOutput].
++    ///
++    /// REVIEW FIX (Codex, PR #16 round 9): moving exception heads and stack frames out of
++    /// [isDiagnosticLine] and into a CONTEXTUAL gate left this function unable to see
++    /// them. A Jenkins failure explained ONLY by a stack trace would then report NO
++    /// reason while Fogell's `ERROR:` reported one — a DiagnosticSilence divergence on an
++    /// otherwise matching run. The same context detection has to serve both.
+     let reportedFailureReason (lines: string seq) : bool =
+-        lines
+-        |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
+-        |> Seq.exists isDiagnosticLine
++        let all = lines |> Seq.toArray
++
++        let clean (l: string) =
++            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
++
++        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
++
++        let looksLikeExceptionHead (l: string) =
++            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
++
++        let hasStackTrace =
++            all
++            |> Array.mapi (fun i l ->
++                let raw = clean l
++                let next = if i + 1 < all.Length then clean all[i + 1] else ""
++                looksLikeExceptionHead raw && isFrame next)
++            |> Array.exists id
++
++        hasStackTrace || (all |> Array.map clean |> Array.exists isDiagnosticLine)
+ 
+     /// The exclusions above are part of the contract, so they are published with
+     /// every receipt rather than buried in code.
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index f8d6510..29cd429 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -59,6 +59,25 @@ let userOutputSurvives =
+               Expect.equal kept [ "real build output" ] "the whole trace is narration, the output is not"
+           }
+ 
++          test "a stack-trace-only failure still counts as a reported reason" {
++              // REVIEW FIX (Codex, PR #16 round 9): moving exception heads and frames out
++              // of isDiagnosticLine into a contextual gate left reportedFailureReason
++              // blind to them. A Jenkins failure explained ONLY by a stack trace would
++              // report NO reason while Fogell's `ERROR:` reported one — a
++              // DiagnosticSilence divergence on an otherwise matching run.
++              let jenkinsFailure =
++                  [ "hudson.AbortException: script returned exit code 4"
++                    "at PluginClassLoader for x//org.Foo.bar(Foo.java:1)" ]
++
++              Expect.isTrue (Trace.reportedFailureReason jenkinsFailure) "the trace IS the explanation"
++              Expect.isEmpty (Trace.normaliseOutput jenkinsFailure) "and it is not compared as output"
++
++              // A build merely printing the class name explains nothing.
++              Expect.isFalse
++                  (Trace.reportedFailureReason [ "hudson.AbortException: printed by a build" ])
++                  "no frame, no trace, no reason"
++          }
++
+           test "`Terminated` survives unless an interrupt was just narrated" {
+               Expect.contains (Trace.normaliseOutput [ "Terminated" ]) "Terminated" "on its own it is output"
+ 

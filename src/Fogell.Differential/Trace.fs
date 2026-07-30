@@ -291,12 +291,34 @@ module Trace =
                 | Some l -> yield l
                 | None -> () ]
 
-    /// `Terminated` on its own is only a reason when an interrupt was narrated
-    /// with it; see [normaliseOutput].
+    /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
+    /// see [normaliseOutput].
+    ///
+    /// REVIEW FIX (Codex, PR #16 round 9): moving exception heads and stack frames out of
+    /// [isDiagnosticLine] and into a CONTEXTUAL gate left this function unable to see
+    /// them. A Jenkins failure explained ONLY by a stack trace would then report NO
+    /// reason while Fogell's `ERROR:` reported one — a DiagnosticSilence divergence on an
+    /// otherwise matching run. The same context detection has to serve both.
     let reportedFailureReason (lines: string seq) : bool =
-        lines
-        |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
-        |> Seq.exists isDiagnosticLine
+        let all = lines |> Seq.toArray
+
+        let clean (l: string) =
+            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+
+        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
+
+        let looksLikeExceptionHead (l: string) =
+            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
+
+        let hasStackTrace =
+            all
+            |> Array.mapi (fun i l ->
+                let raw = clean l
+                let next = if i + 1 < all.Length then clean all[i + 1] else ""
+                looksLikeExceptionHead raw && isFrame next)
+            |> Array.exists id
+
+        hasStackTrace || (all |> Array.map clean |> Array.exists isDiagnosticLine)
 
     /// The exclusions above are part of the contract, so they are published with
     /// every receipt rather than buried in code.
