@@ -213,7 +213,11 @@ module FogellSide =
                         if quote <> '\000' then
                             if c = '\\' then i <- i + 1
                             elif c = quote then quote <- '\000'
-                        elif c = '\'' || c = '"' then
+                        elif c = '\'' || c = '"' || c = '/' then
+                            // `/` opens a SLASHY string, which `Fogell.Groovy.Parser`
+                            // already accepts — `${/}/}` holds a slashy literal whose `}`
+                            // is content, not the placeholder's end. Omitting it made the
+                            // scanner disagree with the parser that consumes its output.
                             quote <- c
                         elif c = '{' then
                             depth <- depth + 1
@@ -1350,10 +1354,17 @@ module FogellSide =
                             // bounded by 250 anyway.
                             let left = defaultArg (remainingMs deadline) 0L
 
-                            if left <= 1L then stop <- true
-                            elif interruptedBySibling () then
+                            // The SIBLING is tested first. With expiry checked first, a
+                            // sibling that failed during the final sleep lost the race to
+                            // a deadline that expired in the same instant, and the build
+                            // reported `aborted` — Aborted outranks Failure, so it would
+                            // then select `post { aborted }` over the failure handler.
+                            // That is collateral-outranks-cause for the sixth time in this
+                            // project, now as an ordering race rather than a missing check.
+                            if interruptedBySibling () then
                                 stop <- true
                                 bySibling <- true
+                            elif left <= 1L then stop <- true
                             else
                                 System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
 

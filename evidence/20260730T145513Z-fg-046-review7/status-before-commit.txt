@@ -1,0 +1,6 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+?? differential/cases/input-slashy-literal.Jenkinsfile
+?? differential/receipts/input-slashy-literal.receipt.txt
+?? evidence/20260730T145513Z-fg-046-review7/
