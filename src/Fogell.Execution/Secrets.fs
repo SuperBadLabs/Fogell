@@ -82,6 +82,29 @@ module Secrets =
     /// Write the secret to a file only the running user can read, and return the
     /// binding. The file lives in the attempt's own directory so it is removed
     /// with the workspace.
+    /// Bind raw BYTES, for a file credential whose content is not text.
+    let bindBytes (directory: string) (variableName: string) (bytes: byte[]) : SecretBinding =
+        Directory.CreateDirectory directory |> ignore
+        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
+        File.WriteAllBytes(path, bytes)
+        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+
+        // The masker works on text. Non-text bytes cannot appear verbatim in a log, so
+        // an empty Value simply registers nothing to mask — which is correct, not a gap.
+        let asText =
+            try
+                let t = Text.Encoding.UTF8.GetString bytes
+                if Text.Encoding.UTF8.GetBytes t = bytes then t else ""
+            with _ ->
+                ""
+
+        { ValueVariable = variableName
+          PathVariable = variableName + "_FILE"
+          FilePath = path
+          Value = asText
+          ValueVariableCarriesPath = true }
+
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
         Directory.CreateDirectory directory |> ignore
         // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two

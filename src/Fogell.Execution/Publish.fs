@@ -232,16 +232,23 @@ module Stash =
         (workspace: string)
         (name: string)
         (patterns: string list)
+        (excludes: string list)
         (abort: unit -> bool)
         =
         let target = dir store buildKey name
         if IO.Directory.Exists target then IO.Directory.Delete(target, true)
         IO.Directory.CreateDirectory target |> ignore
 
+        // REVIEW FIX (Codex, PR #15 round 4): `excludes:` was parsed nowhere and applied
+        // nowhere, so a stash quietly carried files the author had asked it to leave out.
+        let excluded =
+            excludes |> List.collect (Publish.expandGlob workspace) |> Set.ofList
+
         let matched =
             (if List.isEmpty patterns then [ "**" ] else patterns)
             |> List.collect (Publish.expandGlob workspace)
             |> List.distinct
+            |> List.filter (fun f -> not (excluded.Contains f))
             |> List.sort
 
         // Same during-and-after-copy polling as the archive path: a `stash` inside a

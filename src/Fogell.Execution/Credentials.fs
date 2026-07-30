@@ -14,7 +14,10 @@ open System.Text.RegularExpressions
 type Credential =
     | SecretText of string
     | UsernamePassword of user: string * password: string
-    | SecretFile of fileName: string * content: string
+    /// Bytes, not a string. REVIEW FIX (Codex, PR #15 round 4): decoding to UTF-8 text
+    /// corrupts any real file credential — a keystore, a DER certificate, a gzip — and
+    /// corrupting a credential silently is worse than refusing it.
+    | SecretFile of fileName: string * content: byte[]
 
 /// A binding requested by `withCredentials`, before resolution.
 type CredentialRequest =

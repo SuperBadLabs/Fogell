@@ -373,15 +373,15 @@ let secrets =
               File.WriteAllText(canary, "must survive")
 
               for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
-                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] (fun () -> false)
+                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] (fun () -> false)
                   Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
 
               Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
               Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
 
               // Distinct hostile names must not collide with each other either.
-              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] (fun () -> false)
-              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
+              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] (fun () -> false)
+              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] (fun () -> false)
               Expect.equal a b "both saved"
 
               match Stash.restore store "build-1" ws "x" (fun () -> false) with

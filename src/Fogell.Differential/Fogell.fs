@@ -60,11 +60,20 @@ module FogellSide =
         | null
         | "" -> Map.empty
         | text ->
-            let decode (b64: string) =
+            // REVIEW FIX (Codex, PR #15 round 4): this swallowed a decode failure and
+            // returned "", so a typo'd credential line became an EMPTY secret — the exact
+            // "build goes green while the deploy authenticates as nobody" outcome the
+            // credential gate exists to prevent, committed by the decoder feeding it.
+            // A malformed line is now dropped AND named, so the id is absent from the
+            // store and the step fails closed on "credential id not found".
+            let malformed = System.Collections.Generic.List<string>()
+
+            let decodeBytes (id: string) (b64: string) =
                 try
-                    Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64.Trim()))
+                    Some(Convert.FromBase64String(b64.Trim()))
                 with _ ->
-                    ""
+                    malformed.Add id
+                    None
 
             text.Replace("\r\n", "\n").Split '\n'
             |> Array.toList
@@ -74,18 +83,26 @@ module FogellSide =
                 else
                     match line.Split '\t' with
                     | [| id; kind; b64 |] ->
-                        let value = decode b64
+                        match decodeBytes (id.Trim()) b64 with
+                        | None -> None
+                        | Some bytes ->
+                            let asText = Text.Encoding.UTF8.GetString bytes
 
-                        match kind.Trim() with
-                        | "text" -> Some(id.Trim(), SecretText value)
-                        | "file" -> Some(id.Trim(), SecretFile("secret.dat", value))
-                        | "userpass" ->
-                            match value.Split '\n' with
-                            | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+                            match kind.Trim() with
+                            | "text" -> Some(id.Trim(), SecretText asText)
+                            // Bytes are preserved verbatim for a file credential.
+                            | "file" -> Some(id.Trim(), SecretFile("secret.dat", bytes))
+                            | "userpass" ->
+                                match asText.Split '\n' with
+                                | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+                                | _ -> None
                             | _ -> None
-                        | _ -> None
                     | _ -> None)
-            |> Map.ofList
+            |> fun entries ->
+                for id in malformed do
+                    eprintfn $"FOGELL_CREDENTIALS: '{id}' has malformed base64 and was DROPPED; the step will fail closed"
+
+                Map.ofList entries
 
     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -923,11 +940,11 @@ module FogellSide =
                                     // while the comment claimed otherwise — so every
                                     // `file()` body ran with its variable unset.
                                     match store.[id] with
-                                    | SecretFile(_, content) ->
-                                        // The requested variable must hold the PATH; the
-                                        // CONTENT is what gets masked.
-                                        [ { Secrets.bind secretDir v content with
-                                              ValueVariableCarriesPath = true } ]
+                                    | SecretFile(_, bytes) ->
+                                        // The requested variable holds the PATH; the bytes
+                                        // are written verbatim so a binary credential is
+                                        // not corrupted on the way through.
+                                        [ Secrets.bindBytes secretDir v bytes ]
                                     // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
                                     // silently accepted for a `file()` request while every
                                     // other mismatch failed closed — an inconsistency that
@@ -1044,7 +1061,13 @@ module FogellSide =
                             |> Option.map (fun v -> v.Trim().ToLowerInvariant() = "true")
                             |> Option.defaultValue false
 
-                        let saved, aborted = Stash.save store jobName cwd n includes abort
+                        let excludes =
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "excludes" then Some v else None)
+                            |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
+                            |> Option.defaultValue []
+
+                        let saved, aborted = Stash.save store jobName cwd n includes excludes abort
 
                         if aborted then
                             // REVIEW FIX (Codex, PR #15 round 3): this always reported

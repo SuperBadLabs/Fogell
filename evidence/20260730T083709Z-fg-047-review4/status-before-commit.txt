@@ -1,0 +1,9 @@
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Execution/Credentials.fs
+ M src/Fogell.Execution/Publish.fs
+ M src/Fogell.Execution/Secrets.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+?? differential/cases/stash-excludes.Jenkinsfile
+?? differential/receipts/stash-excludes.receipt.txt
+?? evidence/20260730T083709Z-fg-047-review4/

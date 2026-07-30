@@ -1,0 +1,219 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 14ba32e..03d01dd 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **43/43 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **44/44 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -127,7 +127,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002d | P1 | **DONE** | Read EVERY review round before merging, and diff the finding list | I merged PR #13 believing Codex was re-posting stale findings. It was not: it posted **18 distinct findings across 4 rounds** and I had read 9. The cause was mine — a `created_at` filter compared against a cutoff in the wrong timezone (local is UTC−5; comments were stamped 04:39Z–05:14Z, so `> 00:00:00Z` matched everything) — so each poll re-showed round 1 and I read repetition into it. The nine unread findings included two of the same class as the parallel-sink bug: success-only post arms running on a failed build. `scripts/review-rounds.bb <pr>` groups comments by `pull_request_review_id` — a round is a REVIEW, not a wall-clock minute, prints each round's reviewed commit, and marks every finding NEW or seen. Run on #13 it shows **21 comments over 5 rounds, all 5 rounds 100% NEW — zero repeats**, which is the opposite of what I asserted. Every NEW line must be triaged before merging |
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
+-| FG-002e | P2 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. Acceptance: enumerate every return point in `Publish` and `Executor` and assert each either polls or provably cannot be reached after an interrupt |
++| FG-002e | P1 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. **Raised to P1 and widened after PR #15**: the same pattern recurred in brand-new code four more times (`stash` copy loop, `stash` predicate missing the deadline, `unstash` restore, `deleteDir` recursive delete), and a sibling pattern appeared alongside it — an interrupted step reporting `Aborted` when a failFast *sibling* was the cause, which is the collateral-outranks-cause bug already fixed twice elsewhere. Acceptance: enumerate every return point in `Publish`, `Executor` and the walker; assert each either polls or provably cannot be reached after an interrupt; and assert every abort classifies its CAUSE (deadline → aborted, sibling → failure) rather than assuming one |
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index a09ccf5..0c573d9 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -60,11 +60,20 @@ module FogellSide =
+         | null
+         | "" -> Map.empty
+         | text ->
+-            let decode (b64: string) =
++            // REVIEW FIX (Codex, PR #15 round 4): this swallowed a decode failure and
++            // returned "", so a typo'd credential line became an EMPTY secret — the exact
++            // "build goes green while the deploy authenticates as nobody" outcome the
++            // credential gate exists to prevent, committed by the decoder feeding it.
++            // A malformed line is now dropped AND named, so the id is absent from the
++            // store and the step fails closed on "credential id not found".
++            let malformed = System.Collections.Generic.List<string>()
++
++            let decodeBytes (id: string) (b64: string) =
+                 try
+-                    Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64.Trim()))
++                    Some(Convert.FromBase64String(b64.Trim()))
+                 with _ ->
+-                    ""
++                    malformed.Add id
++                    None
+ 
+             text.Replace("\r\n", "\n").Split '\n'
+             |> Array.toList
+@@ -74,18 +83,26 @@ module FogellSide =
+                 else
+                     match line.Split '\t' with
+                     | [| id; kind; b64 |] ->
+-                        let value = decode b64
++                        match decodeBytes (id.Trim()) b64 with
++                        | None -> None
++                        | Some bytes ->
++                            let asText = Text.Encoding.UTF8.GetString bytes
+ 
+-                        match kind.Trim() with
+-                        | "text" -> Some(id.Trim(), SecretText value)
+-                        | "file" -> Some(id.Trim(), SecretFile("secret.dat", value))
+-                        | "userpass" ->
+-                            match value.Split '\n' with
+-                            | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
++                            match kind.Trim() with
++                            | "text" -> Some(id.Trim(), SecretText asText)
++                            // Bytes are preserved verbatim for a file credential.
++                            | "file" -> Some(id.Trim(), SecretFile("secret.dat", bytes))
++                            | "userpass" ->
++                                match asText.Split '\n' with
++                                | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
++                                | _ -> None
+                             | _ -> None
+-                        | _ -> None
+                     | _ -> None)
+-            |> Map.ofList
++            |> fun entries ->
++                for id in malformed do
++                    eprintfn $"FOGELL_CREDENTIALS: '{id}' has malformed base64 and was DROPPED; the step will fail closed"
++
++                Map.ofList entries
+ 
+     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
+         match Fogell.Pipeline.Parser.Parser.parse script with
+@@ -923,11 +940,11 @@ module FogellSide =
+                                     // while the comment claimed otherwise — so every
+                                     // `file()` body ran with its variable unset.
+                                     match store.[id] with
+-                                    | SecretFile(_, content) ->
+-                                        // The requested variable must hold the PATH; the
+-                                        // CONTENT is what gets masked.
+-                                        [ { Secrets.bind secretDir v content with
+-                                              ValueVariableCarriesPath = true } ]
++                                    | SecretFile(_, bytes) ->
++                                        // The requested variable holds the PATH; the bytes
++                                        // are written verbatim so a binary credential is
++                                        // not corrupted on the way through.
++                                        [ Secrets.bindBytes secretDir v bytes ]
+                                     // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
+                                     // silently accepted for a `file()` request while every
+                                     // other mismatch failed closed — an inconsistency that
+@@ -1044,7 +1061,13 @@ module FogellSide =
+                             |> Option.map (fun v -> v.Trim().ToLowerInvariant() = "true")
+                             |> Option.defaultValue false
+ 
+-                        let saved, aborted = Stash.save store jobName cwd n includes abort
++                        let excludes =
++                            step.Named
++                            |> List.tryPick (fun (k, v) -> if k = "excludes" then Some v else None)
++                            |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
++                            |> Option.defaultValue []
++
++                        let saved, aborted = Stash.save store jobName cwd n includes excludes abort
+ 
+                         if aborted then
+                             // REVIEW FIX (Codex, PR #15 round 3): this always reported
+diff --git a/src/Fogell.Execution/Credentials.fs b/src/Fogell.Execution/Credentials.fs
+index 29e4133..9ff950f 100644
+--- a/src/Fogell.Execution/Credentials.fs
++++ b/src/Fogell.Execution/Credentials.fs
+@@ -14,7 +14,10 @@ open System.Text.RegularExpressions
+ type Credential =
+     | SecretText of string
+     | UsernamePassword of user: string * password: string
+-    | SecretFile of fileName: string * content: string
++    /// Bytes, not a string. REVIEW FIX (Codex, PR #15 round 4): decoding to UTF-8 text
++    /// corrupts any real file credential — a keystore, a DER certificate, a gzip — and
++    /// corrupting a credential silently is worse than refusing it.
++    | SecretFile of fileName: string * content: byte[]
+ 
+ /// A binding requested by `withCredentials`, before resolution.
+ type CredentialRequest =
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index fa6e44f..82a514b 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -232,16 +232,23 @@ module Stash =
+         (workspace: string)
+         (name: string)
+         (patterns: string list)
++        (excludes: string list)
+         (abort: unit -> bool)
+         =
+         let target = dir store buildKey name
+         if IO.Directory.Exists target then IO.Directory.Delete(target, true)
+         IO.Directory.CreateDirectory target |> ignore
+ 
++        // REVIEW FIX (Codex, PR #15 round 4): `excludes:` was parsed nowhere and applied
++        // nowhere, so a stash quietly carried files the author had asked it to leave out.
++        let excluded =
++            excludes |> List.collect (Publish.expandGlob workspace) |> Set.ofList
++
+         let matched =
+             (if List.isEmpty patterns then [ "**" ] else patterns)
+             |> List.collect (Publish.expandGlob workspace)
+             |> List.distinct
++            |> List.filter (fun f -> not (excluded.Contains f))
+             |> List.sort
+ 
+         // Same during-and-after-copy polling as the archive path: a `stash` inside a
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index e41fe0c..7713566 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -82,6 +82,29 @@ module Secrets =
+     /// Write the secret to a file only the running user can read, and return the
+     /// binding. The file lives in the attempt's own directory so it is removed
+     /// with the workspace.
++    /// Bind raw BYTES, for a file credential whose content is not text.
++    let bindBytes (directory: string) (variableName: string) (bytes: byte[]) : SecretBinding =
++        Directory.CreateDirectory directory |> ignore
++        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
++        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
++        File.WriteAllBytes(path, bytes)
++        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
++
++        // The masker works on text. Non-text bytes cannot appear verbatim in a log, so
++        // an empty Value simply registers nothing to mask — which is correct, not a gap.
++        let asText =
++            try
++                let t = Text.Encoding.UTF8.GetString bytes
++                if Text.Encoding.UTF8.GetBytes t = bytes then t else ""
++            with _ ->
++                ""
++
++        { ValueVariable = variableName
++          PathVariable = variableName + "_FILE"
++          FilePath = path
++          Value = asText
++          ValueVariableCarriesPath = true }
++
+     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
+         Directory.CreateDirectory directory |> ignore
+         // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 16fbe9c..bf963dc 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -373,15 +373,15 @@ let secrets =
+               File.WriteAllText(canary, "must survive")
+ 
+               for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
+-                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] (fun () -> false)
++                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] (fun () -> false)
+                   Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
+ 
+               Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
+               Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
+ 
+               // Distinct hostile names must not collide with each other either.
+-              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] (fun () -> false)
+-              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
++              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] (fun () -> false)
++              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] (fun () -> false)
+               Expect.equal a b "both saved"
+ 
+               match Stash.restore store "build-1" ws "x" (fun () -> false) with
