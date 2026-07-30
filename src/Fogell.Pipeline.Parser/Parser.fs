@@ -20,13 +20,14 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-let private namedArgWithKind: P<string * string * bool> =
+let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
-            (stringLiteralWithKindPlain |>> fun (v, interpolates) -> v, not interpolates)
+            (stringLiteralWithKindBoth
+             |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
             <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
-                 |>> fun s -> s.Trim(), false)))
-    |>> fun (n, (v, isLiteral)) -> n, v, isLiteral
+                 |>> fun s -> s.Trim(), s.Trim(), false)))
+    |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
 let private namedArg: P<string * string> =
     attempt (
@@ -50,22 +51,23 @@ let private positionalArg: P<string> =
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
-let private argList: P<(string * string) list * string list * Set<string> * Set<int>> =
+let private argList: P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list> =
     let one =
         (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
 
     sepBy one (symbol ",")
     |>> fun items ->
             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
-            let named = namedWithKind |> List.map (fun (n, v, _) -> n, v)
-            let literal = namedWithKind |> List.choose (fun (n, _, lit) -> if lit then Some n else None) |> Set.ofList
+            let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
+            let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
+            let namedSource = namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc)
             let posWithKind = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
             let pos = posWithKind |> List.map fst
 
             let literalPos =
                 posWithKind |> List.mapi (fun i (_, lit) -> i, lit) |> List.choose (fun (i, lit) -> if lit then Some i else None) |> Set.ofList
 
-            named, pos, literal, literalPos
+            named, pos, literal, literalPos, namedSource
 
 let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
@@ -91,26 +93,27 @@ stepRef.Value <-
             (choice
                 [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
                   attempt (hspaces >>. argList) |>> Choice2Of2
-                  preturn (Choice2Of2([], [], Set.empty, Set.empty)) ])
+                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [])) ])
             (fun pos name args -> pos, name, args)
     .>>. opt (attempt stepBlock)
     |>> fun ((pos, name, args), block) ->
-            let named, positional, literalNamed, literalPositional =
+            let named, positional, literalNamed, literalPositional, interpolationSource =
                 match args with
                 | Choice1Of2 raw ->
                     // re-parse the captured paren body for named/positional
                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
-                    | ParserResult.Success((n, p, lit, litPos), _, _) -> n, p, lit, litPos
+                    | ParserResult.Success((n, p, lit, litPos, src), _, _) -> n, p, lit, litPos, src
                     | ParserResult.Failure _ ->
-                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty
-                | Choice2Of2(n, p, lit, litPos) -> n, p, lit, litPos
+                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty, []
+                | Choice2Of2(n, p, lit, litPos, src) -> n, p, lit, litPos, src
 
             { Name = name
               Positional = positional
               Named = named
               LiteralNamedArgs = literalNamed
               LiteralPositionalArgs = literalPositional
+              InterpolationSource = interpolationSource
               Block = defaultArg block []
               RawArgs =
                 match args with

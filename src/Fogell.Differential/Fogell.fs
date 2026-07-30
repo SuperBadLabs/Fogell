@@ -1223,14 +1223,23 @@ module FogellSide =
                         else
                             step.LiteralPositionalArgs.Contains 0
 
-                    let render (isLiteral: bool) (raw: string) =
+                    // Interpolating consumers read the ESCAPE-PRESERVING form, so
+                    // `input message: "Deploy \$TARGET?"` shows a literal $TARGET as
+                    // Jenkins does. `Named` keeps the plain value because a sentinel must
+                    // never reach a step that forwards text verbatim.
+                    let sourceOf (argName: string) (fallback: string) =
+                        step.InterpolationSource
+                        |> List.tryPick (fun (k, v) -> if k = argName then Some v else None)
+                        |> Option.defaultValue fallback
+
+                    let render (isLiteral: bool) (argName: string) (raw: string) =
                         if isLiteral then
                             raw
                         else
-                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
+                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) (sourceOf argName raw)
 
-                    emit (render messageIsLiteral message)
-                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") okLabel} or Abort"""
+                    emit (render messageIsLiteral "message" message)
+                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
 
                     match deadline with
                     | None ->

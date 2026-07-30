@@ -30,6 +30,17 @@ type Step =
       /// coincides with Groovy's for the common case; `input` has no shell.
       /// Mirrors Stage.EnvironmentLiteralNames.
       LiteralNamedArgs: Set<string>
+      /// Argument values with escaped dollars PRESERVED, for consumers that
+      /// interpolate. Keyed by argument name, or `#0`, `#1`… for positionals.
+      ///
+      /// FG-046. `Named`/`Positional` deliberately hold the plain value, because the NUL
+      /// sentinel that marks an escaped dollar must never reach a consumer that forwards
+      /// text verbatim — it once reached a shell. But `input` renders its prompt itself
+      /// and must show `\$TARGET` literally, so it needs the escape-preserving form. This
+      /// is ADDITIVE on purpose: a consumer that forgets it shows a `$` expanded that
+      /// should not have been, which is cosmetic, whereas one that forgets to strip a
+      /// sentinel corrupts a command.
+      InterpolationSource: (string * string) list
       /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
       /// is literal on Jenkins, and the positional form is as common as the named one.
       LiteralPositionalArgs: Set<int>
