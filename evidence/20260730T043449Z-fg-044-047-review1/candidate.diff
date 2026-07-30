@@ -1,0 +1,372 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index 8c7d04a..2fccd6e 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
++seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -45,5 +45,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-quick
+     | from-slow
++    | from-quick
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 829481f..224413f 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **40/40 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **41/41 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -132,7 +132,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+-| FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape) and `credentials-userpass` (12) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file) and a missing credential id both fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
++| FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape), `credentials-userpass` (12) and `credentials-file` (3) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file), a missing credential id, a request that parses to NO bindings, and a **credential type mismatch** all fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+ | FG-045 | P1 | TODO | `timeout`, `retry` (see FG-034/035) | 21 / 6 |
+ | FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
+ | FG-047 | P1 | **DONE** | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | `stash-unstash` receipt PROVEN tier-1, and the property that matters is the one tested: the stash is stored with the BUILD (outside the workspace), so it survives `deleteDir()`. Storing it under the workspace would pass a naive round-trip and fail this. A missing stash name FAILS rather than silently restoring nothing. `deleteDir()` implemented alongside, since the test is meaningless without it. Writing this receipt is what exposed the step-swallowing parser bug (FG-010b) |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 43195a9..22d4970 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -58,6 +58,8 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   masks it in the log as `****`, and **unsets** it after the block. This is why
+   FG-070's "no secret in the environment" design had to be demoted from the default:
+   every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
++- `withCredentials([file(...)])` binds the requested variable to a **path** to a
++  temporary file, not to the content. (Proven: `credentials-file`.)
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 3b97d10..5068ea8 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -797,6 +797,12 @@ module FogellSide =
+                 // the log as `****`, and unsets it after the block. It also prints
+                 // "Masking supported pattern matches of $VAR", which is engine narration.
+                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
++                    let typeName =
++                        function
++                        | SecretText _ -> "secret-text"
++                        | UsernamePassword _ -> "username/password"
++                        | SecretFile _ -> "secret-file"
++
+                     let requests = Credentials.parseRequests (String.concat " " step.Positional)
+                     let store = credentialStore ()
+ 
+@@ -806,10 +812,21 @@ module FogellSide =
+                             | BindUnmodelled(kind, _) -> Some kind
+                             | _ -> None)
+ 
++                    // REVIEW FIX (Copilot, PR #15): if nothing parsed, the block used to
++                    // run with NO bindings at all — and emit a masking line with an empty
++                    // variable list — so a build could appear to succeed with its
++                    // credentials missing entirely. `withCredentials` with nothing bound
++                    // is never what the author meant.
++                    let parsedNothing = List.isEmpty requests
++
+                     let missing =
+                         Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
+ 
+-                    if not (List.isEmpty unmodelled) then
++                    if parsedNothing then
++                        emit $"""ERROR: withCredentials bound nothing — could not parse any binding from '{String.concat " " step.Positional}'"""
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    elif not (List.isEmpty unmodelled) then
+                         // Fail CLOSED by name. A binding kind we do not model must not
+                         // yield an empty variable: the build would go green while the
+                         // deploy authenticated as nobody.
+@@ -823,6 +840,15 @@ module FogellSide =
+                     else
+                         let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
+ 
++                        // REVIEW FIX (Codex, PR #15): a type mismatch used to be COERCED —
++                        // a `string` request against a username/password credential got the
++                        // username, a `usernamePassword` request against secret text left
++                        // the username unset. That is precisely the "build goes green while
++                        // the deploy authenticates as nobody" outcome this step's own
++                        // comment warns about, two lines above the code that did it. A
++                        // mismatch is a misconfiguration and must fail before the body runs.
++                        let mismatches = System.Collections.Generic.List<string>()
++
+                         let bindings =
+                             requests
+                             |> List.collect (fun r ->
+@@ -830,25 +856,45 @@ module FogellSide =
+                                 | BindText(id, v) ->
+                                     match store.[id] with
+                                     | SecretText value -> [ Secrets.bind secretDir v value ]
+-                                    | UsernamePassword(u, _) -> [ Secrets.bind secretDir v u ]
+-                                    | SecretFile(_, content) -> [ Secrets.bind secretDir v content ]
++                                    | other ->
++                                        mismatches.Add
++                                            $"'{id}' is a {typeName other} credential but was requested as `string`"
++                                        []
+                                 | BindUserPass(id, uv, pv) ->
+                                     match store.[id] with
+                                     | UsernamePassword(u, p) ->
+                                         [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
+-                                    | SecretText value -> [ Secrets.bind secretDir pv value ]
+-                                    | SecretFile(_, content) -> [ Secrets.bind secretDir pv content ]
++                                    | other ->
++                                        mismatches.Add
++                                            $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
++                                        []
+                                 | BindFile(id, v) ->
+-                                    // Jenkins binds a PATH for a file credential, so the
+-                                    // path variable IS the value variable here.
++                                    // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
++                                    // requested variable to a PATH to a temporary file. The
++                                    // code bound `<VAR>_CONTENT` and never `<VAR>` at all,
++                                    // while the comment claimed otherwise — so every
++                                    // `file()` body ran with its variable unset.
+                                     match store.[id] with
+                                     | SecretFile(_, content)
+-                                    | SecretText content -> [ Secrets.bind secretDir (v + "_CONTENT") content ]
+-                                    | UsernamePassword(_, p) -> [ Secrets.bind secretDir (v + "_CONTENT") p ]
++                                    | SecretText content ->
++                                        // The requested variable must hold the PATH; the
++                                        // CONTENT is what gets masked.
++                                        [ { Secrets.bind secretDir v content with
++                                              ValueVariableCarriesPath = true } ]
++                                    | other ->
++                                        mismatches.Add
++                                            $"'{id}' is a {typeName other} credential but was requested as `file`"
++                                        []
+                                 | BindUnmodelled _ -> [])
+ 
+                         // Jenkins narrates the masking; excluded from comparison as
+                         // engine narration, but said so a reader is not left guessing.
++                        if mismatches.Count > 0 then
++                            emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
++                            ctx.Failed.Value <- true
++                            ctx.Sink BuildStatus.Failure
++                        else
++
+                         // One line naming every bound variable, matching Jenkins' shape.
+                         // The wording is not compared (see the contract); the line exists
+                         // so a reader of OUR log is told what is being masked.
+@@ -905,8 +951,19 @@ module FogellSide =
+                         ctx.Failed.Value <- true
+                         ctx.Sink BuildStatus.Failure
+                     | Some n ->
+-                        let saved = Stash.save store jobName cwd n includes
+-                        emit $"Stashed {saved.Length} file(s)"
++                        let abort () =
++                            match ctx.Interrupt with
++                            | Some p -> (try p () with _ -> false)
++                            | None -> false
++
++                        let saved, aborted = Stash.save store jobName cwd n includes abort
++
++                        if aborted then
++                            emit "ERROR: stash aborted: the step was interrupted while copying"
++                            ctx.Failed.Value <- true
++                            ctx.Sink BuildStatus.Aborted
++                        else
++                            emit $"Stashed {saved.Length} file(s)"
+ 
+                 | "unstash", _ ->
+                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index a45ed64..bc0b8d0 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -194,11 +194,46 @@ module Publish =
+ 
+ module Stash =
+ 
++    /// A stash name comes from the Jenkinsfile, which is UNTRUSTED third-party CI
++    /// code. Used directly it is a path-traversal primitive, and `save` deletes its
++    /// target recursively before recreating it — so `stash name: '../../..'` would
++    /// have destroyed whatever it resolved to, and `unstash` would copy arbitrary
++    /// controller files into the workspace. Flagged independently by both reviewers
++    /// on PR #15.
++    ///
++    /// The name is treated as an OPAQUE KEY: a readable slug for humans plus a hash
++    /// of the original, so two distinct names can never collide and no name can
++    /// escape the root. The canonical result is then re-checked against the root,
++    /// because a defence you have not asserted is a hope.
++    let private safeKey (name: string) =
++        let slug =
++            String(name |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '-') |> Seq.toArray)
++            |> fun s -> s.Trim '-'
++            |> fun s -> if s = "" then "stash" else s.Substring(0, min 40 s.Length)
++
++        use sha = Security.Cryptography.SHA256.Create()
++        let digest = sha.ComputeHash(Text.Encoding.UTF8.GetBytes name) |> Convert.ToHexString
++        slug + "-" + digest.Substring(0, 12).ToLowerInvariant()
++
+     let private dir (store: StashStore) (buildKey: string) (name: string) =
+-        IO.Path.Combine(store.Root, buildKey, "stashes", name)
++        let root = IO.Path.GetFullPath(IO.Path.Combine(store.Root, buildKey, "stashes"))
++        let target = IO.Path.GetFullPath(IO.Path.Combine(root, safeKey name))
++
++        // Belt and braces: assert containment rather than trusting the slug.
++        if not (target.StartsWith(root + string IO.Path.DirectorySeparatorChar)) then
++            failwith $"stash name '{name}' does not resolve beneath the stash root"
++
++        target
+ 
+     /// Copy the matched files out of the workspace and into controller-side storage.
+-    let save (store: StashStore) (buildKey: string) (workspace: string) (name: string) (patterns: string list) =
++    let save
++        (store: StashStore)
++        (buildKey: string)
++        (workspace: string)
++        (name: string)
++        (patterns: string list)
++        (abort: unit -> bool)
++        =
+         let target = dir store buildKey name
+         if IO.Directory.Exists target then IO.Directory.Delete(target, true)
+         IO.Directory.CreateDirectory target |> ignore
+@@ -209,12 +244,25 @@ module Stash =
+             |> List.distinct
+             |> List.sort
+ 
+-        for relative in matched do
+-            let dest = IO.Path.Combine(target, relative)
+-            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+-            IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
++        // Same during-and-after-copy polling as the archive path: a `stash` inside a
++        // `timeout` used to be able to finish AFTER the deadline with the build still
++        // green, because nothing downstream observed the expiry. (FG-002e's pattern:
++        // every early return is a missed poll.)
++        let mutable aborted = abort ()
++        let copied = System.Collections.Generic.List<string>()
+ 
+-        matched
++        for relative in matched do
++            if not aborted then
++                if abort () then
++                    aborted <- true
++                else
++                    let dest = IO.Path.Combine(target, relative)
++                    IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
++                    IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
++                    copied.Add relative
++                    if abort () then aborted <- true
++
++        List.ofSeq copied, aborted
+ 
+     /// Restore a stash into the workspace. Missing name is an error, never a silent
+     /// no-op: a build that carries on with none of the files it asked for is the
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index f6d3490..ec55cda 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -37,7 +37,11 @@ type SecretBinding =
+       /// Absolute path of the 0600 file holding the value.
+       FilePath: string
+       /// The value, retained only to build the masker and to detect leaks.
+-      Value: string }
++      Value: string
++      /// FG-044. True for a `file()` credential, where Jenkins binds the requested
++      /// variable to a PATH rather than to the content. The content is still what gets
++      /// masked — the path is not a secret, the bytes are.
++      ValueVariableCarriesPath: bool }
+ 
+ type Leak =
+     { Variable: string
+@@ -90,14 +94,17 @@ module Secrets =
+         { ValueVariable = variableName
+           PathVariable = variableName + "_FILE"
+           FilePath = path
+-          Value = value }
++          Value = value
++          ValueVariableCarriesPath = false }
+ 
+     /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
+     /// file path (our addition). Masking on every output path is what actually
+     /// protects the value — see FG-071 — not its absence from the environment.
+     let environmentFor (bindings: SecretBinding list) =
+         bindings
+-        |> List.collect (fun b -> [ b.ValueVariable, b.Value; b.PathVariable, b.FilePath ])
++        |> List.collect (fun b ->
++            let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
++            [ b.ValueVariable, exported; b.PathVariable, b.FilePath ])
+ 
+     /// FG-070's original, hardened form: the path ONLY, no value. Available for a
+     /// caller that accepts the incompatibility.
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index bf299d5..8a38428 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -337,14 +337,58 @@ let secrets =
+                       { req with
+                           // the script prints its OWN environment
+                           Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
+-                          Environment = Secrets.environmentFor [ binding ] }
++                          Environment = Secrets.environmentFor [ binding ]
++                          Secrets = [ binding ] }
+ 
+               Expect.equal r.Status BuildStatus.Success "ran"
+               Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound, as Jenkins binds it"
+               Expect.stringContains r.Stdout "TOKEN_FILE=" "and the file companion is bound too"
++
++              // REVIEW FIX (Copilot, PR #15): this test prints the child's whole
++              // environment, so it is the strongest available place to assert that the
++              // masker holds — and when I rewrote it for the parity change I asserted only
++              // that the variables EXIST, which a real leak would sail through. The value
++              // is now in the environment by design, so masking is the entire protection
++              // and this is where it gets proven.
++              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is MASKED on the way out"
++              Expect.stringContains r.Stdout "****" "and replaced with the mask token"
+               Secrets.revoke [ binding ]
+           }
+ 
++          test "a stash name cannot escape the stash root" {
++              // Both reviewers flagged this independently on PR #15, and it was
++              // destructive: `save` deletes its target recursively before recreating it,
++              // so `stash name: '../../x'` would have removed whatever that resolved to,
++              // and `unstash` would copy arbitrary controller files into the workspace.
++              // The name comes from a Jenkinsfile, which is untrusted third-party code.
++              let root = tempRoot ()
++              let store = StashStore.under (Path.Combine(root, "stashes"))
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              File.WriteAllText(Path.Combine(ws, "f.txt"), "body")
++
++              let canary = Path.Combine(root, "canary.txt")
++              File.WriteAllText(canary, "must survive")
++
++              for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
++                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] (fun () -> false)
++                  Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
++
++              Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
++              Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
++
++              // Distinct hostile names must not collide with each other either.
++              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] (fun () -> false)
++              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
++              Expect.equal a b "both saved"
++
++              match Stash.restore store "build-1" ws "x" with
++              | Ok files -> Expect.equal files [ "f.txt" ] "restoring 'x' finds its own content"
++              | Error e -> failtest e
++          }
++
+           test "the hardened path-only form is still available for a caller that wants it" {
+               // The original FG-070 behaviour has not been deleted, only demoted from
+               // the default: a caller that accepts the incompatibility can still have it.

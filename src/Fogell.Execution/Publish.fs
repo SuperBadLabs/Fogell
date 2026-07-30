@@ -194,11 +194,46 @@ module Publish =
 
 module Stash =
 
+    /// A stash name comes from the Jenkinsfile, which is UNTRUSTED third-party CI
+    /// code. Used directly it is a path-traversal primitive, and `save` deletes its
+    /// target recursively before recreating it — so `stash name: '../../..'` would
+    /// have destroyed whatever it resolved to, and `unstash` would copy arbitrary
+    /// controller files into the workspace. Flagged independently by both reviewers
+    /// on PR #15.
+    ///
+    /// The name is treated as an OPAQUE KEY: a readable slug for humans plus a hash
+    /// of the original, so two distinct names can never collide and no name can
+    /// escape the root. The canonical result is then re-checked against the root,
+    /// because a defence you have not asserted is a hope.
+    let private safeKey (name: string) =
+        let slug =
+            String(name |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '-') |> Seq.toArray)
+            |> fun s -> s.Trim '-'
+            |> fun s -> if s = "" then "stash" else s.Substring(0, min 40 s.Length)
+
+        use sha = Security.Cryptography.SHA256.Create()
+        let digest = sha.ComputeHash(Text.Encoding.UTF8.GetBytes name) |> Convert.ToHexString
+        slug + "-" + digest.Substring(0, 12).ToLowerInvariant()
+
     let private dir (store: StashStore) (buildKey: string) (name: string) =
-        IO.Path.Combine(store.Root, buildKey, "stashes", name)
+        let root = IO.Path.GetFullPath(IO.Path.Combine(store.Root, buildKey, "stashes"))
+        let target = IO.Path.GetFullPath(IO.Path.Combine(root, safeKey name))
+
+        // Belt and braces: assert containment rather than trusting the slug.
+        if not (target.StartsWith(root + string IO.Path.DirectorySeparatorChar)) then
+            failwith $"stash name '{name}' does not resolve beneath the stash root"
+
+        target
 
     /// Copy the matched files out of the workspace and into controller-side storage.
-    let save (store: StashStore) (buildKey: string) (workspace: string) (name: string) (patterns: string list) =
+    let save
+        (store: StashStore)
+        (buildKey: string)
+        (workspace: string)
+        (name: string)
+        (patterns: string list)
+        (abort: unit -> bool)
+        =
         let target = dir store buildKey name
         if IO.Directory.Exists target then IO.Directory.Delete(target, true)
         IO.Directory.CreateDirectory target |> ignore
@@ -209,12 +244,25 @@ module Stash =
             |> List.distinct
             |> List.sort
 
-        for relative in matched do
-            let dest = IO.Path.Combine(target, relative)
-            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-            IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
+        // Same during-and-after-copy polling as the archive path: a `stash` inside a
+        // `timeout` used to be able to finish AFTER the deadline with the build still
+        // green, because nothing downstream observed the expiry. (FG-002e's pattern:
+        // every early return is a missed poll.)
+        let mutable aborted = abort ()
+        let copied = System.Collections.Generic.List<string>()
 
-        matched
+        for relative in matched do
+            if not aborted then
+                if abort () then
+                    aborted <- true
+                else
+                    let dest = IO.Path.Combine(target, relative)
+                    IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+                    IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
+                    copied.Add relative
+                    if abort () then aborted <- true
+
+        List.ofSeq copied, aborted
 
     /// Restore a stash into the workspace. Missing name is an error, never a silent
     /// no-op: a build that carries on with none of the files it asked for is the

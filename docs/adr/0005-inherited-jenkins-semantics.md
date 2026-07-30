@@ -58,6 +58,8 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   masks it in the log as `****`, and **unsets** it after the block. This is why
   FG-070's "no secret in the environment" design had to be demoted from the default:
   every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
+- `withCredentials([file(...)])` binds the requested variable to a **path** to a
+  temporary file, not to the content. (Proven: `credentials-file`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

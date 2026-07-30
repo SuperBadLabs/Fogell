@@ -797,6 +797,12 @@ module FogellSide =
                 // the log as `****`, and unsets it after the block. It also prints
                 // "Masking supported pattern matches of $VAR", which is engine narration.
                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
+                    let typeName =
+                        function
+                        | SecretText _ -> "secret-text"
+                        | UsernamePassword _ -> "username/password"
+                        | SecretFile _ -> "secret-file"
+
                     let requests = Credentials.parseRequests (String.concat " " step.Positional)
                     let store = credentialStore ()
 
@@ -806,10 +812,21 @@ module FogellSide =
                             | BindUnmodelled(kind, _) -> Some kind
                             | _ -> None)
 
+                    // REVIEW FIX (Copilot, PR #15): if nothing parsed, the block used to
+                    // run with NO bindings at all — and emit a masking line with an empty
+                    // variable list — so a build could appear to succeed with its
+                    // credentials missing entirely. `withCredentials` with nothing bound
+                    // is never what the author meant.
+                    let parsedNothing = List.isEmpty requests
+
                     let missing =
                         Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
 
-                    if not (List.isEmpty unmodelled) then
+                    if parsedNothing then
+                        emit $"""ERROR: withCredentials bound nothing — could not parse any binding from '{String.concat " " step.Positional}'"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    elif not (List.isEmpty unmodelled) then
                         // Fail CLOSED by name. A binding kind we do not model must not
                         // yield an empty variable: the build would go green while the
                         // deploy authenticated as nobody.
@@ -823,6 +840,15 @@ module FogellSide =
                     else
                         let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
 
+                        // REVIEW FIX (Codex, PR #15): a type mismatch used to be COERCED —
+                        // a `string` request against a username/password credential got the
+                        // username, a `usernamePassword` request against secret text left
+                        // the username unset. That is precisely the "build goes green while
+                        // the deploy authenticates as nobody" outcome this step's own
+                        // comment warns about, two lines above the code that did it. A
+                        // mismatch is a misconfiguration and must fail before the body runs.
+                        let mismatches = System.Collections.Generic.List<string>()
+
                         let bindings =
                             requests
                             |> List.collect (fun r ->
@@ -830,25 +856,45 @@ module FogellSide =
                                 | BindText(id, v) ->
                                     match store.[id] with
                                     | SecretText value -> [ Secrets.bind secretDir v value ]
-                                    | UsernamePassword(u, _) -> [ Secrets.bind secretDir v u ]
-                                    | SecretFile(_, content) -> [ Secrets.bind secretDir v content ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `string`"
+                                        []
                                 | BindUserPass(id, uv, pv) ->
                                     match store.[id] with
                                     | UsernamePassword(u, p) ->
                                         [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
-                                    | SecretText value -> [ Secrets.bind secretDir pv value ]
-                                    | SecretFile(_, content) -> [ Secrets.bind secretDir pv content ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
+                                        []
                                 | BindFile(id, v) ->
-                                    // Jenkins binds a PATH for a file credential, so the
-                                    // path variable IS the value variable here.
+                                    // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
+                                    // requested variable to a PATH to a temporary file. The
+                                    // code bound `<VAR>_CONTENT` and never `<VAR>` at all,
+                                    // while the comment claimed otherwise — so every
+                                    // `file()` body ran with its variable unset.
                                     match store.[id] with
                                     | SecretFile(_, content)
-                                    | SecretText content -> [ Secrets.bind secretDir (v + "_CONTENT") content ]
-                                    | UsernamePassword(_, p) -> [ Secrets.bind secretDir (v + "_CONTENT") p ]
+                                    | SecretText content ->
+                                        // The requested variable must hold the PATH; the
+                                        // CONTENT is what gets masked.
+                                        [ { Secrets.bind secretDir v content with
+                                              ValueVariableCarriesPath = true } ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `file`"
+                                        []
                                 | BindUnmodelled _ -> [])
 
                         // Jenkins narrates the masking; excluded from comparison as
                         // engine narration, but said so a reader is not left guessing.
+                        if mismatches.Count > 0 then
+                            emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        else
+
                         // One line naming every bound variable, matching Jenkins' shape.
                         // The wording is not compared (see the contract); the line exists
                         // so a reader of OUR log is told what is being masked.
@@ -905,8 +951,19 @@ module FogellSide =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     | Some n ->
-                        let saved = Stash.save store jobName cwd n includes
-                        emit $"Stashed {saved.Length} file(s)"
+                        let abort () =
+                            match ctx.Interrupt with
+                            | Some p -> (try p () with _ -> false)
+                            | None -> false
+
+                        let saved, aborted = Stash.save store jobName cwd n includes abort
+
+                        if aborted then
+                            emit "ERROR: stash aborted: the step was interrupted while copying"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Aborted
+                        else
+                            emit $"Stashed {saved.Length} file(s)"
 
                 | "unstash", _ ->
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))

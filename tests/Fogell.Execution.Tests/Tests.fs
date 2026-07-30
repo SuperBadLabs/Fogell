@@ -337,12 +337,56 @@ let secrets =
                       { req with
                           // the script prints its OWN environment
                           Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
-                          Environment = Secrets.environmentFor [ binding ] }
+                          Environment = Secrets.environmentFor [ binding ]
+                          Secrets = [ binding ] }
 
               Expect.equal r.Status BuildStatus.Success "ran"
               Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound, as Jenkins binds it"
               Expect.stringContains r.Stdout "TOKEN_FILE=" "and the file companion is bound too"
+
+              // REVIEW FIX (Copilot, PR #15): this test prints the child's whole
+              // environment, so it is the strongest available place to assert that the
+              // masker holds — and when I rewrote it for the parity change I asserted only
+              // that the variables EXIST, which a real leak would sail through. The value
+              // is now in the environment by design, so masking is the entire protection
+              // and this is where it gets proven.
+              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is MASKED on the way out"
+              Expect.stringContains r.Stdout "****" "and replaced with the mask token"
               Secrets.revoke [ binding ]
+          }
+
+          test "a stash name cannot escape the stash root" {
+              // Both reviewers flagged this independently on PR #15, and it was
+              // destructive: `save` deletes its target recursively before recreating it,
+              // so `stash name: '../../x'` would have removed whatever that resolved to,
+              // and `unstash` would copy arbitrary controller files into the workspace.
+              // The name comes from a Jenkinsfile, which is untrusted third-party code.
+              let root = tempRoot ()
+              let store = StashStore.under (Path.Combine(root, "stashes"))
+              let ws = match Workspace.createFresh root (key ()) with
+                       | Result.Ok p -> p
+                       | Result.Error e -> failtestf "%s" e.Describe
+
+              File.WriteAllText(Path.Combine(ws, "f.txt"), "body")
+
+              let canary = Path.Combine(root, "canary.txt")
+              File.WriteAllText(canary, "must survive")
+
+              for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
+                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] (fun () -> false)
+                  Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
+
+              Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
+              Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
+
+              // Distinct hostile names must not collide with each other either.
+              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] (fun () -> false)
+              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
+              Expect.equal a b "both saved"
+
+              match Stash.restore store "build-1" ws "x" with
+              | Ok files -> Expect.equal files [ "f.txt" ] "restoring 'x' finds its own content"
+              | Error e -> failtest e
           }
 
           test "the hardened path-only form is still available for a caller that wants it" {

@@ -37,7 +37,11 @@ type SecretBinding =
       /// Absolute path of the 0600 file holding the value.
       FilePath: string
       /// The value, retained only to build the masker and to detect leaks.
-      Value: string }
+      Value: string
+      /// FG-044. True for a `file()` credential, where Jenkins binds the requested
+      /// variable to a PATH rather than to the content. The content is still what gets
+      /// masked — the path is not a secret, the bytes are.
+      ValueVariableCarriesPath: bool }
 
 type Leak =
     { Variable: string
@@ -90,14 +94,17 @@ module Secrets =
         { ValueVariable = variableName
           PathVariable = variableName + "_FILE"
           FilePath = path
-          Value = value }
+          Value = value
+          ValueVariableCarriesPath = false }
 
     /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
     /// file path (our addition). Masking on every output path is what actually
     /// protects the value — see FG-071 — not its absence from the environment.
     let environmentFor (bindings: SecretBinding list) =
         bindings
-        |> List.collect (fun b -> [ b.ValueVariable, b.Value; b.PathVariable, b.FilePath ])
+        |> List.collect (fun b ->
+            let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
+            [ b.ValueVariable, exported; b.PathVariable, b.FilePath ])
 
     /// FG-070's original, hardened form: the path ONLY, no value. Available for a
     /// caller that accepts the incompatibility.
