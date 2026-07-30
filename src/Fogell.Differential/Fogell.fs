@@ -1595,6 +1595,7 @@ module FogellSide =
                         // works. A CancellationTokenSource is the synchronised
                         // signal this needs.
                         use siblingFailed = new System.Threading.CancellationTokenSource()
+                        // A ref cell so Interlocked can guard first-write-wins.
                         let siblingFailedAt = ref 0L
 
                         let branches =
@@ -1632,9 +1633,19 @@ module FogellSide =
                                         // false-PROVEN path, and this sentence is real
                                         // information a reader wants.
                                         emit $"Failed in branch {branch.Name}"
-                                        // Stamp the instant, so "earlier wins" is decidable
-                                        // rather than merely asserted.
-                                        siblingFailedAt.Value <- runClock.ElapsedMilliseconds
+                                        // Stamp only the FIRST signal. Every failing
+                                        // branch reaches here, including ones cancelled as
+                                        // COLLATERAL, so an unconditional write let a later
+                                        // collateral failure overwrite the original cause's
+                                        // instant — a still-unwinding sibling would then see
+                                        // the later stamp, call the deadline earlier, and
+                                        // flip the build from failure to aborted. Exactly
+                                        // the misclassification this model exists to stop,
+                                        // reintroduced by the timestamp added to fix it.
+                                        System.Threading.Interlocked.CompareExchange(
+                                            siblingFailedAt, runClock.ElapsedMilliseconds, 0L)
+                                        |> ignore
+
                                         siblingFailed.Cancel()))
 
                         // Every branch is awaited even under failFast: an
