@@ -8,6 +8,18 @@ STAMP="$(git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
 DIR="evidence/${STAMP}-${TICKET,,}"
 mkdir -p "$DIR"
 
+# FG-104 review finding: a seal run before `git add` records a diff that OMITS every
+# untracked file — the FG-104 bundle validated an intermediate patch and left out the audit
+# script itself, which was the entire deliverable. Evidence that silently excludes the work
+# is worse than no evidence, because it carries a checksum.
+UNTRACKED="$(git ls-files --others --exclude-standard)"
+if [ -n "$UNTRACKED" ]; then
+  echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
+  printf '  %s\n' $UNTRACKED >&2
+  echo "Stage them (git add) so the sealed diff covers the actual change." >&2
+  exit 1
+fi
+
 git diff HEAD --stat > "$DIR/diffstat.txt" 2>/dev/null
 git diff HEAD          > "$DIR/candidate.diff" 2>/dev/null
 git status --short     > "$DIR/status-before-commit.txt"

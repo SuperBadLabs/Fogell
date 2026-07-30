@@ -1018,6 +1018,7 @@ evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Store.Tests.log
 evidence/20260730T154305Z-fg-044b-echo-review1/tree.txt
 evidence/README.md
 global.json
+scripts/audit-claims.bb
 scripts/build-and-test.sh
 scripts/pg-test-db.sh
 scripts/provision-credentials.sh

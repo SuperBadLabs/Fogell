@@ -1,0 +1,19 @@
+ evidence/20260730T161459Z-fg-104-tool/SHA256SUMS   |   15 -
+ .../20260730T161459Z-fg-104-tool/base-commit.txt   |    1 -
+ evidence/20260730T161459Z-fg-104-tool/build.log    |   20 -
+ .../20260730T161459Z-fg-104-tool/candidate.diff    |   30 -
+ .../20260730T161459Z-fg-104-tool/corpus-gate.log   |    1 -
+ evidence/20260730T161459Z-fg-104-tool/diffstat.txt |    3 -
+ .../status-before-commit.txt                       |    4 -
+ .../tests-Fogell.Controller.Api.Tests.log          |    1 -
+ .../tests-Fogell.Differential.Tests.log            |    1 -
+ .../tests-Fogell.Domain.Tests.log                  |    1 -
+ .../tests-Fogell.Execution.Tests.log               |    1 -
+ .../tests-Fogell.Groovy.Tests.log                  |    1 -
+ .../tests-Fogell.Journal.Tests.log                 |    1 -
+ .../tests-Fogell.Pipeline.Parser.Tests.log         |    1 -
+ .../tests-Fogell.Store.Tests.log                   |    1 -
+ evidence/20260730T161459Z-fg-104-tool/tree.txt     | 1096 --------------------
+ scripts/build-and-test.sh                          |    6 +-
+ scripts/seal-evidence.sh                           |   12 +
+ 18 files changed, 17 insertions(+), 1179 deletions(-)
