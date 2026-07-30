@@ -1181,6 +1181,61 @@ module FogellSide =
                                 ctx.Failed.Value <- true
                                 ctx.Sink BuildStatus.Aborted
 
+                // FG-046. `input` — human approval. MEASURED: Jenkins prints the message
+                // and "Proceed or Abort", then waits. Under a `timeout` the deadline
+                // expiring makes the build ABORTED and the following steps do not run.
+                //
+                // 22 corpus files use `input`; 10 of them wrap it in a timeout. Without a
+                // deadline Jenkins waits FOREVER for a human — faithful to reproduce, but
+                // there is no approver in this engine and no receipt can be taken of a
+                // pipeline that never ends. So the un-timed form fails closed with a named
+                // reason rather than silently inventing an approval or an abort: a
+                // DELIBERATE, documented divergence (see FG-046b for real approval).
+                | "input", _ ->
+                    let message =
+                        step.Positional
+                        |> List.tryHead
+                        |> Option.orElse (
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "message" then Some v else None))
+                        |> Option.defaultValue "Proceed?"
+
+                    emit message
+                    emit "Proceed or Abort"
+
+                    match deadline with
+                    | None ->
+                        emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some _ ->
+                        // Wait out the deadline exactly as an unanswered prompt would.
+                        let mutable waiting = true
+
+                        while waiting do
+                            let expired =
+                                match remainingMs deadline with
+                                | Some ms -> ms <= 1
+                                | None -> true
+
+                            let interrupted =
+                                match ctx.Interrupt with
+                                | Some p -> (try p () with _ -> false)
+                                | None -> false
+
+                            if expired || interrupted then
+                                waiting <- false
+                            else
+                                System.Threading.Thread.Sleep 50
+
+                        // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
+                        // timeout, and a silent abort here would be the defect this
+                        // project exists to beat. `ERROR:` lines are diagnostics — kept
+                        // out of the compared output, counted as a reported reason.
+                        emit "ERROR: input aborted: the approval deadline expired with no response"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Aborted
+
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive
                 // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
