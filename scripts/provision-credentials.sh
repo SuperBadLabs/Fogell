@@ -47,6 +47,18 @@ XML
 echo
 
 echo
-# The type is EXPLICIT. Inferring it from whether the value contains a colon broke any
-# secret text holding one — e.g. a URL — which is most of them.
-echo "export FOGELL_CREDENTIALS='fogell-token=text:s3cr3t-value;fogell-userpass=userpass:deploy-bot:p4ssw0rd-value;fogell-file=file:cert-file-body'"
+# The value is BASE64 and fields are TAB-separated, one credential per line. Two rounds of
+# review found a delimiter bug in earlier formats — the type inferred from a colon, then
+# entries split on a semicolon — and a credential value is arbitrary bytes, so any
+# delimiter is wrong. base64 has none. Written to a file rather than an env var so a real
+# secret never appears in a process listing.
+OUT="${FOGELL_CREDENTIALS_FILE:-$PWD/.fogell-credentials.tsv}"
+{
+  printf 'fogell-token\ttext\t%s\n'     "$(printf 's3cr3t-value' | base64 -w0)"
+  printf 'fogell-userpass\tuserpass\t%s\n' "$(printf 'deploy-bot\np4ssw0rd-value' | base64 -w0)"
+  printf 'fogell-file\tfile\t%s\n'      "$(printf 'cert-file-body' | base64 -w0)"
+} > "$OUT"
+chmod 600 "$OUT"
+
+echo "wrote $OUT"
+echo "export FOGELL_CREDENTIALS_FILE='$OUT'"

@@ -1,0 +1,5 @@
+ M .gitignore
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M scripts/provision-credentials.sh
+ M src/Fogell.Differential/Fogell.fs
+?? evidence/20260730T082401Z-fg-044-047-review3/

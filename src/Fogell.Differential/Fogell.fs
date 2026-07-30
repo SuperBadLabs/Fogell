@@ -39,31 +39,52 @@ module FogellSide =
     /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
     /// secret never enters the repository.
     let credentialStore () : Map<string, Credential> =
-        match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS" with
+        // The value of a credential is ARBITRARY BYTES. Two rounds of review found a
+        // delimiter bug here: the type was first inferred from the presence of a colon
+        // (breaking any secret text holding a URL), and my fix then split entries on a
+        // semicolon (breaking any value holding one). Choosing a third delimiter would
+        // just move the bug, so the value is base64 and cannot contain a separator at
+        // all. Fields are tab-separated, one credential per line:
+        //
+        //   <id>\t<text|userpass|file>\t<base64 value>
+        //
+        // `userpass` decodes to "user\npassword". Supplied via FOGELL_CREDENTIALS_FILE
+        // so a real secret never appears in a process listing either.
+        let spec =
+            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
+            | null
+            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+            | path -> if File.Exists path then File.ReadAllText path else null
+
+        match spec with
         | null
         | "" -> Map.empty
-        | spec ->
-            // REVIEW FIX (Codex, PR #15): the type used to be INFERRED from whether the
-            // value contained a colon, so a perfectly ordinary secret text like
-            // `token=https://service/path` was read as username `https` / password
-            // `//service/path` and then rejected as a type mismatch. Secret text and file
-            // content are arbitrary bytes and colons are common in them. The type is now
-            // explicit: `id=text:VALUE`, `id=userpass:USER:PASS`, `id=file:CONTENT`.
-            // Only the FIRST colon after the type is structural.
-            spec.Split ';'
+        | text ->
+            let decode (b64: string) =
+                try
+                    Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64.Trim()))
+                with _ ->
+                    ""
+
+            text.Replace("\r\n", "\n").Split '\n'
             |> Array.toList
-            |> List.choose (fun entry ->
-                match entry.Split('=', 2) with
-                | [| id; rest |] when id.Trim() <> "" ->
-                    match rest.Split(':', 2) with
-                    | [| "text"; v |] -> Some(id.Trim(), SecretText v)
-                    | [| "file"; v |] -> Some(id.Trim(), SecretFile("secret.dat", v))
-                    | [| "userpass"; v |] ->
-                        match v.Split(':', 2) with
-                        | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+            |> List.choose (fun line ->
+                if line.Trim() = "" || line.TrimStart().StartsWith "#" then
+                    None
+                else
+                    match line.Split '\t' with
+                    | [| id; kind; b64 |] ->
+                        let value = decode b64
+
+                        match kind.Trim() with
+                        | "text" -> Some(id.Trim(), SecretText value)
+                        | "file" -> Some(id.Trim(), SecretFile("secret.dat", value))
+                        | "userpass" ->
+                            match value.Split '\n' with
+                            | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+                            | _ -> None
                         | _ -> None
-                    | _ -> None
-                | _ -> None)
+                    | _ -> None)
             |> Map.ofList
 
     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
@@ -902,12 +923,16 @@ module FogellSide =
                                     // while the comment claimed otherwise — so every
                                     // `file()` body ran with its variable unset.
                                     match store.[id] with
-                                    | SecretFile(_, content)
-                                    | SecretText content ->
+                                    | SecretFile(_, content) ->
                                         // The requested variable must hold the PATH; the
                                         // CONTENT is what gets masked.
                                         [ { Secrets.bind secretDir v content with
                                               ValueVariableCarriesPath = true } ]
+                                    // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
+                                    // silently accepted for a `file()` request while every
+                                    // other mismatch failed closed — an inconsistency that
+                                    // let a misconfigured credential through the one gate
+                                    // built to stop it.
                                     | other ->
                                         mismatches.Add
                                             $"'{id}' is a {typeName other} credential but was requested as `file`"
@@ -951,8 +976,22 @@ module FogellSide =
                 // workspace, or the enclosing `dir` block's cwd — without removing the
                 // directory itself. It is what makes the stash test meaningful.
                 | "deleteDir", _ ->
+                    // REVIEW FIX (Codex, PR #15 round 3): a recursive delete of a large
+                    // workspace is slow, and nothing here observed the deadline — so a
+                    // `deleteDir()` as the last step inside a `timeout` finished past it
+                    // with the build green.
+                    let expired () =
+                        match remainingMs deadline with
+                        | Some ms -> ms <= 1
+                        | None -> false
+
                     if Directory.Exists cwd then
                         for entry in Directory.GetFileSystemEntries cwd do
+                          if expired () then
+                            emit "ERROR: deleteDir aborted: the step's deadline expired"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Aborted
+                          else
                             try
                                 if Directory.Exists entry then Directory.Delete(entry, true)
                                 else File.Delete entry
@@ -1008,9 +1047,25 @@ module FogellSide =
                         let saved, aborted = Stash.save store jobName cwd n includes abort
 
                         if aborted then
-                            emit "ERROR: stash aborted: the step was interrupted while copying"
+                            // REVIEW FIX (Codex, PR #15 round 3): this always reported
+                            // Aborted, so a stash interrupted because a failFast SIBLING
+                            // failed turned the build from failure into aborted —
+                            // exactly the collateral-outranks-cause bug fixed for shell
+                            // steps in PR #13. The sibling's failure is the cause; only a
+                            // deadline is genuinely an abort.
+                            let bySibling =
+                                match ctx.Interrupt with
+                                | Some p -> (try p () with _ -> false)
+                                | None -> false
+
+                            emit
+                                (if bySibling then
+                                     "ERROR: stash interrupted: a failFast sibling failed"
+                                 else
+                                     "ERROR: stash aborted: the step's deadline expired while copying")
+
                             ctx.Failed.Value <- true
-                            ctx.Sink BuildStatus.Aborted
+                            if not bySibling then ctx.Sink BuildStatus.Aborted
                         elif List.isEmpty saved && not allowEmpty then
                             // MEASURED: Jenkins FAILS the build here (default
                             // allowEmpty: false) — the pipeline stops and later steps do
@@ -1053,9 +1108,24 @@ module FogellSide =
                         | Result.Error e ->
                             // A missing stash FAILS. Carrying on with none of the files
                             // the build asked for is the silent-loss shape.
+                            //
+                            // REVIEW FIX (Codex, PR #15 round 3): an INTERRUPTED restore
+                            // came back through this same branch and was reported as a
+                            // plain failure, so a `timeout` whose last step is `unstash`
+                            // selected post { failure } where every other timed-out step
+                            // selects post { aborted }.
                             emit $"ERROR: {e}"
                             ctx.Failed.Value <- true
-                            ctx.Sink BuildStatus.Failure
+
+                            let bySibling =
+                                match ctx.Interrupt with
+                                | Some p -> (try p () with _ -> false)
+                                | None -> false
+
+                            if e.StartsWith "aborted:" && not bySibling then
+                                ctx.Sink BuildStatus.Aborted
+                            else
+                                ctx.Sink BuildStatus.Failure
                         | Result.Ok _ -> ()
 
                 | "dir", (sub :: _) ->
