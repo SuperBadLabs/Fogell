@@ -59,6 +59,33 @@ let userOutputSurvives =
               Expect.equal kept [ "real build output" ] "the whole trace is narration, the output is not"
           }
 
+          test "a build may print the secret-interpolation warning's words" {
+              // SIXTH instance of this class, and I introduced it in the same PR that added
+              // these tests. Jenkins' warning is a three-line SEQUENCE; each line alone is
+              // text a build can legitimately print, so matching them as four standalone
+              // prefixes reopened the false-PROVEN path this file exists to close.
+              let userLines =
+                  [ "Warning: A secret was passed to my audit script"
+                    "and here is an unrelated line"
+                    "Affected argument(s) used the following variable(s): my own note"
+                    "See https://jenkins.io/redirect/groovy-string-interpolation for details." ]
+
+              let kept = Trace.normaliseOutput userLines
+
+              for line in userLines do
+                  Expect.contains kept line $"user output must survive: {line}"
+          }
+
+          test "the real warning SEQUENCE is recognised" {
+              let engineLines =
+                  [ "Warning: A secret was passed to \"echo\" using Groovy String interpolation, which is insecure."
+                    "Affected argument(s) used the following variable(s): [TOKEN]"
+                    "See https://jenkins.io/redirect/groovy-string-interpolation for details."
+                    "token is ****" ]
+
+              Expect.equal (Trace.normaliseOutput engineLines) [ "token is ****" ] "only the value survives"
+          }
+
           test "a stack-trace-only failure still counts as a reported reason" {
               // REVIEW FIX (Codex, PR #16 round 9): moving exception heads and frames out
               // of isDiagnosticLine into a contextual gate left reportedFailureReason

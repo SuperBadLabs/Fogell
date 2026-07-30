@@ -163,6 +163,14 @@ module Trace =
         // thing this contract exists to avoid. Both engines say it; the wording is not
         // compared, and the load-bearing evidence is that the value never appears.
         || t.StartsWith "Masking supported pattern matches of "
+        // FG-044b. Jenkins warns, in three lines, when a secret is interpolated into a
+        // step argument via a Groovy GString. Fogell warns too — the security advice is
+        // worth keeping — but matching three sentences and a URL verbatim would be
+        // over-fitting to plugin wording. Both engines say it; the words are not compared.
+        // NOTE: the secret-interpolation warning is NOT matched here. It is recognised by
+        // CONTEXT in [normaliseOutput], because every line of it is text a build could
+        // print. Adding it as four prefixes was the SIXTH instance of this class — written
+        // in the same PR whose own tests forbid it.
         // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
         // `changelog` on a first build. Engine narration about its own evaluation, not
         // build output — and imitating the sentence would be over-fitting again.
@@ -266,8 +274,19 @@ module Trace =
         let looksLikeExceptionHead (l: string) =
             Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
 
+        // Jenkins' secret-interpolation warning is a THREE-LINE sequence; Fogell emits a
+        // one-line equivalent. Every line of it is text a build could print on its own, so
+        // the head counts as narration only when the line that must follow it does.
+        let isWarnHead (l: string) = l.StartsWith "Warning: A secret was passed to"
+        let isWarnBody (l: string) = l.StartsWith "Affected argument(s) used the following variable(s)"
+        let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
+
+        let isFogellWarn (l: string) =
+            l.StartsWith "WARNING: a secret was interpolated into `echo` via a Groovy string:"
+
         let mutable interruptJustNarrated = false
         let mutable inStackTrace = false
+        let mutable inSecretWarning = false
 
         [ for i in 0 .. all.Length - 1 do
             let raw = clean all[i]
@@ -281,6 +300,13 @@ module Trace =
                 (raw = "Terminated" && interruptJustNarrated)
                 || (isFrame raw && inStackTrace)
                 || (looksLikeExceptionHead raw && isFrame next)
+                || (isWarnHead raw && isWarnBody next)
+                || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
+                || isFogellWarn raw
+
+            inSecretWarning <-
+                (isWarnHead raw && isWarnBody next)
+                || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
 
             interruptJustNarrated <-
                 raw.StartsWith "Sending interrupt signal to process"

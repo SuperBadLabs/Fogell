@@ -350,9 +350,32 @@ module Executor =
             { ok Failure with
                 Diagnostic = Some $"step '{request.Name}' requires a script argument" }
         | "echo", Some message ->
-            request.OnLine |> Option.iter (fun f -> f message)
+            // FG-044b. Masking lived ONLY on the shell path, so `echo "$TOKEN"` published
+            // the credential verbatim while Jenkins prints `****`. Any path that emits
+            // output has to mask, or the guarantee is "we mask, except where we forgot".
+            let masked =
+                if List.isEmpty request.Secrets then message else Secrets.mask request.Secrets message
 
-            { ok Success with Stdout = message + "\n" }
+            let leaks =
+                Secrets.detectLeaks request.Secrets masked
+                |> List.map (fun l ->
+                    $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
+                |> List.distinct
+
+            for note in leaks do
+                request.OnLine |> Option.iter (fun f -> f note)
+
+            request.OnLine |> Option.iter (fun f -> f masked)
+
+            { ok Success with
+                Stdout = masked + "\n"
+                // Only when nobody streamed them. The differential runner ALWAYS supplies
+                // OnLine and then re-emits every Stderr line, so returning them here too
+                // printed each warning TWICE for a single leak.
+                Stderr =
+                    match request.OnLine, leaks with
+                    | None, (_ :: _) -> String.concat "\n" leaks + "\n"
+                    | _ -> "" }
         | "echo", None -> { ok Success with Stdout = "\n" }
         | name, _ ->
             { ok Failure with
