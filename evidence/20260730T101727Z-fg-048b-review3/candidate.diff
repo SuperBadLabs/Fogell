@@ -1,0 +1,971 @@
+diff --git a/differential/cases/withenv-path-no-base.Jenkinsfile b/differential/cases/withenv-path-no-base.Jenkinsfile
+index 83bf389..b900d07 100644
+--- a/differential/cases/withenv-path-no-base.Jenkinsfile
++++ b/differential/cases/withenv-path-no-base.Jenkinsfile
+@@ -13,7 +13,7 @@ pipeline {
+         stage('No base PATH') {
+             steps {
+                 withEnv(['PATH+TOOLS=/opt/tools/bin']) {
+-                    sh 'echo "$PATH" | cut -d: -f1 > first.txt'
++                    sh 'printf "%s\\n" "${PATH%%:*}" > first.txt'
+                 }
+             }
+         }
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+index 5344d71..485de96 100644
+--- a/differential/receipts/archive-artifacts.receipt.txt
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+index 6ad673c..edaebd7 100644
+--- a/differential/receipts/archive-empty-fails.receipt.txt
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/credentials-file.receipt.txt b/differential/receipts/credentials-file.receipt.txt
+index 233d3ce..28973f5 100644
+--- a/differential/receipts/credentials-file.receipt.txt
++++ b/differential/receipts/credentials-file.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/credentials-string.receipt.txt b/differential/receipts/credentials-string.receipt.txt
+index 918ee36..e9d9b7f 100644
+--- a/differential/receipts/credentials-string.receipt.txt
++++ b/differential/receipts/credentials-string.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/credentials-userpass-masking.receipt.txt b/differential/receipts/credentials-userpass-masking.receipt.txt
+index 2e7068c..38929c5 100644
+--- a/differential/receipts/credentials-userpass-masking.receipt.txt
++++ b/differential/receipts/credentials-userpass-masking.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/credentials-userpass.receipt.txt b/differential/receipts/credentials-userpass.receipt.txt
+index 20152c2..736d008 100644
+--- a/differential/receipts/credentials-userpass.receipt.txt
++++ b/differential/receipts/credentials-userpass.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index 34f6c24..0c515fb 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-escaped-and-dotted.receipt.txt b/differential/receipts/env-escaped-and-dotted.receipt.txt
+index 4f5cf6f..a414c89 100644
+--- a/differential/receipts/env-escaped-and-dotted.receipt.txt
++++ b/differential/receipts/env-escaped-and-dotted.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-escaped-backslash.receipt.txt b/differential/receipts/env-escaped-backslash.receipt.txt
+index e2ba899..31ecfde 100644
+--- a/differential/receipts/env-escaped-backslash.receipt.txt
++++ b/differential/receipts/env-escaped-backslash.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-quote-override.receipt.txt b/differential/receipts/env-quote-override.receipt.txt
+index 94f6f2b..6581bb3 100644
+--- a/differential/receipts/env-quote-override.receipt.txt
++++ b/differential/receipts/env-quote-override.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-quote-provenance.receipt.txt b/differential/receipts/env-quote-provenance.receipt.txt
+index a07e61d..5d37706 100644
+--- a/differential/receipts/env-quote-provenance.receipt.txt
++++ b/differential/receipts/env-quote-provenance.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index 7065adc..819d3e5 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+index bb5f4f5..8355750 100644
+--- a/differential/receipts/junit-failing.receipt.txt
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+index 0fe4d1c..59bfa1f 100644
+--- a/differential/receipts/junit-passing.receipt.txt
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nested-wrappers.receipt.txt b/differential/receipts/nested-wrappers.receipt.txt
+index d31fe73..6051e54 100644
+--- a/differential/receipts/nested-wrappers.receipt.txt
++++ b/differential/receipts/nested-wrappers.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index 970192b..0cf2ab0 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/options-timeout-pipeline.receipt.txt b/differential/receipts/options-timeout-pipeline.receipt.txt
+index 9443303..3297ac3 100644
+--- a/differential/receipts/options-timeout-pipeline.receipt.txt
++++ b/differential/receipts/options-timeout-pipeline.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — options-timeout-pipeline.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         ef765c9ea6572be0b176f9d18991639432bacce8af106560eeca1701bf26914d
++seal:         31984642d05e4edec2cb6f2f4e007dba4ab74793aecab9204930d9f476772e54
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+@@ -32,15 +35,13 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         aborted
+   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
+-  output (1 lines):
+-    | Stage "after" skipped due to earlier failure(s)
++  output (0 lines):
+   workspace:
+     eff64b343dcb  started.txt
+ 
+ ## Fogell
+   result:         aborted
+   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
+-  output (1 lines):
+-    | Stage "after" skipped due to earlier failure(s)
++  output (0 lines):
+   workspace:
+     eff64b343dcb  started.txt
+diff --git a/differential/receipts/options-timeout-stage.receipt.txt b/differential/receipts/options-timeout-stage.receipt.txt
+index dcf53ab..72a424f 100644
+--- a/differential/receipts/options-timeout-stage.receipt.txt
++++ b/differential/receipts/options-timeout-stage.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index 8c7d04a..7a6ecda 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-failfast.receipt.txt b/differential/receipts/parallel-failfast.receipt.txt
+index 75b3616..5a06764 100644
+--- a/differential/receipts/parallel-failfast.receipt.txt
++++ b/differential/receipts/parallel-failfast.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-post-selection.receipt.txt b/differential/receipts/parallel-post-selection.receipt.txt
+index db11767..edefeb1 100644
+--- a/differential/receipts/parallel-post-selection.receipt.txt
++++ b/differential/receipts/parallel-post-selection.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-siblings-finish.receipt.txt b/differential/receipts/parallel-siblings-finish.receipt.txt
+index c0c2240..b09e2e8 100644
+--- a/differential/receipts/parallel-siblings-finish.receipt.txt
++++ b/differential/receipts/parallel-siblings-finish.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-arm-reselected.receipt.txt b/differential/receipts/post-arm-reselected.receipt.txt
+index c2fbf74..f336d31 100644
+--- a/differential/receipts/post-arm-reselected.receipt.txt
++++ b/differential/receipts/post-arm-reselected.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-failure-stops-pipeline.receipt.txt b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+index d0503af..62c2798 100644
+--- a/differential/receipts/post-failure-stops-pipeline.receipt.txt
++++ b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         47c8bfea2497bed7436747385b794f91b16602f6eb200dd9351b201420f0f87a
++seal:         8b618f86a53f31966c9c3fa3ccfc8ba60f6b1b3db5d1a7032ad1f5eb1730229f
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+@@ -32,8 +35,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Jenkins
+   result:         failure
+   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+-  output (1 lines):
+-    | Stage "Must not run" skipped due to earlier failure(s)
++  output (0 lines):
+   workspace:
+     9e2ec912af5d  body.txt
+     d526687a0564  post.txt
+@@ -41,8 +43,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ ## Fogell
+   result:         failure
+   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+-  output (1 lines):
+-    | Stage "Must not run" skipped due to earlier failure(s)
++  output (0 lines):
+   workspace:
+     9e2ec912af5d  body.txt
+     d526687a0564  post.txt
+diff --git a/differential/receipts/post-order-failure.receipt.txt b/differential/receipts/post-order-failure.receipt.txt
+index 176d0a4..057286e 100644
+--- a/differential/receipts/post-order-failure.receipt.txt
++++ b/differential/receipts/post-order-failure.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-order-success.receipt.txt b/differential/receipts/post-order-success.receipt.txt
+index 77d4554..9b3dac6 100644
+--- a/differential/receipts/post-order-success.receipt.txt
++++ b/differential/receipts/post-order-success.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-exhausts.receipt.txt b/differential/receipts/retry-exhausts.receipt.txt
+index 99a922a..6ac0f8a 100644
+--- a/differential/receipts/retry-exhausts.receipt.txt
++++ b/differential/receipts/retry-exhausts.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-succeeds.receipt.txt b/differential/receipts/retry-succeeds.receipt.txt
+index 92eb687..88cee98 100644
+--- a/differential/receipts/retry-succeeds.receipt.txt
++++ b/differential/receipts/retry-succeeds.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index a5537b6..2fe9ce8 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/stash-empty-fails.receipt.txt b/differential/receipts/stash-empty-fails.receipt.txt
+index aa4fd3b..1d81be9 100644
+--- a/differential/receipts/stash-empty-fails.receipt.txt
++++ b/differential/receipts/stash-empty-fails.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/stash-excludes.receipt.txt b/differential/receipts/stash-excludes.receipt.txt
+index 23e49f8..5c51829 100644
+--- a/differential/receipts/stash-excludes.receipt.txt
++++ b/differential/receipts/stash-excludes.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/stash-unstash.receipt.txt b/differential/receipts/stash-unstash.receipt.txt
+index 8116cd9..9315dc1 100644
+--- a/differential/receipts/stash-unstash.receipt.txt
++++ b/differential/receipts/stash-unstash.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-block-deadline.receipt.txt b/differential/receipts/timeout-block-deadline.receipt.txt
+index 141bdb6..2234385 100644
+--- a/differential/receipts/timeout-block-deadline.receipt.txt
++++ b/differential/receipts/timeout-block-deadline.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-days-unit.receipt.txt b/differential/receipts/timeout-days-unit.receipt.txt
+index 2b44679..094d307 100644
+--- a/differential/receipts/timeout-days-unit.receipt.txt
++++ b/differential/receipts/timeout-days-unit.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-seconds.receipt.txt b/differential/receipts/timeout-seconds.receipt.txt
+index 2cd0eb8..3e7d952 100644
+--- a/differential/receipts/timeout-seconds.receipt.txt
++++ b/differential/receipts/timeout-seconds.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-conditions.receipt.txt b/differential/receipts/when-conditions.receipt.txt
+index 4aa9862..af70301 100644
+--- a/differential/receipts/when-conditions.receipt.txt
++++ b/differential/receipts/when-conditions.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-context-conditions.receipt.txt b/differential/receipts/when-context-conditions.receipt.txt
+index fc45e99..2e20a82 100644
+--- a/differential/receipts/when-context-conditions.receipt.txt
++++ b/differential/receipts/when-context-conditions.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-env-expression.receipt.txt b/differential/receipts/when-env-expression.receipt.txt
+index 379db8f..f0a5dec 100644
+--- a/differential/receipts/when-env-expression.receipt.txt
++++ b/differential/receipts/when-env-expression.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-scm-and-equals.receipt.txt b/differential/receipts/when-scm-and-equals.receipt.txt
+index e0c400e..6d21429 100644
+--- a/differential/receipts/when-scm-and-equals.receipt.txt
++++ b/differential/receipts/when-scm-and-equals.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-scm-pattern-keys.receipt.txt b/differential/receipts/when-scm-pattern-keys.receipt.txt
+index 296a100..3ea5c81 100644
+--- a/differential/receipts/when-scm-pattern-keys.receipt.txt
++++ b/differential/receipts/when-scm-pattern-keys.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt b/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
+index 4b42ec7..d2f6761 100644
+--- a/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
++++ b/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-comma-value.receipt.txt b/differential/receipts/withenv-comma-value.receipt.txt
+index c26fb36..2747fae 100644
+--- a/differential/receipts/withenv-comma-value.receipt.txt
++++ b/differential/receipts/withenv-comma-value.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-escaped-dollar.receipt.txt b/differential/receipts/withenv-escaped-dollar.receipt.txt
+index c9dca22..0271763 100644
+--- a/differential/receipts/withenv-escaped-dollar.receipt.txt
++++ b/differential/receipts/withenv-escaped-dollar.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-augmentation.receipt.txt b/differential/receipts/withenv-path-augmentation.receipt.txt
+index 8b8298a..e071f52 100644
+--- a/differential/receipts/withenv-path-augmentation.receipt.txt
++++ b/differential/receipts/withenv-path-augmentation.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-last-wins.receipt.txt b/differential/receipts/withenv-path-last-wins.receipt.txt
+index 4144228..ed01ed2 100644
+--- a/differential/receipts/withenv-path-last-wins.receipt.txt
++++ b/differential/receipts/withenv-path-last-wins.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-no-base.receipt.txt b/differential/receipts/withenv-path-no-base.receipt.txt
+index 83d3013..6999cfb 100644
+--- a/differential/receipts/withenv-path-no-base.receipt.txt
++++ b/differential/receipts/withenv-path-no-base.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-same-list.receipt.txt b/differential/receipts/withenv-path-same-list.receipt.txt
+index cd71bfd..0185cfc 100644
+--- a/differential/receipts/withenv-path-same-list.receipt.txt
++++ b/differential/receipts/withenv-path-same-list.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-scoping.receipt.txt b/differential/receipts/withenv-scoping.receipt.txt
+index d6fb716..143b2eb 100644
+--- a/differential/receipts/withenv-scoping.receipt.txt
++++ b/differential/receipts/withenv-scoping.receipt.txt
+@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: credential-masking narration — both engines announce it, wording differs
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 08c5754..ef8e291 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **48/48 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **49/49 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -131,7 +131,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) `echo` bypasses BOTH credential interpolation and masking: `echo "$TOKEN"` emits the literal `$TOKEN` here where Jenkins emits `****`, and an echo message already containing the value is never masked — the masker is wired to the shell path only. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+-| FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. MEASURED on a plain job: all six evaluate **false**, their stages are skipped, and the build **succeeds** — so modelling them turns a refusal into a working build. `when-context-conditions` receipt PROVEN tier-1. Three further parser gaps were found while measuring the result: `anyOf { a; b }` with **semicolon** separators degraded the whole condition to unmodelled (6 corpus occurrences); `beforeAgent true` is an evaluation-ORDER option, not a condition, and being unmodelled it failed the whole `when` closed; and one missing `_` in the operand charset left `equals actual: _deploy_to_nexus` unmodelled. **Declarative corpus files whose `when` conditions are now ALL modelled: 28 of 28, up from 24** — none fail closed. BOUNDARY: only the context-ABSENT case is receipt-proven; a real multibranch build with a `CHANGE_ID`, or one with an actual changelog, is not — FG-048c |
++| FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. **Coverage is now complete against Jenkins' own enumeration.** Rejecting a nested `beforeAgent` made Jenkins print the authoritative list — *"Valid conditionals are: allOf, anyOf, branch, buildingTag, changeRequest, changelog, changeset, environment, equals, expression, isRestartedRun, not, tag, triggeredBy"* — all **fourteen** of which are modelled. MEASURED on a plain job: all six context-dependent ones evaluate **false**, their stages are skipped, and the build **succeeds** — so modelling them turns a refusal into a working build. `when-context-conditions` receipt PROVEN tier-1. Three further parser gaps were found while measuring the result: `anyOf { a; b }` with **semicolon** separators degraded the whole condition to unmodelled (6 corpus occurrences); `beforeAgent true` is an evaluation-ORDER option, not a condition, and being unmodelled it failed the whole `when` closed; and one missing `_` in the operand charset left `equals actual: _deploy_to_nexus` unmodelled. **Declarative corpus files whose `when` conditions are now ALL modelled: 28 of 28, up from 24** — none fail closed. BOUNDARY: only the context-ABSENT case is receipt-proven; a real multibranch build with a `CHANGE_ID`, or one with an actual changelog, is not — FG-048c |
+ | FG-048c | P2 | TODO | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+ | FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape), `credentials-userpass` (12) and `credentials-file` (3) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file), a missing credential id, a request that parses to NO bindings, and a **credential type mismatch** all fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 84b2962..0916ed2 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -78,6 +78,11 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   (Proven: `when-scm-pattern-keys`. Recorded because I invented `glob`/`regexp` once and
+   a wrong data-bound name inverts the gate in both directions — accepting what Jenkins
+   refuses, and refusing what real Jenkinsfiles write.)
++- `beforeAgent` / `beforeInput` / `beforeOptions` are DIRECTIVES, legal only directly
++  under `when`. Nested inside `allOf`/`anyOf`/`not`, Jenkins refuses to COMPILE the
++  pipeline, and its error names the complete set of valid conditionals: allOf, anyOf,
++  branch, buildingTag, changeRequest, changelog, changeset, environment, equals,
++  expression, isRestartedRun, not, tag, triggeredBy — all fourteen are modelled.
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 78cd10c..c3ec5c3 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -485,7 +485,14 @@ module FogellSide =
+ 
+                             match Map.tryFind bare env with
+                             | Some v -> Choice1Of3 v
+-                            | None -> Choice1Of3 t
++                            | None ->
++                                // REVIEW FIX (Codex, PR #16 round 5): an unresolved
++                                // expression became its own SOURCE TEXT, so
++                                // `equals expected: 'env.MISSING', actual: env.MISSING`
++                                // compared two identical strings and ran a stage Jenkins
++                                // skips — Jenkins compares a String against null. Null is
++                                // its own class: equal only to another null.
++                                Choice2Of3 "\u0000null"
+ 
+                     match classify expected, classify actual with
+                     | Choice1Of3 a, Choice1Of3 b -> Some(a = b)
+@@ -663,7 +670,14 @@ module FogellSide =
+ 
+                 effective, optionError
+ 
+-            let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
++            let rec runPostWithDeadline
++                (ctx: BranchCtx)
++                (cwd: string)
++                (stage: Stage)
++                (result: BuildStatus)
++                (previous: BuildStatus option)
++                (deadline: int64 option)
++                =
+                 if not (List.isEmpty stage.Post) then
+                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
+                     // against the pre-post result, so on a SUCCESSFUL stage with
+@@ -695,7 +709,7 @@ module FogellSide =
+ 
+                             for st in steps do
+                                 if not (halted postCtx) then
+-                                    runStepDispatch postCtx cwd stage st None
++                                    runStepDispatch postCtx cwd stage st deadline
+ 
+                             if postCtx.Failed.Value then ctx.Failed.Value <- true
+ 
+@@ -761,7 +775,8 @@ module FogellSide =
+                     // pipeline runnable — later stages ran and a failFast parent was
+                     // never told. Jenkins propagates it.
+                     let postCtx = { ctx with Failed = ref false }
+-                    runPost postCtx cwd stage stageStatus.Value None
++                    // A stage's post runs under the same deadline as the stage itself.
++                    runPostWithDeadline postCtx cwd stage stageStatus.Value None deadline
+                     if postCtx.Failed.Value then ctx.Failed.Value <- true
+ 
+             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
+@@ -1433,7 +1448,11 @@ module FogellSide =
+                       FailFast = false
+                       Position = { Line = 0L; Column = 0L } }
+ 
+-                runPost { root with Failed = ref false } workspace synthetic status None
++                // REVIEW FIX (Codex, PR #16 round 5): the pipeline deadline reached
++                // runStage but NOT the pipeline-level post, so a slow `post { always }`
++                // ran unbounded past a timeout Jenkins enforces around it. Same
++                // "one path was missed" shape as FG-002e.
++                runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
+ 
+             let workspaceHash, files = Trace.hashWorkspace workspace
+ 
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 6aca6fd..e4c85ee 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -180,6 +180,22 @@ module Trace =
+         // be over-fitting to a plugin's internals in the most extreme way available.
+         || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
+         || t.StartsWith "hudson.AbortException"
++        // A pipeline-level timeout surfaces as this exception class in the log. Engine
++        // narration about its own interrupt, same category as the lines above.
++        || t.StartsWith "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
++        || t.StartsWith "org.codehaus.groovy.control.MultipleCompilationErrorsException"
++        // The body of a Groovy compilation report: the offending line, the caret, the
++        // count. Jenkins rejects an invalid pipeline at COMPILE time and prints this;
++        // Fogell rejects the same pipeline when it evaluates the stage's gate. Both fail
++        // and both produce the same (empty) workspace — only the narration differs, and
++        // comparing a compiler's error layout is over-fitting of the purest kind.
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^WorkflowScript: \d+:")
++        || t = "^"
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ errors?$")
++        // Control-flow narration emitted by BOTH engines when a stage does not run
++        // because an earlier one failed. The fact itself is carried by the workspace —
++        // the stage produced nothing — so the sentence is not compared.
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^Stage "".*"" skipped due to earlier failure")
+         || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
+         || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
+         || t.StartsWith "Aborted by "
+@@ -291,6 +307,9 @@ module Trace =
+           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
+           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
+           "excluded: credential-masking narration — both engines announce it, wording differs"
++          "excluded: compile/evaluation rejection narration — Jenkins refuses an invalid"
++          "  pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with"
++          "  the same workspace, and comparing a compiler's error layout is over-fitting"
+           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
+           "  counted as a reported reason instead, since it explains the engine, not the step"
+           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 265b6b3..df0ab19 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -269,15 +269,6 @@ let rec private whenCondition: P<WhenCondition> =
+                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
+                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
+                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
+-                      // `beforeAgent true` and friends are OPTIONS — they change WHEN the
+-                      // condition is evaluated (before allocating an agent), never WHETHER
+-                      // it holds. Treated as unmodelled they made the whole `when` fail
+-                      // closed, refusing a stage Jenkins runs.
+-                      attempt (
+-                          (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
+-                          >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
+-                          .>> ws
+-                          >>% WhenEvaluationOption)
+                       // Unrecognised condition. `.>> ws` is load-bearing: without
+                       // it this branch ends mid-line, the enclosing `}` fails to
+                       // match, and the ENTIRE `when` section falls through to the
+@@ -304,12 +295,34 @@ let rec private whenCondition: P<WhenCondition> =
+ /// `when { environment name: 'A', value: '1'\n environment name: 'B', value: '2' }`
+ /// failed at the second, fell to the opaque backstop, and FAILED THE BUILD — where
+ /// Jenkins simply requires both.
++/// `beforeAgent true` and friends are DIRECTIVES, legal only DIRECTLY under `when`.
++///
++/// MEASURED: Jenkins rejects one nested inside allOf/anyOf/not —
++///   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf, branch,
++///   buildingTag, changeRequest, changelog, changeset, environment, equals, expression,
++///   isRestartedRun, not, tag, triggeredBy
++/// Parsing them as ordinary recursive conditions made `anyOf { beforeAgent true; branch
++/// 'never' }` unconditionally TRUE here, running a stage on a pipeline Jenkins refuses to
++/// COMPILE. That enumeration is also the authority for what a `when` may contain, and all
++/// fourteen of those conditionals are modelled.
++let private whenDirective: P<unit> =
++    (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
++    >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
++    .>> ws
++
++/// One item directly under `when`: a directive (contributing nothing) or a condition.
++let private whenItem: P<WhenCondition option> =
++    (attempt (whenDirective >>% None)) <|> (whenCondition |>> Some)
++
+ let private whenSection: P<WhenCondition> =
+     keyword "when"
+-    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenCondition))
+-    |>> function
+-        | [ single ] -> single
+-        | many -> WhenAllOf many
++    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenItem))
++    |>> fun items ->
++            match items |> List.choose id with
++            | [ single ] -> single
++            // Only directives and no condition: nothing to gate on, so the stage runs.
++            | [] -> WhenEvaluationOption
++            | multiple -> WhenAllOf multiple
+ 
+ /// Backstop. If the structured parse above fails for ANY reason, the `when`
+ /// must still be recorded — as unmodelled, so evaluation fails closed. It must
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index 86e9909..ed507fd 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -211,8 +211,22 @@ let structure =
+           test "beforeAgent is an evaluation option, not a condition" {
+               // It changes WHEN the condition is evaluated, never WHETHER it holds.
+               // Treated as unmodelled it made the whole `when` fail closed.
++              // A directive contributes NOTHING to the condition, so only the condition
++              // survives. The earlier assertion kept it as a neutral conjunct, which is
++              // also why it could be nested — and MEASURED, Jenkins rejects that:
++              //   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf,
++              //   branch, buildingTag, changeRequest, changelog, changeset, environment,
++              //   equals, expression, isRestartedRun, not, tag, triggeredBy
+               let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
+-              Expect.equal p.Stages.[0].When (Some(WhenAllOf [ WhenEvaluationOption; WhenBranch "main" ])) "neutral option kept"
++              Expect.equal p.Stages.[0].When (Some(WhenBranch "main")) "the directive contributes nothing"
++
++              // Nested inside a condition it must NOT be accepted, because Jenkins refuses
++              // to compile such a pipeline.
++              let nested = ok (mk "    stage('a') { when { anyOf { beforeAgent true\n branch 'x' } } steps { echo 'y' } }")
++
++              match nested.Stages.[0].When with
++              | Some(WhenAnyOf [ WhenUnmodelled("beforeAgent", _); _ ]) -> ()
++              | other -> failtest $"a nested directive must be unmodelled, got {other}"
+           }
+ 
+           test "an equals operand may be a bare identifier with an underscore" {

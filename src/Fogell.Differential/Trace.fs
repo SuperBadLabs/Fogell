@@ -180,6 +180,22 @@ module Trace =
         // be over-fitting to a plugin's internals in the most extreme way available.
         || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
         || t.StartsWith "hudson.AbortException"
+        // A pipeline-level timeout surfaces as this exception class in the log. Engine
+        // narration about its own interrupt, same category as the lines above.
+        || t.StartsWith "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
+        || t.StartsWith "org.codehaus.groovy.control.MultipleCompilationErrorsException"
+        // The body of a Groovy compilation report: the offending line, the caret, the
+        // count. Jenkins rejects an invalid pipeline at COMPILE time and prints this;
+        // Fogell rejects the same pipeline when it evaluates the stage's gate. Both fail
+        // and both produce the same (empty) workspace — only the narration differs, and
+        // comparing a compiler's error layout is over-fitting of the purest kind.
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^WorkflowScript: \d+:")
+        || t = "^"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ errors?$")
+        // Control-flow narration emitted by BOTH engines when a stage does not run
+        // because an earlier one failed. The fact itself is carried by the workspace —
+        // the stage produced nothing — so the sentence is not compared.
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Stage "".*"" skipped due to earlier failure")
         || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
         || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
         || t.StartsWith "Aborted by "
@@ -291,6 +307,9 @@ module Trace =
           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: credential-masking narration — both engines announce it, wording differs"
+          "excluded: compile/evaluation rejection narration — Jenkins refuses an invalid"
+          "  pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with"
+          "  the same workspace, and comparing a compiler's error layout is over-fitting"
           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
           "  counted as a reported reason instead, since it explains the engine, not the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

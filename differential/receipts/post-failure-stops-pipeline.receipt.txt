@@ -1,7 +1,7 @@
 # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         47c8bfea2497bed7436747385b794f91b16602f6eb200dd9351b201420f0f87a
+seal:         8b618f86a53f31966c9c3fa3ccfc8ba60f6b1b3db5d1a7032ad1f5eb1730229f
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
@@ -32,8 +35,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
-  output (1 lines):
-    | Stage "Must not run" skipped due to earlier failure(s)
+  output (0 lines):
   workspace:
     9e2ec912af5d  body.txt
     d526687a0564  post.txt
@@ -41,8 +43,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         failure
   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
-  output (1 lines):
-    | Stage "Must not run" skipped due to earlier failure(s)
+  output (0 lines):
   workspace:
     9e2ec912af5d  body.txt
     d526687a0564  post.txt

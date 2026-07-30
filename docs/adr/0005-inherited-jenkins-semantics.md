@@ -78,6 +78,11 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   (Proven: `when-scm-pattern-keys`. Recorded because I invented `glob`/`regexp` once and
   a wrong data-bound name inverts the gate in both directions — accepting what Jenkins
   refuses, and refusing what real Jenkinsfiles write.)
+- `beforeAgent` / `beforeInput` / `beforeOptions` are DIRECTIVES, legal only directly
+  under `when`. Nested inside `allOf`/`anyOf`/`not`, Jenkins refuses to COMPILE the
+  pipeline, and its error names the complete set of valid conditionals: allOf, anyOf,
+  branch, buildingTag, changeRequest, changelog, changeset, environment, equals,
+  expression, isRestartedRun, not, tag, triggeredBy — all fourteen are modelled.
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

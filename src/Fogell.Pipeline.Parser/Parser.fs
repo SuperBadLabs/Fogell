@@ -269,15 +269,6 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
-                      // `beforeAgent true` and friends are OPTIONS — they change WHEN the
-                      // condition is evaluated (before allocating an agent), never WHETHER
-                      // it holds. Treated as unmodelled they made the whole `when` fail
-                      // closed, refusing a stage Jenkins runs.
-                      attempt (
-                          (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
-                          >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
-                          .>> ws
-                          >>% WhenEvaluationOption)
                       // Unrecognised condition. `.>> ws` is load-bearing: without
                       // it this branch ends mid-line, the enclosing `}` fails to
                       // match, and the ENTIRE `when` section falls through to the
@@ -304,12 +295,34 @@ let rec private whenCondition: P<WhenCondition> =
 /// `when { environment name: 'A', value: '1'\n environment name: 'B', value: '2' }`
 /// failed at the second, fell to the opaque backstop, and FAILED THE BUILD — where
 /// Jenkins simply requires both.
+/// `beforeAgent true` and friends are DIRECTIVES, legal only DIRECTLY under `when`.
+///
+/// MEASURED: Jenkins rejects one nested inside allOf/anyOf/not —
+///   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf, branch,
+///   buildingTag, changeRequest, changelog, changeset, environment, equals, expression,
+///   isRestartedRun, not, tag, triggeredBy
+/// Parsing them as ordinary recursive conditions made `anyOf { beforeAgent true; branch
+/// 'never' }` unconditionally TRUE here, running a stage on a pipeline Jenkins refuses to
+/// COMPILE. That enumeration is also the authority for what a `when` may contain, and all
+/// fourteen of those conditionals are modelled.
+let private whenDirective: P<unit> =
+    (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
+    >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
+    .>> ws
+
+/// One item directly under `when`: a directive (contributing nothing) or a condition.
+let private whenItem: P<WhenCondition option> =
+    (attempt (whenDirective >>% None)) <|> (whenCondition |>> Some)
+
 let private whenSection: P<WhenCondition> =
     keyword "when"
-    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenCondition))
-    |>> function
-        | [ single ] -> single
-        | many -> WhenAllOf many
+    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenItem))
+    |>> fun items ->
+            match items |> List.choose id with
+            | [ single ] -> single
+            // Only directives and no condition: nothing to gate on, so the stage runs.
+            | [] -> WhenEvaluationOption
+            | multiple -> WhenAllOf multiple
 
 /// Backstop. If the structured parse above fails for ANY reason, the `when`
 /// must still be recorded — as unmodelled, so evaluation fails closed. It must

@@ -13,7 +13,7 @@ pipeline {
         stage('No base PATH') {
             steps {
                 withEnv(['PATH+TOOLS=/opt/tools/bin']) {
-                    sh 'echo "$PATH" | cut -d: -f1 > first.txt'
+                    sh 'printf "%s\\n" "${PATH%%:*}" > first.txt'
                 }
             }
         }

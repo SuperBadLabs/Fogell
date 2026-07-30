@@ -485,7 +485,14 @@ module FogellSide =
 
                             match Map.tryFind bare env with
                             | Some v -> Choice1Of3 v
-                            | None -> Choice1Of3 t
+                            | None ->
+                                // REVIEW FIX (Codex, PR #16 round 5): an unresolved
+                                // expression became its own SOURCE TEXT, so
+                                // `equals expected: 'env.MISSING', actual: env.MISSING`
+                                // compared two identical strings and ran a stage Jenkins
+                                // skips — Jenkins compares a String against null. Null is
+                                // its own class: equal only to another null.
+                                Choice2Of3 "\u0000null"
 
                     match classify expected, classify actual with
                     | Choice1Of3 a, Choice1Of3 b -> Some(a = b)
@@ -663,7 +670,14 @@ module FogellSide =
 
                 effective, optionError
 
-            let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
+            let rec runPostWithDeadline
+                (ctx: BranchCtx)
+                (cwd: string)
+                (stage: Stage)
+                (result: BuildStatus)
+                (previous: BuildStatus option)
+                (deadline: int64 option)
+                =
                 if not (List.isEmpty stage.Post) then
                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
                     // against the pre-post result, so on a SUCCESSFUL stage with
@@ -695,7 +709,7 @@ module FogellSide =
 
                             for st in steps do
                                 if not (halted postCtx) then
-                                    runStepDispatch postCtx cwd stage st None
+                                    runStepDispatch postCtx cwd stage st deadline
 
                             if postCtx.Failed.Value then ctx.Failed.Value <- true
 
@@ -761,7 +775,8 @@ module FogellSide =
                     // pipeline runnable — later stages ran and a failFast parent was
                     // never told. Jenkins propagates it.
                     let postCtx = { ctx with Failed = ref false }
-                    runPost postCtx cwd stage stageStatus.Value None
+                    // A stage's post runs under the same deadline as the stage itself.
+                    runPostWithDeadline postCtx cwd stage stageStatus.Value None deadline
                     if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
@@ -1433,7 +1448,11 @@ module FogellSide =
                       FailFast = false
                       Position = { Line = 0L; Column = 0L } }
 
-                runPost { root with Failed = ref false } workspace synthetic status None
+                // REVIEW FIX (Codex, PR #16 round 5): the pipeline deadline reached
+                // runStage but NOT the pipeline-level post, so a slow `post { always }`
+                // ran unbounded past a timeout Jenkins enforces around it. Same
+                // "one path was missed" shape as FG-002e.
+                runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
 
             let workspaceHash, files = Trace.hashWorkspace workspace
 

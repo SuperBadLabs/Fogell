@@ -211,8 +211,22 @@ let structure =
           test "beforeAgent is an evaluation option, not a condition" {
               // It changes WHEN the condition is evaluated, never WHETHER it holds.
               // Treated as unmodelled it made the whole `when` fail closed.
+              // A directive contributes NOTHING to the condition, so only the condition
+              // survives. The earlier assertion kept it as a neutral conjunct, which is
+              // also why it could be nested — and MEASURED, Jenkins rejects that:
+              //   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf,
+              //   branch, buildingTag, changeRequest, changelog, changeset, environment,
+              //   equals, expression, isRestartedRun, not, tag, triggeredBy
               let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
-              Expect.equal p.Stages.[0].When (Some(WhenAllOf [ WhenEvaluationOption; WhenBranch "main" ])) "neutral option kept"
+              Expect.equal p.Stages.[0].When (Some(WhenBranch "main")) "the directive contributes nothing"
+
+              // Nested inside a condition it must NOT be accepted, because Jenkins refuses
+              // to compile such a pipeline.
+              let nested = ok (mk "    stage('a') { when { anyOf { beforeAgent true\n branch 'x' } } steps { echo 'y' } }")
+
+              match nested.Stages.[0].When with
+              | Some(WhenAnyOf [ WhenUnmodelled("beforeAgent", _); _ ]) -> ()
+              | other -> failtest $"a nested directive must be unmodelled, got {other}"
           }
 
           test "an equals operand may be a bare identifier with an underscore" {
