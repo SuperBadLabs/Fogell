@@ -1,0 +1,10 @@
+M  Fogell.slnx
+M  docs/EXECUTION_BOARD.md
+A  scripts/pg-test-db.sh
+A  src/Fogell.Store/Fogell.Store.fsproj
+A  src/Fogell.Store/Migrations.fs
+A  src/Fogell.Store/Store.fs
+A  src/Fogell.Store/migrations/0001_controller_truth.sql
+A  tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj
+A  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/20260729T203943Z-fg-022/

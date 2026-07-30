@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Migrations.fs" />
+    <Compile Include="Store.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" />
+    <PackageReference Include="Npgsql" Version="8.0.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="migrations/*.sql" />
+  </ItemGroup>
+</Project>

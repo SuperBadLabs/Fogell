@@ -6,6 +6,7 @@
     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+    <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
     <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
   </Folder>
   <Folder Name="/tools/">
@@ -14,6 +15,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
+    <Project Path="tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj" />
     <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />
   </Folder>
 </Solution>
