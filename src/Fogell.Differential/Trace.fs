@@ -184,14 +184,16 @@ module Trace =
         // narration about its own interrupt, same category as the lines above.
         || t.StartsWith "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException"
         || t.StartsWith "org.codehaus.groovy.control.MultipleCompilationErrorsException"
-        // The body of a Groovy compilation report: the offending line, the caret, the
-        // count. Jenkins rejects an invalid pipeline at COMPILE time and prints this;
-        // Fogell rejects the same pipeline when it evaluates the stage's gate. Both fail
-        // and both produce the same (empty) workspace — only the narration differs, and
-        // comparing a compiler's error layout is over-fitting of the purest kind.
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^WorkflowScript: \d+:")
-        || t = "^"
-        || Text.RegularExpressions.Regex.IsMatch(t, @"^\d+ errors?$")
+        // NOTE, third instance of one mistake: `WorkflowScript: \d+:`, a bare `^` and
+        // `\d+ errors?` were added here last round to silence a Groovy compilation report.
+        // Every one of them is USER-REPRODUCIBLE — a pipeline echoing "1 error" would lose
+        // the line, and because this predicate also feeds ReportedFailureReason it could
+        // mask an engine failing silently and yield a FALSE PROVEN. That is exactly the
+        // defect fixed for `Terminated`, then again for the changelog warning, and I
+        // recreated it while fixing the second one. They are removed rather than narrowed:
+        // they existed only for a case that is no longer in the suite, so the machinery
+        // was pure risk. The rule this file needs is that a pattern belongs here only if a
+        // user's own output cannot plausibly match it.
         // Control-flow narration emitted by BOTH engines when a stage does not run
         // because an earlier one failed. The fact itself is carried by the workspace —
         // the stage produced nothing — so the sentence is not compared.
