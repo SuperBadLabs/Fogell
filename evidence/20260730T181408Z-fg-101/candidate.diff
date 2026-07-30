@@ -1,0 +1,1777 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index e31a280..7e03a23 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         8fc38766a04ac4ec02727515cec433380259e76e0e93669e45b5b1f9ef67192a
++seal:         b0bc62bebe7b0d3e36da85c5fd8fc09f417fa1d71384bad7ac7599d63182ce1b
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -50,7 +50,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (4 lines):
+-    | from-quick
+     | from-slow
++    | from-quick
+     | Failed in branch quick-fail
+     | Failed in branch interrupted
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 8537d92..0b1dc7a 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -30,6 +30,10 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
+   workspace.
+ - Incomplete pattern matches fail the build (FS0025/FS0026).
+ - No scalar compatibility percentage is ever published.
++- **Seal evidence LAST**, after the final review round. A bundle sealed mid-review attests
++  to a snapshot that was never merged: FG-101's first seal recorded the pre-review
++  implementation, and FG-104's omitted its own deliverable. The checksum makes a stale
++  bundle look more trustworthy than no bundle at all.
+ 
+ ### Batch composition (measured, not assumed)
+ 
+diff --git a/evidence/20260730T161459Z-fg-101/SHA256SUMS b/evidence/20260730T161459Z-fg-101/SHA256SUMS
+deleted file mode 100644
+index 70d0c48..0000000
+--- a/evidence/20260730T161459Z-fg-101/SHA256SUMS
++++ /dev/null
+@@ -1,16 +0,0 @@
+-53142bd98cbd312e05350b4f48803d71ed09aff17be267404375f1b533eec585  base-commit.txt
+-efd0344d540f1094ab47df03dfd67c28966f7262b867502f35333243c2ea06eb  build.log
+-727b1e4523964a3b7c6a870cc90f23a73acb831ad5714d9c4237a67c9791f0ed  cancellation-selects-post-arm.receipt.txt
+-7b33b4fb879733d6cce336e57be469a0c6b8a689fec392f934a8bc4407af4991  candidate.diff
+-dcf84a6b7954cd34d8b3b253b91d6933644e50d5d0cee776f9e0be87d6fceaec  corpus-gate.log
+-08a58964b474654e231907c2eea6e38f3ef37ffc193b3cb2f9618c02cd7f184d  diffstat.txt
+-9eb118eb3b9f3191cd440650c093c5314f6fff175bd556e8a6e7f0f451f85bfb  status-before-commit.txt
+-d9ce1475885eb68f3e5d191518d4f944d1b79d8c99e43fc7f84a7b6916d46745  tests-Fogell.Controller.Api.Tests.log
+-1044ab158fb7dd3c9032bec85c40123f7d6a54365e3dcd3c40d22dfc42e99155  tests-Fogell.Differential.Tests.log
+-b9c376a0953cda4f935eb3e1588bd86615dda3851a1cd9205affd492100eaf65  tests-Fogell.Domain.Tests.log
+-8050c3e374ecfb59f46c8e75f8818458776a50d0c7e5daa28cac3ad158c30dba  tests-Fogell.Execution.Tests.log
+-ae01278b4d26c5cce3df739a2b35d8132ed824aff0a38ab4299333f0d198ee9a  tests-Fogell.Groovy.Tests.log
+-0edf45f67d1191f27b8c8e7bb01ab4f26ebe78b67b4c4e01ef746d0cf080d656  tests-Fogell.Journal.Tests.log
+-c3959b2d95ff76e11f260fc364ac14e09b1b38338ed8f48cfa0e5f62de159238  tests-Fogell.Pipeline.Parser.Tests.log
+-c53c446bdfb6dc7d5b23a478890dbb6a4309a425bdc140eaa11811d21d2882fd  tests-Fogell.Store.Tests.log
+-5a9110c82db22366232ca12305c488dbab5b0880d51affa17a63f66ca4772329  tree.txt
+diff --git a/evidence/20260730T161459Z-fg-101/base-commit.txt b/evidence/20260730T161459Z-fg-101/base-commit.txt
+deleted file mode 100644
+index 24598e1..0000000
+--- a/evidence/20260730T161459Z-fg-101/base-commit.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-3514538ff1f9d883f4c08e3f8d10f1a7daae9426
+diff --git a/evidence/20260730T161459Z-fg-101/build.log b/evidence/20260730T161459Z-fg-101/build.log
+deleted file mode 100644
+index b3c79a2..0000000
+--- a/evidence/20260730T161459Z-fg-101/build.log
++++ /dev/null
+@@ -1,20 +0,0 @@
+-  Fogell.Admission -> /home/srikanth/projects/fogell/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+-  Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+-  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+-  Fogell.Execution -> /home/srikanth/projects/fogell/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+-  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+-  Fogell.Execution.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+-  Fogell.Groovy.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Groovy.Tests/bin/Release/net10.0/Fogell.Groovy.Tests.dll
+-  Fogell.Corpus.Score -> /home/srikanth/projects/fogell/tools/Fogell.Corpus.Score/bin/Release/net10.0/fogell-score.dll
+-  Fogell.Differential -> /home/srikanth/projects/fogell/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+-  Fogell.Pipeline.Parser.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+-  Fogell.Controller.Api -> /home/srikanth/projects/fogell/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+-  Fogell.Differential.Cli -> /home/srikanth/projects/fogell/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+-  Fogell.Differential.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+-  Fogell.Controller.Api.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+-
+-Build succeeded.
+-    0 Warning(s)
+-    0 Error(s)
+-
+-Time Elapsed 00:00:00.75
+diff --git a/evidence/20260730T161459Z-fg-101/cancellation-selects-post-arm.receipt.txt b/evidence/20260730T161459Z-fg-101/cancellation-selects-post-arm.receipt.txt
+deleted file mode 100644
+index 25a9833..0000000
+--- a/evidence/20260730T161459Z-fg-101/cancellation-selects-post-arm.receipt.txt
++++ /dev/null
+@@ -1,49 +0,0 @@
+-# Differential receipt — cancellation-selects-post-arm.Jenkinsfile
+-
+-jenkins-core: 2.568.1
+-seal:         7e39a6ead828efcc3d08dea6605b47e431fae549fb6edf02d1f7af9000efd666
+-
+-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+-
+-## Comparison contract
+-  compared: terminal result
+-  compared: ordered normalised output lines
+-  compared: canonical workspace hash over sorted (path, content-hash) pairs
+-  excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+-  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+-  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+-  compared as a BOOLEAN, not text: whether a failure reason was reported
+-    (applies to failure/aborted only — an unstable build is explained by its test report)
+-    (Jenkins' wording comes from whichever plugin implements the step;
+-     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
+-    provenance — but when the traced command contains a literal newline the trace spans
+-    several lines and only the FIRST begins with '+ '. A continuation line is not
+-    distinguishable from real output (the line after a trace is USUALLY real output), so
+-    it is compared as output. Cases whose commands embed a newline must therefore carry
+-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+-  excluded: credential-masking narration — both engines announce it, wording differs
+-  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+-    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+-    the same workspace, and comparing a compiler's error layout is over-fitting
+-  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+-    counted as a reported reason instead, since it explains the engine, not the step
+-  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+-
+-## Jenkins
+-  result:         aborted
+-  workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
+-  output (0 lines):
+-  workspace:
+-    55c97802b397  aborted.txt
+-    eff64b343dcb  started.txt
+-
+-## Fogell
+-  result:         aborted
+-  workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
+-  output (0 lines):
+-  workspace:
+-    55c97802b397  aborted.txt
+-    eff64b343dcb  started.txt
+diff --git a/evidence/20260730T161459Z-fg-101/candidate.diff b/evidence/20260730T161459Z-fg-101/candidate.diff
+deleted file mode 100644
+index 287cdb4..0000000
+--- a/evidence/20260730T161459Z-fg-101/candidate.diff
++++ /dev/null
+@@ -1,397 +0,0 @@
+-diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+-index 7e03a23..e31a280 100644
+---- a/differential/receipts/parallel-always-failfast.receipt.txt
+-+++ b/differential/receipts/parallel-always-failfast.receipt.txt
+-@@ -1,7 +1,7 @@
+- # Differential receipt — parallel-always-failfast.Jenkinsfile
+- 
+- jenkins-core: 2.568.1
+--seal:         b0bc62bebe7b0d3e36da85c5fd8fc09f417fa1d71384bad7ac7599d63182ce1b
+-+seal:         8fc38766a04ac4ec02727515cec433380259e76e0e93669e45b5b1f9ef67192a
+- 
+- VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+- 
+-@@ -50,7 +50,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+-   result:         failure
+-   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-   output (4 lines):
+--    | from-slow
+-     | from-quick
+-+    | from-slow
+-     | Failed in branch quick-fail
+-     | Failed in branch interrupted
+-diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+-index 5332cd7..8537d92 100644
+---- a/docs/EXECUTION_BOARD.md
+-+++ b/docs/EXECUTION_BOARD.md
+-@@ -115,7 +115,7 @@ of trusting the row.
+- |---|---|---|---|---|
+- | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+- | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+--| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **62/62 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+-+| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **63/63 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+- | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+- | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+- | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+-@@ -181,7 +181,7 @@ converts that recurring cost into a one-time cost.
+- | id | pri | status | scope | acceptance |
+- |---|---|---|---|---|
+- | FG-100 | **P0** | TODO | **One string model.** Literal / GString / expression provenance, escaped dollars, and the balanced placeholder scanner, decided in ONE place that every consumer routes through | **52 findings.** Today the rules are re-derived per consumer: `environment`, `withEnv`, `input`, `echo`, `equals`, `when` each learned them separately, and four PR #17 rounds were spent on it. Acceptance: a single module owns the model; **CORRECTED before this ticket was ever started.** My first draft said `sh`/`bat` "provably do NOT pre-expand". That is wrong, and `tests/Fogell.Groovy.Tests` already proves it: `sh "echo ${name}"` with a Groovy LOCAL must become `echo world` before execution, because the shell cannot see a Groovy local or call a Groovy function. The real rule is that **Groovy interpolates a GString for EVERY step, `sh` included**; what survives to the shell is an ESCAPED `\$` and anything inside a SINGLE-quoted string, which Groovy never touched. The declarative walker currently skips interpolation for `sh` and gets away with it only because the shell expands `$VAR` itself — that breaks the moment a `${…}` names something the shell cannot see; a table test covers literal × GString × expression × escaped-dollar × slashy × division × nested-brace for EVERY consumer, so adding a consumer means adding a row, not rediscovering the rules |
+--| FG-101 | **P0** | TODO | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+-+| FG-101 | **P0** | **DONE** | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+- | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
+- | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
+- | FG-104 | P1 | TODO | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. Acceptance: a review pass over `Fogell.Differential` and `Fogell.Pipeline.Parser` doc comments; each either points at its test/receipt or is marked NOT IMPLEMENTED |
+-diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+-index 1a49da1..e1ea612 100644
+---- a/docs/adr/0005-inherited-jenkins-semantics.md
+-+++ b/docs/adr/0005-inherited-jenkins-semantics.md
+-@@ -88,6 +88,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+- - `input` prints its message and `Proceed or Abort` and then WAITS. Under a `timeout`,
+-   the deadline expiring makes the build **ABORTED** and the following step does not run.
+-   (Proven: `input-timeout-aborts`.)
+-+- A **stage's** `options { timeout }` bounds that stage's STEPS, not its `post`: the
+-+  `aborted` arm still runs after the deadline expires. A **pipeline-level** timeout DOES
+-+  bound `post`. (Proven: `cancellation-selects-post-arm`, `options-timeout-wraps-post`.)
+- - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+-   survive `deleteDir()`. (Proven: `stash-unstash`.)
+- - Approval/`input` state survives a controller restart.
+-diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+-index 2a6a385..1c16578 100644
+---- a/src/Fogell.Differential/Fogell.fs
+-+++ b/src/Fogell.Differential/Fogell.fs
+-@@ -9,6 +9,12 @@ open Fogell.Groovy.Interpreter
+- 
+- /// FG-036. What one parallel branch (or the single implicit branch of a
+- /// sequential pipeline) needs to know about itself.
+-+/// FG-101. Why a step stopped. `Running` means it did not.
+-+type Cancellation =
+-+    | Running
+-+    | DeadlineExpired
+-+    | SiblingFailed
+-+
+- type BranchCtx =
+-     { /// Polled while a shell step runs; true means a failFast sibling failed.
+-       Interrupt: (unit -> bool) option
+-@@ -326,6 +332,54 @@ module FogellSide =
+-             /// absolute point in time rather than a per-step budget.
+-             let runClock = Diagnostics.Stopwatch.StartNew()
+- 
+-+            /// FG-101. THE cancellation model: one predicate, one classification, one place
+-+            /// that decides `aborted` versus `failure`.
+-+            ///
+-+            /// The same logic was previously written six times — `stop()`, `abort()`, a
+-+            /// bare `expired`, `interruptedBySibling`, and two inline checks — and the CAUSE
+-+            /// was misclassified six times: shell steps, stash, unstash, deleteDir, input,
+-+            /// then input again as an ordering race. Twice I swept the class and the sweep
+-+            /// was itself incomplete, because it asked whether every site CHECKED rather
+-+            /// than whether every site checked in the right ORDER.
+-+            ///
+-+            /// Each rule below is established by a receipt, not by reasoning:
+-+            ///   deadline expired -> ABORTED, and the step must say so (JB-DUR-005)
+-+            ///   failFast sibling -> the build is a FAILURE; the sibling's failure is the
+-+            ///                       cause and this interruption is collateral, so the step
+-+            ///                       must NOT sink Aborted (parallel-failfast,
+-+            ///                       input-failfast-is-failure)
+-+            /// When both hold, the earlier event wins: a deadline already past preceded a
+-+            /// sibling seen on this poll.
+-+            let cancellationOf (ctx: BranchCtx) (deadline: int64 option) : Cancellation =
+-+                let expiredNow =
+-+                    match deadline with
+-+                    | Some d -> runClock.ElapsedMilliseconds >= d
+-+                    | None -> false
+-+
+-+                let siblingNow =
+-+                    match ctx.Interrupt with
+-+                    | Some p -> (try p () with _ -> false)
+-+                    | None -> false
+-+
+-+                if expiredNow then DeadlineExpired
+-+                elif siblingNow then SiblingFailed
+-+                else Running
+-+
+-+            /// Emit the reason, mark the branch failed, and sink the status the CAUSE
+-+            /// dictates. Every cancellable step routes through this so the classification
+-+            /// cannot drift per-step again.
+-+            let applyCancellation (ctx: BranchCtx) (what: string) (c: Cancellation) =
+-+                match c with
+-+                | Running -> ()
+-+                | SiblingFailed ->
+-+                    emit $"ERROR: {what} interrupted: a failFast sibling failed"
+-+                    ctx.Failed.Value <- true
+-+                | DeadlineExpired ->
+-+                    emit $"ERROR: {what} aborted: the step's deadline expired"
+-+                    ctx.Failed.Value <- true
+-+                    ctx.Sink BuildStatus.Aborted
+-+
+-+
+-             /// Remaining milliseconds before an absolute deadline, floored at 1.
+-             /// REVIEW FIX (Codex P1, PR #12): the first version handed the FULL
+-             /// timeout budget to every step inside the block, so two 2 s steps
+-@@ -439,11 +493,11 @@ module FogellSide =
+-                     // interruption is collateral. Letting the collateral abort
+-                     // dominate (worstOf puts Aborted above Failure) reported
+-                     // `aborted` where Jenkins reports `failure`.
+-+                    // Routed through the ONE model so the shell path cannot drift from
+-+                    // the wrapper steps again.
+-                     let interruptedBySibling =
+-                         result.Status = BuildStatus.Aborted
+--                        && (match ctx.Interrupt with
+--                            | Some p -> p ()
+--                            | None -> false)
+-+                        && cancellationOf ctx deadline = SiblingFailed
+- 
+-                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
+-                     // an unstable one — `junit` marks the build unstable without
+-@@ -906,8 +960,15 @@ module FogellSide =
+-                     // pipeline runnable — later stages ran and a failFast parent was
+-                     // never told. Jenkins propagates it.
+-                     let postCtx = { ctx with Failed = ref false }
+--                    // A stage's post runs under the same deadline as the stage itself.
+--                    runPostWithDeadline postCtx cwd stage stageStatus.Value None deadline
+-+
+-+                    // MEASURED: a STAGE's `options { timeout }` bounds the stage's STEPS,
+-+                    // not its `post`. Jenkins ran the `aborted` arm after the stage
+-+                    // deadline expired (`cancellation-selects-post-arm`), while a
+-+                    // PIPELINE-level timeout DOES bound post (`options-timeout-wraps-post`).
+-+                    // Passing the stage's own expired deadline into post aborted every arm
+-+                    // before it could run — which would have silently swallowed exactly the
+-+                    // failure notifications a `post { aborted }` exists to send.
+-+                    runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
+-                     if postCtx.Failed.Value then ctx.Failed.Value <- true
+- 
+-             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
+-@@ -1254,71 +1315,29 @@ module FogellSide =
+-                 // workspace, or the enclosing `dir` block's cwd — without removing the
+-                 // directory itself. It is what makes the stash test meaningful.
+-                 | "deleteDir", _ ->
+--                    // Polling here has now been wrong twice: first absent altogether, then
+--                    // checking only the deadline and only BEFORE each top-level entry — so a
+--                    // fail-fast sibling could not stop it, and a single large directory
+--                    // could cross the deadline with no later check. One predicate covering
+--                    // both causes, checked before AND after each entry.
+--                    let stop () =
+--                        let interrupted =
+--                            match ctx.Interrupt with
+--                            | Some p -> (try p () with _ -> false)
+--                            | None -> false
+--
+--                        let expired =
+--                            match remainingMs deadline with
+--                            | Some ms -> ms <= 1
+--                            | None -> false
+--
+--                        interrupted, expired
+--
+-+                    // Polled before AND after each top-level entry: a recursive delete can
+-+                    // itself outlast the deadline. Getting this wrong three times running
+-+                    // is what made FG-101 a ticket rather than another instance fix.
+-                     if Directory.Exists cwd then
+--                        let mutable halt = false
+-+                        let mutable outcome = Running
+- 
+-                         for entry in Directory.GetFileSystemEntries cwd do
+--                            if not halt then
+--                                match stop () with
+--                                | true, _
+--                                | _, true -> halt <- true
+--                                | _ ->
+-+                            if outcome = Running then
+-+                                match cancellationOf ctx deadline with
+-+                                | Running ->
+-                                     try
+-                                         if Directory.Exists entry then Directory.Delete(entry, true)
+-                                         else File.Delete entry
+- 
+--                                        // A single recursive delete can itself outlast the
+--                                        // deadline, so re-check immediately after it.
+--                                        match stop () with
+--                                        | true, _
+--                                        | _, true -> halt <- true
+--                                        | _ -> ()
+-+                                        outcome <- cancellationOf ctx deadline
+-                                     with ex ->
+-                                         emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
+-                                         ctx.Failed.Value <- true
+-                                         ctx.Sink BuildStatus.Failure
+-+                                | c -> outcome <- c
+- 
+--                        if halt then
+--                            // Classify the CAUSE: a sibling's failure is a failure, a
+--                            // deadline is an abort.
+--                            let interrupted, _ = stop ()
+-+                        applyCancellation ctx "deleteDir" outcome
+- 
+--                            if interrupted then
+--                                emit "ERROR: deleteDir interrupted: a failFast sibling failed"
+--                                ctx.Failed.Value <- true
+--                            else
+--                                emit "ERROR: deleteDir aborted: the step's deadline expired"
+--                                ctx.Failed.Value <- true
+--                                ctx.Sink BuildStatus.Aborted
+--
+--                // FG-046. `input` — human approval. MEASURED: Jenkins prints the message
+--                // and "Proceed or Abort", then waits. Under a `timeout` the deadline
+--                // expiring makes the build ABORTED and the following steps do not run.
+--                //
+--                // 22 corpus files use `input`; 10 of them wrap it in a timeout. Without a
+--                // deadline Jenkins waits FOREVER for a human — faithful to reproduce, but
+--                // there is no approver in this engine and no receipt can be taken of a
+--                // pipeline that never ends. So the un-timed form fails closed with a named
+--                // reason rather than silently inventing an approval or an abort: a
+--                // DELIBERATE, documented divergence (see FG-046b for real approval).
+-                 | "input", _ ->
+-                     let message =
+-                         step.Positional
+-@@ -1400,53 +1419,22 @@ module FogellSide =
+-                         //
+-                         // Polling backs off instead of spinning at 50 ms: an `input` under
+-                         // an hour-long timeout woke ~72,000 times for nothing.
+--                        let interruptedBySibling () =
+--                            match ctx.Interrupt with
+--                            | Some p -> (try p () with _ -> false)
+--                            | None -> false
+-+                        // The ONE model. This loop got the cause wrong twice: once by
+-+                        // omitting the sibling check, once by testing expiry first so a
+-+                        // sibling failing in the final sleep lost a tie.
+-+                        let mutable outcome = Running
+- 
+--                        let mutable stop = false
+--                        let mutable bySibling = false
+--
+--                        while not stop do
+--                            // REVIEW FIX (Codex, PR #17 round 3): narrowing to int here
+--                            // wrapped negative for a deadline past Int32.MaxValue ms — a
+--                            // `timeout(time: 30, unit: 'DAYS') { input … }` satisfied
+--                            // `left <= 1` and aborted the prompt IMMEDIATELY. Compare at
+--                            // full width; only the sleep interval is narrowed, and it is
+--                            // bounded by 250 anyway.
+--                            let left = defaultArg (remainingMs deadline) 0L
+--
+--                            // Record WHICH EVENT HAPPENED, not which branch is tested
+--                            // first. Round 8 checked expiry first, so a sibling failing in
+--                            // the final sleep lost; reordering merely swapped the bias, and
+--                            // a deadline that genuinely expired first would then be
+--                            // reported as a sibling interruption. Both are wrong for the
+--                            // same reason — the priority of a test is not evidence about
+--                            // the order of events.
+--                            let siblingNow = interruptedBySibling ()
+--                            let expiredNow = left <= 1L
+--
+--                            if siblingNow || expiredNow then
+--                                stop <- true
+--                                // A deadline that had ALREADY passed on the previous wake
+--                                // is the earlier event; a sibling seen first this wake wins
+--                                // only when the deadline has not yet passed.
+--                                bySibling <- siblingNow && not expiredNow
+--                            else
+-+                        while outcome = Running do
+-+                            match cancellationOf ctx deadline with
+-+                            | Running ->
+-+                                // Full-width comparison; only the sleep narrows, and it is
+-+                                // bounded by 250 anyway. A 30-day deadline once wrapped
+-+                                // negative here and aborted the prompt instantly.
+-+                                let left = defaultArg (remainingMs deadline) 0L
+-                                 System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+-+                            | c -> outcome <- c
+- 
+--                        // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
+--                        // timeout, and a silent abort here would be the defect this
+--                        // project exists to beat. `ERROR:` lines are diagnostics — kept
+--                        // out of the compared output, counted as a reported reason.
+--                        ctx.Failed.Value <- true
+--
+--                        if bySibling then
+--                            emit "ERROR: input interrupted: a failFast sibling failed"
+--                        else
+--                            emit "ERROR: input aborted: the approval deadline expired with no response"
+--                            ctx.Sink BuildStatus.Aborted
+-+                        applyCancellation ctx "input" outcome
+- 
+-                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
+-                 // artifact root, NOT the workspace — which is what makes a stash survive
+-@@ -1476,15 +1464,7 @@ module FogellSide =
+-                         // the archive and junit predicates combine interruption WITH the
+-                         // deadline — so a stash inside a `timeout` could still finish past
+-                         // it. Same predicate everywhere now.
+--                        let abort () =
+--                            let fired (p: (unit -> bool) option) =
+--                                match p with
+--                                | Some f -> (try f () with _ -> false)
+--                                | None -> false
+--
+--                            fired ctx.Interrupt || (match remainingMs deadline with
+--                                                    | Some ms -> ms <= 1
+--                                                    | None -> false)
+-+                        let abort () = cancellationOf ctx deadline <> Running
+- 
+-                         let allowEmpty =
+-                             step.Named
+-@@ -1501,25 +1481,7 @@ module FogellSide =
+-                         let saved, aborted = Stash.save store jobName cwd n includes excludes abort
+- 
+-                         if aborted then
+--                            // REVIEW FIX (Codex, PR #15 round 3): this always reported
+--                            // Aborted, so a stash interrupted because a failFast SIBLING
+--                            // failed turned the build from failure into aborted —
+--                            // exactly the collateral-outranks-cause bug fixed for shell
+--                            // steps in PR #13. The sibling's failure is the cause; only a
+--                            // deadline is genuinely an abort.
+--                            let bySibling =
+--                                match ctx.Interrupt with
+--                                | Some p -> (try p () with _ -> false)
+--                                | None -> false
+--
+--                            emit
+--                                (if bySibling then
+--                                     "ERROR: stash interrupted: a failFast sibling failed"
+--                                 else
+--                                     "ERROR: stash aborted: the step's deadline expired while copying")
+--
+--                            ctx.Failed.Value <- true
+--                            if not bySibling then ctx.Sink BuildStatus.Aborted
+-+                            applyCancellation ctx "stash" (cancellationOf ctx deadline)
+-                         elif List.isEmpty saved && not allowEmpty then
+-                             // MEASURED: Jenkins FAILS the build here (default
+-                             // allowEmpty: false) — the pipeline stops and later steps do
+-@@ -1548,15 +1510,7 @@ module FogellSide =
+-                         ctx.Failed.Value <- true
+-                         ctx.Sink BuildStatus.Failure
+-                     | Some n ->
+--                        let abort () =
+--                            let fired (p: (unit -> bool) option) =
+--                                match p with
+--                                | Some f -> (try f () with _ -> false)
+--                                | None -> false
+--
+--                            fired ctx.Interrupt || (match remainingMs deadline with
+--                                                    | Some ms -> ms <= 1
+--                                                    | None -> false)
+-+                        let abort () = cancellationOf ctx deadline <> Running
+- 
+-                         match Stash.restore store jobName cwd n abort with
+-                         | Result.Error e ->
+-@@ -1568,17 +1522,13 @@ module FogellSide =
+-                             // plain failure, so a `timeout` whose last step is `unstash`
+-                             // selected post { failure } where every other timed-out step
+-                             // selects post { aborted }.
+--                            emit $"ERROR: {e}"
+--                            ctx.Failed.Value <- true
+--
+--                            let bySibling =
+--                                match ctx.Interrupt with
+--                                | Some p -> (try p () with _ -> false)
+--                                | None -> false
+--
+--                            if e.StartsWith "aborted:" && not bySibling then
+--                                ctx.Sink BuildStatus.Aborted
+-+                            if e.StartsWith "aborted:" then
+-+                                applyCancellation ctx "unstash" (cancellationOf ctx deadline)
+-                             else
+-+                                // A MISSING stash is a genuine failure, not a
+-+                                // cancellation, and must not be classified by this model.
+-+                                emit $"ERROR: {e}"
+-+                                ctx.Failed.Value <- true
+-                                 ctx.Sink BuildStatus.Failure
+-                         | Result.Ok _ -> ()
+- 
+diff --git a/evidence/20260730T161459Z-fg-101/corpus-gate.log b/evidence/20260730T161459Z-fg-101/corpus-gate.log
+deleted file mode 100644
+index ec2776e..0000000
+--- a/evidence/20260730T161459Z-fg-101/corpus-gate.log
++++ /dev/null
+@@ -1 +0,0 @@
+-corpus verified: 228/228 files match the pinned manifest
+diff --git a/evidence/20260730T161459Z-fg-101/diffstat.txt b/evidence/20260730T161459Z-fg-101/diffstat.txt
+deleted file mode 100644
+index 5fbb1cf..0000000
+--- a/evidence/20260730T161459Z-fg-101/diffstat.txt
++++ /dev/null
+@@ -1,5 +0,0 @@
+- .../receipts/parallel-always-failfast.receipt.txt  |   4 +-
+- docs/EXECUTION_BOARD.md                            |   4 +-
+- docs/adr/0005-inherited-jenkins-semantics.md       |   3 +
+- src/Fogell.Differential/Fogell.fs                  | 246 ++++++++-------------
+- 4 files changed, 105 insertions(+), 152 deletions(-)
+diff --git a/evidence/20260730T161459Z-fg-101/status-before-commit.txt b/evidence/20260730T161459Z-fg-101/status-before-commit.txt
+deleted file mode 100644
+index 89eb4b1..0000000
+--- a/evidence/20260730T161459Z-fg-101/status-before-commit.txt
++++ /dev/null
+@@ -1,7 +0,0 @@
+- M differential/receipts/parallel-always-failfast.receipt.txt
+- M docs/EXECUTION_BOARD.md
+- M docs/adr/0005-inherited-jenkins-semantics.md
+- M src/Fogell.Differential/Fogell.fs
+-?? differential/cases/cancellation-selects-post-arm.Jenkinsfile
+-?? differential/receipts/cancellation-selects-post-arm.receipt.txt
+-?? evidence/20260730T161459Z-fg-101/
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Controller.Api.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Controller.Api.Tests.log
+deleted file mode 100644
+index 693e50c..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Controller.Api.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m15[37m tests run in [32m00:00:00.1839085[37m for [36mFogell.Controller.Api[37m – [36m15[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Differential.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Differential.Tests.log
+deleted file mode 100644
+index c9980f1..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Differential.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m7[37m tests run in [32m00:00:00.0450429[37m for [36mFogell.Differential.FG-002f user output is never mistaken for engine narration[37m – [36m7[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Domain.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Domain.Tests.log
+deleted file mode 100644
+index f1eecc3..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Domain.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m18[37m tests run in [32m00:00:00.0757886[37m for [36mFogell.Domain[37m – [36m18[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Execution.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Execution.Tests.log
+deleted file mode 100644
+index ae56e54..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Execution.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m40[37m tests run in [32m00:00:12.4824467[37m for [36mFogell.Execution[37m – [36m40[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Groovy.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Groovy.Tests.log
+deleted file mode 100644
+index 712b26e..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Groovy.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m39[37m tests run in [32m00:00:00.1578280[37m for [36mFogell.Groovy[37m – [36m39[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Journal.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Journal.Tests.log
+deleted file mode 100644
+index a1f1f31..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Journal.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m12[37m tests run in [32m00:00:00.1960621[37m for [36mFogell.Journal[37m – [36m12[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Pipeline.Parser.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Pipeline.Parser.Tests.log
+deleted file mode 100644
+index f687059..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Pipeline.Parser.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m37[37m tests run in [32m00:00:00.0765599[37m for [36mFogell.Pipeline.Parser[37m – [36m37[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tests-Fogell.Store.Tests.log b/evidence/20260730T161459Z-fg-101/tests-Fogell.Store.Tests.log
+deleted file mode 100644
+index b2249e0..0000000
+--- a/evidence/20260730T161459Z-fg-101/tests-Fogell.Store.Tests.log
++++ /dev/null
+@@ -1 +0,0 @@
+-EXPECTO! [36m26[37m tests run in [32m00:00:00.2714847[37m for [36mFogell.Store[37m – [36m26[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+diff --git a/evidence/20260730T161459Z-fg-101/tree.txt b/evidence/20260730T161459Z-fg-101/tree.txt
+deleted file mode 100644
+index 7a10645..0000000
+--- a/evidence/20260730T161459Z-fg-101/tree.txt
++++ /dev/null
+@@ -1,1096 +0,0 @@
+-.gitignore
+-Directory.Build.props
+-Fogell.slnx
+-README.md
+-corpus/BASELINE-DECLARATIVE-SCORE.tsv
+-corpus/CORPUS-SHA256SUMS
+-corpus/README.md
+-differential/cases/archive-artifacts.Jenkinsfile
+-differential/cases/archive-empty-fails.Jenkinsfile
+-differential/cases/credentials-file.Jenkinsfile
+-differential/cases/credentials-string.Jenkinsfile
+-differential/cases/credentials-userpass-masking.Jenkinsfile
+-differential/cases/credentials-userpass.Jenkinsfile
+-differential/cases/echo-credential-masking.Jenkinsfile
+-differential/cases/echo-only.Jenkinsfile
+-differential/cases/env-escaped-and-dotted.Jenkinsfile
+-differential/cases/env-escaped-backslash.Jenkinsfile
+-differential/cases/env-quote-override.Jenkinsfile
+-differential/cases/env-quote-provenance.Jenkinsfile
+-differential/cases/env-scoping.Jenkinsfile
+-differential/cases/input-division-in-gstring.Jenkinsfile
+-differential/cases/input-escaped-dollar.Jenkinsfile
+-differential/cases/input-expression-args.Jenkinsfile
+-differential/cases/input-failfast-is-failure.Jenkinsfile
+-differential/cases/input-gstring-expression.Jenkinsfile
+-differential/cases/input-gstring-label.Jenkinsfile
+-differential/cases/input-ok-label.Jenkinsfile
+-differential/cases/input-positional-escaped-dollar.Jenkinsfile
+-differential/cases/input-positional-literal.Jenkinsfile
+-differential/cases/input-slashy-literal.Jenkinsfile
+-differential/cases/input-timeout-aborts.Jenkinsfile
+-differential/cases/junit-failing.Jenkinsfile
+-differential/cases/junit-passing.Jenkinsfile
+-differential/cases/nested-wrappers.Jenkinsfile
+-differential/cases/nonzero-exit.Jenkinsfile
+-differential/cases/options-timeout-pipeline.Jenkinsfile
+-differential/cases/options-timeout-stage.Jenkinsfile
+-differential/cases/options-timeout-wraps-post.Jenkinsfile
+-differential/cases/parallel-always-failfast.Jenkinsfile
+-differential/cases/parallel-failfast.Jenkinsfile
+-differential/cases/parallel-post-selection.Jenkinsfile
+-differential/cases/parallel-siblings-finish.Jenkinsfile
+-differential/cases/post-arm-reselected.Jenkinsfile
+-differential/cases/post-failure-stops-pipeline.Jenkinsfile
+-differential/cases/post-order-failure.Jenkinsfile
+-differential/cases/post-order-success.Jenkinsfile
+-differential/cases/retry-exhausts.Jenkinsfile
+-differential/cases/retry-succeeds.Jenkinsfile
+-differential/cases/sh-escaped-dollar-named-arg.Jenkinsfile
+-differential/cases/shell-and-file.Jenkinsfile
+-differential/cases/stash-empty-fails.Jenkinsfile
+-differential/cases/stash-excludes.Jenkinsfile
+-differential/cases/stash-unstash.Jenkinsfile
+-differential/cases/timeout-block-deadline.Jenkinsfile
+-differential/cases/timeout-days-unit.Jenkinsfile
+-differential/cases/timeout-seconds.Jenkinsfile
+-differential/cases/when-conditions.Jenkinsfile
+-differential/cases/when-context-conditions.Jenkinsfile
+-differential/cases/when-env-expression.Jenkinsfile
+-differential/cases/when-scm-and-equals.Jenkinsfile
+-differential/cases/when-scm-pattern-keys.Jenkinsfile
+-differential/cases/when-siblings-and-jenkins-vars.Jenkinsfile
+-differential/cases/withenv-comma-value.Jenkinsfile
+-differential/cases/withenv-escaped-dollar.Jenkinsfile
+-differential/cases/withenv-path-augmentation.Jenkinsfile
+-differential/cases/withenv-path-last-wins.Jenkinsfile
+-differential/cases/withenv-path-no-base.Jenkinsfile
+-differential/cases/withenv-path-same-list.Jenkinsfile
+-differential/cases/withenv-scoping.Jenkinsfile
+-differential/receipts/archive-artifacts.receipt.txt
+-differential/receipts/archive-empty-fails.receipt.txt
+-differential/receipts/credentials-file.receipt.txt
+-differential/receipts/credentials-string.receipt.txt
+-differential/receipts/credentials-userpass-masking.receipt.txt
+-differential/receipts/credentials-userpass.receipt.txt
+-differential/receipts/echo-credential-masking.receipt.txt
+-differential/receipts/echo-only.receipt.txt
+-differential/receipts/env-escaped-and-dotted.receipt.txt
+-differential/receipts/env-escaped-backslash.receipt.txt
+-differential/receipts/env-quote-override.receipt.txt
+-differential/receipts/env-quote-provenance.receipt.txt
+-differential/receipts/env-scoping.receipt.txt
+-differential/receipts/input-division-in-gstring.receipt.txt
+-differential/receipts/input-escaped-dollar.receipt.txt
+-differential/receipts/input-expression-args.receipt.txt
+-differential/receipts/input-failfast-is-failure.receipt.txt
+-differential/receipts/input-gstring-expression.receipt.txt
+-differential/receipts/input-gstring-label.receipt.txt
+-differential/receipts/input-ok-label.receipt.txt
+-differential/receipts/input-positional-escaped-dollar.receipt.txt
+-differential/receipts/input-positional-literal.receipt.txt
+-differential/receipts/input-slashy-literal.receipt.txt
+-differential/receipts/input-timeout-aborts.receipt.txt
+-differential/receipts/junit-failing.receipt.txt
+-differential/receipts/junit-passing.receipt.txt
+-differential/receipts/nested-wrappers.receipt.txt
+-differential/receipts/nonzero-exit.receipt.txt
+-differential/receipts/options-timeout-pipeline.receipt.txt
+-differential/receipts/options-timeout-stage.receipt.txt
+-differential/receipts/options-timeout-wraps-post.receipt.txt
+-differential/receipts/parallel-always-failfast.receipt.txt
+-differential/receipts/parallel-failfast.receipt.txt
+-differential/receipts/parallel-post-selection.receipt.txt
+-differential/receipts/parallel-siblings-finish.receipt.txt
+-differential/receipts/post-arm-reselected.receipt.txt
+-differential/receipts/post-failure-stops-pipeline.receipt.txt
+-differential/receipts/post-order-failure.receipt.txt
+-differential/receipts/post-order-success.receipt.txt
+-differential/receipts/retry-exhausts.receipt.txt
+-differential/receipts/retry-succeeds.receipt.txt
+-differential/receipts/sh-escaped-dollar-named-arg.receipt.txt
+-differential/receipts/shell-and-file.receipt.txt
+-differential/receipts/stash-empty-fails.receipt.txt
+-differential/receipts/stash-excludes.receipt.txt
+-differential/receipts/stash-unstash.receipt.txt
+-differential/receipts/timeout-block-deadline.receipt.txt
+-differential/receipts/timeout-days-unit.receipt.txt
+-differential/receipts/timeout-seconds.receipt.txt
+-differential/receipts/when-conditions.receipt.txt
+-differential/receipts/when-context-conditions.receipt.txt
+-differential/receipts/when-env-expression.receipt.txt
+-differential/receipts/when-scm-and-equals.receipt.txt
+-differential/receipts/when-scm-pattern-keys.receipt.txt
+-differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
+-differential/receipts/withenv-comma-value.receipt.txt
+-differential/receipts/withenv-escaped-dollar.receipt.txt
+-differential/receipts/withenv-path-augmentation.receipt.txt
+-differential/receipts/withenv-path-last-wins.receipt.txt
+-differential/receipts/withenv-path-no-base.receipt.txt
+-differential/receipts/withenv-path-same-list.receipt.txt
+-differential/receipts/withenv-scoping.receipt.txt
+-docs/EXECUTION_BOARD.md
+-docs/FOGELL-DAY1-BACKLOG.md
+-docs/adr/0001-compatibility-tiers.md
+-docs/adr/0002-interpret-not-lower.md
+-docs/adr/0003-durability.md
+-docs/adr/0004-differential-evidence.md
+-docs/adr/0005-inherited-jenkins-semantics.md
+-docs/adr/0006-single-language.md
+-docs/adr/0007-controller-truth.md
+-docs/adr/0008-agent-boundary.md
+-docs/adr/README.md
+-docs/architecture/BASELINE.md
+-docs/architecture/CHARTER.md
+-evidence/20260729T194840Z-fg-010/SHA256SUMS
+-evidence/20260729T194840Z-fg-010/base-commit.txt
+-evidence/20260729T194840Z-fg-010/build.log
+-evidence/20260729T194840Z-fg-010/candidate.diff
+-evidence/20260729T194840Z-fg-010/corpus-gate.log
+-evidence/20260729T194840Z-fg-010/diffstat.txt
+-evidence/20260729T194840Z-fg-010/fs2.tsv
+-evidence/20260729T194840Z-fg-010/status-before-commit.txt
+-evidence/20260729T194840Z-fg-010/tests-Fogell.Domain.Tests.log
+-evidence/20260729T194840Z-fg-010/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T194840Z-fg-010/tree.txt
+-evidence/20260729T200241Z-fg-013/SHA256SUMS
+-evidence/20260729T200241Z-fg-013/base-commit.txt
+-evidence/20260729T200241Z-fg-013/build.log
+-evidence/20260729T200241Z-fg-013/candidate.diff
+-evidence/20260729T200241Z-fg-013/corpus-gate.log
+-evidence/20260729T200241Z-fg-013/diffstat.txt
+-evidence/20260729T200241Z-fg-013/fs4.tsv
+-evidence/20260729T200241Z-fg-013/status-before-commit.txt
+-evidence/20260729T200241Z-fg-013/tests-Fogell.Domain.Tests.log
+-evidence/20260729T200241Z-fg-013/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T200241Z-fg-013/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T200241Z-fg-013/tree.txt
+-evidence/20260729T203943Z-fg-022/SHA256SUMS
+-evidence/20260729T203943Z-fg-022/base-commit.txt
+-evidence/20260729T203943Z-fg-022/build.log
+-evidence/20260729T203943Z-fg-022/candidate.diff
+-evidence/20260729T203943Z-fg-022/corpus-gate.log
+-evidence/20260729T203943Z-fg-022/diffstat.txt
+-evidence/20260729T203943Z-fg-022/status-before-commit.txt
+-evidence/20260729T203943Z-fg-022/tests-Fogell.Domain.Tests.log
+-evidence/20260729T203943Z-fg-022/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T203943Z-fg-022/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T203943Z-fg-022/tests-Fogell.Store.Tests.log
+-evidence/20260729T203943Z-fg-022/tree.txt
+-evidence/20260729T204732Z-fg-032/SHA256SUMS
+-evidence/20260729T204732Z-fg-032/base-commit.txt
+-evidence/20260729T204732Z-fg-032/build.log
+-evidence/20260729T204732Z-fg-032/candidate.diff
+-evidence/20260729T204732Z-fg-032/corpus-gate.log
+-evidence/20260729T204732Z-fg-032/diffstat.txt
+-evidence/20260729T204732Z-fg-032/status-before-commit.txt
+-evidence/20260729T204732Z-fg-032/tests-Fogell.Domain.Tests.log
+-evidence/20260729T204732Z-fg-032/tests-Fogell.Execution.Tests.log
+-evidence/20260729T204732Z-fg-032/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T204732Z-fg-032/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T204732Z-fg-032/tests-Fogell.Store.Tests.log
+-evidence/20260729T204732Z-fg-032/tree.txt
+-evidence/20260729T210203Z-fg-002/SHA256SUMS
+-evidence/20260729T210203Z-fg-002/base-commit.txt
+-evidence/20260729T210203Z-fg-002/build.log
+-evidence/20260729T210203Z-fg-002/candidate.diff
+-evidence/20260729T210203Z-fg-002/corpus-gate.log
+-evidence/20260729T210203Z-fg-002/diffstat.txt
+-evidence/20260729T210203Z-fg-002/status-before-commit.txt
+-evidence/20260729T210203Z-fg-002/tests-Fogell.Domain.Tests.log
+-evidence/20260729T210203Z-fg-002/tests-Fogell.Execution.Tests.log
+-evidence/20260729T210203Z-fg-002/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T210203Z-fg-002/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T210203Z-fg-002/tests-Fogell.Store.Tests.log
+-evidence/20260729T210203Z-fg-002/tree.txt
+-evidence/20260729T211126Z-fg-002b/SHA256SUMS
+-evidence/20260729T211126Z-fg-002b/base-commit.txt
+-evidence/20260729T211126Z-fg-002b/build.log
+-evidence/20260729T211126Z-fg-002b/candidate.diff
+-evidence/20260729T211126Z-fg-002b/corpus-gate.log
+-evidence/20260729T211126Z-fg-002b/diffstat.txt
+-evidence/20260729T211126Z-fg-002b/status-before-commit.txt
+-evidence/20260729T211126Z-fg-002b/tests-Fogell.Domain.Tests.log
+-evidence/20260729T211126Z-fg-002b/tests-Fogell.Execution.Tests.log
+-evidence/20260729T211126Z-fg-002b/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T211126Z-fg-002b/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T211126Z-fg-002b/tests-Fogell.Store.Tests.log
+-evidence/20260729T211126Z-fg-002b/tree.txt
+-evidence/20260729T212053Z-fg-061/SHA256SUMS
+-evidence/20260729T212053Z-fg-061/base-commit.txt
+-evidence/20260729T212053Z-fg-061/build.log
+-evidence/20260729T212053Z-fg-061/candidate.diff
+-evidence/20260729T212053Z-fg-061/corpus-gate.log
+-evidence/20260729T212053Z-fg-061/diffstat.txt
+-evidence/20260729T212053Z-fg-061/status-before-commit.txt
+-evidence/20260729T212053Z-fg-061/tests-Fogell.Domain.Tests.log
+-evidence/20260729T212053Z-fg-061/tests-Fogell.Execution.Tests.log
+-evidence/20260729T212053Z-fg-061/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T212053Z-fg-061/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T212053Z-fg-061/tests-Fogell.Store.Tests.log
+-evidence/20260729T212053Z-fg-061/tree.txt
+-evidence/20260729T213752Z-fg-060/SHA256SUMS
+-evidence/20260729T213752Z-fg-060/base-commit.txt
+-evidence/20260729T213752Z-fg-060/build.log
+-evidence/20260729T213752Z-fg-060/candidate.diff
+-evidence/20260729T213752Z-fg-060/corpus-gate.log
+-evidence/20260729T213752Z-fg-060/diffstat.txt
+-evidence/20260729T213752Z-fg-060/status-before-commit.txt
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Domain.Tests.log
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Execution.Tests.log
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T213752Z-fg-060/tests-Fogell.Store.Tests.log
+-evidence/20260729T213752Z-fg-060/tree.txt
+-evidence/20260729T220820Z-fg-025/SHA256SUMS
+-evidence/20260729T220820Z-fg-025/base-commit.txt
+-evidence/20260729T220820Z-fg-025/build.log
+-evidence/20260729T220820Z-fg-025/candidate.diff
+-evidence/20260729T220820Z-fg-025/corpus-gate.log
+-evidence/20260729T220820Z-fg-025/diffstat.txt
+-evidence/20260729T220820Z-fg-025/status-before-commit.txt
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Domain.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Execution.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Journal.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T220820Z-fg-025/tests-Fogell.Store.Tests.log
+-evidence/20260729T220820Z-fg-025/tree.txt
+-evidence/20260729T221251Z-fg-070/SHA256SUMS
+-evidence/20260729T221251Z-fg-070/base-commit.txt
+-evidence/20260729T221251Z-fg-070/build.log
+-evidence/20260729T221251Z-fg-070/candidate.diff
+-evidence/20260729T221251Z-fg-070/corpus-gate.log
+-evidence/20260729T221251Z-fg-070/diffstat.txt
+-evidence/20260729T221251Z-fg-070/status-before-commit.txt
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Domain.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Execution.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Journal.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T221251Z-fg-070/tests-Fogell.Store.Tests.log
+-evidence/20260729T221251Z-fg-070/tree.txt
+-evidence/20260729T221733Z-fg-034-035-036/SHA256SUMS
+-evidence/20260729T221733Z-fg-034-035-036/base-commit.txt
+-evidence/20260729T221733Z-fg-034-035-036/build.log
+-evidence/20260729T221733Z-fg-034-035-036/candidate.diff
+-evidence/20260729T221733Z-fg-034-035-036/corpus-gate.log
+-evidence/20260729T221733Z-fg-034-035-036/diffstat.txt
+-evidence/20260729T221733Z-fg-034-035-036/parallel-always-failfast.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/parallel-failfast.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/parallel-siblings-finish.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/retry-exhausts.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/retry-succeeds.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/status-before-commit.txt
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Domain.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Execution.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Journal.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/tests-Fogell.Store.Tests.log
+-evidence/20260729T221733Z-fg-034-035-036/timeout-seconds.receipt.txt
+-evidence/20260729T221733Z-fg-034-035-036/tree.txt
+-evidence/20260729T225353Z-fg-048-049-041b/SHA256SUMS
+-evidence/20260729T225353Z-fg-048-049-041b/base-commit.txt
+-evidence/20260729T225353Z-fg-048-049-041b/build.log
+-evidence/20260729T225353Z-fg-048-049-041b/candidate.diff
+-evidence/20260729T225353Z-fg-048-049-041b/corpus-gate.log
+-evidence/20260729T225353Z-fg-048-049-041b/diffstat.txt
+-evidence/20260729T225353Z-fg-048-049-041b/nested-wrappers.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/post-order-failure.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/post-order-success.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/status-before-commit.txt
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Domain.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Execution.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Journal.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/tests-Fogell.Store.Tests.log
+-evidence/20260729T225353Z-fg-048-049-041b/timeout-block-deadline.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/tree.txt
+-evidence/20260729T225353Z-fg-048-049-041b/when-conditions.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/when-scm-and-equals.receipt.txt
+-evidence/20260729T225353Z-fg-048-049-041b/withenv-scoping.receipt.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/SHA256SUMS
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/base-commit.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/build.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/candidate.diff
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/corpus-gate.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/diffstat.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/post-failure-stops-pipeline.receipt.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/status-before-commit.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Domain.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Execution.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Journal.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tests-Fogell.Store.Tests.log
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/tree.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/when-env-expression.receipt.txt
+-evidence/20260729T233405Z-fg-048-049-041b-rev2/withenv-comma-value.receipt.txt
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/SHA256SUMS
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/base-commit.txt
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/build.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/candidate.diff
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/corpus-gate.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/diffstat.txt
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/parallel-post-selection.receipt.txt
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/status-before-commit.txt
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Domain.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Execution.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Journal.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tests-Fogell.Store.Tests.log
+-evidence/20260729T234950Z-fg-048-049-041b-rev3/tree.txt
+-evidence/20260729T235923Z-fg-034-days-proof/SHA256SUMS
+-evidence/20260729T235923Z-fg-034-days-proof/base-commit.txt
+-evidence/20260729T235923Z-fg-034-days-proof/build.log
+-evidence/20260729T235923Z-fg-034-days-proof/candidate.diff
+-evidence/20260729T235923Z-fg-034-days-proof/corpus-gate.log
+-evidence/20260729T235923Z-fg-034-days-proof/diffstat.txt
+-evidence/20260729T235923Z-fg-034-days-proof/status-before-commit.txt
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Domain.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Execution.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Groovy.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Journal.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/tests-Fogell.Store.Tests.log
+-evidence/20260729T235923Z-fg-034-days-proof/timeout-days-unit.receipt.txt
+-evidence/20260729T235923Z-fg-034-days-proof/tree.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/SHA256SUMS
+-evidence/20260730T001702Z-fg-048-049-round2-4/base-commit.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/build.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/candidate.diff
+-evidence/20260730T001702Z-fg-048-049-round2-4/corpus-gate.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/diffstat.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/post-arm-reselected.receipt.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/status-before-commit.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Domain.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Execution.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Journal.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tests-Fogell.Store.Tests.log
+-evidence/20260730T001702Z-fg-048-049-round2-4/tree.txt
+-evidence/20260730T001702Z-fg-048-049-round2-4/when-siblings-and-jenkins-vars.receipt.txt
+-evidence/20260730T003908Z-fg-041b-path-interp/SHA256SUMS
+-evidence/20260730T003908Z-fg-041b-path-interp/base-commit.txt
+-evidence/20260730T003908Z-fg-041b-path-interp/build.log
+-evidence/20260730T003908Z-fg-041b-path-interp/candidate.diff
+-evidence/20260730T003908Z-fg-041b-path-interp/corpus-gate.log
+-evidence/20260730T003908Z-fg-041b-path-interp/diffstat.txt
+-evidence/20260730T003908Z-fg-041b-path-interp/status-before-commit.txt
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Domain.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Execution.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Journal.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tests-Fogell.Store.Tests.log
+-evidence/20260730T003908Z-fg-041b-path-interp/tree.txt
+-evidence/20260730T003908Z-fg-041b-path-interp/withenv-path-augmentation.receipt.txt
+-evidence/20260730T005503Z-fg-041b-samelist/SHA256SUMS
+-evidence/20260730T005503Z-fg-041b-samelist/base-commit.txt
+-evidence/20260730T005503Z-fg-041b-samelist/build.log
+-evidence/20260730T005503Z-fg-041b-samelist/candidate.diff
+-evidence/20260730T005503Z-fg-041b-samelist/corpus-gate.log
+-evidence/20260730T005503Z-fg-041b-samelist/diffstat.txt
+-evidence/20260730T005503Z-fg-041b-samelist/status-before-commit.txt
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Domain.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Execution.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Journal.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tests-Fogell.Store.Tests.log
+-evidence/20260730T005503Z-fg-041b-samelist/tree.txt
+-evidence/20260730T005503Z-fg-041b-samelist/withenv-path-same-list.receipt.txt
+-evidence/20260730T011512Z-fg-041b-quote-provenance/SHA256SUMS
+-evidence/20260730T011512Z-fg-041b-quote-provenance/base-commit.txt
+-evidence/20260730T011512Z-fg-041b-quote-provenance/build.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/candidate.diff
+-evidence/20260730T011512Z-fg-041b-quote-provenance/corpus-gate.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/diffstat.txt
+-evidence/20260730T011512Z-fg-041b-quote-provenance/env-quote-provenance.receipt.txt
+-evidence/20260730T011512Z-fg-041b-quote-provenance/status-before-commit.txt
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Domain.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Execution.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Journal.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tests-Fogell.Store.Tests.log
+-evidence/20260730T011512Z-fg-041b-quote-provenance/tree.txt
+-evidence/20260730T013558Z-fg-041b-quote-override/SHA256SUMS
+-evidence/20260730T013558Z-fg-041b-quote-override/base-commit.txt
+-evidence/20260730T013558Z-fg-041b-quote-override/build.log
+-evidence/20260730T013558Z-fg-041b-quote-override/candidate.diff
+-evidence/20260730T013558Z-fg-041b-quote-override/corpus-gate.log
+-evidence/20260730T013558Z-fg-041b-quote-override/diffstat.txt
+-evidence/20260730T013558Z-fg-041b-quote-override/env-quote-override.receipt.txt
+-evidence/20260730T013558Z-fg-041b-quote-override/status-before-commit.txt
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Domain.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Execution.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Journal.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tests-Fogell.Store.Tests.log
+-evidence/20260730T013558Z-fg-041b-quote-override/tree.txt
+-evidence/20260730T014751Z-fg-041b-round6/SHA256SUMS
+-evidence/20260730T014751Z-fg-041b-round6/base-commit.txt
+-evidence/20260730T014751Z-fg-041b-round6/build.log
+-evidence/20260730T014751Z-fg-041b-round6/candidate.diff
+-evidence/20260730T014751Z-fg-041b-round6/corpus-gate.log
+-evidence/20260730T014751Z-fg-041b-round6/diffstat.txt
+-evidence/20260730T014751Z-fg-041b-round6/status-before-commit.txt
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Domain.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Execution.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Journal.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tests-Fogell.Store.Tests.log
+-evidence/20260730T014751Z-fg-041b-round6/tree.txt
+-evidence/20260730T020024Z-fg-041b-round6-proof/SHA256SUMS
+-evidence/20260730T020024Z-fg-041b-round6-proof/base-commit.txt
+-evidence/20260730T020024Z-fg-041b-round6-proof/build.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/candidate.diff
+-evidence/20260730T020024Z-fg-041b-round6-proof/corpus-gate.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/diffstat.txt
+-evidence/20260730T020024Z-fg-041b-round6-proof/status-before-commit.txt
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Domain.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Execution.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Journal.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tests-Fogell.Store.Tests.log
+-evidence/20260730T020024Z-fg-041b-round6-proof/tree.txt
+-evidence/20260730T020024Z-fg-041b-round6-proof/withenv-path-no-base.receipt.txt
+-evidence/20260730T020508Z-fg-041b-round7-8/SHA256SUMS
+-evidence/20260730T020508Z-fg-041b-round7-8/base-commit.txt
+-evidence/20260730T020508Z-fg-041b-round7-8/build.log
+-evidence/20260730T020508Z-fg-041b-round7-8/candidate.diff
+-evidence/20260730T020508Z-fg-041b-round7-8/corpus-gate.log
+-evidence/20260730T020508Z-fg-041b-round7-8/diffstat.txt
+-evidence/20260730T020508Z-fg-041b-round7-8/env-escaped-and-dotted.receipt.txt
+-evidence/20260730T020508Z-fg-041b-round7-8/status-before-commit.txt
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Domain.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Execution.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Journal.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tests-Fogell.Store.Tests.log
+-evidence/20260730T020508Z-fg-041b-round7-8/tree.txt
+-evidence/20260730T022037Z-fg-041b-round9/SHA256SUMS
+-evidence/20260730T022037Z-fg-041b-round9/base-commit.txt
+-evidence/20260730T022037Z-fg-041b-round9/build.log
+-evidence/20260730T022037Z-fg-041b-round9/candidate.diff
+-evidence/20260730T022037Z-fg-041b-round9/corpus-gate.log
+-evidence/20260730T022037Z-fg-041b-round9/diffstat.txt
+-evidence/20260730T022037Z-fg-041b-round9/env-escaped-backslash.receipt.txt
+-evidence/20260730T022037Z-fg-041b-round9/status-before-commit.txt
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Domain.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Execution.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Journal.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tests-Fogell.Store.Tests.log
+-evidence/20260730T022037Z-fg-041b-round9/tree.txt
+-evidence/20260730T023436Z-fg-043-junit-abort/SHA256SUMS
+-evidence/20260730T023436Z-fg-043-junit-abort/base-commit.txt
+-evidence/20260730T023436Z-fg-043-junit-abort/build.log
+-evidence/20260730T023436Z-fg-043-junit-abort/candidate.diff
+-evidence/20260730T023436Z-fg-043-junit-abort/corpus-gate.log
+-evidence/20260730T023436Z-fg-043-junit-abort/diffstat.txt
+-evidence/20260730T023436Z-fg-043-junit-abort/status-before-commit.txt
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Domain.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Execution.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Journal.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tests-Fogell.Store.Tests.log
+-evidence/20260730T023436Z-fg-043-junit-abort/tree.txt
+-evidence/20260730T024740Z-fg-041b-round11/SHA256SUMS
+-evidence/20260730T024740Z-fg-041b-round11/base-commit.txt
+-evidence/20260730T024740Z-fg-041b-round11/build.log
+-evidence/20260730T024740Z-fg-041b-round11/candidate.diff
+-evidence/20260730T024740Z-fg-041b-round11/corpus-gate.log
+-evidence/20260730T024740Z-fg-041b-round11/diffstat.txt
+-evidence/20260730T024740Z-fg-041b-round11/status-before-commit.txt
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Domain.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Execution.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Journal.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tests-Fogell.Store.Tests.log
+-evidence/20260730T024740Z-fg-041b-round11/tree.txt
+-evidence/20260730T024740Z-fg-041b-round11/withenv-path-last-wins.receipt.txt
+-evidence/20260730T030053Z-fg-043-junit-nomatch/SHA256SUMS
+-evidence/20260730T030053Z-fg-043-junit-nomatch/base-commit.txt
+-evidence/20260730T030053Z-fg-043-junit-nomatch/build.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/candidate.diff
+-evidence/20260730T030053Z-fg-043-junit-nomatch/corpus-gate.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/diffstat.txt
+-evidence/20260730T030053Z-fg-043-junit-nomatch/status-before-commit.txt
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Domain.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Execution.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Journal.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tests-Fogell.Store.Tests.log
+-evidence/20260730T030053Z-fg-043-junit-nomatch/tree.txt
+-evidence/20260730T031747Z-fg-041b-round13/SHA256SUMS
+-evidence/20260730T031747Z-fg-041b-round13/base-commit.txt
+-evidence/20260730T031747Z-fg-041b-round13/build.log
+-evidence/20260730T031747Z-fg-041b-round13/candidate.diff
+-evidence/20260730T031747Z-fg-041b-round13/corpus-gate.log
+-evidence/20260730T031747Z-fg-041b-round13/diffstat.txt
+-evidence/20260730T031747Z-fg-041b-round13/status-before-commit.txt
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Domain.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Execution.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Journal.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tests-Fogell.Store.Tests.log
+-evidence/20260730T031747Z-fg-041b-round13/tree.txt
+-evidence/20260730T031747Z-fg-041b-round13/withenv-escaped-dollar.receipt.txt
+-evidence/20260730T033801Z-fg-044-047-010b/SHA256SUMS
+-evidence/20260730T033801Z-fg-044-047-010b/base-commit.txt
+-evidence/20260730T033801Z-fg-044-047-010b/build.log
+-evidence/20260730T033801Z-fg-044-047-010b/candidate.diff
+-evidence/20260730T033801Z-fg-044-047-010b/corpus-gate.log
+-evidence/20260730T033801Z-fg-044-047-010b/credentials-string.receipt.txt
+-evidence/20260730T033801Z-fg-044-047-010b/credentials-userpass.receipt.txt
+-evidence/20260730T033801Z-fg-044-047-010b/diffstat.txt
+-evidence/20260730T033801Z-fg-044-047-010b/stash-unstash.receipt.txt
+-evidence/20260730T033801Z-fg-044-047-010b/status-before-commit.txt
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Domain.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Execution.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Journal.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tests-Fogell.Store.Tests.log
+-evidence/20260730T033801Z-fg-044-047-010b/tree.txt
+-evidence/20260730T043449Z-fg-044-047-review1/SHA256SUMS
+-evidence/20260730T043449Z-fg-044-047-review1/base-commit.txt
+-evidence/20260730T043449Z-fg-044-047-review1/build.log
+-evidence/20260730T043449Z-fg-044-047-review1/candidate.diff
+-evidence/20260730T043449Z-fg-044-047-review1/corpus-gate.log
+-evidence/20260730T043449Z-fg-044-047-review1/credentials-file.receipt.txt
+-evidence/20260730T043449Z-fg-044-047-review1/diffstat.txt
+-evidence/20260730T043449Z-fg-044-047-review1/status-before-commit.txt
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Domain.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Execution.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Journal.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tests-Fogell.Store.Tests.log
+-evidence/20260730T043449Z-fg-044-047-review1/tree.txt
+-evidence/20260730T080548Z-fg-044-047-review2/SHA256SUMS
+-evidence/20260730T080548Z-fg-044-047-review2/base-commit.txt
+-evidence/20260730T080548Z-fg-044-047-review2/build.log
+-evidence/20260730T080548Z-fg-044-047-review2/candidate.diff
+-evidence/20260730T080548Z-fg-044-047-review2/corpus-gate.log
+-evidence/20260730T080548Z-fg-044-047-review2/credentials-userpass-masking.receipt.txt
+-evidence/20260730T080548Z-fg-044-047-review2/diffstat.txt
+-evidence/20260730T080548Z-fg-044-047-review2/stash-empty-fails.receipt.txt
+-evidence/20260730T080548Z-fg-044-047-review2/status-before-commit.txt
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Domain.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Execution.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Journal.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tests-Fogell.Store.Tests.log
+-evidence/20260730T080548Z-fg-044-047-review2/tree.txt
+-evidence/20260730T082401Z-fg-044-047-review3/SHA256SUMS
+-evidence/20260730T082401Z-fg-044-047-review3/base-commit.txt
+-evidence/20260730T082401Z-fg-044-047-review3/build.log
+-evidence/20260730T082401Z-fg-044-047-review3/candidate.diff
+-evidence/20260730T082401Z-fg-044-047-review3/corpus-gate.log
+-evidence/20260730T082401Z-fg-044-047-review3/diffstat.txt
+-evidence/20260730T082401Z-fg-044-047-review3/status-before-commit.txt
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Domain.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Execution.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Journal.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tests-Fogell.Store.Tests.log
+-evidence/20260730T082401Z-fg-044-047-review3/tree.txt
+-evidence/20260730T083709Z-fg-047-review4/SHA256SUMS
+-evidence/20260730T083709Z-fg-047-review4/base-commit.txt
+-evidence/20260730T083709Z-fg-047-review4/build.log
+-evidence/20260730T083709Z-fg-047-review4/candidate.diff
+-evidence/20260730T083709Z-fg-047-review4/corpus-gate.log
+-evidence/20260730T083709Z-fg-047-review4/diffstat.txt
+-evidence/20260730T083709Z-fg-047-review4/stash-excludes.receipt.txt
+-evidence/20260730T083709Z-fg-047-review4/status-before-commit.txt
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Domain.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Execution.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Journal.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tests-Fogell.Store.Tests.log
+-evidence/20260730T083709Z-fg-047-review4/tree.txt
+-evidence/20260730T085319Z-fg-044-047-review5/SHA256SUMS
+-evidence/20260730T085319Z-fg-044-047-review5/base-commit.txt
+-evidence/20260730T085319Z-fg-044-047-review5/build.log
+-evidence/20260730T085319Z-fg-044-047-review5/candidate.diff
+-evidence/20260730T085319Z-fg-044-047-review5/corpus-gate.log
+-evidence/20260730T085319Z-fg-044-047-review5/diffstat.txt
+-evidence/20260730T085319Z-fg-044-047-review5/status-before-commit.txt
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Domain.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Execution.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Journal.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tests-Fogell.Store.Tests.log
+-evidence/20260730T085319Z-fg-044-047-review5/tree.txt
+-evidence/20260730T091612Z-fg-048b/SHA256SUMS
+-evidence/20260730T091612Z-fg-048b/base-commit.txt
+-evidence/20260730T091612Z-fg-048b/build.log
+-evidence/20260730T091612Z-fg-048b/candidate.diff
+-evidence/20260730T091612Z-fg-048b/corpus-gate.log
+-evidence/20260730T091612Z-fg-048b/diffstat.txt
+-evidence/20260730T091612Z-fg-048b/status-before-commit.txt
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Domain.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Execution.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Journal.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T091612Z-fg-048b/tests-Fogell.Store.Tests.log
+-evidence/20260730T091612Z-fg-048b/tree.txt
+-evidence/20260730T091612Z-fg-048b/when-context-conditions.receipt.txt
+-evidence/20260730T092803Z-fg-045/SHA256SUMS
+-evidence/20260730T092803Z-fg-045/base-commit.txt
+-evidence/20260730T092803Z-fg-045/build.log
+-evidence/20260730T092803Z-fg-045/candidate.diff
+-evidence/20260730T092803Z-fg-045/corpus-gate.log
+-evidence/20260730T092803Z-fg-045/diffstat.txt
+-evidence/20260730T092803Z-fg-045/options-timeout-pipeline.receipt.txt
+-evidence/20260730T092803Z-fg-045/options-timeout-stage.receipt.txt
+-evidence/20260730T092803Z-fg-045/status-before-commit.txt
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Domain.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Execution.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Journal.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T092803Z-fg-045/tests-Fogell.Store.Tests.log
+-evidence/20260730T092803Z-fg-045/tree.txt
+-evidence/20260730T094046Z-fg-048b-045-review1/SHA256SUMS
+-evidence/20260730T094046Z-fg-048b-045-review1/base-commit.txt
+-evidence/20260730T094046Z-fg-048b-045-review1/build.log
+-evidence/20260730T094046Z-fg-048b-045-review1/candidate.diff
+-evidence/20260730T094046Z-fg-048b-045-review1/corpus-gate.log
+-evidence/20260730T094046Z-fg-048b-045-review1/diffstat.txt
+-evidence/20260730T094046Z-fg-048b-045-review1/status-before-commit.txt
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Domain.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Execution.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Journal.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tests-Fogell.Store.Tests.log
+-evidence/20260730T094046Z-fg-048b-045-review1/tree.txt
+-evidence/20260730T095857Z-fg-048b-review2/SHA256SUMS
+-evidence/20260730T095857Z-fg-048b-review2/base-commit.txt
+-evidence/20260730T095857Z-fg-048b-review2/build.log
+-evidence/20260730T095857Z-fg-048b-review2/candidate.diff
+-evidence/20260730T095857Z-fg-048b-review2/corpus-gate.log
+-evidence/20260730T095857Z-fg-048b-review2/diffstat.txt
+-evidence/20260730T095857Z-fg-048b-review2/status-before-commit.txt
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Domain.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Execution.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Journal.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tests-Fogell.Store.Tests.log
+-evidence/20260730T095857Z-fg-048b-review2/tree.txt
+-evidence/20260730T095857Z-fg-048b-review2/when-scm-pattern-keys.receipt.txt
+-evidence/20260730T101727Z-fg-048b-review3/SHA256SUMS
+-evidence/20260730T101727Z-fg-048b-review3/base-commit.txt
+-evidence/20260730T101727Z-fg-048b-review3/build.log
+-evidence/20260730T101727Z-fg-048b-review3/candidate.diff
+-evidence/20260730T101727Z-fg-048b-review3/corpus-gate.log
+-evidence/20260730T101727Z-fg-048b-review3/diffstat.txt
+-evidence/20260730T101727Z-fg-048b-review3/options-timeout-wraps-post.receipt.txt
+-evidence/20260730T101727Z-fg-048b-review3/status-before-commit.txt
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Domain.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Execution.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Journal.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tests-Fogell.Store.Tests.log
+-evidence/20260730T101727Z-fg-048b-review3/tree.txt
+-evidence/20260730T105055Z-fg-048b-review4/SHA256SUMS
+-evidence/20260730T105055Z-fg-048b-review4/base-commit.txt
+-evidence/20260730T105055Z-fg-048b-review4/build.log
+-evidence/20260730T105055Z-fg-048b-review4/candidate.diff
+-evidence/20260730T105055Z-fg-048b-review4/corpus-gate.log
+-evidence/20260730T105055Z-fg-048b-review4/diffstat.txt
+-evidence/20260730T105055Z-fg-048b-review4/status-before-commit.txt
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Domain.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Execution.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Journal.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tests-Fogell.Store.Tests.log
+-evidence/20260730T105055Z-fg-048b-review4/tree.txt
+-evidence/20260730T110857Z-fg-002f/SHA256SUMS
+-evidence/20260730T110857Z-fg-002f/base-commit.txt
+-evidence/20260730T110857Z-fg-002f/build.log
+-evidence/20260730T110857Z-fg-002f/candidate.diff
+-evidence/20260730T110857Z-fg-002f/corpus-gate.log
+-evidence/20260730T110857Z-fg-002f/diffstat.txt
+-evidence/20260730T110857Z-fg-002f/status-before-commit.txt
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Domain.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Execution.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Journal.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T110857Z-fg-002f/tests-Fogell.Store.Tests.log
+-evidence/20260730T110857Z-fg-002f/tree.txt
+-evidence/20260730T114214Z-fg-002f-acceptance/SHA256SUMS
+-evidence/20260730T114214Z-fg-002f-acceptance/base-commit.txt
+-evidence/20260730T114214Z-fg-002f-acceptance/build.log
+-evidence/20260730T114214Z-fg-002f-acceptance/candidate.diff
+-evidence/20260730T114214Z-fg-002f-acceptance/corpus-gate.log
+-evidence/20260730T114214Z-fg-002f-acceptance/diffstat.txt
+-evidence/20260730T114214Z-fg-002f-acceptance/status-before-commit.txt
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Differential.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Domain.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Execution.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Journal.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tests-Fogell.Store.Tests.log
+-evidence/20260730T114214Z-fg-002f-acceptance/tree.txt
+-evidence/20260730T120451Z-fg-002f-solution/SHA256SUMS
+-evidence/20260730T120451Z-fg-002f-solution/base-commit.txt
+-evidence/20260730T120451Z-fg-002f-solution/build.log
+-evidence/20260730T120451Z-fg-002f-solution/candidate.diff
+-evidence/20260730T120451Z-fg-002f-solution/corpus-gate.log
+-evidence/20260730T120451Z-fg-002f-solution/diffstat.txt
+-evidence/20260730T120451Z-fg-002f-solution/status-before-commit.txt
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Differential.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Domain.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Execution.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Journal.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tests-Fogell.Store.Tests.log
+-evidence/20260730T120451Z-fg-002f-solution/tree.txt
+-evidence/20260730T122700Z-fg-046/SHA256SUMS
+-evidence/20260730T122700Z-fg-046/base-commit.txt
+-evidence/20260730T122700Z-fg-046/build.log
+-evidence/20260730T122700Z-fg-046/candidate.diff
+-evidence/20260730T122700Z-fg-046/corpus-gate.log
+-evidence/20260730T122700Z-fg-046/diffstat.txt
+-evidence/20260730T122700Z-fg-046/input-timeout-aborts.receipt.txt
+-evidence/20260730T122700Z-fg-046/status-before-commit.txt
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Differential.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Domain.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Execution.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Journal.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T122700Z-fg-046/tests-Fogell.Store.Tests.log
+-evidence/20260730T122700Z-fg-046/tree.txt
+-evidence/20260730T123729Z-fg-046-review1/SHA256SUMS
+-evidence/20260730T123729Z-fg-046-review1/base-commit.txt
+-evidence/20260730T123729Z-fg-046-review1/build.log
+-evidence/20260730T123729Z-fg-046-review1/candidate.diff
+-evidence/20260730T123729Z-fg-046-review1/corpus-gate.log
+-evidence/20260730T123729Z-fg-046-review1/diffstat.txt
+-evidence/20260730T123729Z-fg-046-review1/input-failfast-is-failure.receipt.txt
+-evidence/20260730T123729Z-fg-046-review1/input-ok-label.receipt.txt
+-evidence/20260730T123729Z-fg-046-review1/status-before-commit.txt
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Differential.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Domain.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Execution.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Journal.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tests-Fogell.Store.Tests.log
+-evidence/20260730T123729Z-fg-046-review1/tree.txt
+-evidence/20260730T130006Z-fg-046-review2/SHA256SUMS
+-evidence/20260730T130006Z-fg-046-review2/base-commit.txt
+-evidence/20260730T130006Z-fg-046-review2/build.log
+-evidence/20260730T130006Z-fg-046-review2/candidate.diff
+-evidence/20260730T130006Z-fg-046-review2/corpus-gate.log
+-evidence/20260730T130006Z-fg-046-review2/diffstat.txt
+-evidence/20260730T130006Z-fg-046-review2/input-gstring-label.receipt.txt
+-evidence/20260730T130006Z-fg-046-review2/status-before-commit.txt
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Differential.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Domain.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Execution.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Journal.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tests-Fogell.Store.Tests.log
+-evidence/20260730T130006Z-fg-046-review2/tree.txt
+-evidence/20260730T131930Z-fg-046-review3/SHA256SUMS
+-evidence/20260730T131930Z-fg-046-review3/base-commit.txt
+-evidence/20260730T131930Z-fg-046-review3/build.log
+-evidence/20260730T131930Z-fg-046-review3/candidate.diff
+-evidence/20260730T131930Z-fg-046-review3/corpus-gate.log
+-evidence/20260730T131930Z-fg-046-review3/diffstat.txt
+-evidence/20260730T131930Z-fg-046-review3/input-positional-literal.receipt.txt
+-evidence/20260730T131930Z-fg-046-review3/sh-escaped-dollar-named-arg.receipt.txt
+-evidence/20260730T131930Z-fg-046-review3/status-before-commit.txt
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Differential.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Domain.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Execution.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Journal.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tests-Fogell.Store.Tests.log
+-evidence/20260730T131930Z-fg-046-review3/tree.txt
+-evidence/20260730T134032Z-fg-046-review4/SHA256SUMS
+-evidence/20260730T134032Z-fg-046-review4/base-commit.txt
+-evidence/20260730T134032Z-fg-046-review4/build.log
+-evidence/20260730T134032Z-fg-046-review4/candidate.diff
+-evidence/20260730T134032Z-fg-046-review4/corpus-gate.log
+-evidence/20260730T134032Z-fg-046-review4/diffstat.txt
+-evidence/20260730T134032Z-fg-046-review4/input-escaped-dollar.receipt.txt
+-evidence/20260730T134032Z-fg-046-review4/status-before-commit.txt
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Differential.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Domain.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Execution.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Journal.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tests-Fogell.Store.Tests.log
+-evidence/20260730T134032Z-fg-046-review4/tree.txt
+-evidence/20260730T135935Z-fg-046-review5/SHA256SUMS
+-evidence/20260730T135935Z-fg-046-review5/base-commit.txt
+-evidence/20260730T135935Z-fg-046-review5/build.log
+-evidence/20260730T135935Z-fg-046-review5/candidate.diff
+-evidence/20260730T135935Z-fg-046-review5/corpus-gate.log
+-evidence/20260730T135935Z-fg-046-review5/diffstat.txt
+-evidence/20260730T135935Z-fg-046-review5/input-gstring-expression.receipt.txt
+-evidence/20260730T135935Z-fg-046-review5/input-positional-escaped-dollar.receipt.txt
+-evidence/20260730T135935Z-fg-046-review5/status-before-commit.txt
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Differential.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Domain.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Execution.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Journal.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tests-Fogell.Store.Tests.log
+-evidence/20260730T135935Z-fg-046-review5/tree.txt
+-evidence/20260730T142415Z-fg-046-review6/SHA256SUMS
+-evidence/20260730T142415Z-fg-046-review6/base-commit.txt
+-evidence/20260730T142415Z-fg-046-review6/build.log
+-evidence/20260730T142415Z-fg-046-review6/candidate.diff
+-evidence/20260730T142415Z-fg-046-review6/corpus-gate.log
+-evidence/20260730T142415Z-fg-046-review6/diffstat.txt
+-evidence/20260730T142415Z-fg-046-review6/input-expression-args.receipt.txt
+-evidence/20260730T142415Z-fg-046-review6/status-before-commit.txt
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Differential.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Domain.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Execution.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Journal.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tests-Fogell.Store.Tests.log
+-evidence/20260730T142415Z-fg-046-review6/tree.txt
+-evidence/20260730T145513Z-fg-046-review7/SHA256SUMS
+-evidence/20260730T145513Z-fg-046-review7/base-commit.txt
+-evidence/20260730T145513Z-fg-046-review7/build.log
+-evidence/20260730T145513Z-fg-046-review7/candidate.diff
+-evidence/20260730T145513Z-fg-046-review7/corpus-gate.log
+-evidence/20260730T145513Z-fg-046-review7/diffstat.txt
+-evidence/20260730T145513Z-fg-046-review7/input-slashy-literal.receipt.txt
+-evidence/20260730T145513Z-fg-046-review7/status-before-commit.txt
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Differential.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Domain.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Execution.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Journal.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tests-Fogell.Store.Tests.log
+-evidence/20260730T145513Z-fg-046-review7/tree.txt
+-evidence/20260730T151424Z-fg-046-review8/SHA256SUMS
+-evidence/20260730T151424Z-fg-046-review8/base-commit.txt
+-evidence/20260730T151424Z-fg-046-review8/build.log
+-evidence/20260730T151424Z-fg-046-review8/candidate.diff
+-evidence/20260730T151424Z-fg-046-review8/corpus-gate.log
+-evidence/20260730T151424Z-fg-046-review8/diffstat.txt
+-evidence/20260730T151424Z-fg-046-review8/input-division-in-gstring.receipt.txt
+-evidence/20260730T151424Z-fg-046-review8/status-before-commit.txt
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Differential.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Domain.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Execution.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Journal.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tests-Fogell.Store.Tests.log
+-evidence/20260730T151424Z-fg-046-review8/tree.txt
+-evidence/20260730T153413Z-board-reorder/SHA256SUMS
+-evidence/20260730T153413Z-board-reorder/base-commit.txt
+-evidence/20260730T153413Z-board-reorder/build.log
+-evidence/20260730T153413Z-board-reorder/candidate.diff
+-evidence/20260730T153413Z-board-reorder/corpus-gate.log
+-evidence/20260730T153413Z-board-reorder/diffstat.txt
+-evidence/20260730T153413Z-board-reorder/status-before-commit.txt
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Differential.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Domain.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Execution.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Journal.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T153413Z-board-reorder/tests-Fogell.Store.Tests.log
+-evidence/20260730T153413Z-board-reorder/tree.txt
+-evidence/20260730T153413Z-fg-044b-echo/SHA256SUMS
+-evidence/20260730T153413Z-fg-044b-echo/base-commit.txt
+-evidence/20260730T153413Z-fg-044b-echo/build.log
+-evidence/20260730T153413Z-fg-044b-echo/candidate.diff
+-evidence/20260730T153413Z-fg-044b-echo/corpus-gate.log
+-evidence/20260730T153413Z-fg-044b-echo/diffstat.txt
+-evidence/20260730T153413Z-fg-044b-echo/echo-credential-masking.receipt.txt
+-evidence/20260730T153413Z-fg-044b-echo/status-before-commit.txt
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Differential.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Domain.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Execution.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Journal.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tests-Fogell.Store.Tests.log
+-evidence/20260730T153413Z-fg-044b-echo/tree.txt
+-evidence/20260730T154305Z-fg-044b-echo-review1/SHA256SUMS
+-evidence/20260730T154305Z-fg-044b-echo-review1/base-commit.txt
+-evidence/20260730T154305Z-fg-044b-echo-review1/build.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/candidate.diff
+-evidence/20260730T154305Z-fg-044b-echo-review1/corpus-gate.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/diffstat.txt
+-evidence/20260730T154305Z-fg-044b-echo-review1/status-before-commit.txt
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Controller.Api.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Differential.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Domain.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Execution.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Groovy.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Journal.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Pipeline.Parser.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tests-Fogell.Store.Tests.log
+-evidence/20260730T154305Z-fg-044b-echo-review1/tree.txt
+-evidence/README.md
+-global.json
+-scripts/build-and-test.sh
+-scripts/pg-test-db.sh
+-scripts/provision-credentials.sh
+-scripts/review-rounds.bb
+-scripts/run-differential.sh
+-scripts/seal-evidence.sh
+-scripts/verify-corpus.sh
+-src/Fogell.Admission/Errors.fs
+-src/Fogell.Admission/Fogell.Admission.fsproj
+-src/Fogell.Admission/Limits.fs
+-src/Fogell.Controller.Api/Authorization.fs
+-src/Fogell.Controller.Api/Contracts.fs
+-src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+-src/Fogell.Controller.Api/Router.fs
+-src/Fogell.Differential/Compare.fs
+-src/Fogell.Differential/Fogell.Differential.fsproj
+-src/Fogell.Differential/Fogell.fs
+-src/Fogell.Differential/Jenkins.fs
+-src/Fogell.Differential/Trace.fs
+-src/Fogell.Domain/Fogell.Domain.fsproj
+-src/Fogell.Domain/Ids.fs
+-src/Fogell.Domain/Model.fs
+-src/Fogell.Domain/Status.fs
+-src/Fogell.Execution/Credentials.fs
+-src/Fogell.Execution/Executor.fs
+-src/Fogell.Execution/Fogell.Execution.fsproj
+-src/Fogell.Execution/Native.fs
+-src/Fogell.Execution/ProcessGroup.fs
+-src/Fogell.Execution/Publish.fs
+-src/Fogell.Execution/Secrets.fs
+-src/Fogell.Execution/Workspace.fs
+-src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj
+-src/Fogell.Groovy.Interpreter/Interpreter.fs
+-src/Fogell.Groovy.Interpreter/Sandbox.fs
+-src/Fogell.Groovy.Interpreter/Value.fs
+-src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj
+-src/Fogell.Groovy.Parser/Parser.fs
+-src/Fogell.Groovy/Ast.fs
+-src/Fogell.Groovy/Fogell.Groovy.fsproj
+-src/Fogell.Ir/Fogell.Ir.fsproj
+-src/Fogell.Ir/Pipeline.fs
+-src/Fogell.Ir/Position.fs
+-src/Fogell.Journal/Fogell.Journal.fsproj
+-src/Fogell.Journal/Journal.fs
+-src/Fogell.Journal/Records.fs
+-src/Fogell.Journal/Resume.fs
+-src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj
+-src/Fogell.Pipeline.Parser/Lexeme.fs
+-src/Fogell.Pipeline.Parser/Parser.fs
+-src/Fogell.Store/Fogell.Store.fsproj
+-src/Fogell.Store/Migrations.fs
+-src/Fogell.Store/Store.fs
+-src/Fogell.Store/migrations/0001_controller_truth.sql
+-src/Fogell.Store/migrations/0002_scheduler.sql
+-tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+-tests/Fogell.Controller.Api.Tests/Tests.fs
+-tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
+-tests/Fogell.Differential.Tests/Tests.fs
+-tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj
+-tests/Fogell.Domain.Tests/Tests.fs
+-tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj
+-tests/Fogell.Execution.Tests/Tests.fs
+-tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj
+-tests/Fogell.Groovy.Tests/Tests.fs
+-tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj
+-tests/Fogell.Journal.Tests/Tests.fs
+-tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj
+-tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+-tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj
+-tests/Fogell.Store.Tests/Tests.fs
+-tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj
+-tools/Fogell.Corpus.Score/Program.fs
+-tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj
+-tools/Fogell.Crash.Harness/Program.fs
+-tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+-tools/Fogell.Differential.Cli/Program.fs
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index eb7e7fc..627b904 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -366,18 +366,22 @@ module FogellSide =
+                     | Some p -> (try p () with _ -> false)
+                     | None -> false
+ 
+-                match expiredNow, siblingNow with
+-                | false, false -> Running
+-                | true, false -> DeadlineExpired
+-                | false, true -> SiblingFailed
+-                | true, true ->
+-                    // Both hold: the EARLIER event is the cause. The sibling records when
+-                    // it signalled; the deadline's instant is the deadline itself.
+-                    let siblingAt = ctx.SiblingFailedAt.Value
+-                    let deadlineAt = defaultArg deadline Int64.MaxValue
++                // The two predicates are sampled SEPARATELY, so the boolean pair cannot be
++                // trusted to describe ordering: the deadline can pass between reading
++                // `expiredNow` and reading `siblingNow`, and the sibling stamps its time
++                // BEFORE calling Cancel(), so a stamp can exist while the token still reads
++                // clear. Both windows produce a tuple that says one thing and a clock that
++                // says another.
++                //
++                // So once EITHER event is observed, classify by the recorded TIMES.
++                let siblingAt = ctx.SiblingFailedAt.Value
++                let deadlineAt = defaultArg deadline Int64.MaxValue
++                let siblingObserved = siblingNow || siblingAt >= 0L
+ 
+-                    if siblingAt >= 0L && siblingAt < deadlineAt then SiblingFailed
+-                    else DeadlineExpired
++                if not (expiredNow || siblingObserved) then Running
++                elif siblingObserved && siblingAt >= 0L && siblingAt < deadlineAt then SiblingFailed
++                elif expiredNow then DeadlineExpired
++                else SiblingFailed
+ 
+             /// Emit the reason, mark the branch failed, and sink the status the CAUSE
+             /// dictates. Every cancellable step routes through this so the classification

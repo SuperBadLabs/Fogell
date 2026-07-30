@@ -88,6 +88,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 - `input` prints its message and `Proceed or Abort` and then WAITS. Under a `timeout`,
   the deadline expiring makes the build **ABORTED** and the following step does not run.
   (Proven: `input-timeout-aborts`.)
+- A **stage's** `options { timeout }` bounds that stage's STEPS, not its `post`: the
+  `aborted` arm still runs after the deadline expires. A **pipeline-level** timeout DOES
+  bound `post`. (Proven: `cancellation-selects-post-arm`, `options-timeout-wraps-post`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.
