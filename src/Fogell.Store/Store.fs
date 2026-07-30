@@ -341,6 +341,168 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("k", kind) |> ignore
         cmd.ExecuteScalar() :?> int64 |> int
 
+    /// FG-061. Claim the next offerable attempt for an agent.
+    ///
+    /// Serialised per tenant with a transaction advisory lock, and candidates are
+    /// selected FOR UPDATE SKIP LOCKED so two schedulers never hand the same
+    /// attempt to two agents. Capability containment is checked in SQL rather
+    /// than in application code, so a mismatch cannot be waved through.
+    member _.ClaimNext
+        (org: OrganizationId, agentId: string, trustPool: string, capabilities: string list, leaseSeconds: int)
+        : Result<(AttemptId * NodeId * BuildId * Fence) option, string> =
+        use conn = openConn ()
+        use tx = conn.BeginTransaction()
+
+        try
+            use lock = conn.CreateCommand()
+            lock.Transaction <- tx
+            lock.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o))"
+            lock.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+            lock.ExecuteNonQuery() |> ignore
+
+            use pick = conn.CreateCommand()
+            pick.Transaction <- tx
+            pick.CommandText <-
+                "SELECT a.id, n.id, n.build_id
+                 FROM attempts a
+                 JOIN nodes n ON n.id = a.node_id AND n.organization_id = a.organization_id
+                 WHERE a.organization_id = @o
+                   AND a.state = 'queued'
+                   AND n.required_trust_pool = @pool
+                   AND n.required_capabilities <@ @caps
+                 ORDER BY a.created_at, a.id
+                 FOR UPDATE OF a SKIP LOCKED
+                 LIMIT 1"
+            pick.Parameters.AddWithValue("o", org.Value) |> ignore
+            pick.Parameters.AddWithValue("pool", trustPool) |> ignore
+            pick.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
+
+            use reader = pick.ExecuteReader()
+
+            if not (reader.Read()) then
+                reader.Close()
+                tx.Commit()
+                Ok None
+            else
+                let attemptId = reader.GetGuid 0
+                let nodeId = reader.GetGuid 1
+                let buildId = reader.GetGuid 2
+                reader.Close()
+
+                use offer = conn.CreateCommand()
+                offer.Transaction <- tx
+                offer.CommandText <-
+                    "UPDATE attempts
+                        SET fence = fence + 1, state = 'offered', lease_owner = @agent,
+                            lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
+                      WHERE organization_id = @o AND id = @a
+                      RETURNING fence"
+                offer.Parameters.AddWithValue("o", org.Value) |> ignore
+                offer.Parameters.AddWithValue("a", attemptId) |> ignore
+                offer.Parameters.AddWithValue("agent", agentId) |> ignore
+                offer.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+                let fence = offer.ExecuteScalar() :?> int64
+
+                tx.Commit()
+                Ok(Some(AttemptId attemptId, NodeId nodeId, BuildId buildId, Fence fence))
+        with ex ->
+            (try tx.Rollback() with _ -> ())
+            Error ex.Message
+
+    /// FG-061 wait diagnostics. Distinguishes an EMPTY queue from a concrete
+    /// capability mismatch, and names the missing capabilities — Jenkins' own
+    /// "There are no nodes with the label X" is the behaviour worth matching
+    /// (JB-AGT-004), and it is far better than an unexplained wait.
+    member _.ExplainWait(org: OrganizationId, trustPool: string, capabilities: string list) : string =
+        use conn = openConn ()
+
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT count(*) FILTER (WHERE a.state = 'queued') AS queued,
+                    count(*) FILTER (WHERE a.state = 'queued' AND n.required_trust_pool = @pool) AS pool_ok,
+                    count(*) FILTER (WHERE a.state = 'queued' AND n.required_trust_pool = @pool
+                                       AND n.required_capabilities <@ @caps) AS claimable,
+                    coalesce(
+                        (SELECT string_agg(DISTINCT c, ', ')
+                         FROM attempts a2
+                         JOIN nodes n2 ON n2.id = a2.node_id AND n2.organization_id = a2.organization_id
+                         CROSS JOIN unnest(n2.required_capabilities) AS c
+                         WHERE a2.organization_id = @o AND a2.state = 'queued'
+                           AND NOT (c = ANY(@caps))), '') AS missing
+             FROM attempts a
+             JOIN nodes n ON n.id = a.node_id AND n.organization_id = a.organization_id
+             WHERE a.organization_id = @o"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("pool", trustPool) |> ignore
+        cmd.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
+
+        use r = cmd.ExecuteReader()
+
+        if not (r.Read()) then
+            "queue is empty"
+        else
+            let queued = r.GetInt64 0
+            let poolOk = r.GetInt64 1
+            let claimable = r.GetInt64 2
+            let missing = r.GetString 3
+
+            if queued = 0L then "queue is empty"
+            elif claimable > 0L then $"{claimable} attempt(s) claimable now"
+            elif poolOk = 0L then $"{queued} attempt(s) queued, none in trust pool '{trustPool}'"
+            elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
+            else $"{queued} attempt(s) queued, none claimable"
+
+    member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+             VALUES (@o, @b, @a, @s, @body)
+             ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("s", sequence) |> ignore
+        cmd.Parameters.AddWithValue("body", body) |> ignore
+        cmd.ExecuteNonQuery() = 1
+
+    /// FG-064. Read the log from a sequence offset, so a client can tail a
+    /// running build rather than waiting for completion.
+    member _.ReadLog(org: OrganizationId, build: BuildId, fromSequence: int) : (int * string) list =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT sequence, body FROM log_chunks
+              WHERE organization_id = @o AND build_id = @b AND sequence >= @s
+              ORDER BY sequence"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.Parameters.AddWithValue("s", fromSequence) |> ignore
+
+        use r = cmd.ExecuteReader()
+        [ while r.Read() do
+              yield r.GetInt32 0, r.GetString 1 ]
+
+    member _.RequestCancellation(org: OrganizationId, build: BuildId) : bool =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "UPDATE builds SET cancellation_requested = true
+              WHERE organization_id = @o AND id = @b AND status NOT IN ('succeeded','failed','aborted')"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.ExecuteNonQuery() = 1
+
+    member _.BuildSnapshot(org: OrganizationId, build: BuildId) : (string * bool) option =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT status, cancellation_requested FROM builds WHERE organization_id = @o AND id = @b"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        use r = cmd.ExecuteReader()
+        if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
+
     member _.CountOutbox(org: OrganizationId) : int =
         use conn = openConn ()
         use cmd = conn.CreateCommand()

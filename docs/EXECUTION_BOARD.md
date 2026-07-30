@@ -139,10 +139,10 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
 | FG-060 | P0 | TODO | `Fogell.Controller.Api`: submit / status / logs / cancel / explain; bearer token ≥ 32 bytes; deny by default | authz matrix test; unauthenticated request returns 401, never data |
-| FG-061 | P0 | TODO | Scheduler: capability-filtered claim, FIFO within pool, wait diagnostics distinguishing empty queue from capability mismatch | mismatch reports the missing capability set |
+| FG-061 | P0 | **DONE** | Scheduler: capability-filtered claim, FIFO within pool, wait diagnostics | Tenant advisory lock + `FOR UPDATE SKIP LOCKED`: **16 concurrent schedulers over 4 attempts yield exactly 4 claims, none twice**. Capability containment checked in SQL (`<@`), not application code. FIFO by admission order. Wait diagnostics distinguish empty queue / trust-pool mismatch / **named missing capabilities** |
 | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
 | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
-| FG-064 | P1 | TODO | Progressive console over the API (`adr/0005` match) | partial output served mid-run; line count grows between two polls |
+| FG-064 | P1 | **PARTIAL** | Progressive log storage and offset reads | `log_chunks` with idempotent append and offset reads — a client can tail a running build. HTTP surface awaits FG-060 |
 | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
 | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
 | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
