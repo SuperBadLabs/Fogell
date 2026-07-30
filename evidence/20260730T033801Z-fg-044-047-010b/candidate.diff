@@ -1,0 +1,1038 @@
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+index dbb9087..5344d71 100644
+--- a/differential/receipts/archive-artifacts.receipt.txt
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+index 2e3f678..6ad673c 100644
+--- a/differential/receipts/archive-empty-fails.receipt.txt
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index be2010f..34f6c24 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-escaped-and-dotted.receipt.txt b/differential/receipts/env-escaped-and-dotted.receipt.txt
+index 62c65ee..4f5cf6f 100644
+--- a/differential/receipts/env-escaped-and-dotted.receipt.txt
++++ b/differential/receipts/env-escaped-and-dotted.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-escaped-backslash.receipt.txt b/differential/receipts/env-escaped-backslash.receipt.txt
+index 05c9b7c..e2ba899 100644
+--- a/differential/receipts/env-escaped-backslash.receipt.txt
++++ b/differential/receipts/env-escaped-backslash.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-quote-override.receipt.txt b/differential/receipts/env-quote-override.receipt.txt
+index eea050f..94f6f2b 100644
+--- a/differential/receipts/env-quote-override.receipt.txt
++++ b/differential/receipts/env-quote-override.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-quote-provenance.receipt.txt b/differential/receipts/env-quote-provenance.receipt.txt
+index 511446d..a07e61d 100644
+--- a/differential/receipts/env-quote-provenance.receipt.txt
++++ b/differential/receipts/env-quote-provenance.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index 8d9b57f..7065adc 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+index 42952d1..bb5f4f5 100644
+--- a/differential/receipts/junit-failing.receipt.txt
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+index 18a56e6..0fe4d1c 100644
+--- a/differential/receipts/junit-passing.receipt.txt
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nested-wrappers.receipt.txt b/differential/receipts/nested-wrappers.receipt.txt
+index d8661e7..d31fe73 100644
+--- a/differential/receipts/nested-wrappers.receipt.txt
++++ b/differential/receipts/nested-wrappers.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index 363708c..970192b 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index a73468d..8c7d04a 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
++seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+@@ -44,5 +45,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+diff --git a/differential/receipts/parallel-failfast.receipt.txt b/differential/receipts/parallel-failfast.receipt.txt
+index 6eb4795..75b3616 100644
+--- a/differential/receipts/parallel-failfast.receipt.txt
++++ b/differential/receipts/parallel-failfast.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-post-selection.receipt.txt b/differential/receipts/parallel-post-selection.receipt.txt
+index e9f3964..db11767 100644
+--- a/differential/receipts/parallel-post-selection.receipt.txt
++++ b/differential/receipts/parallel-post-selection.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-siblings-finish.receipt.txt b/differential/receipts/parallel-siblings-finish.receipt.txt
+index c316db4..c0c2240 100644
+--- a/differential/receipts/parallel-siblings-finish.receipt.txt
++++ b/differential/receipts/parallel-siblings-finish.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-arm-reselected.receipt.txt b/differential/receipts/post-arm-reselected.receipt.txt
+index 5494aef..c2fbf74 100644
+--- a/differential/receipts/post-arm-reselected.receipt.txt
++++ b/differential/receipts/post-arm-reselected.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-failure-stops-pipeline.receipt.txt b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+index d0beed7..d0503af 100644
+--- a/differential/receipts/post-failure-stops-pipeline.receipt.txt
++++ b/differential/receipts/post-failure-stops-pipeline.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-order-failure.receipt.txt b/differential/receipts/post-order-failure.receipt.txt
+index 0716bc6..176d0a4 100644
+--- a/differential/receipts/post-order-failure.receipt.txt
++++ b/differential/receipts/post-order-failure.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-order-success.receipt.txt b/differential/receipts/post-order-success.receipt.txt
+index 98fe207..77d4554 100644
+--- a/differential/receipts/post-order-success.receipt.txt
++++ b/differential/receipts/post-order-success.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-exhausts.receipt.txt b/differential/receipts/retry-exhausts.receipt.txt
+index a17b17f..99a922a 100644
+--- a/differential/receipts/retry-exhausts.receipt.txt
++++ b/differential/receipts/retry-exhausts.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-succeeds.receipt.txt b/differential/receipts/retry-succeeds.receipt.txt
+index a0ac02c..92eb687 100644
+--- a/differential/receipts/retry-succeeds.receipt.txt
++++ b/differential/receipts/retry-succeeds.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index 29e5f6d..a5537b6 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-block-deadline.receipt.txt b/differential/receipts/timeout-block-deadline.receipt.txt
+index fea12e4..141bdb6 100644
+--- a/differential/receipts/timeout-block-deadline.receipt.txt
++++ b/differential/receipts/timeout-block-deadline.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-days-unit.receipt.txt b/differential/receipts/timeout-days-unit.receipt.txt
+index 504f329..2b44679 100644
+--- a/differential/receipts/timeout-days-unit.receipt.txt
++++ b/differential/receipts/timeout-days-unit.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-seconds.receipt.txt b/differential/receipts/timeout-seconds.receipt.txt
+index 76e5eea..2cd0eb8 100644
+--- a/differential/receipts/timeout-seconds.receipt.txt
++++ b/differential/receipts/timeout-seconds.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-conditions.receipt.txt b/differential/receipts/when-conditions.receipt.txt
+index 1010cc2..4aa9862 100644
+--- a/differential/receipts/when-conditions.receipt.txt
++++ b/differential/receipts/when-conditions.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-env-expression.receipt.txt b/differential/receipts/when-env-expression.receipt.txt
+index 0d36fa3..379db8f 100644
+--- a/differential/receipts/when-env-expression.receipt.txt
++++ b/differential/receipts/when-env-expression.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-scm-and-equals.receipt.txt b/differential/receipts/when-scm-and-equals.receipt.txt
+index b388e10..e0c400e 100644
+--- a/differential/receipts/when-scm-and-equals.receipt.txt
++++ b/differential/receipts/when-scm-and-equals.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt b/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
+index 4c41016..4b42ec7 100644
+--- a/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
++++ b/differential/receipts/when-siblings-and-jenkins-vars.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-comma-value.receipt.txt b/differential/receipts/withenv-comma-value.receipt.txt
+index 890e6c3..c26fb36 100644
+--- a/differential/receipts/withenv-comma-value.receipt.txt
++++ b/differential/receipts/withenv-comma-value.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-escaped-dollar.receipt.txt b/differential/receipts/withenv-escaped-dollar.receipt.txt
+index 41c4a0a..c9dca22 100644
+--- a/differential/receipts/withenv-escaped-dollar.receipt.txt
++++ b/differential/receipts/withenv-escaped-dollar.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-augmentation.receipt.txt b/differential/receipts/withenv-path-augmentation.receipt.txt
+index 987232a..8b8298a 100644
+--- a/differential/receipts/withenv-path-augmentation.receipt.txt
++++ b/differential/receipts/withenv-path-augmentation.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-last-wins.receipt.txt b/differential/receipts/withenv-path-last-wins.receipt.txt
+index 7df92ef..4144228 100644
+--- a/differential/receipts/withenv-path-last-wins.receipt.txt
++++ b/differential/receipts/withenv-path-last-wins.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-no-base.receipt.txt b/differential/receipts/withenv-path-no-base.receipt.txt
+index 249a732..83d3013 100644
+--- a/differential/receipts/withenv-path-no-base.receipt.txt
++++ b/differential/receipts/withenv-path-no-base.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-path-same-list.receipt.txt b/differential/receipts/withenv-path-same-list.receipt.txt
+index 7cee49a..cd71bfd 100644
+--- a/differential/receipts/withenv-path-same-list.receipt.txt
++++ b/differential/receipts/withenv-path-same-list.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-scoping.receipt.txt b/differential/receipts/withenv-scoping.receipt.txt
+index 5748d9a..d6fb716 100644
+--- a/differential/receipts/withenv-scoping.receipt.txt
++++ b/differential/receipts/withenv-scoping.receipt.txt
+@@ -24,6 +24,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     distinguishable from real output (the line after a trace is USUALLY real output), so
+     it is compared as output. Cases whose commands embed a newline must therefore carry
+     their claim in the workspace hash, not in stdout. Declared, not silently handled.
++  excluded: credential-masking narration — both engines announce it, wording differs
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 625756d..829481f 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **37/37 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **40/40 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -128,13 +128,14 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
+ | FG-002e | P2 | TODO | Sweep the interrupt/deadline surface for remaining early-return paths | Reviews 9-12 of PR #14 each found ONE more code path that returns before polling the abort predicate: archive mid-loop, archive after the final copy, archive zero-match, junit mid-loop, junit zero-match. The pattern is "every early return is a missed poll", and it was found one instance per round rather than swept. Acceptance: enumerate every return point in `Publish` and `Executor` and assert each either polls or provably cannot be reached after an interrupt |
++| FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` does not PARSE, so the statement form is rejected before any evaluation question arises. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+-| FG-044 | P1 | TODO | `credentials` / `withCredentials`, scope-limited bindings | 22 files |
++| FG-044 | P1 | **DONE** | `credentials` / `withCredentials`, scope-limited bindings | Two receipts PROVEN tier-1. `credentials-string` (19 of 23 corpus files use this shape) and `credentials-userpass` (12) match Jenkins on: value bound into the named variable, `env \| grep -c` = 1, `${#VAR}` = the secret's length, `****` in the console, and the variable **unset after the block**. `scripts/provision-credentials.sh` mirrors the same values into the pinned Jenkins so the receipts are reproducible by anyone. An unmodelled binding kind (`vaultString`, 1 file) and a missing credential id both fail **closed by name** — a step that appears to succeed with an empty credential is the worst outcome available, because the build goes green while the deploy authenticates as nobody. This measurement is what forced FG-070's re-scope |
+ | FG-045 | P1 | TODO | `timeout`, `retry` (see FG-034/035) | 21 / 6 |
+ | FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
+-| FG-047 | P1 | TODO | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | 7 files |
++| FG-047 | P1 | **DONE** | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | `stash-unstash` receipt PROVEN tier-1, and the property that matters is the one tested: the stash is stored with the BUILD (outside the workspace), so it survives `deleteDir()`. Storing it under the workspace would pass a naive round-trip and fail this. A missing stash name FAILS rather than silently restoring nothing. `deleteDir()` implemented alongside, since the test is meaningless without it. Writing this receipt is what exposed the step-swallowing parser bug (FG-010b) |
+ | FG-048 | P1 | **DONE** | `when` conditions incl. `expression` via the bounded interpreter | Two receipts PROVEN tier-1. `when-conditions`: `expression { return false }` skips, `environment name/value` matches and mismatches correctly, `allOf` + `not` composes; a skipped stage leaves the build **SUCCESS** and its **`post` block does not run** (both measured). `when-scm-and-equals`: MEASURED that on a plain job Jenkins **skips** `branch` and `tag` stages because `BRANCH_NAME`/`TAG_NAME` do not exist — which is what lets those two be modelled rather than refused, and they are the corpus's heaviest `when` users. `equals` is a plain comparison. **Two parser bugs found by receipt:** `when { environment name: 'X', value: 'Y' }` did not parse at all (the code expected `environment X = 'Y'`, which Jenkins rejects), and an unparseable `when` fell through the stage's generic section fallback so the stage ran **unconditionally** — silently running a stage Jenkins skips, the worst failure mode available. A backstop now records any unrecognised `when` as unmodelled so evaluation fails closed. Unmodelled conditions: FG-048b |
+ | FG-049 | P1 | **DONE** | `post` blocks: correct *selection*, not just presence — Jenkins prints all branches in the console | Two receipts PROVEN tier-1 (`post-order-failure`, `post-order-success`), each declaring all nine conditions so the receipt proves which fire AND in what order. Selection and order were MEASURED across four consecutive builds of one job, not read from documentation: order is **always → changed → fixed → regression → result-arm → cleanup**, and `changed` **fires on a first build** (no previous result to differ from) — not what I would have guessed. Stage post is selected against the STAGE result, pipeline post against the BUILD result. Before this ticket the walker parsed `post` and then **ignored it entirely**. `changed`/`fixed`/`regression` on later builds: FG-049b |
+ | FG-050 | P2 | TODO | `agent { label }` / `agent { docker }` and capability matching | 19 / 9 |
+@@ -159,7 +160,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-070 | P0 | **DONE** | Secrets never placed in the child environment | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent. **CLAIM CORRECTED** after a Codex review on PR #11, which was right: this does **not** defeat the same-UID attacker the measurement identified. That process reads `<VAR>_FILE` from `/proc/<pid>/environ` and then simply opens the 0600 file, because it owns it too. What FG-070 actually buys: the secret is gone from the environment, so anything that dumps or logs `environ` (crash handlers, `ps e`, process explorers, child processes started before the binding) no longer captures it, and a **different**-UID reader is blocked. Protecting a secret from a same-UID process is not achievable on Linux without UID separation or namespaces — see FG-070b |
++| FG-070 | P0 | **DONE (re-scoped)** | Secret delivery: value bound as Jenkins binds it, plus a file companion | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent. **CLAIM CORRECTED** after a Codex review on PR #11, which was right: this does **not** defeat the same-UID attacker the measurement identified. That process reads `<VAR>_FILE` from `/proc/<pid>/environ` and then simply opens the 0600 file, because it owns it too. What FG-070 actually buys: the secret is gone from the environment, so anything that dumps or logs `environ` (crash handlers, `ps e`, process explorers, child processes started before the binding) no longer captures it, and a **different**-UID reader is blocked. Protecting a secret from a same-UID process is not achievable on Linux without UID separation or namespaces — see FG-070b. **CORRECTED A SECOND TIME** by the FG-044 measurement: Jenkins' `withCredentials` binds the VALUE (`env \| grep -c '^TOKEN='` is 1, `${#TOKEN}` is the secret's length) and every real pipeline reads `$TOKEN`, so binding only a path breaks lift-and-shift for all 23 corpus files that use credentials. Fogell now binds the value for parity AND the `_FILE` companion; `Secrets.environmentForPathOnly` keeps the hardened form for a caller that accepts the incompatibility. What protects the value is **masking on every output path** (FG-071), not absence from the environment |
+ | FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | **Now genuinely wired to the output path.** A Codex review on PR #11 found the masker and detector were reachable only from their own tests — `Executor.runShell` forwarded `OnLine` and returned stdout/stderr untouched, so a step running `cat "$TOKEN_FILE"` streamed the literal secret while this row claimed masking was done. Masking now happens on the **streaming** path and the buffered stdout/stderr, and three tests fail if that wiring is removed. Masks the same forms Jenkins was measured to handle (literal, base64, case-folded), and uppercase hex was added to the detector after a Copilot review found only lowercase was generated. It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
+ | FG-072 | P0 | TODO | Interpreter sandbox: no reflection, no file/network/process access except through steps | escape-attempt suite fully rejected with named codes |
+ | FG-073 | P1 | TODO | Threat model document: untrusted Jenkinsfile, hostile agent, multi-tenant boundary | reviewed and committed |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 9dd3ace..43195a9 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -53,6 +53,13 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   automated review asked for the bracketed form to be supported; the receipt says
+   supporting it would make Fogell RUN what Jenkins REFUSES, which is the same
+   divergence direction rejected for stage-level `failFast`.
++- `withCredentials` binds the credential's **value** into the named variable —
++  measured: `env | grep -c '^TOKEN='` is 1 and `${#TOKEN}` is the secret's length —
++  masks it in the log as `****`, and **unsets** it after the block. This is why
++  FG-070's "no secret in the environment" design had to be demoted from the default:
++  every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
++- A `stash` is stored with the **build**, not in the workspace, which is what makes it
++  survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+ - Agent-side output is buffered locally and recovered by offset on reconnect: a
+   46 s network partition cost **zero** log lines.
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 10f2be1..3b97d10 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -20,6 +20,8 @@ type BranchCtx =
+       /// must not leave a permanent mark on the build, and the build status is a
+       /// monotone worst-of that could never be walked back.
+       Sink: BuildStatus -> unit
++      /// FG-044. Credential bindings live for this scope, so output is masked.
++      Secrets: SecretBinding list
+       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
+       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
+       /// shadowed one reverts to its outer value.
+@@ -32,6 +34,26 @@ module FogellSide =
+     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
+     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
+     /// separate concern and is not on this path.
++    /// FG-044. Credentials the harness has mirrored into the pinned Jenkins, so both
++    /// engines bind the SAME values and a receipt means something. Supplied out of band
++    /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
++    /// secret never enters the repository.
++    let credentialStore () : Map<string, Credential> =
++        match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS" with
++        | null
++        | "" -> Map.empty
++        | spec ->
++            spec.Split ','
++            |> Array.toList
++            |> List.choose (fun entry ->
++                match entry.Split('=', 2) with
++                | [| id; value |] when id <> "" ->
++                    match value.Split(':', 2) with
++                    | [| u; p |] when value.Contains ':' -> Some(id.Trim(), UsernamePassword(u, p))
++                    | _ -> Some(id.Trim(), SecretText value)
++                | _ -> None)
++            |> Map.ofList
++
+     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
+         match Fogell.Pipeline.Parser.Parser.parse script with
+         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+@@ -215,7 +237,7 @@ module FogellSide =
+                           Interrupt = ctx.Interrupt
+                           DeadlineExpired =
+                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
+-                          Secrets = []
++                          Secrets = ctx.Secrets
+                           Named = step.Named
+                           Artifacts = Some(ArtifactStore.under artifactRoot)
+                           BuildKey = jobName }
+@@ -769,6 +791,148 @@ module FogellSide =
+ 
+                     if inner.Failed.Value then ctx.Failed.Value <- true
+ 
++                // FG-044. `withCredentials([...]) { … }`.
++                //
++                // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
++                // the log as `****`, and unsets it after the block. It also prints
++                // "Masking supported pattern matches of $VAR", which is engine narration.
++                | "withCredentials", _ when not (List.isEmpty step.Block) ->
++                    let requests = Credentials.parseRequests (String.concat " " step.Positional)
++                    let store = credentialStore ()
++
++                    let unmodelled =
++                        requests
++                        |> List.choose (function
++                            | BindUnmodelled(kind, _) -> Some kind
++                            | _ -> None)
++
++                    let missing =
++                        Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
++
++                    if not (List.isEmpty unmodelled) then
++                        // Fail CLOSED by name. A binding kind we do not model must not
++                        // yield an empty variable: the build would go green while the
++                        // deploy authenticated as nobody.
++                        emit $"""ERROR: unsupported credential binding kind(s) {String.concat ", " unmodelled}; refusing to bind an empty credential"""
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    elif not (List.isEmpty missing) then
++                        emit $"""ERROR: credential id(s) not found: {String.concat ", " missing}"""
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    else
++                        let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
++
++                        let bindings =
++                            requests
++                            |> List.collect (fun r ->
++                                match r with
++                                | BindText(id, v) ->
++                                    match store.[id] with
++                                    | SecretText value -> [ Secrets.bind secretDir v value ]
++                                    | UsernamePassword(u, _) -> [ Secrets.bind secretDir v u ]
++                                    | SecretFile(_, content) -> [ Secrets.bind secretDir v content ]
++                                | BindUserPass(id, uv, pv) ->
++                                    match store.[id] with
++                                    | UsernamePassword(u, p) ->
++                                        [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
++                                    | SecretText value -> [ Secrets.bind secretDir pv value ]
++                                    | SecretFile(_, content) -> [ Secrets.bind secretDir pv content ]
++                                | BindFile(id, v) ->
++                                    // Jenkins binds a PATH for a file credential, so the
++                                    // path variable IS the value variable here.
++                                    match store.[id] with
++                                    | SecretFile(_, content)
++                                    | SecretText content -> [ Secrets.bind secretDir (v + "_CONTENT") content ]
++                                    | UsernamePassword(_, p) -> [ Secrets.bind secretDir (v + "_CONTENT") p ]
++                                | BindUnmodelled _ -> [])
++
++                        // Jenkins narrates the masking; excluded from comparison as
++                        // engine narration, but said so a reader is not left guessing.
++                        // One line naming every bound variable, matching Jenkins' shape.
++                        // The wording is not compared (see the contract); the line exists
++                        // so a reader of OUR log is told what is being masked.
++                        let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
++                        emit $"""Masking supported pattern matches of {String.concat " or " names}"""
++
++                        let overlay = ctx.EnvOverlay @ Secrets.environmentFor bindings
++                        let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
++
++                        for st in step.Block do
++                            if not (halted inner) then
++                                runStepDispatch inner cwd stage st deadline
++
++                        if inner.Failed.Value then ctx.Failed.Value <- true
++
++                        // Unset after the block: measured on Jenkins.
++                        Secrets.revoke bindings
++
++                // FG-047 companion. `deleteDir()` empties the CURRENT directory — the
++                // workspace, or the enclosing `dir` block's cwd — without removing the
++                // directory itself. It is what makes the stash test meaningful.
++                | "deleteDir", _ ->
++                    if Directory.Exists cwd then
++                        for entry in Directory.GetFileSystemEntries cwd do
++                            try
++                                if Directory.Exists entry then Directory.Delete(entry, true)
++                                else File.Delete entry
++                            with ex ->
++                                emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
++                                ctx.Failed.Value <- true
++                                ctx.Sink BuildStatus.Failure
++
++                // FG-047. `stash` / `unstash`. Storage is controller-side — under the
++                // artifact root, NOT the workspace — which is what makes a stash survive
++                // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
++                // would pass a naive test and fail the one that matters.
++                | "stash", _ ->
++                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
++
++                    let name =
++                        step.Named
++                        |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None)
++                        |> Option.orElse (List.tryHead step.Positional)
++
++                    let includes =
++                        step.Named
++                        |> List.tryPick (fun (k, v) -> if k = "includes" then Some v else None)
++                        |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
++                        |> Option.defaultValue []
++
++                    match name with
++                    | None ->
++                        emit "ERROR: stash requires a name"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    | Some n ->
++                        let saved = Stash.save store jobName cwd n includes
++                        emit $"Stashed {saved.Length} file(s)"
++
++                | "unstash", _ ->
++                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
++
++                    let name =
++                        step.Positional
++                        |> List.tryHead
++                        |> Option.orElse (
++                            step.Named
++                            |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None))
++
++                    match name with
++                    | None ->
++                        emit "ERROR: unstash requires a name"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    | Some n ->
++                        match Stash.restore store jobName cwd n with
++                        | Result.Error e ->
++                            // A missing stash FAILS. Carrying on with none of the files
++                            // the build asked for is the silent-loss shape.
++                            emit $"ERROR: {e}"
++                            ctx.Failed.Value <- true
++                            ctx.Sink BuildStatus.Failure
++                        | Result.Ok _ -> ()
++
+                 | "dir", (sub :: _) ->
+                     // `dir('x') { … }` — nested cwd, auto-created
+                     match Workspace.resolveUnder cwd sub with
+@@ -835,6 +999,7 @@ module FogellSide =
+                                       // forwards upward to `bump`.
+                                       Sink = ctx.Sink
+                                       EnvOverlay = ctx.EnvOverlay
++                                      Secrets = ctx.Secrets
+                                       Interrupt =
+                                         if failFast then
+                                             Some(fun () -> siblingFailed.IsCancellationRequested)
+@@ -864,7 +1029,7 @@ module FogellSide =
+                         for nested in stage.Nested do
+                             runStage ctx cwd nested
+ 
+-            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
++            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
+ 
+             for stage in pipeline.Stages do
+                 if root.Failed.Value then
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 4db498e..2cb9f9d 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -159,6 +159,12 @@ module Trace =
+         || t.StartsWith "Cancelling nested steps"
+         || t.StartsWith "Sending interrupt signal to process"
+         || t.StartsWith "Failed in branch "
++        // FG-044. Jenkins narrates credential masking as one line naming every bound
++        // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
++        // that join word character for character would over-fit to plugin wording, the
++        // thing this contract exists to avoid. Both engines say it; the wording is not
++        // compared, and the load-bearing evidence is that the value never appears.
++        || t.StartsWith "Masking supported pattern matches of "
+         // FG-049. A failing `post` step makes Jenkins print a Java exception and
+         // stack trace into the build log. It is the engine explaining itself, which
+         // is what this predicate is for — and matching a stack trace verbatim would
+@@ -275,6 +281,7 @@ module Trace =
+           "  distinguishable from real output (the line after a trace is USUALLY real output), so"
+           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
+           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
++          "excluded: credential-masking narration — both engines announce it, wording differs"
+           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
+           "  counted as a reported reason instead, since it explains the engine, not the step"
+           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+diff --git a/src/Fogell.Execution/Fogell.Execution.fsproj b/src/Fogell.Execution/Fogell.Execution.fsproj
+index e7eef4b..52396fc 100644
+--- a/src/Fogell.Execution/Fogell.Execution.fsproj
++++ b/src/Fogell.Execution/Fogell.Execution.fsproj
+@@ -11,6 +11,7 @@
+     <Compile Include="Workspace.fs" />
+     <Compile Include="ProcessGroup.fs" />
+     <Compile Include="Secrets.fs" />
++    <Compile Include="Credentials.fs" />
+     <Compile Include="Publish.fs" />
+     <Compile Include="Executor.fs" />
+   </ItemGroup>
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index 1d0678b..a45ed64 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -26,6 +26,16 @@ type JUnitProblem =
+     | Interrupted
+     | Unreadable of string
+ 
++/// FG-047. Controller-side stash storage.
++///
++/// Jenkins keeps a stash with the BUILD, not in the workspace, which is what makes it
++/// survive `deleteDir()` — measured in the behavioural spec. Storing it under the
++/// workspace would pass a naive test and fail the one that matters.
++type StashStore =
++    { Root: string }
++
++    static member under (root: string) = { Root = root }
++
+ module Publish =
+ 
+     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
+@@ -181,3 +191,48 @@ module Publish =
+         | Ok v -> Ok v
+         | Error Interrupted -> Error "interrupted"
+         | Error(Unreadable m) -> Error m
++
++module Stash =
++
++    let private dir (store: StashStore) (buildKey: string) (name: string) =
++        IO.Path.Combine(store.Root, buildKey, "stashes", name)
++
++    /// Copy the matched files out of the workspace and into controller-side storage.
++    let save (store: StashStore) (buildKey: string) (workspace: string) (name: string) (patterns: string list) =
++        let target = dir store buildKey name
++        if IO.Directory.Exists target then IO.Directory.Delete(target, true)
++        IO.Directory.CreateDirectory target |> ignore
++
++        let matched =
++            (if List.isEmpty patterns then [ "**" ] else patterns)
++            |> List.collect (Publish.expandGlob workspace)
++            |> List.distinct
++            |> List.sort
++
++        for relative in matched do
++            let dest = IO.Path.Combine(target, relative)
++            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
++            IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
++
++        matched
++
++    /// Restore a stash into the workspace. Missing name is an error, never a silent
++    /// no-op: a build that carries on with none of the files it asked for is the
++    /// silent-loss shape this project exists to avoid.
++    let restore (store: StashStore) (buildKey: string) (workspace: string) (name: string) =
++        let source = dir store buildKey name
++
++        if not (IO.Directory.Exists source) then
++            Error $"No such saved stash ‘{name}’"
++        else
++            let files =
++                IO.Directory.GetFiles(source, "*", IO.SearchOption.AllDirectories)
++                |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
++                |> Array.sort
++
++            for relative in files do
++                let dest = IO.Path.Combine(workspace, relative)
++                IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
++                IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
++
++            Ok(List.ofArray files)
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index 9a68dea..f6d3490 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -20,7 +20,19 @@ open System.IO
+ ///    treats masking as defence-in-depth and, crucially, is NOT silent when a
+ ///    transformation likely escaped it.
+ type SecretBinding =
+-    { /// Environment variable the script reads, e.g. `TOKEN_FILE`.
++    { /// The variable carrying the VALUE, exactly as Jenkins binds it.
++      ///
++      /// MEASURED on the pinned Jenkins (FG-044): `withCredentials([string(...,
++      /// variable: 'TOKEN')])` puts the real value in `TOKEN` —
++      /// `env | grep -c '^TOKEN='` is 1 and `${#TOKEN}` is the secret's length — and
++      /// unsets it after the block. FG-070's original design bound only a
++      /// `TOKEN_FILE` path and NO value, which is incompatible with running any real
++      /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
++      /// hardening property that was in any case already proven weaker than claimed
++      /// (a same-UID reader follows the path and opens the file it owns).
++      ValueVariable: string
++      /// Companion variable carrying a path to a 0600 file with the same value. Kept
++      /// as an ADDITION, not a replacement: scripts that prefer a file can use it.
+       PathVariable: string
+       /// Absolute path of the 0600 file holding the value.
+       FilePath: string
+@@ -75,12 +87,21 @@ module Secrets =
+         // process umask, so this is tightened immediately after.
+         File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+ 
+-        { PathVariable = variableName + "_FILE"
++        { ValueVariable = variableName
++          PathVariable = variableName + "_FILE"
+           FilePath = path
+           Value = value }
+ 
+-    /// Environment entries for a set of bindings. Note what is ABSENT: the value.
++    /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
++    /// file path (our addition). Masking on every output path is what actually
++    /// protects the value — see FG-071 — not its absence from the environment.
+     let environmentFor (bindings: SecretBinding list) =
++        bindings
++        |> List.collect (fun b -> [ b.ValueVariable, b.Value; b.PathVariable, b.FilePath ])
++
++    /// FG-070's original, hardened form: the path ONLY, no value. Available for a
++    /// caller that accepts the incompatibility.
++    let environmentForPathOnly (bindings: SecretBinding list) =
+         bindings |> List.map (fun b -> b.PathVariable, b.FilePath)
+ 
+     /// Replace every registered form with `****`.
+@@ -97,11 +118,11 @@ module Secrets =
+         [ for b in bindings do
+               // the literal must never survive masking; if it does, the masker failed
+               if maskedText.Contains b.Value then
+-                  { Variable = b.PathVariable; Encoding = "literal" }
++                  { Variable = b.ValueVariable; Encoding = "literal" }
+ 
+               for name, form in detectableForms b.Value do
+                   if maskedText.Contains form then
+-                      { Variable = b.PathVariable; Encoding = name } ]
++                      { Variable = b.ValueVariable; Encoding = name } ]
+ 
+     /// Remove secret files. Called even on failure, because a leftover secret
+     /// file outlives the reason it existed.
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 8d5ed8f..1ab20aa 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -44,32 +44,49 @@ let private argList: P<(string * string) list * string list> =
+ let private stepBlock: P<Step list> =
+     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
+ 
++/// Whitespace WITHIN a line. Load-bearing: see the step parser below.
++let private hspaces: P<unit> = skipMany (anyOf " \t")
++
+ stepRef.Value <-
+     ws
+-    >>. pipe4 position identifier
+-            (opt (attempt (balancedRaw '(' ')')) )
+-            (opt (attempt (ws >>. argList)))
+-            (fun pos name parens inlineArgs -> pos, name, parens, inlineArgs)
++    >>. pipe3 position identifier
++            // A step is EITHER `name(args)` OR `name args` — never both, and the
++            // inline form must start ON THE SAME LINE.
++            //
++            // The previous version tried parenthesised args and then, independently,
++            // inline args starting with `ws`. For `deleteDir()` that skipped the
++            // NEWLINE and consumed the whole NEXT STEP as a positional argument —
++            // which was then thrown away, because when parens are present the inline
++            // args are ignored. So `deleteDir()` silently ATE the step after it and
++            // the build reported success having skipped the work. Found by a
++            // stash/unstash differential receipt: `before.txt` was missing from the
++            // workspace, nothing else. Any zero-argument call form was affected —
++            // `deleteDir()`, `cleanWs()`, and so on.
++            (choice
++                [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
++                  attempt (hspaces >>. argList) |>> Choice2Of2
++                  preturn (Choice2Of2([], [])) ])
++            (fun pos name args -> pos, name, args)
+     .>>. opt (attempt stepBlock)
+-    |>> fun ((pos, name, parens, inlineArgs), block) ->
++    |>> fun ((pos, name, args), block) ->
+             let named, positional =
+-                match parens with
+-                | Some raw ->
++                match args with
++                | Choice1Of2 raw ->
+                     // re-parse the captured paren body for named/positional
+                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
+                     | ParserResult.Success((n, p), _, _) -> n, p
+                     | ParserResult.Failure _ -> [], (if body.Trim() = "" then [] else [ body.Trim() ])
+-                | None ->
+-                    match inlineArgs with
+-                    | Some(n, p) -> n, p
+-                    | None -> [], []
++                | Choice2Of2(n, p) -> n, p
+ 
+             { Name = name
+               Positional = positional
+               Named = named
+               Block = defaultArg block []
+-              RawArgs = defaultArg parens ""
++              RawArgs =
++                match args with
++                | Choice1Of2 raw -> raw
++                | Choice2Of2 _ -> ""
+               Position = pos }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index e20c871..bf299d5 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -310,11 +310,24 @@ let containment =
+ let secrets =
+     testList
+         "FG-070/071 secret delivery and leak detection"
+-        [ test "BEAT JENKINS: the value is NOT in the child's environment" {
+-              // Measured: a secret in the environment is readable from
+-              // /proc/<pid>/environ by any process running as the same user, for
+-              // the whole life of the step. Jenkins' withCredentials does exactly
+-              // that. Fogell passes a PATH, never the value.
++        [ test "the value IS bound, as Jenkins binds it — and a file companion too" {
++              // CLAIM CORRECTED, twice, and this test is the record of it.
++              //
++              // Originally: "the value is NOT in the child's environment", on the
++              // measurement that a secret in `environ` is readable from
++              // /proc/<pid>/environ by any same-UID process.
++              //
++              // First correction (Codex, PR #11): the 0600 file does not defeat that
++              // attacker either — it reads `TOKEN_FILE` from environ and opens the file,
++              // which it owns.
++              //
++              // Second correction (FG-044 measurement): Jenkins' `withCredentials` binds
++              // the VALUE — `env | grep -c '^TOKEN='` is 1, `${#TOKEN}` is the secret's
++              // length — and every real pipeline reads `$TOKEN`. Binding only a path
++              // breaks lift-and-shift for all 23 corpus files that use credentials, and
++              // lift-and-shift is the product. So Fogell binds the value for parity AND
++              // offers the file companion, and what actually protects the value is
++              // masking on every output path (FG-071), not absence from the environment.
+               let root = tempRoot ()
+               let req = request root ""
+               let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
+@@ -322,14 +335,31 @@ let secrets =
+               let r =
+                   Executor.runStep
+                       { req with
+-                          // the script prints its OWN environment; if the value
+-                          // were there, it would appear here
++                          // the script prints its OWN environment
+                           Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
+                           Environment = Secrets.environmentFor [ binding ] }
+ 
+               Expect.equal r.Status BuildStatus.Success "ran"
+-              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is absent from the environment"
+-              Expect.stringContains r.Stdout "TOKEN_FILE=" "only a path is exposed"
++              Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound, as Jenkins binds it"
++              Expect.stringContains r.Stdout "TOKEN_FILE=" "and the file companion is bound too"
++              Secrets.revoke [ binding ]
++          }
++
++          test "the hardened path-only form is still available for a caller that wants it" {
++              // The original FG-070 behaviour has not been deleted, only demoted from
++              // the default: a caller that accepts the incompatibility can still have it.
++              let root = tempRoot ()
++              let req = request root ""
++              let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
++
++              let r =
++                  Executor.runStep
++                      { req with
++                          Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
++                          Environment = Secrets.environmentForPathOnly [ binding ] }
++
++              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "no value in the environment"
++              Expect.stringContains r.Stdout "TOKEN_FILE=" "only a path"
+               Secrets.revoke [ binding ]
+           }
+ 

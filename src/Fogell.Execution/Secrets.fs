@@ -20,12 +20,28 @@ open System.IO
 ///    treats masking as defence-in-depth and, crucially, is NOT silent when a
 ///    transformation likely escaped it.
 type SecretBinding =
-    { /// Environment variable the script reads, e.g. `TOKEN_FILE`.
+    { /// The variable carrying the VALUE, exactly as Jenkins binds it.
+      ///
+      /// MEASURED on the pinned Jenkins (FG-044): `withCredentials([string(...,
+      /// variable: 'TOKEN')])` puts the real value in `TOKEN` —
+      /// `env | grep -c '^TOKEN='` is 1 and `${#TOKEN}` is the secret's length — and
+      /// unsets it after the block. FG-070's original design bound only a
+      /// `TOKEN_FILE` path and NO value, which is incompatible with running any real
+      /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
+      /// hardening property that was in any case already proven weaker than claimed
+      /// (a same-UID reader follows the path and opens the file it owns).
+      ValueVariable: string
+      /// Companion variable carrying a path to a 0600 file with the same value. Kept
+      /// as an ADDITION, not a replacement: scripts that prefer a file can use it.
       PathVariable: string
       /// Absolute path of the 0600 file holding the value.
       FilePath: string
       /// The value, retained only to build the masker and to detect leaks.
-      Value: string }
+      Value: string
+      /// FG-044. True for a `file()` credential, where Jenkins binds the requested
+      /// variable to a PATH rather than to the content. The content is still what gets
+      /// masked — the path is not a secret, the bytes are.
+      ValueVariableCarriesPath: bool }
 
 type Leak =
     { Variable: string
@@ -66,21 +82,75 @@ module Secrets =
     /// Write the secret to a file only the running user can read, and return the
     /// binding. The file lives in the attempt's own directory so it is removed
     /// with the workspace.
+    /// Bind raw BYTES, for a file credential whose content is not text.
+    let bindBytes (directory: string) (variableName: string) (bytes: byte[]) : SecretBinding =
+        Directory.CreateDirectory directory |> ignore
+        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
+        File.WriteAllBytes(path, bytes)
+        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+
+        // The masker works on text. Non-text bytes cannot appear verbatim in a log, so
+        // an empty Value simply registers nothing to mask — which is correct, not a gap.
+        let asText =
+            try
+                let t = Text.Encoding.UTF8.GetString bytes
+                if Text.Encoding.UTF8.GetBytes t = bytes then t else ""
+            with _ ->
+                ""
+
+        { ValueVariable = variableName
+          PathVariable = variableName + "_FILE"
+          FilePath = path
+          Value = asText
+          ValueVariableCarriesPath = true }
+
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
         Directory.CreateDirectory directory |> ignore
-        let path = Path.Combine(directory, $".secret-{variableName}")
+        // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two
+        // bindings of the same variable — nested `withCredentials`, or concurrent
+        // parallel branches — shared one file. The inner one overwrote the outer, and
+        // revoking the inner deleted the file the outer's variable still pointed at.
+        // Jenkins allocates a fresh temporary path per binding; so do we.
+        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
         File.WriteAllText(path, value)
 
         // 0600 before anything can read it. WriteAllText creates with the
         // process umask, so this is tightened immediately after.
         File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
 
-        { PathVariable = variableName + "_FILE"
+        { ValueVariable = variableName
+          PathVariable = variableName + "_FILE"
           FilePath = path
-          Value = value }
+          Value = value
+          ValueVariableCarriesPath = false }
 
-    /// Environment entries for a set of bindings. Note what is ABSENT: the value.
+    /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
+    /// file path (our addition). Masking on every output path is what actually
+    /// protects the value — see FG-071 — not its absence from the environment.
     let environmentFor (bindings: SecretBinding list) =
+        // REVIEW FIX (Codex, PR #15 round 5): the overlay is last-wins, so a generated
+        // `X_FILE` companion could overwrite a variable the Jenkinsfile had EXPLICITLY
+        // requested as `X_FILE` — handing the body a path where its configured credential
+        // should be. Requested names win; a colliding companion is dropped.
+        let requested = bindings |> List.map (fun b -> b.ValueVariable) |> Set.ofList
+
+        let values =
+            bindings
+            |> List.map (fun b ->
+                b.ValueVariable, (if b.ValueVariableCarriesPath then b.FilePath else b.Value))
+
+        let companions =
+            bindings
+            |> List.filter (fun b -> not (requested.Contains b.PathVariable))
+            |> List.map (fun b -> b.PathVariable, b.FilePath)
+
+        values @ companions
+
+    /// FG-070's original, hardened form: the path ONLY, no value. Available for a
+    /// caller that accepts the incompatibility.
+    let environmentForPathOnly (bindings: SecretBinding list) =
         bindings |> List.map (fun b -> b.PathVariable, b.FilePath)
 
     /// Replace every registered form with `****`.
@@ -95,13 +165,17 @@ module Secrets =
     /// swallowed.
     let detectLeaks (bindings: SecretBinding list) (maskedText: string) : Leak list =
         [ for b in bindings do
-              // the literal must never survive masking; if it does, the masker failed
-              if maskedText.Contains b.Value then
-                  { Variable = b.PathVariable; Encoding = "literal" }
+              // REVIEW FIX (Codex, PR #15 round 5): `bindBytes` deliberately stores an
+              // empty Value for a binary credential, and EVERY string contains the empty
+              // string — so this reported a literal credential leak on every line of
+              // output inside the block. A security warning that fires always is worse
+              // than none: it trains the reader to ignore the channel.
+              if b.Value <> "" && maskedText.Contains b.Value then
+                  { Variable = b.ValueVariable; Encoding = "literal" }
 
               for name, form in detectableForms b.Value do
                   if maskedText.Contains form then
-                      { Variable = b.PathVariable; Encoding = name } ]
+                      { Variable = b.ValueVariable; Encoding = name } ]
 
     /// Remove secret files. Called even on failure, because a leftover secret
     /// file outlives the reason it existed.

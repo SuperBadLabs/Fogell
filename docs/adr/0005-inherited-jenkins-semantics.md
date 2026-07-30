@@ -53,6 +53,21 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   automated review asked for the bracketed form to be supported; the receipt says
   supporting it would make Fogell RUN what Jenkins REFUSES, which is the same
   divergence direction rejected for stage-level `failFast`.
+- `withCredentials` binds the credential's **value** into the named variable —
+  measured: `env | grep -c '^TOKEN='` is 1 and `${#TOKEN}` is the secret's length —
+  masks it in the log as `****`, and **unsets** it after the block. This is why
+  FG-070's "no secret in the environment" design had to be demoted from the default:
+  every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
+- `withCredentials([file(...)])` binds the requested variable to a **path** to a
+  temporary file, not to the content. (Proven: `credentials-file`.)
+- `withCredentials([usernamePassword(...)])` masks **both** the username and the
+  password. (Proven: `credentials-userpass-masking`. A review asked for the username to
+  be exported unmasked, citing an unverified comment of mine that said Jenkins does not
+  mask it; the receipt showed Jenkins masks both.)
+- `stash` with the default `allowEmpty: false` and no matching files **fails the
+  build** — later steps do not run. (Proven: `stash-empty-fails`.)
+- A `stash` is stored with the **build**, not in the workspace, which is what makes it
+  survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a
   46 s network partition cost **zero** log lines.

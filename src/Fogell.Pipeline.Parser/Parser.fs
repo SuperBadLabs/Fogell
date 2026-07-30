@@ -44,32 +44,49 @@ let private argList: P<(string * string) list * string list> =
 let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
 
+/// Whitespace WITHIN a line. Load-bearing: see the step parser below.
+let private hspaces: P<unit> = skipMany (anyOf " \t")
+
 stepRef.Value <-
     ws
-    >>. pipe4 position identifier
-            (opt (attempt (balancedRaw '(' ')')) )
-            (opt (attempt (ws >>. argList)))
-            (fun pos name parens inlineArgs -> pos, name, parens, inlineArgs)
+    >>. pipe3 position identifier
+            // A step is EITHER `name(args)` OR `name args` — never both, and the
+            // inline form must start ON THE SAME LINE.
+            //
+            // The previous version tried parenthesised args and then, independently,
+            // inline args starting with `ws`. For `deleteDir()` that skipped the
+            // NEWLINE and consumed the whole NEXT STEP as a positional argument —
+            // which was then thrown away, because when parens are present the inline
+            // args are ignored. So `deleteDir()` silently ATE the step after it and
+            // the build reported success having skipped the work. Found by a
+            // stash/unstash differential receipt: `before.txt` was missing from the
+            // workspace, nothing else. Any zero-argument call form was affected —
+            // `deleteDir()`, `cleanWs()`, and so on.
+            (choice
+                [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
+                  attempt (hspaces >>. argList) |>> Choice2Of2
+                  preturn (Choice2Of2([], [])) ])
+            (fun pos name args -> pos, name, args)
     .>>. opt (attempt stepBlock)
-    |>> fun ((pos, name, parens, inlineArgs), block) ->
+    |>> fun ((pos, name, args), block) ->
             let named, positional =
-                match parens with
-                | Some raw ->
+                match args with
+                | Choice1Of2 raw ->
                     // re-parse the captured paren body for named/positional
                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
                     | ParserResult.Success((n, p), _, _) -> n, p
                     | ParserResult.Failure _ -> [], (if body.Trim() = "" then [] else [ body.Trim() ])
-                | None ->
-                    match inlineArgs with
-                    | Some(n, p) -> n, p
-                    | None -> [], []
+                | Choice2Of2(n, p) -> n, p
 
             { Name = name
               Positional = positional
               Named = named
               Block = defaultArg block []
-              RawArgs = defaultArg parens ""
+              RawArgs =
+                match args with
+                | Choice1Of2 raw -> raw
+                | Choice2Of2 _ -> ""
               Position = pos }
 
 // ---------------------------------------------------------------------------

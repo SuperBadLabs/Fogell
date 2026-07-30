@@ -1,0 +1,302 @@
+diff --git a/differential/cases/credentials-userpass.Jenkinsfile b/differential/cases/credentials-userpass.Jenkinsfile
+index 70786dd..a47252a 100644
+--- a/differential/cases/credentials-userpass.Jenkinsfile
++++ b/differential/cases/credentials-userpass.Jenkinsfile
+@@ -3,8 +3,12 @@
+ // both must be unset after the block.
+ //
+ // The workspace records lengths and the username's masked state rather than values, so
+-// the receipt proves the binding without committing a secret. The USERNAME is not a
+-// secret on Jenkins and is not masked; the password is.
++// the receipt proves the binding without committing a secret.
++//
++// MEASURED (credentials-username-not-masked): Jenkins masks BOTH the username and the
++// password. An earlier version of this comment asserted the username was not masked, on
++// no evidence, and a reviewer reasonably cited it as fact when asking for a change that
++// would have broken parity. An unverified comment that sounds measured is a liability.
+ pipeline {
+     agent any
+     stages {
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 224413f..14ba32e 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **41/41 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **43/43 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 22d4970..7315b57 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -60,6 +60,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+   every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
+ - `withCredentials([file(...)])` binds the requested variable to a **path** to a
+   temporary file, not to the content. (Proven: `credentials-file`.)
++- `withCredentials([usernamePassword(...)])` masks **both** the username and the
++  password. (Proven: `credentials-userpass-masking`. A review asked for the username to
++  be exported unmasked, citing an unverified comment of mine that said Jenkins does not
++  mask it; the receipt showed Jenkins masks both.)
++- `stash` with the default `allowEmpty: false` and no matching files **fails the
++  build** — later steps do not run. (Proven: `stash-empty-fails`.)
+ - A `stash` is stored with the **build**, not in the workspace, which is what makes it
+   survive `deleteDir()`. (Proven: `stash-unstash`.)
+ - Approval/`input` state survives a controller restart.
+diff --git a/scripts/provision-credentials.sh b/scripts/provision-credentials.sh
+index c63df95..28413b0 100755
+--- a/scripts/provision-credentials.sh
++++ b/scripts/provision-credentials.sh
+@@ -37,5 +37,16 @@ post_cred <<'XML'
+ XML
+ echo
+ 
++echo -n "fogell-file        (secret file)     -> HTTP "
++post_cred <<XML
++<org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl>
++  <scope>GLOBAL</scope><id>fogell-file</id><description>differential secret file</description>
++  <fileName>cert.pem</fileName><secretBytes>$(printf 'cert-file-body' | base64 -w0)</secretBytes>
++</org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl>
++XML
+ echo
+-echo "export FOGELL_CREDENTIALS='fogell-token=s3cr3t-value,fogell-userpass=deploy-bot:p4ssw0rd-value'"
++
++echo
++# The type is EXPLICIT. Inferring it from whether the value contains a colon broke any
++# secret text holding one — e.g. a URL — which is most of them.
++echo "export FOGELL_CREDENTIALS='fogell-token=text:s3cr3t-value;fogell-userpass=userpass:deploy-bot:p4ssw0rd-value;fogell-file=file:cert-file-body'"
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 5068ea8..27e2a68 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -43,14 +43,26 @@ module FogellSide =
+         | null
+         | "" -> Map.empty
+         | spec ->
+-            spec.Split ','
++            // REVIEW FIX (Codex, PR #15): the type used to be INFERRED from whether the
++            // value contained a colon, so a perfectly ordinary secret text like
++            // `token=https://service/path` was read as username `https` / password
++            // `//service/path` and then rejected as a type mismatch. Secret text and file
++            // content are arbitrary bytes and colons are common in them. The type is now
++            // explicit: `id=text:VALUE`, `id=userpass:USER:PASS`, `id=file:CONTENT`.
++            // Only the FIRST colon after the type is structural.
++            spec.Split ';'
+             |> Array.toList
+             |> List.choose (fun entry ->
+                 match entry.Split('=', 2) with
+-                | [| id; value |] when id <> "" ->
+-                    match value.Split(':', 2) with
+-                    | [| u; p |] when value.Contains ':' -> Some(id.Trim(), UsernamePassword(u, p))
+-                    | _ -> Some(id.Trim(), SecretText value)
++                | [| id; rest |] when id.Trim() <> "" ->
++                    match rest.Split(':', 2) with
++                    | [| "text"; v |] -> Some(id.Trim(), SecretText v)
++                    | [| "file"; v |] -> Some(id.Trim(), SecretFile("secret.dat", v))
++                    | [| "userpass"; v |] ->
++                        match v.Split(':', 2) with
++                        | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
++                        | _ -> None
++                    | _ -> None
+                 | _ -> None)
+             |> Map.ofList
+ 
+@@ -848,6 +860,9 @@ module FogellSide =
+                         // comment warns about, two lines above the code that did it. A
+                         // mismatch is a misconfiguration and must fail before the body runs.
+                         let mismatches = System.Collections.Generic.List<string>()
++                        // Non-secret variables that still have to reach the child, e.g. a
++                        // usernamePassword's username.
++                        let plainEnv = System.Collections.Generic.List<string * string>()
+ 
+                         let bindings =
+                             requests
+@@ -863,6 +878,18 @@ module FogellSide =
+                                 | BindUserPass(id, uv, pv) ->
+                                     match store.[id] with
+                                     | UsernamePassword(u, p) ->
++                                        // BOTH are masked. A Codex review (PR #15) said the
++                                        // username is not a secret on Jenkins and asked for
++                                        // it to be exported plainly — citing a comment I had
++                                        // written in the credentials-userpass case asserting
++                                        // exactly that. I had never measured it. A receipt
++                                        // that prints both to STDOUT settles it:
++                                        //   Jenkins: user-on-stdout=****
++                                        //   Jenkins: pass-on-stdout=****
++                                        // Jenkins registers both values with its masker, so
++                                        // masking both is parity and the "fix" broke it. My
++                                        // unverified comment became the reviewer's evidence,
++                                        // which is the real defect here.
+                                         [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
+                                     | other ->
+                                         mismatches.Add
+@@ -890,6 +917,12 @@ module FogellSide =
+                         // Jenkins narrates the masking; excluded from comparison as
+                         // engine narration, but said so a reader is not left guessing.
+                         if mismatches.Count > 0 then
++                            // REVIEW FIX (Codex, PR #15): a mixed request creates the valid
++                            // bindings BEFORE the mismatch is noticed, and this branch
++                            // returned without revoking them — leaving secret files on disk
++                            // outside the workspace, so workspace cleanup never removed
++                            // them.
++                            Secrets.revoke bindings
+                             emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
+                             ctx.Failed.Value <- true
+                             ctx.Sink BuildStatus.Failure
+@@ -901,7 +934,8 @@ module FogellSide =
+                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
+                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
+ 
+-                        let overlay = ctx.EnvOverlay @ Secrets.environmentFor bindings
++                        let overlay =
++                            ctx.EnvOverlay @ List.ofSeq plainEnv @ Secrets.environmentFor bindings
+                         let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
+ 
+                         for st in step.Block do
+@@ -951,10 +985,25 @@ module FogellSide =
+                         ctx.Failed.Value <- true
+                         ctx.Sink BuildStatus.Failure
+                     | Some n ->
++                        // REVIEW FIX (Codex, PR #15): this checked only ctx.Interrupt while
++                        // the archive and junit predicates combine interruption WITH the
++                        // deadline — so a stash inside a `timeout` could still finish past
++                        // it. Same predicate everywhere now.
+                         let abort () =
+-                            match ctx.Interrupt with
+-                            | Some p -> (try p () with _ -> false)
+-                            | None -> false
++                            let fired (p: (unit -> bool) option) =
++                                match p with
++                                | Some f -> (try f () with _ -> false)
++                                | None -> false
++
++                            fired ctx.Interrupt || (match remainingMs deadline with
++                                                    | Some ms -> ms <= 1
++                                                    | None -> false)
++
++                        let allowEmpty =
++                            step.Named
++                            |> List.tryPick (fun (k, v) -> if k = "allowEmpty" then Some v else None)
++                            |> Option.map (fun v -> v.Trim().ToLowerInvariant() = "true")
++                            |> Option.defaultValue false
+ 
+                         let saved, aborted = Stash.save store jobName cwd n includes abort
+ 
+@@ -962,6 +1011,15 @@ module FogellSide =
+                             emit "ERROR: stash aborted: the step was interrupted while copying"
+                             ctx.Failed.Value <- true
+                             ctx.Sink BuildStatus.Aborted
++                        elif List.isEmpty saved && not allowEmpty then
++                            // MEASURED: Jenkins FAILS the build here (default
++                            // allowEmpty: false) — the pipeline stops and later steps do
++                            // not run. Reporting success would let the build continue
++                            // having silently lost the inputs it asked for, and a later
++                            // `unstash` would succeed with nothing.
++                            emit $"ERROR: No files included in stash ‘{n}’"
++                            ctx.Failed.Value <- true
++                            ctx.Sink BuildStatus.Failure
+                         else
+                             emit $"Stashed {saved.Length} file(s)"
+ 
+@@ -981,7 +1039,17 @@ module FogellSide =
+                         ctx.Failed.Value <- true
+                         ctx.Sink BuildStatus.Failure
+                     | Some n ->
+-                        match Stash.restore store jobName cwd n with
++                        let abort () =
++                            let fired (p: (unit -> bool) option) =
++                                match p with
++                                | Some f -> (try f () with _ -> false)
++                                | None -> false
++
++                            fired ctx.Interrupt || (match remainingMs deadline with
++                                                    | Some ms -> ms <= 1
++                                                    | None -> false)
++
++                        match Stash.restore store jobName cwd n abort with
+                         | Result.Error e ->
+                             // A missing stash FAILS. Carrying on with none of the files
+                             // the build asked for is the silent-loss shape.
+diff --git a/src/Fogell.Execution/Publish.fs b/src/Fogell.Execution/Publish.fs
+index bc0b8d0..fa6e44f 100644
+--- a/src/Fogell.Execution/Publish.fs
++++ b/src/Fogell.Execution/Publish.fs
+@@ -267,7 +267,13 @@ module Stash =
+     /// Restore a stash into the workspace. Missing name is an error, never a silent
+     /// no-op: a build that carries on with none of the files it asked for is the
+     /// silent-loss shape this project exists to avoid.
+-    let restore (store: StashStore) (buildKey: string) (workspace: string) (name: string) =
++    let restore
++        (store: StashStore)
++        (buildKey: string)
++        (workspace: string)
++        (name: string)
++        (abort: unit -> bool)
++        =
+         let source = dir store buildKey name
+ 
+         if not (IO.Directory.Exists source) then
+@@ -278,9 +284,22 @@ module Stash =
+                 |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
+                 |> Array.sort
+ 
+-            for relative in files do
+-                let dest = IO.Path.Combine(workspace, relative)
+-                IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+-                IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
++            // REVIEW FIX (Codex, PR #15): `restore` had no abort predicate and the
++            // dispatcher did no post-copy check, so a large `unstash` as the final step
++            // inside a `timeout` finished and reported success past the deadline.
++            let mutable aborted = abort ()
++            let restored = System.Collections.Generic.List<string>()
+ 
+-            Ok(List.ofArray files)
++            for relative in files do
++                if not aborted then
++                    if abort () then
++                        aborted <- true
++                    else
++                        let dest = IO.Path.Combine(workspace, relative)
++                        IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
++                        IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
++                        restored.Add relative
++                        if abort () then aborted <- true
++
++            if aborted then Error "aborted: the step was interrupted while restoring the stash"
++            else Ok(List.ofSeq restored)
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index ec55cda..e41fe0c 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -84,7 +84,13 @@ module Secrets =
+     /// with the workspace.
+     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
+         Directory.CreateDirectory directory |> ignore
+-        let path = Path.Combine(directory, $".secret-{variableName}")
++        // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two
++        // bindings of the same variable — nested `withCredentials`, or concurrent
++        // parallel branches — shared one file. The inner one overwrote the outer, and
++        // revoking the inner deleted the file the outer's variable still pointed at.
++        // Jenkins allocates a fresh temporary path per binding; so do we.
++        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
++        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
+         File.WriteAllText(path, value)
+ 
+         // 0600 before anything can read it. WriteAllText creates with the
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 8a38428..16fbe9c 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -384,7 +384,7 @@ let secrets =
+               let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
+               Expect.equal a b "both saved"
+ 
+-              match Stash.restore store "build-1" ws "x" with
++              match Stash.restore store "build-1" ws "x" (fun () -> false) with
+               | Ok files -> Expect.equal files [ "f.txt" ] "restoring 'x' finds its own content"
+               | Error e -> failtest e
+           }

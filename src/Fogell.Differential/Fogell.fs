@@ -20,6 +20,8 @@ type BranchCtx =
       /// must not leave a permanent mark on the build, and the build status is a
       /// monotone worst-of that could never be walked back.
       Sink: BuildStatus -> unit
+      /// FG-044. Credential bindings live for this scope, so output is masked.
+      Secrets: SecretBinding list
       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
       /// shadowed one reverts to its outer value.
@@ -32,6 +34,76 @@ module FogellSide =
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
+    /// FG-044. Credentials the harness has mirrored into the pinned Jenkins, so both
+    /// engines bind the SAME values and a receipt means something. Supplied out of band
+    /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
+    /// secret never enters the repository.
+    let credentialStore () : Map<string, Credential> =
+        // The value of a credential is ARBITRARY BYTES. Two rounds of review found a
+        // delimiter bug here: the type was first inferred from the presence of a colon
+        // (breaking any secret text holding a URL), and my fix then split entries on a
+        // semicolon (breaking any value holding one). Choosing a third delimiter would
+        // just move the bug, so the value is base64 and cannot contain a separator at
+        // all. Fields are tab-separated, one credential per line:
+        //
+        //   <id>\t<text|userpass|file>\t<base64 value>
+        //
+        // `userpass` decodes to "user\npassword". Supplied via FOGELL_CREDENTIALS_FILE
+        // so a real secret never appears in a process listing either.
+        let spec =
+            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
+            | null
+            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+            | path -> if File.Exists path then File.ReadAllText path else null
+
+        match spec with
+        | null
+        | "" -> Map.empty
+        | text ->
+            // REVIEW FIX (Codex, PR #15 round 4): this swallowed a decode failure and
+            // returned "", so a typo'd credential line became an EMPTY secret — the exact
+            // "build goes green while the deploy authenticates as nobody" outcome the
+            // credential gate exists to prevent, committed by the decoder feeding it.
+            // A malformed line is now dropped AND named, so the id is absent from the
+            // store and the step fails closed on "credential id not found".
+            let malformed = System.Collections.Generic.List<string>()
+
+            let decodeBytes (id: string) (b64: string) =
+                try
+                    Some(Convert.FromBase64String(b64.Trim()))
+                with _ ->
+                    malformed.Add id
+                    None
+
+            text.Replace("\r\n", "\n").Split '\n'
+            |> Array.toList
+            |> List.choose (fun line ->
+                if line.Trim() = "" || line.TrimStart().StartsWith "#" then
+                    None
+                else
+                    match line.Split '\t' with
+                    | [| id; kind; b64 |] ->
+                        match decodeBytes (id.Trim()) b64 with
+                        | None -> None
+                        | Some bytes ->
+                            let asText = Text.Encoding.UTF8.GetString bytes
+
+                            match kind.Trim() with
+                            | "text" -> Some(id.Trim(), SecretText asText)
+                            // Bytes are preserved verbatim for a file credential.
+                            | "file" -> Some(id.Trim(), SecretFile("secret.dat", bytes))
+                            | "userpass" ->
+                                match asText.Split '\n' with
+                                | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+                                | _ -> None
+                            | _ -> None
+                    | _ -> None)
+            |> fun entries ->
+                for id in malformed do
+                    eprintfn $"FOGELL_CREDENTIALS: '{id}' has malformed base64 and was DROPPED; the step will fail closed"
+
+                Map.ofList entries
+
     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
@@ -215,7 +287,7 @@ module FogellSide =
                           Interrupt = ctx.Interrupt
                           DeadlineExpired =
                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
-                          Secrets = []
+                          Secrets = ctx.Secrets
                           Named = step.Named
                           Artifacts = Some(ArtifactStore.under artifactRoot)
                           BuildKey = jobName }
@@ -769,6 +841,347 @@ module FogellSide =
 
                     if inner.Failed.Value then ctx.Failed.Value <- true
 
+                // FG-044. `withCredentials([...]) { … }`.
+                //
+                // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
+                // the log as `****`, and unsets it after the block. It also prints
+                // "Masking supported pattern matches of $VAR", which is engine narration.
+                | "withCredentials", _ when not (List.isEmpty step.Block) ->
+                    let typeName =
+                        function
+                        | SecretText _ -> "secret-text"
+                        | UsernamePassword _ -> "username/password"
+                        | SecretFile _ -> "secret-file"
+
+                    let requests = Credentials.parseRequests (String.concat " " step.Positional)
+                    let store = credentialStore ()
+
+                    let unmodelled =
+                        requests
+                        |> List.choose (function
+                            | BindUnmodelled(kind, _) -> Some kind
+                            | _ -> None)
+
+                    // REVIEW FIX (Copilot, PR #15): if nothing parsed, the block used to
+                    // run with NO bindings at all — and emit a masking line with an empty
+                    // variable list — so a build could appear to succeed with its
+                    // credentials missing entirely. `withCredentials` with nothing bound
+                    // is never what the author meant.
+                    let parsedNothing = List.isEmpty requests
+
+                    let missing =
+                        Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
+
+                    if parsedNothing then
+                        emit $"""ERROR: withCredentials bound nothing — could not parse any binding from '{String.concat " " step.Positional}'"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    elif not (List.isEmpty unmodelled) then
+                        // Fail CLOSED by name. A binding kind we do not model must not
+                        // yield an empty variable: the build would go green while the
+                        // deploy authenticated as nobody.
+                        emit $"""ERROR: unsupported credential binding kind(s) {String.concat ", " unmodelled}; refusing to bind an empty credential"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    elif not (List.isEmpty missing) then
+                        emit $"""ERROR: credential id(s) not found: {String.concat ", " missing}"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    else
+                        let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
+
+                        // REVIEW FIX (Codex, PR #15): a type mismatch used to be COERCED —
+                        // a `string` request against a username/password credential got the
+                        // username, a `usernamePassword` request against secret text left
+                        // the username unset. That is precisely the "build goes green while
+                        // the deploy authenticates as nobody" outcome this step's own
+                        // comment warns about, two lines above the code that did it. A
+                        // mismatch is a misconfiguration and must fail before the body runs.
+                        let mismatches = System.Collections.Generic.List<string>()
+                        // Non-secret variables that still have to reach the child, e.g. a
+                        // usernamePassword's username.
+                        let plainEnv = System.Collections.Generic.List<string * string>()
+
+                        let bindings =
+                            requests
+                            |> List.collect (fun r ->
+                                match r with
+                                | BindText(id, v) ->
+                                    match store.[id] with
+                                    | SecretText value -> [ Secrets.bind secretDir v value ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `string`"
+                                        []
+                                | BindUserPass(id, uv, pv) ->
+                                    match store.[id] with
+                                    | UsernamePassword(u, p) ->
+                                        // BOTH are masked. A Codex review (PR #15) said the
+                                        // username is not a secret on Jenkins and asked for
+                                        // it to be exported plainly — citing a comment I had
+                                        // written in the credentials-userpass case asserting
+                                        // exactly that. I had never measured it. A receipt
+                                        // that prints both to STDOUT settles it:
+                                        //   Jenkins: user-on-stdout=****
+                                        //   Jenkins: pass-on-stdout=****
+                                        // Jenkins registers both values with its masker, so
+                                        // masking both is parity and the "fix" broke it. My
+                                        // unverified comment became the reviewer's evidence,
+                                        // which is the real defect here.
+                                        [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
+                                        []
+                                | BindFile(id, v) ->
+                                    // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
+                                    // requested variable to a PATH to a temporary file. The
+                                    // code bound `<VAR>_CONTENT` and never `<VAR>` at all,
+                                    // while the comment claimed otherwise — so every
+                                    // `file()` body ran with its variable unset.
+                                    match store.[id] with
+                                    | SecretFile(_, bytes) ->
+                                        // The requested variable holds the PATH; the bytes
+                                        // are written verbatim so a binary credential is
+                                        // not corrupted on the way through.
+                                        [ Secrets.bindBytes secretDir v bytes ]
+                                    // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
+                                    // silently accepted for a `file()` request while every
+                                    // other mismatch failed closed — an inconsistency that
+                                    // let a misconfigured credential through the one gate
+                                    // built to stop it.
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `file`"
+                                        []
+                                | BindUnmodelled _ -> [])
+
+                        // Jenkins narrates the masking; excluded from comparison as
+                        // engine narration, but said so a reader is not left guessing.
+                        if mismatches.Count > 0 then
+                            // REVIEW FIX (Codex, PR #15): a mixed request creates the valid
+                            // bindings BEFORE the mismatch is noticed, and this branch
+                            // returned without revoking them — leaving secret files on disk
+                            // outside the workspace, so workspace cleanup never removed
+                            // them.
+                            Secrets.revoke bindings
+                            emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        else
+
+                        // One line naming every bound variable, matching Jenkins' shape.
+                        // The wording is not compared (see the contract); the line exists
+                        // so a reader of OUR log is told what is being masked.
+                        let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
+                        emit $"""Masking supported pattern matches of {String.concat " or " names}"""
+
+                        let overlay =
+                            ctx.EnvOverlay @ List.ofSeq plainEnv @ Secrets.environmentFor bindings
+                        let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
+
+                        for st in step.Block do
+                            if not (halted inner) then
+                                runStepDispatch inner cwd stage st deadline
+
+                        if inner.Failed.Value then ctx.Failed.Value <- true
+
+                        // Unset after the block: measured on Jenkins.
+                        Secrets.revoke bindings
+
+                // FG-047 companion. `deleteDir()` empties the CURRENT directory — the
+                // workspace, or the enclosing `dir` block's cwd — without removing the
+                // directory itself. It is what makes the stash test meaningful.
+                | "deleteDir", _ ->
+                    // Polling here has now been wrong twice: first absent altogether, then
+                    // checking only the deadline and only BEFORE each top-level entry — so a
+                    // fail-fast sibling could not stop it, and a single large directory
+                    // could cross the deadline with no later check. One predicate covering
+                    // both causes, checked before AND after each entry.
+                    let stop () =
+                        let interrupted =
+                            match ctx.Interrupt with
+                            | Some p -> (try p () with _ -> false)
+                            | None -> false
+
+                        let expired =
+                            match remainingMs deadline with
+                            | Some ms -> ms <= 1
+                            | None -> false
+
+                        interrupted, expired
+
+                    if Directory.Exists cwd then
+                        let mutable halt = false
+
+                        for entry in Directory.GetFileSystemEntries cwd do
+                            if not halt then
+                                match stop () with
+                                | true, _
+                                | _, true -> halt <- true
+                                | _ ->
+                                    try
+                                        if Directory.Exists entry then Directory.Delete(entry, true)
+                                        else File.Delete entry
+
+                                        // A single recursive delete can itself outlast the
+                                        // deadline, so re-check immediately after it.
+                                        match stop () with
+                                        | true, _
+                                        | _, true -> halt <- true
+                                        | _ -> ()
+                                    with ex ->
+                                        emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
+                                        ctx.Failed.Value <- true
+                                        ctx.Sink BuildStatus.Failure
+
+                        if halt then
+                            // Classify the CAUSE: a sibling's failure is a failure, a
+                            // deadline is an abort.
+                            let interrupted, _ = stop ()
+
+                            if interrupted then
+                                emit "ERROR: deleteDir interrupted: a failFast sibling failed"
+                                ctx.Failed.Value <- true
+                            else
+                                emit "ERROR: deleteDir aborted: the step's deadline expired"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Aborted
+
+                // FG-047. `stash` / `unstash`. Storage is controller-side — under the
+                // artifact root, NOT the workspace — which is what makes a stash survive
+                // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
+                // would pass a naive test and fail the one that matters.
+                | "stash", _ ->
+                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
+
+                    let name =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None)
+                        |> Option.orElse (List.tryHead step.Positional)
+
+                    let includes =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "includes" then Some v else None)
+                        |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
+                        |> Option.defaultValue []
+
+                    match name with
+                    | None ->
+                        emit "ERROR: stash requires a name"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some n ->
+                        // REVIEW FIX (Codex, PR #15): this checked only ctx.Interrupt while
+                        // the archive and junit predicates combine interruption WITH the
+                        // deadline — so a stash inside a `timeout` could still finish past
+                        // it. Same predicate everywhere now.
+                        let abort () =
+                            let fired (p: (unit -> bool) option) =
+                                match p with
+                                | Some f -> (try f () with _ -> false)
+                                | None -> false
+
+                            fired ctx.Interrupt || (match remainingMs deadline with
+                                                    | Some ms -> ms <= 1
+                                                    | None -> false)
+
+                        let allowEmpty =
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "allowEmpty" then Some v else None)
+                            |> Option.map (fun v -> v.Trim().ToLowerInvariant() = "true")
+                            |> Option.defaultValue false
+
+                        let excludes =
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "excludes" then Some v else None)
+                            |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
+                            |> Option.defaultValue []
+
+                        let saved, aborted = Stash.save store jobName cwd n includes excludes abort
+
+                        if aborted then
+                            // REVIEW FIX (Codex, PR #15 round 3): this always reported
+                            // Aborted, so a stash interrupted because a failFast SIBLING
+                            // failed turned the build from failure into aborted —
+                            // exactly the collateral-outranks-cause bug fixed for shell
+                            // steps in PR #13. The sibling's failure is the cause; only a
+                            // deadline is genuinely an abort.
+                            let bySibling =
+                                match ctx.Interrupt with
+                                | Some p -> (try p () with _ -> false)
+                                | None -> false
+
+                            emit
+                                (if bySibling then
+                                     "ERROR: stash interrupted: a failFast sibling failed"
+                                 else
+                                     "ERROR: stash aborted: the step's deadline expired while copying")
+
+                            ctx.Failed.Value <- true
+                            if not bySibling then ctx.Sink BuildStatus.Aborted
+                        elif List.isEmpty saved && not allowEmpty then
+                            // MEASURED: Jenkins FAILS the build here (default
+                            // allowEmpty: false) — the pipeline stops and later steps do
+                            // not run. Reporting success would let the build continue
+                            // having silently lost the inputs it asked for, and a later
+                            // `unstash` would succeed with nothing.
+                            emit $"ERROR: No files included in stash ‘{n}’"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        else
+                            emit $"Stashed {saved.Length} file(s)"
+
+                | "unstash", _ ->
+                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
+
+                    let name =
+                        step.Positional
+                        |> List.tryHead
+                        |> Option.orElse (
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None))
+
+                    match name with
+                    | None ->
+                        emit "ERROR: unstash requires a name"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some n ->
+                        let abort () =
+                            let fired (p: (unit -> bool) option) =
+                                match p with
+                                | Some f -> (try f () with _ -> false)
+                                | None -> false
+
+                            fired ctx.Interrupt || (match remainingMs deadline with
+                                                    | Some ms -> ms <= 1
+                                                    | None -> false)
+
+                        match Stash.restore store jobName cwd n abort with
+                        | Result.Error e ->
+                            // A missing stash FAILS. Carrying on with none of the files
+                            // the build asked for is the silent-loss shape.
+                            //
+                            // REVIEW FIX (Codex, PR #15 round 3): an INTERRUPTED restore
+                            // came back through this same branch and was reported as a
+                            // plain failure, so a `timeout` whose last step is `unstash`
+                            // selected post { failure } where every other timed-out step
+                            // selects post { aborted }.
+                            emit $"ERROR: {e}"
+                            ctx.Failed.Value <- true
+
+                            let bySibling =
+                                match ctx.Interrupt with
+                                | Some p -> (try p () with _ -> false)
+                                | None -> false
+
+                            if e.StartsWith "aborted:" && not bySibling then
+                                ctx.Sink BuildStatus.Aborted
+                            else
+                                ctx.Sink BuildStatus.Failure
+                        | Result.Ok _ -> ()
+
                 | "dir", (sub :: _) ->
                     // `dir('x') { … }` — nested cwd, auto-created
                     match Workspace.resolveUnder cwd sub with
@@ -835,6 +1248,7 @@ module FogellSide =
                                       // forwards upward to `bump`.
                                       Sink = ctx.Sink
                                       EnvOverlay = ctx.EnvOverlay
+                                      Secrets = ctx.Secrets
                                       Interrupt =
                                         if failFast then
                                             Some(fun () -> siblingFailed.IsCancellationRequested)
@@ -864,7 +1278,7 @@ module FogellSide =
                         for nested in stage.Nested do
                             runStage ctx cwd nested
 
-            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
+            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then

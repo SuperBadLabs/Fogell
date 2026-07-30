@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md               |  4 +--
+ src/Fogell.Differential/Fogell.fs     | 59 ++++++++++++++++++++++++-----------
+ src/Fogell.Execution/Credentials.fs   |  5 ++-
+ src/Fogell.Execution/Publish.fs       |  7 +++++
+ src/Fogell.Execution/Secrets.fs       | 23 ++++++++++++++
+ tests/Fogell.Execution.Tests/Tests.fs |  6 ++--
+ 6 files changed, 80 insertions(+), 24 deletions(-)

@@ -1,0 +1,13 @@
+ M differential/cases/credentials-userpass.Jenkinsfile
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M scripts/provision-credentials.sh
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Execution/Publish.fs
+ M src/Fogell.Execution/Secrets.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+?? differential/cases/credentials-userpass-masking.Jenkinsfile
+?? differential/cases/stash-empty-fails.Jenkinsfile
+?? differential/receipts/credentials-userpass-masking.receipt.txt
+?? differential/receipts/stash-empty-fails.receipt.txt
+?? evidence/20260730T080548Z-fg-044-047-review2/

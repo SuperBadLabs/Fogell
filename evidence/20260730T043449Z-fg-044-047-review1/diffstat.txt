@@ -1,0 +1,8 @@
+ .../receipts/parallel-always-failfast.receipt.txt  |  4 +-
+ docs/EXECUTION_BOARD.md                            |  4 +-
+ docs/adr/0005-inherited-jenkins-semantics.md       |  2 +
+ src/Fogell.Differential/Fogell.fs                  | 79 +++++++++++++++++++---
+ src/Fogell.Execution/Publish.fs                    | 62 +++++++++++++++--
+ src/Fogell.Execution/Secrets.fs                    | 13 +++-
+ tests/Fogell.Execution.Tests/Tests.fs              | 46 ++++++++++++-
+ 7 files changed, 184 insertions(+), 26 deletions(-)

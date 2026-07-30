@@ -310,11 +310,24 @@ let containment =
 let secrets =
     testList
         "FG-070/071 secret delivery and leak detection"
-        [ test "BEAT JENKINS: the value is NOT in the child's environment" {
-              // Measured: a secret in the environment is readable from
-              // /proc/<pid>/environ by any process running as the same user, for
-              // the whole life of the step. Jenkins' withCredentials does exactly
-              // that. Fogell passes a PATH, never the value.
+        [ test "the value IS bound, as Jenkins binds it — and a file companion too" {
+              // CLAIM CORRECTED, twice, and this test is the record of it.
+              //
+              // Originally: "the value is NOT in the child's environment", on the
+              // measurement that a secret in `environ` is readable from
+              // /proc/<pid>/environ by any same-UID process.
+              //
+              // First correction (Codex, PR #11): the 0600 file does not defeat that
+              // attacker either — it reads `TOKEN_FILE` from environ and opens the file,
+              // which it owns.
+              //
+              // Second correction (FG-044 measurement): Jenkins' `withCredentials` binds
+              // the VALUE — `env | grep -c '^TOKEN='` is 1, `${#TOKEN}` is the secret's
+              // length — and every real pipeline reads `$TOKEN`. Binding only a path
+              // breaks lift-and-shift for all 23 corpus files that use credentials, and
+              // lift-and-shift is the product. So Fogell binds the value for parity AND
+              // offers the file companion, and what actually protects the value is
+              // masking on every output path (FG-071), not absence from the environment.
               let root = tempRoot ()
               let req = request root ""
               let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
@@ -322,14 +335,103 @@ let secrets =
               let r =
                   Executor.runStep
                       { req with
-                          // the script prints its OWN environment; if the value
-                          // were there, it would appear here
+                          // the script prints its OWN environment
                           Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
-                          Environment = Secrets.environmentFor [ binding ] }
+                          Environment = Secrets.environmentFor [ binding ]
+                          Secrets = [ binding ] }
 
               Expect.equal r.Status BuildStatus.Success "ran"
-              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is absent from the environment"
-              Expect.stringContains r.Stdout "TOKEN_FILE=" "only a path is exposed"
+              Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound, as Jenkins binds it"
+              Expect.stringContains r.Stdout "TOKEN_FILE=" "and the file companion is bound too"
+
+              // REVIEW FIX (Copilot, PR #15): this test prints the child's whole
+              // environment, so it is the strongest available place to assert that the
+              // masker holds — and when I rewrote it for the parity change I asserted only
+              // that the variables EXIST, which a real leak would sail through. The value
+              // is now in the environment by design, so masking is the entire protection
+              // and this is where it gets proven.
+              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is MASKED on the way out"
+              Expect.stringContains r.Stdout "****" "and replaced with the mask token"
+              Secrets.revoke [ binding ]
+          }
+
+          test "a binary file credential reports no phantom literal leak" {
+              // REVIEW FIX (Codex, PR #15 round 5): `bindBytes` stores an empty Value for a
+              // non-UTF-8 credential, and every string contains the empty string — so a
+              // literal leak was reported on EVERY line of output inside the block. A
+              // warning that always fires trains the reader to ignore the channel.
+              let root = tempRoot ()
+              let bytes = [| 0uy; 159uy; 146uy; 150uy; 255uy |] // invalid UTF-8
+              let binding = Secrets.bindBytes root "CERT" bytes
+
+              Expect.isEmpty (Secrets.detectLeaks [ binding ] "ordinary build output") "no phantom leak"
+              Expect.equal (Secrets.mask [ binding ] "ordinary build output") "ordinary build output" "output untouched"
+              Secrets.revoke [ binding ]
+          }
+
+          test "an explicitly requested variable is never overridden by a companion" {
+              // Requested `TOKEN_FILE` must survive another binding's generated
+              // `TOKEN_FILE` companion, or the body gets a path where its credential
+              // should be.
+              let root = tempRoot ()
+              let explicitBinding = Secrets.bind root "TOKEN_FILE" "explicit-secret"
+              let other = Secrets.bind root "TOKEN" "other-secret"
+
+              let env = Secrets.environmentFor [ explicitBinding; other ] |> Map.ofList
+
+              Expect.equal (Map.tryFind "TOKEN_FILE" env) (Some "explicit-secret") "the requested value wins"
+              Secrets.revoke [ explicitBinding; other ]
+          }
+
+          test "a stash name cannot escape the stash root" {
+              // Both reviewers flagged this independently on PR #15, and it was
+              // destructive: `save` deletes its target recursively before recreating it,
+              // so `stash name: '../../x'` would have removed whatever that resolved to,
+              // and `unstash` would copy arbitrary controller files into the workspace.
+              // The name comes from a Jenkinsfile, which is untrusted third-party code.
+              let root = tempRoot ()
+              let store = StashStore.under (Path.Combine(root, "stashes"))
+              let ws = match Workspace.createFresh root (key ()) with
+                       | Result.Ok p -> p
+                       | Result.Error e -> failtestf "%s" e.Describe
+
+              File.WriteAllText(Path.Combine(ws, "f.txt"), "body")
+
+              let canary = Path.Combine(root, "canary.txt")
+              File.WriteAllText(canary, "must survive")
+
+              for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
+                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] (fun () -> false)
+                  Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
+
+              Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
+              Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
+
+              // Distinct hostile names must not collide with each other either.
+              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] (fun () -> false)
+              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] (fun () -> false)
+              Expect.equal a b "both saved"
+
+              match Stash.restore store "build-1" ws "x" (fun () -> false) with
+              | Ok files -> Expect.equal files [ "f.txt" ] "restoring 'x' finds its own content"
+              | Error e -> failtest e
+          }
+
+          test "the hardened path-only form is still available for a caller that wants it" {
+              // The original FG-070 behaviour has not been deleted, only demoted from
+              // the default: a caller that accepts the incompatibility can still have it.
+              let root = tempRoot ()
+              let req = request root ""
+              let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
+
+              let r =
+                  Executor.runStep
+                      { req with
+                          Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
+                          Environment = Secrets.environmentForPathOnly [ binding ] }
+
+              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "no value in the environment"
+              Expect.stringContains r.Stdout "TOKEN_FILE=" "only a path"
               Secrets.revoke [ binding ]
           }
 
