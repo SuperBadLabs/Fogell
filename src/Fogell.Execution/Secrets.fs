@@ -20,7 +20,19 @@ open System.IO
 ///    treats masking as defence-in-depth and, crucially, is NOT silent when a
 ///    transformation likely escaped it.
 type SecretBinding =
-    { /// Environment variable the script reads, e.g. `TOKEN_FILE`.
+    { /// The variable carrying the VALUE, exactly as Jenkins binds it.
+      ///
+      /// MEASURED on the pinned Jenkins (FG-044): `withCredentials([string(...,
+      /// variable: 'TOKEN')])` puts the real value in `TOKEN` —
+      /// `env | grep -c '^TOKEN='` is 1 and `${#TOKEN}` is the secret's length — and
+      /// unsets it after the block. FG-070's original design bound only a
+      /// `TOKEN_FILE` path and NO value, which is incompatible with running any real
+      /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
+      /// hardening property that was in any case already proven weaker than claimed
+      /// (a same-UID reader follows the path and opens the file it owns).
+      ValueVariable: string
+      /// Companion variable carrying a path to a 0600 file with the same value. Kept
+      /// as an ADDITION, not a replacement: scripts that prefer a file can use it.
       PathVariable: string
       /// Absolute path of the 0600 file holding the value.
       FilePath: string
@@ -75,12 +87,21 @@ module Secrets =
         // process umask, so this is tightened immediately after.
         File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
 
-        { PathVariable = variableName + "_FILE"
+        { ValueVariable = variableName
+          PathVariable = variableName + "_FILE"
           FilePath = path
           Value = value }
 
-    /// Environment entries for a set of bindings. Note what is ABSENT: the value.
+    /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
+    /// file path (our addition). Masking on every output path is what actually
+    /// protects the value — see FG-071 — not its absence from the environment.
     let environmentFor (bindings: SecretBinding list) =
+        bindings
+        |> List.collect (fun b -> [ b.ValueVariable, b.Value; b.PathVariable, b.FilePath ])
+
+    /// FG-070's original, hardened form: the path ONLY, no value. Available for a
+    /// caller that accepts the incompatibility.
+    let environmentForPathOnly (bindings: SecretBinding list) =
         bindings |> List.map (fun b -> b.PathVariable, b.FilePath)
 
     /// Replace every registered form with `****`.
@@ -97,11 +118,11 @@ module Secrets =
         [ for b in bindings do
               // the literal must never survive masking; if it does, the masker failed
               if maskedText.Contains b.Value then
-                  { Variable = b.PathVariable; Encoding = "literal" }
+                  { Variable = b.ValueVariable; Encoding = "literal" }
 
               for name, form in detectableForms b.Value do
                   if maskedText.Contains form then
-                      { Variable = b.PathVariable; Encoding = name } ]
+                      { Variable = b.ValueVariable; Encoding = name } ]
 
     /// Remove secret files. Called even on failure, because a leftover secret
     /// file outlives the reason it existed.

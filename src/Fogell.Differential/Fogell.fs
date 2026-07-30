@@ -20,6 +20,8 @@ type BranchCtx =
       /// must not leave a permanent mark on the build, and the build status is a
       /// monotone worst-of that could never be walked back.
       Sink: BuildStatus -> unit
+      /// FG-044. Credential bindings live for this scope, so output is masked.
+      Secrets: SecretBinding list
       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
       /// shadowed one reverts to its outer value.
@@ -32,6 +34,26 @@ module FogellSide =
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
+    /// FG-044. Credentials the harness has mirrored into the pinned Jenkins, so both
+    /// engines bind the SAME values and a receipt means something. Supplied out of band
+    /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
+    /// secret never enters the repository.
+    let credentialStore () : Map<string, Credential> =
+        match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS" with
+        | null
+        | "" -> Map.empty
+        | spec ->
+            spec.Split ','
+            |> Array.toList
+            |> List.choose (fun entry ->
+                match entry.Split('=', 2) with
+                | [| id; value |] when id <> "" ->
+                    match value.Split(':', 2) with
+                    | [| u; p |] when value.Contains ':' -> Some(id.Trim(), UsernamePassword(u, p))
+                    | _ -> Some(id.Trim(), SecretText value)
+                | _ -> None)
+            |> Map.ofList
+
     let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
@@ -215,7 +237,7 @@ module FogellSide =
                           Interrupt = ctx.Interrupt
                           DeadlineExpired =
                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
-                          Secrets = []
+                          Secrets = ctx.Secrets
                           Named = step.Named
                           Artifacts = Some(ArtifactStore.under artifactRoot)
                           BuildKey = jobName }
@@ -769,6 +791,148 @@ module FogellSide =
 
                     if inner.Failed.Value then ctx.Failed.Value <- true
 
+                // FG-044. `withCredentials([...]) { … }`.
+                //
+                // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
+                // the log as `****`, and unsets it after the block. It also prints
+                // "Masking supported pattern matches of $VAR", which is engine narration.
+                | "withCredentials", _ when not (List.isEmpty step.Block) ->
+                    let requests = Credentials.parseRequests (String.concat " " step.Positional)
+                    let store = credentialStore ()
+
+                    let unmodelled =
+                        requests
+                        |> List.choose (function
+                            | BindUnmodelled(kind, _) -> Some kind
+                            | _ -> None)
+
+                    let missing =
+                        Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
+
+                    if not (List.isEmpty unmodelled) then
+                        // Fail CLOSED by name. A binding kind we do not model must not
+                        // yield an empty variable: the build would go green while the
+                        // deploy authenticated as nobody.
+                        emit $"""ERROR: unsupported credential binding kind(s) {String.concat ", " unmodelled}; refusing to bind an empty credential"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    elif not (List.isEmpty missing) then
+                        emit $"""ERROR: credential id(s) not found: {String.concat ", " missing}"""
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    else
+                        let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
+
+                        let bindings =
+                            requests
+                            |> List.collect (fun r ->
+                                match r with
+                                | BindText(id, v) ->
+                                    match store.[id] with
+                                    | SecretText value -> [ Secrets.bind secretDir v value ]
+                                    | UsernamePassword(u, _) -> [ Secrets.bind secretDir v u ]
+                                    | SecretFile(_, content) -> [ Secrets.bind secretDir v content ]
+                                | BindUserPass(id, uv, pv) ->
+                                    match store.[id] with
+                                    | UsernamePassword(u, p) ->
+                                        [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
+                                    | SecretText value -> [ Secrets.bind secretDir pv value ]
+                                    | SecretFile(_, content) -> [ Secrets.bind secretDir pv content ]
+                                | BindFile(id, v) ->
+                                    // Jenkins binds a PATH for a file credential, so the
+                                    // path variable IS the value variable here.
+                                    match store.[id] with
+                                    | SecretFile(_, content)
+                                    | SecretText content -> [ Secrets.bind secretDir (v + "_CONTENT") content ]
+                                    | UsernamePassword(_, p) -> [ Secrets.bind secretDir (v + "_CONTENT") p ]
+                                | BindUnmodelled _ -> [])
+
+                        // Jenkins narrates the masking; excluded from comparison as
+                        // engine narration, but said so a reader is not left guessing.
+                        // One line naming every bound variable, matching Jenkins' shape.
+                        // The wording is not compared (see the contract); the line exists
+                        // so a reader of OUR log is told what is being masked.
+                        let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
+                        emit $"""Masking supported pattern matches of {String.concat " or " names}"""
+
+                        let overlay = ctx.EnvOverlay @ Secrets.environmentFor bindings
+                        let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
+
+                        for st in step.Block do
+                            if not (halted inner) then
+                                runStepDispatch inner cwd stage st deadline
+
+                        if inner.Failed.Value then ctx.Failed.Value <- true
+
+                        // Unset after the block: measured on Jenkins.
+                        Secrets.revoke bindings
+
+                // FG-047 companion. `deleteDir()` empties the CURRENT directory — the
+                // workspace, or the enclosing `dir` block's cwd — without removing the
+                // directory itself. It is what makes the stash test meaningful.
+                | "deleteDir", _ ->
+                    if Directory.Exists cwd then
+                        for entry in Directory.GetFileSystemEntries cwd do
+                            try
+                                if Directory.Exists entry then Directory.Delete(entry, true)
+                                else File.Delete entry
+                            with ex ->
+                                emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Failure
+
+                // FG-047. `stash` / `unstash`. Storage is controller-side — under the
+                // artifact root, NOT the workspace — which is what makes a stash survive
+                // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
+                // would pass a naive test and fail the one that matters.
+                | "stash", _ ->
+                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
+
+                    let name =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None)
+                        |> Option.orElse (List.tryHead step.Positional)
+
+                    let includes =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "includes" then Some v else None)
+                        |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
+                        |> Option.defaultValue []
+
+                    match name with
+                    | None ->
+                        emit "ERROR: stash requires a name"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some n ->
+                        let saved = Stash.save store jobName cwd n includes
+                        emit $"Stashed {saved.Length} file(s)"
+
+                | "unstash", _ ->
+                    let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
+
+                    let name =
+                        step.Positional
+                        |> List.tryHead
+                        |> Option.orElse (
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "name" then Some v else None))
+
+                    match name with
+                    | None ->
+                        emit "ERROR: unstash requires a name"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | Some n ->
+                        match Stash.restore store jobName cwd n with
+                        | Result.Error e ->
+                            // A missing stash FAILS. Carrying on with none of the files
+                            // the build asked for is the silent-loss shape.
+                            emit $"ERROR: {e}"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        | Result.Ok _ -> ()
+
                 | "dir", (sub :: _) ->
                     // `dir('x') { … }` — nested cwd, auto-created
                     match Workspace.resolveUnder cwd sub with
@@ -835,6 +999,7 @@ module FogellSide =
                                       // forwards upward to `bump`.
                                       Sink = ctx.Sink
                                       EnvOverlay = ctx.EnvOverlay
+                                      Secrets = ctx.Secrets
                                       Interrupt =
                                         if failFast then
                                             Some(fun () -> siblingFailed.IsCancellationRequested)
@@ -864,7 +1029,7 @@ module FogellSide =
                         for nested in stage.Nested do
                             runStage ctx cwd nested
 
-            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
+            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = []; Secrets = [] }
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then

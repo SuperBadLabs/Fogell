@@ -159,6 +159,12 @@ module Trace =
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
         || t.StartsWith "Failed in branch "
+        // FG-044. Jenkins narrates credential masking as one line naming every bound
+        // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
+        // that join word character for character would over-fit to plugin wording, the
+        // thing this contract exists to avoid. Both engines say it; the wording is not
+        // compared, and the load-bearing evidence is that the value never appears.
+        || t.StartsWith "Masking supported pattern matches of "
         // FG-049. A failing `post` step makes Jenkins print a Java exception and
         // stack trace into the build log. It is the engine explaining itself, which
         // is what this predicate is for — and matching a stack trace verbatim would
@@ -275,6 +281,7 @@ module Trace =
           "  distinguishable from real output (the line after a trace is USUALLY real output), so"
           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
+          "excluded: credential-masking narration — both engines announce it, wording differs"
           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
           "  counted as a reported reason instead, since it explains the engine, not the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

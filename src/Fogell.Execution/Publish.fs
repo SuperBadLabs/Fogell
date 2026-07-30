@@ -26,6 +26,16 @@ type JUnitProblem =
     | Interrupted
     | Unreadable of string
 
+/// FG-047. Controller-side stash storage.
+///
+/// Jenkins keeps a stash with the BUILD, not in the workspace, which is what makes it
+/// survive `deleteDir()` — measured in the behavioural spec. Storing it under the
+/// workspace would pass a naive test and fail the one that matters.
+type StashStore =
+    { Root: string }
+
+    static member under (root: string) = { Root = root }
+
 module Publish =
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
@@ -181,3 +191,48 @@ module Publish =
         | Ok v -> Ok v
         | Error Interrupted -> Error "interrupted"
         | Error(Unreadable m) -> Error m
+
+module Stash =
+
+    let private dir (store: StashStore) (buildKey: string) (name: string) =
+        IO.Path.Combine(store.Root, buildKey, "stashes", name)
+
+    /// Copy the matched files out of the workspace and into controller-side storage.
+    let save (store: StashStore) (buildKey: string) (workspace: string) (name: string) (patterns: string list) =
+        let target = dir store buildKey name
+        if IO.Directory.Exists target then IO.Directory.Delete(target, true)
+        IO.Directory.CreateDirectory target |> ignore
+
+        let matched =
+            (if List.isEmpty patterns then [ "**" ] else patterns)
+            |> List.collect (Publish.expandGlob workspace)
+            |> List.distinct
+            |> List.sort
+
+        for relative in matched do
+            let dest = IO.Path.Combine(target, relative)
+            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+            IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
+
+        matched
+
+    /// Restore a stash into the workspace. Missing name is an error, never a silent
+    /// no-op: a build that carries on with none of the files it asked for is the
+    /// silent-loss shape this project exists to avoid.
+    let restore (store: StashStore) (buildKey: string) (workspace: string) (name: string) =
+        let source = dir store buildKey name
+
+        if not (IO.Directory.Exists source) then
+            Error $"No such saved stash ‘{name}’"
+        else
+            let files =
+                IO.Directory.GetFiles(source, "*", IO.SearchOption.AllDirectories)
+                |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
+                |> Array.sort
+
+            for relative in files do
+                let dest = IO.Path.Combine(workspace, relative)
+                IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+                IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
+
+            Ok(List.ofArray files)
