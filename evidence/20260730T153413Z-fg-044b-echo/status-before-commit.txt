@@ -1,0 +1,7 @@
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Execution/Executor.fs
+?? differential/cases/echo-credential-masking.Jenkinsfile
+?? differential/receipts/echo-credential-masking.receipt.txt
+?? evidence/20260730T153413Z-fg-044b-echo/

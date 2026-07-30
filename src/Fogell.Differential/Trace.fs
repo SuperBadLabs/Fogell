@@ -163,6 +163,14 @@ module Trace =
         // thing this contract exists to avoid. Both engines say it; the wording is not
         // compared, and the load-bearing evidence is that the value never appears.
         || t.StartsWith "Masking supported pattern matches of "
+        // FG-044b. Jenkins warns, in three lines, when a secret is interpolated into a
+        // step argument via a Groovy GString. Fogell warns too — the security advice is
+        // worth keeping — but matching three sentences and a URL verbatim would be
+        // over-fitting to plugin wording. Both engines say it; the words are not compared.
+        || t.StartsWith "Warning: A secret was passed to"
+        || t.StartsWith "Affected argument(s) used the following variable(s)"
+        || t.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
+        || t.StartsWith "WARNING: a secret was interpolated into"
         // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
         // `changelog` on a first build. Engine narration about its own evaluation, not
         // build output — and imitating the sentence would be over-fitting again.

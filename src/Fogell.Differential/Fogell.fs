@@ -345,12 +345,57 @@ module FogellSide =
                 deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
-                let script =
+                let rawScript =
                     match step.Positional with
                     | s :: _ -> Some s
                     | [] ->
                         step.Named
                         |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some v else None)
+
+                // FG-044b. `echo` renders text ITSELF, so — like `input` — it must apply
+                // Groovy's quoting: a single-quoted argument stays literal, a GString
+                // interpolates, an unquoted one is an expression. A shell step must NOT be
+                // pre-expanded, because the shell does that itself and doing it twice
+                // would expand what the author escaped for the shell.
+                let script =
+                    if step.Name <> "echo" then
+                        rawScript
+                    else
+                        rawScript
+                        |> Option.map (fun raw ->
+                            let key =
+                                if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
+
+                            let isLiteral =
+                                if key = "message" then step.LiteralNamedArgs.Contains "message"
+                                else step.LiteralPositionalArgs.Contains 0
+
+                            let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                            if isLiteral then raw
+                            elif step.ExpressionArgs.Contains key then interpolate env ("${" + raw + "}")
+                            else
+                                let source =
+                                    step.InterpolationSource
+                                    |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+                                    |> Option.defaultValue raw
+
+                                interpolate env source)
+
+                // Jenkins warns when a SECRET reaches a step argument through GString
+                // interpolation, and keeps the advice even though it then masks the value.
+                // Being quieter than Jenkins about a security matter is not an option.
+                if step.Name = "echo" then
+                    match script, rawScript with
+                    | Some rendered, Some raw when rendered <> raw ->
+                        let leaked =
+                            ctx.Secrets
+                            |> List.filter (fun b -> b.Value <> "" && rendered.Contains b.Value)
+                            |> List.map (fun b -> b.ValueVariable)
+
+                        if not (List.isEmpty leaked) then
+                            emit $"""WARNING: a secret was interpolated into `echo` via a Groovy string: {String.concat ", " leaked}"""
+                    | _ -> ()
 
                 let result =
                     Executor.runStep
