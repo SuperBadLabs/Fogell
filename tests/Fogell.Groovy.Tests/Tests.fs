@@ -204,6 +204,33 @@ let semantics =
               | other -> failtestf "unexpected effects: %A" other
           } ]
 
+
+let predicateValues =
+    testList
+        "FG-048 a `when` predicate's VALUE"
+        [ test "a bare trailing expression is the value" {
+              Expect.equal (run "1 == 1").Returned (Some(VBool true)) "single expression"
+          }
+
+          test "a multi-statement closure returns its LAST expression" {
+              // REVIEW FIX (Codex, PR #13): only a script that was exactly one
+              // expression produced a value, so `def deploy = true; deploy` gave
+              // None — which a `when` reads as unevaluable and FAILS THE BUILD on,
+              // where Jenkins simply runs the stage. Groovy returns the last
+              // expression of a closure regardless of what precedes it.
+              Expect.equal (run "def deploy = true\ndeploy").Returned (Some(VBool true)) "last expression wins"
+          }
+
+          test "an explicit return still wins" {
+              Expect.equal (run "return false").Returned (Some(VBool false)) "explicit return"
+          }
+
+          test "a script with no expression has no value" {
+              // None must stay distinguishable from false: a predicate that produced
+              // nothing is unevaluable, not negative.
+              Expect.equal (run "def x = 1").Returned None "no trailing expression"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues ])

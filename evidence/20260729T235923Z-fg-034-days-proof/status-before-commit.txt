@@ -1,0 +1,5 @@
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M docs/EXECUTION_BOARD.md
+?? differential/cases/timeout-days-unit.Jenkinsfile
+?? differential/receipts/timeout-days-unit.receipt.txt
+?? evidence/20260729T235923Z-fg-034-days-proof/

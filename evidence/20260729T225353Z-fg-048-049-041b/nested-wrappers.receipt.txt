@@ -1,0 +1,39 @@
+# Differential receipt — nested-wrappers.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         c624044b02d55d4080d131307b761d4491eb8a4140ca6a33a51069b771aba8ac
+
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+    counted as a reported reason instead, since it explains the engine, not the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+
+## Jenkins
+  result:         failure
+  workspace-hash: f43d97e07d18578c2315da574449fa84834d47c31b8531c12277073b798564e0
+  output (1 lines):
+    | Retrying
+  workspace:
+    381aca7a98c6  work/attempts.txt
+
+## Fogell
+  result:         failure
+  workspace-hash: f43d97e07d18578c2315da574449fa84834d47c31b8531c12277073b798564e0
+  output (1 lines):
+    | Retrying
+  workspace:
+    381aca7a98c6  work/attempts.txt

@@ -27,6 +27,14 @@ type StepRequest =
       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
       Interrupt: (unit -> bool) option
+      /// FG-071. Secret bindings live for this step. Output is masked against
+      /// them ON THE WAY OUT — including the streaming path.
+      ///
+      /// REVIEW FIX (Codex P1, PR #11): the masker and leak detector existed but
+      /// nothing called them, so a step running `cat "$TOKEN_FILE"` streamed the
+      /// literal secret while the board claimed masking was done. A capability
+      /// reachable only from its own tests is not a capability.
+      Secrets: SecretBinding list
       /// Identifies this build in the artifact store.
       BuildKey: string }
 
@@ -72,13 +80,62 @@ module Executor =
             { ok Failure with
                 Diagnostic = Some $"workspace '{request.Workspace}' does not exist; create it once per attempt" }
         else
-            let run =
+            // Mask on the way out, streaming path included: a secret that reaches
+            // the console before the run ends has already leaked.
+            let maskText (t: string) =
+                if List.isEmpty request.Secrets then t else Secrets.mask request.Secrets t
+
+            let leakReports = System.Collections.Generic.List<string>()
+
+            let onLine =
+                match request.OnLine with
+                | None -> None
+                | Some f ->
+                    Some(fun (line: string) ->
+                        let masked = maskText line
+
+                        // Detection runs on the MASKED text: anything still
+                        // recognisable is an encoding masking cannot cover, and
+                        // naming it is the whole point of FG-071.
+                        for leak in Secrets.detectLeaks request.Secrets masked do
+                            let note = $"WARNING: {leak.Variable} appears in output {leak.Encoding}-encoded; masking cannot cover this form"
+
+                            if not (leakReports.Contains note) then
+                                leakReports.Add note
+                                f note
+
+                        f masked)
+
+            let runResult =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
                         Interrupt = request.Interrupt
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
-                        OnLine = request.OnLine }
+                        OnLine = onLine }
+
+            // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
+            // streaming callback, so a step with no OnLine — or one that wrote a
+            // transformed secret to STDERR — returned it with none of the warnings
+            // FG-071 promises. Reverse/hex/char-split forms survive masking BY
+            // DESIGN, so the warning is the entire guarantee, and it has to cover
+            // every path out of the step.
+            let maskedStdout = maskText runResult.Stdout
+            let maskedStderr = maskText runResult.Stderr
+
+            let bufferedLeaks =
+                [ maskedStdout; maskedStderr ]
+                |> List.collect (Secrets.detectLeaks request.Secrets)
+                |> List.map (fun l ->
+                    $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
+                |> List.distinct
+                |> List.filter (fun note -> not (leakReports.Contains note))
+
+            for note in bufferedLeaks do
+                leakReports.Add note
+                request.OnLine |> Option.iter (fun f -> f note)
+
+            let run = runResult
 
             let signalName =
                 function
@@ -93,12 +150,22 @@ module Executor =
                 | Completed 0 -> Success, Some 0, None
                 // FG-033: name the signal and say who did not do it, so the
                 // operator is not left guessing at an opaque code.
+                //
+                // REVIEW FIX (Codex P2 + Copilot, PR #11): this asserted the
+                // termination came from outside as a CERTAINTY. It cannot. The
+                // exit code is 128+N, and a script that runs `exit 137` produces
+                // exactly what SIGKILL produces — `setsid --wait` has already
+                // collapsed the wait status by then. Saying "likely" costs the
+                // operator nothing and stops the engine from claiming knowledge
+                // it does not have. The exit code is now reported alongside, so
+                // the ambiguity is resolvable by whoever wrote the script.
                 | Signalled s ->
                     Failure,
-                    None,
+                    Some(128 + s),
                     Some
-                        $"step process was terminated by {signalName s} from outside the engine \
-                          (not a Fogell timeout or cancellation); its effect may be incomplete"
+                        $"step process most likely terminated by {signalName s} from outside the engine \
+                          (not a Fogell timeout or cancellation), or exited {128 + s} deliberately — \
+                          these are indistinguishable in a wrapped exit status; if it was a signal, its effect may be incomplete"
                 | Completed code ->
                     Failure,
                     Some code,
@@ -135,8 +202,16 @@ module Executor =
 
             { Status = status
               ExitCode = exitCode
-              Stdout = run.Stdout
-              Stderr = run.Stderr
+              // Buffered output is masked too — a caller that reads Stdout
+              // instead of streaming must not get a different secrecy guarantee.
+              Stdout = maskedStdout
+              // A caller with no OnLine still has to SEE the warning, or FG-071's
+              // "never silent" promise depends on how the caller chose to read.
+              Stderr =
+                if List.isEmpty bufferedLeaks then
+                    maskedStderr
+                else
+                    maskedStderr + String.concat "\n" bufferedLeaks + "\n"
               DurationMs = run.DurationMs
               ProcessGroupId = run.ProcessGroupId
               Termination = run.Termination

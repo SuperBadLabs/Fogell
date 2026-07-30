@@ -28,6 +28,8 @@ type Step =
 
 type WhenCondition =
     | WhenBranch of string
+    | WhenTag of string
+    | WhenEquals of expected: string * actual: string
     | WhenEnvironment of name: string * value: string
     | WhenExpression of source: string
     | WhenAllOf of WhenCondition list
@@ -57,8 +59,10 @@ type Stage =
       /// Nested `stages { }` (sequential) and `parallel { }` children.
       Nested: Stage list
       IsParallel: bool
-      /// `failFast true` inside a `parallel { }` block, or inherited from the
-      /// top-level `parallelsAlwaysFailFast()` option. Only meaningful when
+      /// `failFast true` as a STAGE-level directive — a sibling of `parallel`,
+      /// which is the only placement Jenkins accepts (it rejects it inside the
+      /// `parallel { }` block with "Expected a stage"). Also set by the
+      /// pipeline-wide `parallelsAlwaysFailFast()` option. Only meaningful when
       /// IsParallel is true.
       FailFast: bool
       Position: Position }

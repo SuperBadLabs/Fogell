@@ -1,0 +1,1446 @@
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+index 232b610..7b683c3 100644
+--- a/differential/receipts/archive-artifacts.receipt.txt
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+index c9f9b43..e2b7177 100644
+--- a/differential/receipts/archive-empty-fails.receipt.txt
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index 9c56bc2..04c63fe 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index b299907..cf91cb7 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+index 554f74b..01cb838 100644
+--- a/differential/receipts/junit-failing.receipt.txt
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+index 3c836c5..1d74201 100644
+--- a/differential/receipts/junit-passing.receipt.txt
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index 4b683cb..4ede0d0 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index ce350ac..ae0a606 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
++seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+@@ -38,5 +38,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-quick
+     | from-slow
++    | from-quick
+diff --git a/differential/receipts/parallel-failfast.receipt.txt b/differential/receipts/parallel-failfast.receipt.txt
+index 64ac93a..bf09533 100644
+--- a/differential/receipts/parallel-failfast.receipt.txt
++++ b/differential/receipts/parallel-failfast.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/parallel-siblings-finish.receipt.txt b/differential/receipts/parallel-siblings-finish.receipt.txt
+index fa582db..15b4580 100644
+--- a/differential/receipts/parallel-siblings-finish.receipt.txt
++++ b/differential/receipts/parallel-siblings-finish.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/retry-exhausts.receipt.txt b/differential/receipts/retry-exhausts.receipt.txt
+index 3bc123f..1c22449 100644
+--- a/differential/receipts/retry-exhausts.receipt.txt
++++ b/differential/receipts/retry-exhausts.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/retry-succeeds.receipt.txt b/differential/receipts/retry-succeeds.receipt.txt
+index 9cf03a3..971aeea 100644
+--- a/differential/receipts/retry-succeeds.receipt.txt
++++ b/differential/receipts/retry-succeeds.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index 2ae15d8..9cca65f 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/differential/receipts/timeout-seconds.receipt.txt b/differential/receipts/timeout-seconds.receipt.txt
+index 1a698c5..19b276d 100644
+--- a/differential/receipts/timeout-seconds.receipt.txt
++++ b/differential/receipts/timeout-seconds.receipt.txt
+@@ -10,7 +10,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   compared: ordered normalised output lines
+   compared: canonical workspace hash over sorted (path, content-hash) pairs
+   excluded: timestamps, ANSI escapes, blank lines
+-  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+   excluded: shell xtrace ('+ cmd') lines — provenance, not output
+   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index e7141eb..d7322d9 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **14/14 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **21/21 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -104,12 +104,13 @@ derivation in `architecture/BASELINE.md`.
+ | FG-030 | P0 | **DONE** | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | 6 tests: absolute, traversal, mid-path traversal, symlinked component, outside-root, and reuse all refused with a named error |
+ | FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
+ | FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
+-| FG-033 | P0 | **DONE** | **Dead-process detection in seconds**, diagnostic naming the cause (`adr/0005` beat) | An externally SIGKILLed step is detected in **under 10 s** (Jenkins: ~10 min, then `exit code -1`). A signal exit (128+N) is reported as `Signalled`, **not** an ordinary exit code, and the diagnostic names the signal, says it came from outside the engine, and warns the effect may be incomplete. Our own timeout is still `Aborted`, never mis-attributed |
++| FG-033 | P0 | **DONE** | **Dead-process detection in seconds**, diagnostic naming the cause (`adr/0005` beat) | An externally SIGKILLed step is detected in **under 10 s** (Jenkins: ~10 min, then `exit code -1`). A signal exit (128+N) is reported as `Signalled`, **not** an ordinary exit code, and the diagnostic names the signal and warns the effect may be incomplete. **CLAIM CORRECTED** after a Codex review on PR #11: the engine cannot *prove* the termination came from outside. `setsid --wait` propagates the child's status verbatim, so the wait-status bit distinguishing "killed by signal 9" from "exited 137 deliberately" is already gone before .NET reports `ExitCode`. The diagnostic now says "most likely", names both possibilities, and reports the raw code so whoever wrote the script can settle it. The signal range was also widened from 128+36 to 128+64 — Linux has 64 signals and the higher ones were being reported as ordinary exits | Our own timeout is still `Aborted`, never mis-attributed |
+ | FG-034 | P1 | **DONE** | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | `timeout-seconds` receipt PROVEN tier-1: `timeout(time: 3, unit: 'SECONDS')` around `sleep 60` aborts on both engines with an identical workspace (`started.txt` present, `finished.txt` absent). Jenkins' **default unit is MINUTES** — measured, and honoured. Interruption is polled while the step runs and takes the trappable SIGTERM → grace → SIGKILL path; a step interrupted from outside reports `Cancelled`, never `TimedOut`, so the cause is not misattributed |
+ | FG-035 | P1 | **DONE** | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | Two receipts PROVEN tier-1. `retry-exhausts`: the body appends a line per attempt, and `attempts.txt` has **exactly 3 lines with the same hash on both engines** — the count is evidence, not a claim. `retry-succeeds`: fail-then-succeed is **SUCCESS** on both; the first version reported `failure` because a failed attempt bumped the monotone build status, so a retry attempt now writes to a throwaway sink |
+ | FG-036 | P1 | **DONE** | `parallel`: siblings finish by default; `failFast` interrupts them | Three receipts PROVEN tier-1. `parallel-siblings-finish`: the slow branch's `slow.txt` is **present** on both engines despite its sibling failing. `parallel-failfast` and `parallel-always-failfast`: `late.txt` is **absent** on both — the sleeping branch was interrupted mid-`sleep 45`. Jenkins corrected three assumptions here: `failFast` is stage-level (Jenkins *rejects* it inside `parallel { }`), declarative emits no `[branch]` prefix, and a failFast build is `failure` not `aborted` (see `adr/0005`) |
+ | FG-037 | P1 | TODO | **No steps-per-stage ceiling** (`adr/0005` beat) | 400-step stage runs; Jenkins fails at 251; receipt records both |
+-| FG-038 | P2 | TODO | Windows executor via Job Objects, P/Invoke confined to one project (`adr/0006`) | platform-parity suite; requires a Windows host — blocked until one exists |
++| FG-038a | P2 | TODO | Windows executor via Job Objects, P/Invoke confined to one project (`adr/0006`) | Runs on a GitHub-hosted `windows-latest` runner — the hardware blocker is gone (technique observed on McLoving). Linux-only surface to replace: `/usr/bin/setsid` + `/proc` group-survivor scanning in `ProcessGroup.fs`, two `libc` DllImports in `Native.fs`. Acceptance: existing suites green on Windows AND a backgrounded child provably reaped via a Job Object, asserted the same way FG-032 asserts it on Linux. **This closes "Fogell RUNS on Windows" and nothing more** |
++| FG-038b | P2 | TODO | Windows **differential** lane — Jenkins on the same runner | The only ticket that can license a platform-parity claim. Jenkins is Java and runs natively on Windows, so receipts are possible. Three costs, to be priced before starting: Windows CI minutes bill at **2x** on a private repo and each job pays JVM+Jenkins startup instead of hitting a warm controller; the CI Jenkins must be pinned to **2.568.1 with the identical plugin set** or its receipts cannot be compared with the Linux lane's, and plugin drift would masquerade as a Fogell bug; **CRLF** makes Windows workspace hashes differ from Linux by construction, and normalising that is a comparison *weakening* that must be declared in the contract like the FG-036 ordering relaxation — not applied quietly |
+ 
+ ## Wave 4 — Step coverage by measured demand
+ 
+@@ -119,16 +120,19 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ |---|---|---|---|---:|
+ | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+ | FG-041 | P0 | **PARTIAL** | `echo`, `dir`, `environment` scoping (lexical, stage overrides pipeline) | `echo` and environment scoping proven by differential receipt (`env-scoping`, stage overrides pipeline, shared vars inherited). `dir` nests and auto-creates, refusing traversal. `withEnv` still outstanding — split to FG-041b |
+-| FG-041b | P1 | TODO | `withEnv(['A=1']) { … }` block-scoped environment | differential receipt |
++| FG-041b | P1 | **DONE** | `withEnv(['A=1']) { … }` block-scoped environment | `withenv-scoping` receipt PROVEN tier-1. MEASURED and matched: inside the block an added variable is visible and a shadowed one takes the new value; **after** the block the added variable is UNSET and the shadowed one reverts to its outer value. The argument is a Groovy list literal, split where its meaning is needed rather than in the parser (`adr/0002`) |
+ | FG-042 | P0 | **PARTIAL** | `archiveArtifacts` with ant-glob expansion | Proven by receipt: multi-pattern archive (`out.txt, target/*.jar`) and the empty-match case, which Jenkins **fails** rather than passing quietly. Artifacts land outside the workspace so archiving cannot perturb the compared hash. Retrieval over a stable URL awaits the API — FG-042b |
+ | FG-043 | P1 | **DONE** | `junit` test-result ingest | Proven by receipt for passing and failing reports. Failing tests → **UNSTABLE**, not FAILURE (the build worked, the code did not) — matching Jenkins. A malformed report is reported, never silently counted as zero |
+ | FG-042b | P2 | TODO | Artifact retrieval at a stable URL, byte-exact | requires the controller API (FG-060) |
++| FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
++| FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
++| FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+ | FG-044 | P1 | TODO | `credentials` / `withCredentials`, scope-limited bindings | 22 files |
+ | FG-045 | P1 | TODO | `timeout`, `retry` (see FG-034/035) | 21 / 6 |
+ | FG-046 | P1 | TODO | `input` with **durable** approval state across restart (`adr/0005` match) | 18 files |
+ | FG-047 | P1 | TODO | `stash` / `unstash`, controller-side storage surviving `deleteDir()` | 7 files |
+-| FG-048 | P1 | TODO | `when` conditions incl. `expression` via the bounded interpreter | 26 files |
+-| FG-049 | P1 | TODO | `post` blocks: correct *selection*, not just presence — Jenkins prints all branches in the console | 32 files |
++| FG-048 | P1 | **DONE** | `when` conditions incl. `expression` via the bounded interpreter | Two receipts PROVEN tier-1. `when-conditions`: `expression { return false }` skips, `environment name/value` matches and mismatches correctly, `allOf` + `not` composes; a skipped stage leaves the build **SUCCESS** and its **`post` block does not run** (both measured). `when-scm-and-equals`: MEASURED that on a plain job Jenkins **skips** `branch` and `tag` stages because `BRANCH_NAME`/`TAG_NAME` do not exist — which is what lets those two be modelled rather than refused, and they are the corpus's heaviest `when` users. `equals` is a plain comparison. **Two parser bugs found by receipt:** `when { environment name: 'X', value: 'Y' }` did not parse at all (the code expected `environment X = 'Y'`, which Jenkins rejects), and an unparseable `when` fell through the stage's generic section fallback so the stage ran **unconditionally** — silently running a stage Jenkins skips, the worst failure mode available. A backstop now records any unrecognised `when` as unmodelled so evaluation fails closed. Unmodelled conditions: FG-048b |
++| FG-049 | P1 | **DONE** | `post` blocks: correct *selection*, not just presence — Jenkins prints all branches in the console | Two receipts PROVEN tier-1 (`post-order-failure`, `post-order-success`), each declaring all nine conditions so the receipt proves which fire AND in what order. Selection and order were MEASURED across four consecutive builds of one job, not read from documentation: order is **always → changed → fixed → regression → result-arm → cleanup**, and `changed` **fires on a first build** (no previous result to differ from) — not what I would have guessed. Stage post is selected against the STAGE result, pipeline post against the BUILD result. Before this ticket the walker parsed `post` and then **ignored it entirely**. `changed`/`fixed`/`regression` on later builds: FG-049b |
+ | FG-050 | P2 | TODO | `agent { label }` / `agent { docker }` and capability matching | 19 / 9 |
+ | FG-051 | P2 | TODO | `tools` registry with auto-provision (7 corpus files failed *Jenkins* on this) | 7 files |
+ | FG-052 | P2 | TODO | `checkout scm`, `git` step | 15 files |
+@@ -151,8 +155,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-070 | P0 | **DONE** | Secrets never placed in the child environment | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent |
+-| FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | Masks the same forms Jenkins was measured to handle (literal, base64, case-folded). It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
++| FG-070 | P0 | **DONE** | Secrets never placed in the child environment | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent. **CLAIM CORRECTED** after a Codex review on PR #11, which was right: this does **not** defeat the same-UID attacker the measurement identified. That process reads `<VAR>_FILE` from `/proc/<pid>/environ` and then simply opens the 0600 file, because it owns it too. What FG-070 actually buys: the secret is gone from the environment, so anything that dumps or logs `environ` (crash handlers, `ps e`, process explorers, child processes started before the binding) no longer captures it, and a **different**-UID reader is blocked. Protecting a secret from a same-UID process is not achievable on Linux without UID separation or namespaces — see FG-070b |
++| FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | **Now genuinely wired to the output path.** A Codex review on PR #11 found the masker and detector were reachable only from their own tests — `Executor.runShell` forwarded `OnLine` and returned stdout/stderr untouched, so a step running `cat "$TOKEN_FILE"` streamed the literal secret while this row claimed masking was done. Masking now happens on the **streaming** path and the buffered stdout/stderr, and three tests fail if that wiring is removed. Masks the same forms Jenkins was measured to handle (literal, base64, case-folded), and uppercase hex was added to the detector after a Copilot review found only lowercase was generated. It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
+ | FG-072 | P0 | TODO | Interpreter sandbox: no reflection, no file/network/process access except through steps | escape-attempt suite fully rejected with named codes |
+ | FG-073 | P1 | TODO | Threat model document: untrusted Jenkinsfile, hostile agent, multi-tenant boundary | reviewed and committed |
+ | FG-074 | P1 | TODO | Dependency audit + pinned lockfile; no unpinned transitive fetch at build time | offline build succeeds from a warm cache |
+@@ -186,8 +190,14 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+    receipts. FG-002 exists because of this and blocks the release lane.
+ 2. **Interpreter sandbox.** ADR 0002 buys coverage and inherits Jenkins' script
+    security problem. FG-013 and FG-072 are the mitigation and they are P0.
+-3. **Windows is claimed nowhere yet.** FG-038 is blocked on hardware; until then
+-   the charter must not promise platform parity.
++3. **Windows is claimed nowhere yet.** The hardware blocker is gone — a
++   GitHub-hosted `windows-latest` runner is a real Windows host — but that
++   changes only what is *testable*, not what is *proven*. A green Windows CI job
++   licenses "Fogell runs on Windows" (FG-038a). Platform **parity** needs Jenkins
++   producing receipts on that same runner (FG-038b). The charter must not promise
++   parity until 038b has receipts, and a green 038a must never be reported as if
++   it were 038b. Note also that Windows is demanded by **zero** of the 228 corpus
++   files, so it earns no priority from the compatibility number.
+ 4. **Untrusted corpus execution.** Parsing is safe; running is not. The
+    allowlist-by-executed-surface rule is not optional.
+ 5. **Non-durable numbers.** Forge's ~0 ms/step is the non-durable path. Any
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index 6688d16..fda7bc0 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -30,6 +30,23 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+     and letting it dominate reports the wrong terminal state.
+   (Proven: `parallel-siblings-finish`, `parallel-failfast`,
+   `parallel-always-failfast` receipts.)
++- `post` **selection and order**, measured across four consecutive builds of one
++  job rather than read from documentation. Order:
++  **always → changed → fixed → regression → result-arm → cleanup**.
++  `changed` fires on a **first** build — with no previous result, Jenkins treats
++  the result as changed. `fixed` needs a previous FAILURE/UNSTABLE and a current
++  SUCCESS; `regression` needs a previous SUCCESS and anything worse now.
++  (Proven for build #1 by `post-order-failure`/`post-order-success`; the
++  history-dependent arms are measured but not receipt-proven — FG-049b.)
++- A `when`-skipped stage leaves the build **SUCCESS** and its **`post` block does
++  not run**. (Proven: `when-conditions`.)
++- On a plain (non-multibranch) job, `when { branch … }` and `when { tag … }` are
++  **skipped**, because `BRANCH_NAME`/`TAG_NAME` do not exist. This is what allows
++  them to be modelled rather than refused. (Proven: `when-scm-and-equals`.)
++- `withEnv` is genuinely block-scoped: after the block an added variable is
++  **unset** and a shadowed one **reverts**. (Proven: `withenv-scoping`.)
++- `timeout` bounds the **block**, not each step inside it. (Proven:
++  `timeout-block-deadline`.)
+ - Approval/`input` state survives a controller restart.
+ - Agent-side output is buffered locally and recovered by offset on reconnect: a
+   46 s network partition cost **zero** log lines.
+diff --git a/src/Fogell.Differential/Fogell.Differential.fsproj b/src/Fogell.Differential/Fogell.Differential.fsproj
+index 313a686..f9fa058 100644
+--- a/src/Fogell.Differential/Fogell.Differential.fsproj
++++ b/src/Fogell.Differential/Fogell.Differential.fsproj
+@@ -9,5 +9,9 @@
+   <ItemGroup>
+     <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+     <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
++    <!-- FG-048: `when { expression { … } }` is evaluated by the bounded
++         interpreter (ADR 0002), so the differential engine needs it. -->
++    <ProjectReference Include="../Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
++    <ProjectReference Include="../Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
+   </ItemGroup>
+ </Project>
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 09dfdef..ebb1c91 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -5,6 +5,7 @@ open System.IO
+ open Fogell.Domain
+ open Fogell.Execution
+ open Fogell.Ir
++open Fogell.Groovy.Interpreter
+ 
+ /// FG-036. What one parallel branch (or the single implicit branch of a
+ /// sequential pipeline) needs to know about itself.
+@@ -18,7 +19,11 @@ type BranchCtx =
+       /// a `retry` attempt, a throwaway sink — a failed attempt that is retried
+       /// must not leave a permanent mark on the build, and the build status is a
+       /// monotone worst-of that could never be walked back.
+-      Sink: BuildStatus -> unit }
++      Sink: BuildStatus -> unit
++      /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
++      /// MEASURED on Jenkins, after the block an added variable is UNSET and a
++      /// shadowed one reverts to its outer value.
++      EnvOverlay: (string * string) list }
+ 
+ /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
+ /// step, and reduces the run to a [Trace] in the same canonical form.
+@@ -52,8 +57,8 @@ module FogellSide =
+ 
+             /// Environment visible to a step: pipeline scope, overridden by stage
+             /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
+-            let envFor (stage: Stage) =
+-                (pipeline.Environment @ stage.Environment)
++            let envForWith (overlay: (string * string) list) (stage: Stage) =
++                (pipeline.Environment @ stage.Environment @ overlay)
+                 |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
+                 |> Map.toList
+ 
+@@ -61,10 +66,19 @@ module FogellSide =
+             let statusLock = obj ()
+             let bump (s: BuildStatus) = lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
+ 
+-            let runStepWithRef = ref (fun (_: BranchCtx) (_: Stage) (_: string) (_: Step) (_: int option) -> ())
+-            let runStepWith ctx stage cwd step budget = runStepWithRef.Value ctx stage cwd step budget
++            /// One clock for the whole build, so a `timeout` deadline is an
++            /// absolute point in time rather than a per-step budget.
++            let runClock = Diagnostics.Stopwatch.StartNew()
+ 
+-            let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (budget: int option option) =
++            /// Remaining milliseconds before an absolute deadline, floored at 1.
++            /// REVIEW FIX (Codex P1, PR #12): the first version handed the FULL
++            /// timeout budget to every step inside the block, so two 2 s steps
++            /// inside `timeout(3, SECONDS)` both succeeded and the block ran ~4 s.
++            /// Jenkins bounds the BLOCK, not each step.
++            let remainingMs (deadline: int64 option) =
++                deadline |> Option.map (fun d -> max 1 (int (d - runClock.ElapsedMilliseconds)))
++
++            let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
+                 let script =
+                     match step.Positional with
+                     | s :: _ -> Some s
+@@ -77,10 +91,14 @@ module FogellSide =
+                         { Name = step.Name
+                           Script = script
+                           Workspace = cwd
+-                          Environment = envFor stage
+-                          TimeoutMs = defaultArg budget (Some 120_000)
++                          Environment = envForWith ctx.EnvOverlay stage
++                          TimeoutMs =
++                            match remainingMs deadline with
++                            | Some ms -> Some ms
++                            | None -> Some 120_000
+                           OnLine = Some emit
+                           Interrupt = ctx.Interrupt
++                          Secrets = []
+                           Named = step.Named
+                           Artifacts = Some(ArtifactStore.under artifactRoot)
+                           BuildKey = jobName }
+@@ -146,13 +164,27 @@ module FogellSide =
+                     |> List.tryPick (fun (k, v) -> if k = "unit" then Some(v.Trim().Trim('\'').ToUpperInvariant()) else None)
+                     |> Option.defaultValue "MINUTES"
+ 
+-                value
+-                |> Option.map (fun n ->
++                // REVIEW FIX (Codex P1, PR #12): the wildcard silently mapped every
++                // unrecognised unit to MINUTES, so `timeout(time: 1, unit: 'DAYS')`
++                // aborted after one minute — killing a valid build 1,440x early.
++                // Every java.util.concurrent.TimeUnit Jenkins accepts is mapped, and
++                // an unknown unit returns None so the caller can fail closed rather
++                // than invent a deadline.
++                let scale =
+                     match unit with
+-                    | "SECONDS" -> n * 1_000
+-                    | "MILLISECONDS" -> n
+-                    | "HOURS" -> n * 3_600_000
+-                    | _ -> n * 60_000)
++                    | "NANOSECONDS" -> Some 0.000001
++                    | "MICROSECONDS" -> Some 0.001
++                    | "MILLISECONDS" -> Some 1.0
++                    | "SECONDS" -> Some 1_000.0
++                    | "MINUTES" -> Some 60_000.0
++                    | "HOURS" -> Some 3_600_000.0
++                    | "DAYS" -> Some 86_400_000.0
++                    | _ -> None
++
++                match value, scale with
++                | Some n, Some f -> Ok(int64 (float n * f))
++                | Some _, None -> Error $"unknown timeout unit '{unit}'"
++                | None, _ -> Error "timeout has no numeric time value"
+ 
+             let retryCount (step: Step) =
+                 step.Named
+@@ -163,11 +195,6 @@ module FogellSide =
+                                          | _ -> None)
+                 |> Option.defaultValue 1
+ 
+-            runStepWithRef.Value <- fun ctx stage cwd step budget ->
+-                runStepInner ctx stage cwd step (budget |> Option.map Some)
+-
+-            let runStep ctx (stage: Stage) (cwd: string) (step: Step) = runStepInner ctx stage cwd step None
+-
+             /// `parallelsAlwaysFailFast()` in top-level options is equivalent to
+             /// writing `failFast true` in every parallel block.
+             let alwaysFailFast =
+@@ -183,79 +210,323 @@ module FogellSide =
+                     | Some p -> p ()
+                     | None -> false)
+ 
+-            let rec runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
++            /// Ant-style glob as `when { branch }` / `when { tag }` use it. An
++            /// absent variable is never a match: MEASURED, Jenkins skips the stage.
++            let matchesGlob (pattern: string) (value: string option) =
++                match value with
++                | None -> false
++                | Some v ->
++                    let rx =
++                        "^"
++                        + (pattern.Split '*'
++                           |> Array.map Text.RegularExpressions.Regex.Escape
++                           |> String.concat ".*")
++                        + "$"
++
++                    Text.RegularExpressions.Regex.IsMatch(v, rx)
++
++            /// FG-048. Evaluate a `when` condition. Returns None when the condition
++            /// cannot be evaluated at all, which is NOT the same as false: running
++            /// a stage Jenkins would skip and skipping one Jenkins would run are
++            /// both divergences, so an unmodelled condition fails the build with a
++            /// named reason instead of guessing a direction.
++            let rec evalWhen (stage: Stage) (cond: WhenCondition) : bool option =
++                let env = envForWith [] stage |> Map.ofList
++
++                match cond with
++                | WhenEnvironment(name, value) ->
++                    Some(Map.tryFind name env = Some value)
++
++                // MEASURED: on a plain (non-multibranch) pipeline job Jenkins
++                // SKIPS a `branch` or `tag` stage, because BRANCH_NAME/TAG_NAME do
++                // not exist. So absent-means-false is Jenkins' behaviour, not a
++                // guess, and it is what lets these two conditions be modelled
++                // instead of refused — `branch` and `tag` together account for
++                // most `when` usage in the corpus.
++                //
++                // The glob path (variable PRESENT, pattern matched) is NOT
++                // receipt-proven: this harness has no multibranch job to exercise
++                // it. It is implemented from Jenkins' documented ant-style glob.
++                | WhenBranch pattern -> Some(matchesGlob pattern (Map.tryFind "BRANCH_NAME" env))
++                | WhenTag pattern -> Some(matchesGlob pattern (Map.tryFind "TAG_NAME" env))
++
++                | WhenEquals(expected, actual) -> Some(expected.Trim() = actual.Trim())
++
++                | WhenNot inner -> evalWhen stage inner |> Option.map not
++
++                | WhenAllOf conds ->
++                    let results = conds |> List.map (evalWhen stage)
++                    if results |> List.exists Option.isNone then None
++                    else Some(results |> List.forall (fun r -> r = Some true))
++
++                | WhenAnyOf conds ->
++                    let results = conds |> List.map (evalWhen stage)
++                    if results |> List.exists Option.isNone then None
++                    else Some(results |> List.exists (fun r -> r = Some true))
++
++                | WhenExpression source ->
++                    // ADR 0002: expressions stay as source text and the bounded
++                    // interpreter decides what they mean. The sandbox's step
++                    // vocabulary is EMPTY here — a `when` predicate has no
++                    // business invoking build steps.
++                    match Fogell.Groovy.Parser.Parser.parse source with
++                    | Result.Error _ -> None
++                    | Result.Ok script ->
++                        let genv =
++                            { Vars = env |> Map.map (fun _ v -> VStr v)
++                              Funcs = Map.empty }
++
++                        let outcome = Interpreter.run Budget.defaults Set.empty genv script
++
++                        match outcome.Fault, outcome.Returned with
++                        | Some _, _ -> None
++                        | None, Some v -> Some(Value.isTruthy v)
++                        // A predicate that produced no value cannot be read as
++                        // false; that is the vacuous-pass shape.
++                        | None, None -> None
++
++                | WhenUnmodelled _ -> None
++
++            /// FG-049. Does this post condition fire?
++            ///
++            /// MEASURED across four consecutive builds of one job, not read from
++            /// documentation:
++            ///   build 1 fails (no history) -> always, changed,          failure, cleanup
++            ///   build 2 ok after FAILURE   -> always, changed, fixed,   success, cleanup
++            ///   build 3 ok after SUCCESS   -> always,                   success, cleanup
++            ///   build 4 fails after SUCCESS-> always, changed, regression, failure, cleanup
++            ///
++            /// The surprise is `changed` on build 1: with no previous result,
++            /// Jenkins treats the result as changed.
++            let postFires (cond: PostCondition) (result: BuildStatus) (previous: BuildStatus option) =
++                match cond with
++                | PostCondition.Always -> true
++                | PostCondition.Cleanup -> true
++                | PostCondition.Success -> result = BuildStatus.Success
++                | PostCondition.Failure -> result = BuildStatus.Failure
++                | PostCondition.Unstable -> result = BuildStatus.Unstable
++                | PostCondition.Aborted -> result = BuildStatus.Aborted
++                // We never produce NOT_BUILT, so claiming this fires would be
++                // asserting behaviour we have not built.
++                | PostCondition.NotBuilt -> false
++                | PostCondition.Changed ->
++                    match previous with
++                    | None -> true
++                    | Some p -> p <> result
++                | PostCondition.Fixed ->
++                    match previous with
++                    | None -> false
++                    | Some p -> (p = BuildStatus.Failure || p = BuildStatus.Unstable) && result = BuildStatus.Success
++                | PostCondition.Regression ->
++                    match previous with
++                    | None -> false
++                    | Some p -> p = BuildStatus.Success && result <> BuildStatus.Success
++
++            /// Execution order, MEASURED: always -> changed -> fixed ->
++            /// regression -> <result arm> -> cleanup. The result arms are mutually
++            /// exclusive, so their order relative to each other is unobservable
++            /// and is not claimed.
++            let postRank (cond: PostCondition) =
++                match cond with
++                | PostCondition.Always -> 0
++                | PostCondition.Changed -> 1
++                | PostCondition.Fixed -> 2
++                | PostCondition.Regression -> 3
++                | PostCondition.Aborted -> 4
++                | PostCondition.Failure -> 5
++                | PostCondition.Success -> 6
++                | PostCondition.Unstable -> 7
++                | PostCondition.NotBuilt -> 8
++                | PostCondition.Cleanup -> 9
++
++            let rec runPost (ctx: BranchCtx) (cwd: string) (stage: Stage) (result: BuildStatus) (previous: BuildStatus option) =
++                if not (List.isEmpty stage.Post) then
++                    stage.Post
++                    |> List.filter (fun (cond, _) -> postFires cond result previous)
++                    |> List.sortBy (fun (cond, _) -> postRank cond)
++                    |> List.iter (fun (_, steps) ->
++                        // A post block runs even though the stage failed — that is
++                        // the point of it — so it gets a context whose failure flag
++                        // is clear. A failure INSIDE post is still the build's.
++                        let postCtx = { ctx with Failed = ref false }
++
++                        for st in steps do
++                            if not (halted postCtx) then
++                                runStepDispatch postCtx cwd stage st None
++
++                        if postCtx.Failed.Value then ctx.Failed.Value <- true)
++
++            and runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+                 if not (halted ctx) then
++                    // FG-048. The `when` gate, before anything else runs.
++                    let gate =
++                        match stage.When with
++                        | None -> Some true
++                        | Some cond -> evalWhen stage cond
++
++                    match gate with
++                    | Some false ->
++                        // MEASURED: a skipped stage leaves the build SUCCESS, and
++                        // its `post` block does NOT run either. Emitting a line is
++                        // deliberate — Jenkins says "Stage \"x\" skipped due to when
++                        // conditional", and being quieter than Jenkins about why a
++                        // stage did not run is the JB-DUR-005 defect in miniature.
++                        emit $"Stage \"{stage.Name}\" skipped due to when conditional"
++
++                    | None ->
++                        // Cannot decide. Fail closed with a named reason rather
++                        // than pick a direction: guessing wrong either runs a
++                        // stage Jenkins skips or skips one Jenkins runs.
++                        emit $"ERROR: stage '{stage.Name}' has a `when` condition this engine cannot evaluate; refusing to guess whether it should run"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++
++                    | Some true ->
++                    let stageStatus = ref BuildStatus.Success
++
++                    let body =
++                        { ctx with
++                            Failed = ref false
++                            Sink = fun st ->
++                                    stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
++                                    ctx.Sink st }
++
++                    runStageBody body cwd stage
++
++                    if body.Failed.Value then ctx.Failed.Value <- true
++
++                    // Stage post is selected against the STAGE's result, and
++                    // `previous` is None because this harness runs one build per
++                    // job (it deletes the job around every run). `fixed` and
++                    // `regression` are therefore implemented and measured but not
++                    // receipt-proven — see FG-049b.
++                    runPost { ctx with Failed = ref false } cwd stage stageStatus.Value None
++
++            /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
++            /// another wrapper used to be routed straight at `Executor.runStep`,
++            /// which does not know them — so `retry(2) { timeout(10) { sh '…' } }`
++            /// failed as an unsupported step every time. Every body now re-enters
++            /// this dispatcher, so wrappers compose to any depth.
++            and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
++                match step.Name, step.Positional with
++                // JB-FAIL-001/002: timeout and abort share one interrupt path,
++                // and the interrupt is a trappable SIGTERM with a grace window.
++                | "timeout", _ when not (List.isEmpty step.Block) ->
++                    match timeoutMs step with
++                    | Error why ->
++                        emit $"ERROR: {why}; refusing to guess a deadline"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    | Ok ms ->
++                        // ONE deadline for the whole block. A nested timeout can
++                        // only tighten it, never extend past its parent.
++                        let mine = runClock.ElapsedMilliseconds + ms
++
++                        let effective =
++                            match deadline with
++                            | Some outer -> min outer mine
++                            | None -> mine
++
++                        for inner in step.Block do
++                            if not (halted ctx) then
++                                runStepDispatch ctx cwd stage inner (Some effective)
++
++                // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
++                // the first, and there is no backoff. `retry(3)` around a step
++                // that always fails runs it exactly three times.
++                | "retry", _ when not (List.isEmpty step.Block) ->
++                    let attempts = max 1 (retryCount step)
++                    let mutable attempt = 1
++                    let mutable settled = false
++
++                    while not settled && attempt <= attempts do
++                        // Each attempt gets a fresh failure flag AND a throwaway
++                        // status sink. MEASURED (FG-035): a body that fails once
++                        // then succeeds is a SUCCESS build. Bumping the build
++                        // status from the failed attempt reported `failure` with an
++                        // identical workspace — the work was right, the bookkeeping
++                        // was not.
++                        let attemptStatus = ref BuildStatus.Success
++
++                        let attemptCtx =
++                            { ctx with
++                                Failed = ref false
++                                Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
++
++                        for inner in step.Block do
++                            if not (halted attemptCtx) then
++                                runStepDispatch attemptCtx cwd stage inner deadline
++
++                        if not attemptCtx.Failed.Value then
++                            // A retried body may still have gone unstable; that is
++                            // not a retryable failure, so it must reach the build.
++                            ctx.Sink attemptStatus.Value
++                            settled <- true
++                        elif attempt < attempts then
++                            // Jenkins prints this between attempts, with no delay:
++                            // retry does not back off.
++                            emit "Retrying"
++                            attempt <- attempt + 1
++                        else
++                            // Final attempt failed: now it is the build's failure.
++                            ctx.Sink attemptStatus.Value
++                            ctx.Failed.Value <- true
++                            attempt <- attempt + 1
++
++                // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
++                // after the block an added variable is UNSET and a shadowed one
++                // reverts, so the binding is an overlay on the inner scope only.
++                | "withEnv", _ when not (List.isEmpty step.Block) ->
++                    // The argument is a Groovy LIST literal, handed over as one
++                    // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
++                    // keeps ADR 0002's rule that expression-shaped text stays text
++                    // until something needs its meaning.
++                    let bindings =
++                        step.Positional
++                        |> List.collect (fun raw ->
++                            raw.Trim().Trim('[', ']').Split ','
++                            |> Array.toList
++                            |> List.choose (fun entry ->
++                                let t = entry.Trim().Trim('\'', '"')
++
++                                match t.IndexOf '=' with
++                                | i when i > 0 -> Some(t.Substring(0, i), t.Substring(i + 1))
++                                | _ -> None))
++
++                    let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
++
++                    for st in step.Block do
++                        if not (halted inner) then
++                            runStepDispatch inner cwd stage st deadline
++
++                    if inner.Failed.Value then ctx.Failed.Value <- true
++
++                | "dir", (sub :: _) ->
++                    // `dir('x') { … }` — nested cwd, auto-created
++                    match Workspace.resolveUnder cwd sub with
++                    | Result.Error e ->
++                        emit $"dir refused: {e.Describe}"
++                        ctx.Failed.Value <- true
++                        ctx.Sink BuildStatus.Failure
++                    | Result.Ok target ->
++                        Directory.CreateDirectory target |> ignore
++
++                        // `target`, NOT `cwd`. Restructuring the dispatcher for the
++                        // nested-wrapper fix reintroduced `cwd` here, and the body
++                        // wrote to the stage root instead of the subdirectory. Both
++                        // engines agreed on the file CONTENT, so only the workspace
++                        // manifest's PATHS caught it — which is precisely why the
++                        // manifest is (path, hash) pairs and not a content digest.
++                        for inner in step.Block do
++                            if not (halted ctx) then
++                                runStepDispatch ctx target stage inner deadline
++
++                | _ -> runStepInner ctx stage cwd step deadline
++
++            and runStageBody (ctx: BranchCtx) (cwd: string) (stage: Stage) =
+                     for step in stage.Steps do
+                         if not (halted ctx) then
+-                            match step.Name, step.Positional with
+-                            // JB-FAIL-001/002: timeout and abort share one
+-                            // interrupt path, and the interrupt is a trappable
+-                            // SIGTERM with a grace window.
+-                            | "timeout", _ when not (List.isEmpty step.Block) ->
+-                                let budget = timeoutMs step
+-
+-                                for inner in step.Block do
+-                                    if not (halted ctx) then
+-                                        runStepWith ctx stage cwd inner budget
+-
+-                            // JB-FAIL-005: retry(N) is N TOTAL attempts, not N
+-                            // retries after the first, and there is no backoff.
+-                            // `retry(3)` around a step that always fails runs it
+-                            // exactly three times.
+-                            | "retry", _ when not (List.isEmpty step.Block) ->
+-                                let attempts = max 1 (retryCount step)
+-                                let mutable attempt = 1
+-                                let mutable settled = false
+-
+-                                while not settled && attempt <= attempts do
+-                                    // Each attempt gets a fresh failure flag AND a
+-                                    // throwaway status sink. MEASURED (FG-035): a
+-                                    // body that fails once then succeeds is a
+-                                    // SUCCESS build on Jenkins. Bumping the build
+-                                    // status from the failed attempt reported
+-                                    // `failure` with an identical workspace — the
+-                                    // work was right, the bookkeeping was not.
+-                                    let attemptStatus = ref BuildStatus.Success
+-
+-                                    let attemptCtx =
+-                                        { ctx with
+-                                            Failed = ref false
+-                                            Sink = fun s -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value s }
+-
+-                                    for inner in step.Block do
+-                                        if not (halted attemptCtx) then
+-                                            runStepWith attemptCtx stage cwd inner None
+-
+-                                    if not attemptCtx.Failed.Value then
+-                                        // A retried body may still have gone
+-                                        // unstable; that is not a retryable
+-                                        // failure, so it must reach the build.
+-                                        ctx.Sink attemptStatus.Value
+-                                        settled <- true
+-                                    elif attempt < attempts then
+-                                        // Jenkins prints this between attempts, with
+-                                        // no delay: retry does not back off.
+-                                        emit "Retrying"
+-                                        attempt <- attempt + 1
+-                                    else
+-                                        // Final attempt failed: now it is the
+-                                        // build's failure.
+-                                        ctx.Sink attemptStatus.Value
+-                                        ctx.Failed.Value <- true
+-                                        attempt <- attempt + 1
+-
+-                            | "dir", (sub :: _) ->
+-                                // `dir('x') { … }` — nested cwd, auto-created
+-                                match Workspace.resolveUnder cwd sub with
+-                                | Result.Error e ->
+-                                    emit $"dir refused: {e.Describe}"
+-                                    ctx.Failed.Value <- true
+-                                    bump BuildStatus.Failure
+-                                | Result.Ok target ->
+-                                    Directory.CreateDirectory target |> ignore
+-                                    for inner in step.Block do
+-                                        runStep ctx stage target inner
+-                            | _ -> runStep ctx stage cwd step
++                            runStepDispatch ctx cwd stage step None
+ 
+                     if stage.IsParallel && not (List.isEmpty stage.Nested) then
+                         // JB-FAIL-006/007. Branches run concurrently and, by
+@@ -270,7 +541,15 @@ module FogellSide =
+                         // lift-and-shift promise means their pipeline behaves the
+                         // same way here, bugs included.
+                         let failFast = stage.FailFast || alwaysFailFast
+-                        let anyFailed = ref false
++
++                        // REVIEW FIX (Copilot, PR #12): this was a plain `bool ref`
++                        // written by one branch thread and polled by others. Under
++                        // the .NET memory model a non-volatile read may observe a
++                        // stale value, so failFast could interrupt late or not at
++                        // all — and a test would pass anyway because it usually
++                        // works. A CancellationTokenSource is the synchronised
++                        // signal this needs.
++                        use siblingFailed = new System.Threading.CancellationTokenSource()
+ 
+                         let branches =
+                             stage.Nested
+@@ -278,9 +557,10 @@ module FogellSide =
+                                 let branchCtx =
+                                     { Failed = ref false
+                                       Sink = bump
++                                      EnvOverlay = ctx.EnvOverlay
+                                       Interrupt =
+                                         if failFast then
+-                                            Some(fun () -> anyFailed.Value)
++                                            Some(fun () -> siblingFailed.IsCancellationRequested)
+                                         else
+                                             ctx.Interrupt }
+ 
+@@ -289,7 +569,7 @@ module FogellSide =
+                                     runStage branchCtx cwd branch
+ 
+                                     if branchCtx.Failed.Value then
+-                                        anyFailed.Value <- true))
++                                        siblingFailed.Cancel()))
+ 
+                         // Every branch is awaited even under failFast: an
+                         // interrupted branch still has a process group to reap,
+@@ -307,11 +587,30 @@ module FogellSide =
+                         for nested in stage.Nested do
+                             runStage ctx cwd nested
+ 
+-            let root = { Interrupt = None; Failed = ref false; Sink = bump }
++            let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
+ 
+             for stage in pipeline.Stages do
+                 runStage root workspace stage
+ 
++            // Pipeline-level `post` is selected against the BUILD result, so it
++            // runs after every stage. Modelled as a synthetic stage carrying only
++            // the post section, which is also how the pipeline's own environment
++            // reaches those steps.
++            if not (List.isEmpty pipeline.Post) then
++                let synthetic =
++                    { Name = ""
++                      Agent = None
++                      Environment = []
++                      Steps = []
++                      When = None
++                      Post = pipeline.Post
++                      Nested = []
++                      IsParallel = false
++                      FailFast = false
++                      Position = { Line = 0L; Column = 0L } }
++
++                runPost { root with Failed = ref false } workspace synthetic status None
++
+             let workspaceHash, files = Trace.hashWorkspace workspace
+ 
+             Result.Ok
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index a7b8c28..49e95c3 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -158,7 +158,6 @@ module Trace =
+         || t.StartsWith "Timeout has been exceeded"
+         || t.StartsWith "Cancelling nested steps"
+         || t.StartsWith "Sending interrupt signal to process"
+-        || t = "Terminated"
+         || t.StartsWith "Failed in branch "
+         || t.StartsWith "Aborted by "
+         // The timeout plugin appends an opaque correlation id. It carries no
+@@ -183,6 +182,12 @@ module Trace =
+             None
+         // Jenkins pipeline-graph annotations: pure structure, no output
+         elif t.StartsWith "[Pipeline]" then None
++        // FG-049. `Post stage` is the declarative graph's label for the synthetic
++        // stage that wraps a post section — the same category as [Pipeline]
++        // annotations: structure, not output. Excluded rather than imitated,
++        // because inventing Jenkins' internal narration is what went wrong with
++        // the `[branch]` prefix in FG-036.
++        elif t = "Post stage" then None
+         // Jenkins node/workspace banners
+         elif t.StartsWith "Running on " || t.StartsWith "Running in " then None
+         elif t.StartsWith "Started by " then None
+@@ -203,11 +208,35 @@ module Trace =
+         elif isDiagnosticLine t then None
+         else Some t
+ 
++    /// REVIEW FIX (Codex P2, PR #12): `Terminated` was excluded by an
++    /// unconditional text match, so a build whose own script printed that word
++    /// silently lost the line — and a lost line on one side only is how a FALSE
++    /// `PROVEN` happens. Jenkins emits it only as the second half of
++    /// "Sending interrupt signal to process" / "Terminated", so it is excluded
++    /// ONLY when such an interrupt was actually narrated earlier in the run.
++    /// Everywhere else it is ordinary user output and is compared.
+     let normaliseOutput (lines: string seq) : string list =
+-        lines |> Seq.choose normaliseLine |> List.ofSeq
++        let mutable interruptNarrated = false
++
++        [ for line in lines do
++            let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
++
++            if raw.StartsWith "Sending interrupt signal to process"
++               || raw.StartsWith "Cancelling nested steps"
++               || raw.StartsWith "Timeout has been exceeded" then
++                interruptNarrated <- true
++
++            if raw = "Terminated" && interruptNarrated then
++                ()
++            else
++                match normaliseLine line with
++                | Some l -> yield l
++                | None -> () ]
+ 
+     /// Did the engine explain itself? Computed over RAW lines, before the
+     /// diagnostic-stripping normaliser removes them.
++    /// `Terminated` on its own is only a reason when an interrupt was narrated
++    /// with it; see [normaliseOutput].
+     let reportedFailureReason (lines: string seq) : bool =
+         lines
+         |> Seq.map (fun l -> Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim())
+@@ -220,7 +249,7 @@ module Trace =
+           "compared: ordered normalised output lines"
+           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
+           "excluded: timestamps, ANSI escapes, blank lines"
+-          "excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines"
++          "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"
+           "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
+           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
+           "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 1a37bc5..27d4524 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -27,6 +27,14 @@ type StepRequest =
+       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
+       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
+       Interrupt: (unit -> bool) option
++      /// FG-071. Secret bindings live for this step. Output is masked against
++      /// them ON THE WAY OUT — including the streaming path.
++      ///
++      /// REVIEW FIX (Codex P1, PR #11): the masker and leak detector existed but
++      /// nothing called them, so a step running `cat "$TOKEN_FILE"` streamed the
++      /// literal secret while the board claimed masking was done. A capability
++      /// reachable only from its own tests is not a capability.
++      Secrets: SecretBinding list
+       /// Identifies this build in the artifact store.
+       BuildKey: string }
+ 
+@@ -72,13 +80,39 @@ module Executor =
+             { ok Failure with
+                 Diagnostic = Some $"workspace '{request.Workspace}' does not exist; create it once per attempt" }
+         else
++            // Mask on the way out, streaming path included: a secret that reaches
++            // the console before the run ends has already leaked.
++            let maskText (t: string) =
++                if List.isEmpty request.Secrets then t else Secrets.mask request.Secrets t
++
++            let leakReports = System.Collections.Generic.List<string>()
++
++            let onLine =
++                match request.OnLine with
++                | None -> None
++                | Some f ->
++                    Some(fun (line: string) ->
++                        let masked = maskText line
++
++                        // Detection runs on the MASKED text: anything still
++                        // recognisable is an encoding masking cannot cover, and
++                        // naming it is the whole point of FG-071.
++                        for leak in Secrets.detectLeaks request.Secrets masked do
++                            let note = $"WARNING: {leak.Variable} appears in output {leak.Encoding}-encoded; masking cannot cover this form"
++
++                            if not (leakReports.Contains note) then
++                                leakReports.Add note
++                                f note
++
++                        f masked)
++
+             let run =
+                 ProcessGroup.run
+                     { RunRequest.create (script, request.Workspace) with
+                         Interrupt = request.Interrupt
+                         Environment = request.Environment
+                         TimeoutMs = request.TimeoutMs
+-                        OnLine = request.OnLine }
++                        OnLine = onLine }
+ 
+             let signalName =
+                 function
+@@ -93,12 +127,22 @@ module Executor =
+                 | Completed 0 -> Success, Some 0, None
+                 // FG-033: name the signal and say who did not do it, so the
+                 // operator is not left guessing at an opaque code.
++                //
++                // REVIEW FIX (Codex P2 + Copilot, PR #11): this asserted the
++                // termination came from outside as a CERTAINTY. It cannot. The
++                // exit code is 128+N, and a script that runs `exit 137` produces
++                // exactly what SIGKILL produces — `setsid --wait` has already
++                // collapsed the wait status by then. Saying "likely" costs the
++                // operator nothing and stops the engine from claiming knowledge
++                // it does not have. The exit code is now reported alongside, so
++                // the ambiguity is resolvable by whoever wrote the script.
+                 | Signalled s ->
+                     Failure,
+-                    None,
++                    Some(128 + s),
+                     Some
+-                        $"step process was terminated by {signalName s} from outside the engine \
+-                          (not a Fogell timeout or cancellation); its effect may be incomplete"
++                        $"step process most likely terminated by {signalName s} from outside the engine \
++                          (not a Fogell timeout or cancellation), or exited {128 + s} deliberately — \
++                          these are indistinguishable in a wrapped exit status; if it was a signal, its effect may be incomplete"
+                 | Completed code ->
+                     Failure,
+                     Some code,
+@@ -135,8 +179,10 @@ module Executor =
+ 
+             { Status = status
+               ExitCode = exitCode
+-              Stdout = run.Stdout
+-              Stderr = run.Stderr
++              // Buffered output is masked too — a caller that reads Stdout
++              // instead of streaming must not get a different secrecy guarantee.
++              Stdout = maskText run.Stdout
++              Stderr = maskText run.Stderr
+               DurationMs = run.DurationMs
+               ProcessGroupId = run.ProcessGroupId
+               Termination = run.Termination
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index 63693ce..e3cc66a 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -265,10 +265,21 @@ module ProcessGroup =
+                     else
+                         None
+ 
+-                // On Linux a process killed by signal N reports 128+N. Reporting
+-                // that as an ordinary exit code is how "exit code -1" happens.
++                // On Linux a process killed by signal N exits 128+N.
++                //
++                // REVIEW FIXES (Codex P2 + Copilot, PR #11), both correct:
++                //  * the range stopped at 164, covering signals 1..36, but Linux
++                //    has signals up to 64 (exit 192), so a high-numbered signal was
++                //    silently reported as an ordinary exit code;
++                //  * this is a HEURISTIC and cannot be otherwise here. `setsid
++                //    --wait` propagates "the same return", so the wait-status bit
++                //    that distinguishes "killed by signal 9" from "exited 137" is
++                //    already gone by the time .NET reports ExitCode. A script that
++                //    deliberately calls `exit 137` is indistinguishable from one
++                //    that was SIGKILLed. The diagnostic must therefore say "likely",
++                //    and FG-033's claim is corrected accordingly — see the board.
+                 let outcome =
+-                    if code > 128 && code < 165 then Signalled(code - 128) else Completed code
++                    if code > 128 && code <= 192 then Signalled(code - 128) else Completed code
+ 
+                 outcome, t
+             else
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index b058f3e..9a68dea 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -53,8 +53,13 @@ module Secrets =
+     let private detectableForms (value: string) =
+         let bytes = Text.Encoding.UTF8.GetBytes value
+ 
++        // REVIEW FIX (Copilot, PR #11): only the lowercase hex form was generated,
++        // so a secret hex-encoded by anything using .NET's default casing — which
++        // is UPPERCASE — went undetected while the report claimed hex was covered.
++        // A detector with a hole it does not admit to is worse than no detector.
+         [ "reversed", String(value.ToCharArray() |> Array.rev)
+           "hex", Convert.ToHexString(bytes).ToLowerInvariant()
++          "hex-upper", Convert.ToHexString bytes
+           "char-split", String.Join("_", value.ToCharArray()) ]
+         |> List.filter (fun (_, v) -> v.Length > 3)
+ 
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 771da4c..7de3a66 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -19,7 +19,14 @@ type Fault =
+ type Outcome =
+     { Effects: Effect list
+       Fault: Fault option
+-      Env: Env }
++      Env: Env
++      /// FG-048. The script's VALUE, when it has one — needed because
++      /// `when { expression { … } }` is a predicate, not a side effect. Two
++      /// shapes occur in the corpus and both must work: an explicit `return X`,
++      /// and a bare trailing expression (Groovy's last-expression-is-the-value).
++      /// None means the script produced no value, which is NOT the same as
++      /// producing false, and a `when` must not treat it as such.
++      Returned: Value option }
+ 
+ /// Evaluation budgets. An untrusted script must not be able to spin forever or
+ /// allocate without bound — the interpreter is on the admission path, so a
+@@ -413,20 +420,36 @@ module Interpreter =
+                 env
+ 
+         try
+-            let final = execBlock st hoisted script
++            // A script that is exactly one expression has that expression's
++            // value. Threading a value out of execBlock would change every
++            // statement's signature for the sake of one caller, so the single
++            // shape that needs it is handled here.
++            match script with
++            | [ SExpr e ] ->
++                let v = evalExpr st hoisted e
+ 
+-            { Effects = List.rev st.Effects
+-              Fault = None
+-              Env = final }
++                { Effects = List.rev st.Effects
++                  Fault = None
++                  Env = hoisted
++                  Returned = Some v }
++            | _ ->
++                let final = execBlock st hoisted script
++
++                { Effects = List.rev st.Effects
++                  Fault = None
++                  Env = final
++                  Returned = None }
+         with
+         | Stop f ->
+             { Effects = List.rev st.Effects
+               Fault = Some f
+-              Env = hoisted }
+-        | ReturnSignal _ ->
++              Env = hoisted
++              Returned = None }
++        | ReturnSignal v ->
+             { Effects = List.rev st.Effects
+               Fault = None
+-              Env = hoisted }
++              Env = hoisted
++              Returned = Some v }
+ 
+     let runDefault registeredSteps script =
+         run Budget.defaults registeredSteps Env.empty script
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index 32f19da..4b37bd3 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -28,6 +28,8 @@ type Step =
+ 
+ type WhenCondition =
+     | WhenBranch of string
++    | WhenTag of string
++    | WhenEquals of expected: string * actual: string
+     | WhenEnvironment of name: string * value: string
+     | WhenExpression of source: string
+     | WhenAllOf of WhenCondition list
+@@ -57,8 +59,10 @@ type Stage =
+       /// Nested `stages { }` (sequential) and `parallel { }` children.
+       Nested: Stage list
+       IsParallel: bool
+-      /// `failFast true` inside a `parallel { }` block, or inherited from the
+-      /// top-level `parallelsAlwaysFailFast()` option. Only meaningful when
++      /// `failFast true` as a STAGE-level directive — a sibling of `parallel`,
++      /// which is the only placement Jenkins accepts (it rejects it inside the
++      /// `parallel { }` block with "Expected a stage"). Also set by the
++      /// pipeline-wide `parallelsAlwaysFailFast()` option. Only meaningful when
+       /// IsParallel is true.
+       FailFast: bool
+       Position: Position }
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index ffb8a0c..922394b 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -132,24 +132,86 @@ let private postSection: P<(PostCondition * Step list) list> =
+     >>. between (symbol "{") (symbol "}") (
+         ws >>. many (attempt (postConditionName .>>. stepBlock)))
+ 
++/// `when { environment name: 'FOO', value: 'bar' }`.
++///
++/// MEASURED shape. The first version expected `environment FOO = 'bar'`, which
++/// Jenkins does not accept — so every real `environment` condition fell through
++/// to the unmodelled branch, and from there (see below) out of the `when`
++/// section entirely. Named arguments, in either order.
++let private whenEnvironmentCondition: P<WhenCondition> =
++    keyword "environment"
++    >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
++    |>> fun pairs ->
++            let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
++
++            match get "name", get "value" with
++            | Some n, Some v -> WhenEnvironment(n, v)
++            | _ ->
++                // Recognised the keyword but not its arguments: unmodelled, so
++                // evaluation fails closed rather than assuming a direction.
++                WhenUnmodelled("environment", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
++
++/// `when { tag 'v*' }` — also accepts the named form `tag pattern: 'v*'`.
++let private whenTagCondition: P<WhenCondition> =
++    keyword "tag"
++    >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral)
++    .>> ws
++    |>> WhenTag
++
++/// `when { equals expected: 2, actual: 2 }` — a pure comparison, so it is worth
++/// modelling rather than failing closed on.
++let private whenEqualsCondition: P<WhenCondition> =
++    keyword "equals"
++    >>. sepBy1 (identifier .>> symbol ":" .>>. (attempt stringLiteral <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.') .>> ws)))
++        (symbol ",")
++    .>> ws
++    |>> fun pairs ->
++            let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
++
++            match get "expected", get "actual" with
++            | Some e, Some a -> WhenEquals(e, a)
++            | _ -> WhenUnmodelled("equals", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
++
+ let rec private whenCondition: P<WhenCondition> =
+     parse {
+         let! _ = ws
+         return! choice
+-                    [ attempt (keyword "branch" >>. stringLiteral |>> WhenBranch)
+-                      attempt (keyword "environment" >>. (
+-                          identifier .>> symbol "=" .>>. stringLiteral |>> WhenEnvironment))
+-                      attempt (keyword "expression" >>. balancedBody '{' '}' |>> WhenExpression)
+-                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAllOf)
+-                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAnyOf)
+-                      attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition |>> WhenNot)
+-                      (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')') <|> (restOfLine true |>> fun s -> s.Trim()))
++                    [ attempt (keyword "branch" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenBranch)
++                      attempt whenTagCondition
++                      attempt whenEqualsCondition
++                      attempt whenEnvironmentCondition
++                      attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
++                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAllOf)
++                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAnyOf)
++                      attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
++                      // Unrecognised condition. `.>> ws` is load-bearing: without
++                      // it this branch ends mid-line, the enclosing `}` fails to
++                      // match, and the ENTIRE `when` section falls through to the
++                      // stage's generic section fallback — which means a stage
++                      // with an unparseable `when` runs unconditionally. Silently
++                      // running a stage Jenkins skips is the worst failure mode
++                      // available here, and it was live until a receipt exposed it.
++                      ((identifier
++                        .>>. (attempt (balancedRaw '{' '}')
++                              <|> attempt (balancedRaw '(' ')')
++                              // NOT `restOfLine`: on a single-line `when { unknown x: 'y' }`
++                              // that swallowed the closing braces and destroyed the
++                              // whole pipeline parse. Stop at the enclosing brace or
++                              // the newline, whichever comes first.
++                              <|> (manySatisfy (fun c -> c <> '\n' && c <> '}') |>> fun s -> s.Trim())))
++                       .>> ws
+                        |>> WhenUnmodelled) ]
+     }
+ 
+ let private whenSection: P<WhenCondition> =
+     keyword "when" >>. between (symbol "{") (symbol "}") (ws >>. whenCondition)
+ 
++/// Backstop. If the structured parse above fails for ANY reason, the `when`
++/// must still be recorded — as unmodelled, so evaluation fails closed. It must
++/// never be allowed to disappear and leave the stage unconditional.
++let private whenSectionOpaque: P<WhenCondition> =
++    keyword "when" >>. balancedRaw '{' '}' |>> fun raw -> WhenUnmodelled("when", raw)
++
+ // ---------------------------------------------------------------------------
+ // Stages
+ // ---------------------------------------------------------------------------
+@@ -203,6 +265,7 @@ stageRef.Value <-
+                       attempt (environmentSection |>> SecEnv)
+                       attempt (keyword "steps" >>. stepBlock |>> SecSteps)
+                       attempt (whenSection |>> SecWhen)
++                      attempt (whenSectionOpaque |>> SecWhen)
+                       attempt (postSection |>> SecPost)
+                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
+                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index e332845..8e60899 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -28,6 +28,7 @@ let private request root script =
+       Environment = []
+       TimeoutMs = None
+       Interrupt = None
++      Secrets = []
+       OnLine = None
+       Named = []
+       Artifacts = None
+@@ -536,6 +537,59 @@ let externalInterrupt =
+           } ]
+ 
+ 
++
++let maskingOnOutputPath =
++    testList
++        "FG-071 masking is ON the output path, not merely available"
++        [ test "a secret echoed by the step is masked in BOTH streamed and buffered output" {
++              // REVIEW FIX (Codex P1, PR #11). The masker existed and was unit
++              // tested, but nothing called it, so a step that printed the secret
++              // leaked it while the board claimed masking was done. This test
++              // fails if the wiring is ever removed again.
++              let root = tempRoot ()
++              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
++              let streamed = System.Collections.Generic.List<string>()
++
++              let r =
++                  Executor.runStep
++                      { request root "echo \"leaking s3cr3t-value now\"" with
++                          Secrets = [ binding ]
++                          OnLine = Some(fun l -> streamed.Add l) }
++
++              Expect.equal r.Status Success "step ran"
++
++              let streamedText = String.Join("\n", streamed)
++
++              Expect.isFalse (streamedText.Contains "s3cr3t-value") "STREAMED output must not carry the secret"
++              Expect.isFalse (r.Stdout.Contains "s3cr3t-value") "BUFFERED output must not carry the secret"
++              Expect.stringContains streamedText "leaking" "the rest of the line survives"
++          }
++
++          test "an encoding masking cannot cover is NAMED in the output" {
++              // The FG-071 promise is not that nothing leaks — it is that a leak
++              // is never silent. `rev` defeats the mask, so the engine must say so.
++              let root = tempRoot ()
++              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
++              let streamed = System.Collections.Generic.List<string>()
++
++              Executor.runStep
++                  { request root "printf '%s\\n' \"$(echo s3cr3t-value | rev)\"" with
++                      Secrets = [ binding ]
++                      OnLine = Some(fun l -> streamed.Add l) }
++              |> ignore
++
++              let streamedText = String.Join("\n", streamed)
++
++              Expect.stringContains streamedText "TOKEN" "the warning names the variable"
++              Expect.stringContains streamedText "reversed" "the warning names the defeating encoding"
++          }
++
++          test "no secrets configured means output is untouched" {
++              // Guards against a masker that mangles ordinary builds.
++              let r = Executor.runStep (request (tempRoot ()) "echo plain-output")
++              Expect.stringContains r.Stdout "plain-output" "unchanged"
++          } ]
++
+ [<EntryPoint>]
+ let main argv =
+     // These tests spawn real processes and assert on /proc; running them in
+@@ -543,4 +597,4 @@ let main argv =
+     runTestsWithCLIArgs
+         []
+         argv
+-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt ]))
++        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt; maskingOnOutputPath ]))
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index 09132d5..0598509 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -110,6 +110,43 @@ let structure =
+               Expect.contains (step.Named |> List.map fst) "artifacts" "named arg present"
+           }
+ 
++          test "when { environment name: 'X', value: 'Y' } parses — the shape Jenkins accepts" {
++              // Found by a differential receipt: the parser expected
++              // `environment X = 'Y'`, which Jenkins REJECTS, so every real
++              // condition fell through to the unmodelled branch and from there
++              // out of the `when` section entirely.
++              let p = ok (mk "    stage('a') { when { environment name: 'FOO', value: 'bar' } steps { echo 'x' } }")
++              Expect.equal p.Stages.[0].When (Some(WhenEnvironment("FOO", "bar"))) "modelled condition"
++          }
++
++          test "an unparseable when is recorded as unmodelled, never dropped" {
++              // THE dangerous case. Before the backstop, a `when` the parser could
++              // not understand vanished into the stage's generic section fallback,
++              // leaving the stage unconditional — silently running a stage Jenkins
++              // skips. A refusal is recoverable; a silent wrong answer is not.
++              let p = ok (mk "    stage('a') { when { someFutureCondition foo: 'bar' } steps { echo 'x' } }")
++
++              match p.Stages.[0].When with
++              | Some(WhenUnmodelled _) -> ()
++              | other -> failtest $"an unrecognised when must be Some(WhenUnmodelled …), got {other}"
++          }
++
++          test "allOf composes not and environment" {
++              let p = ok (mk "    stage('a') { when { allOf { environment name: 'FOO', value: 'bar'\n not { environment name: 'FOO', value: 'no' } } } steps { echo 'x' } }")
++              Expect.equal
++                  p.Stages.[0].When
++                  (Some(WhenAllOf [ WhenEnvironment("FOO", "bar"); WhenNot(WhenEnvironment("FOO", "no")) ]))
++                  "nested composition"
++          }
++
++          test "tag and equals conditions are modelled" {
++              let t = ok (mk "    stage('a') { when { tag 'v*' } steps { echo 'x' } }")
++              Expect.equal t.Stages.[0].When (Some(WhenTag "v*")) "tag pattern"
++
++              let e = ok (mk "    stage('a') { when { equals expected: 2, actual: 2 } steps { echo 'x' } }")
++              Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
++          }
++
+           test "failFast is a STAGE-level directive, as Jenkins requires" {
+               // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
+               // parallel block with "Expected a stage". The accepted form is a

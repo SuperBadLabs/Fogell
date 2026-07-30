@@ -1,0 +1,41 @@
+# Differential receipt — when-conditions.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         fe2f404bc48c390f163b63632642716521dbfefa7adbc33582a80c3350ab0833
+
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+    counted as a reported reason instead, since it explains the engine, not the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+
+## Jenkins
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | Stage "Skipped" skipped due to when conditional
+    | env-matched
+    | Stage "Env mismatch" skipped due to when conditional
+    | allof-matched
+
+## Fogell
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | Stage "Skipped" skipped due to when conditional
+    | env-matched
+    | Stage "Env mismatch" skipped due to when conditional
+    | allof-matched

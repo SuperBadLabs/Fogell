@@ -19,7 +19,14 @@ type Fault =
 type Outcome =
     { Effects: Effect list
       Fault: Fault option
-      Env: Env }
+      Env: Env
+      /// FG-048. The script's VALUE, when it has one — needed because
+      /// `when { expression { … } }` is a predicate, not a side effect. Two
+      /// shapes occur in the corpus and both must work: an explicit `return X`,
+      /// and a bare trailing expression (Groovy's last-expression-is-the-value).
+      /// None means the script produced no value, which is NOT the same as
+      /// producing false, and a `when` must not treat it as such.
+      Returned: Value option }
 
 /// Evaluation budgets. An untrusted script must not be able to spin forever or
 /// allocate without bound — the interpreter is on the admission path, so a
@@ -47,7 +54,16 @@ module Interpreter =
           mutable Effects: Effect list
           Budget: Budget
           RegisteredSteps: Set<string>
-          Defined: Set<string> }
+          Defined: Set<string>
+          /// FG-048. The value of the most recent expression statement.
+          ///
+          /// REVIEW FIX (Codex, PR #13): Groovy returns the last expression of a
+          /// closure even when earlier statements exist, but only a script that was
+          /// EXACTLY one expression produced a value here. So
+          /// `expression { def deploy = true; deploy }` returned None, which a
+          /// `when` reads as unevaluable and fails the build on — where Jenkins
+          /// simply runs the stage.
+          mutable LastValue: Value option }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
@@ -314,7 +330,7 @@ module Interpreter =
 
         match s with
         | SExpr e ->
-            evalExpr st env e |> ignore
+            st.LastValue <- Some(evalExpr st env e)
             env
         | SDef(n, Some e) -> Env.withVar n (evalExpr st env e) env
         | SDef(n, None) -> Env.withVar n VNull env
@@ -400,7 +416,8 @@ module Interpreter =
               Effects = []
               Budget = budget
               RegisteredSteps = registeredSteps
-              Defined = defined }
+              Defined = defined
+              LastValue = None }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -417,16 +434,20 @@ module Interpreter =
 
             { Effects = List.rev st.Effects
               Fault = None
-              Env = final }
+              Env = final
+              // Groovy's last-expression-is-the-value, for any statement block.
+              Returned = st.LastValue }
         with
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f
-              Env = hoisted }
-        | ReturnSignal _ ->
+              Env = hoisted
+              Returned = None }
+        | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = hoisted }
+              Env = hoisted
+              Returned = Some v }
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script
