@@ -1,0 +1,11 @@
+ Fogell.slnx                                        |   3 +
+ docs/EXECUTION_BOARD.md                            |   4 +-
+ src/Fogell.Journal/Fogell.Journal.fsproj           |   9 +
+ src/Fogell.Journal/Journal.fs                      |  92 ++++++++++
+ src/Fogell.Journal/Records.fs                      |  49 ++++++
+ src/Fogell.Journal/Resume.fs                       |  82 +++++++++
+ .../Fogell.Journal.Tests.fsproj                    |   8 +
+ tests/Fogell.Journal.Tests/Tests.fs                | 187 +++++++++++++++++++++
+ .../Fogell.Crash.Harness.fsproj                    |  10 ++
+ tools/Fogell.Crash.Harness/Program.fs              |  75 +++++++++
+ 10 files changed, 517 insertions(+), 2 deletions(-)
