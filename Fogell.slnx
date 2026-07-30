@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+  </Folder>
+</Solution>

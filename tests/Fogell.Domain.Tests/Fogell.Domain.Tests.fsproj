@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Tests.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fogell.Domain/Fogell.Domain.fsproj" />
+    <PackageReference Include="Expecto" Version="10.2.3" />
+    <PackageReference Include="Expecto.FsCheck" Version="10.2.3" />
+    <PackageReference Include="FsCheck" Version="2.16.6" />
+  </ItemGroup>
+</Project>
