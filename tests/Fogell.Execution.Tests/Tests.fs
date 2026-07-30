@@ -26,7 +26,10 @@ let private request root script =
       Workspace = ws
       Environment = []
       TimeoutMs = None
-      OnLine = None }
+      OnLine = None
+      Named = []
+      Artifacts = None
+      BuildKey = "test" }
 
 /// Spawn a real background child that records its own pid, then assert on that
 /// pid directly.

@@ -7,6 +7,7 @@ open System.Security.Cryptography
 /// Why a comparison failed, named so a report is machine-readable.
 type Divergence =
     | ResultDiffers of jenkins: string * fogell: string
+    | DiagnosticSilence of engine: string
     | OutputDiffers of firstMismatchIndex: int * jenkins: string option * fogell: string option
     | WorkspaceDiffers of jenkins: string * fogell: string
     | JenkinsFailed of string
@@ -15,6 +16,7 @@ type Divergence =
     member this.Describe =
         match this with
         | ResultDiffers(j, f) -> $"terminal result: jenkins={j} fogell={f}"
+        | DiagnosticSilence engine -> $"{engine} failed without reporting a reason"
         | OutputDiffers(i, j, f) ->
             let show = Option.defaultValue "<absent>"
             $"output line {i}: jenkins={show j} fogell={show f}"
@@ -83,6 +85,16 @@ module Compare =
               match compareOutput jenkins.Output fogell.Output with
               | Some d -> d
               | None -> ()
+
+              // A FAILED or ABORTED build must be explained by both engines.
+              // `unstable` is excluded deliberately: Jenkins marks a build
+              // unstable from a test report and prints no ERROR line — the report
+              // is the explanation. Requiring one there fired symmetrically on
+              // both engines, which is the signature of a wrong rule rather than
+              // a real divergence.
+              if jenkins.Result = "failure" || jenkins.Result = "aborted" then
+                  if not fogell.ReportedFailureReason then DiagnosticSilence "fogell"
+                  if not jenkins.ReportedFailureReason then DiagnosticSilence "jenkins"
 
               if
                   jenkins.WorkspaceHash <> "not-collected"

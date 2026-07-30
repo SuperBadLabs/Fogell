@@ -18,6 +18,9 @@ module FogellSide =
         | Result.Ok pipeline ->
             let output = System.Collections.Generic.List<string>()
             let workspace = Path.Combine(workspaceRoot, jobName)
+            // artifacts live OUTSIDE the workspace so archiving cannot perturb
+            // the workspace hash the differential compares
+            let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
             if Directory.Exists workspace then Directory.Delete(workspace, true)
             Directory.CreateDirectory workspace |> ignore
 
@@ -45,7 +48,10 @@ module FogellSide =
                           Workspace = cwd
                           Environment = envFor stage
                           TimeoutMs = Some 120_000
-                          OnLine = Some(fun l -> output.Add l) }
+                          OnLine = Some(fun l -> output.Add l)
+                          Named = step.Named
+                          Artifacts = Some(ArtifactStore.under artifactRoot)
+                          BuildKey = jobName }
 
                 // Output arrives exactly once, via OnLine. An earlier version also
                 // appended result.Stdout, so every shell line was emitted twice and
@@ -60,8 +66,11 @@ module FogellSide =
                 // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
                 // opaque `exit code -1`, and we promised to be clearer, not quieter).
                 if result.Status <> BuildStatus.Success then
-                    result.Diagnostic
-                    |> Option.iter (fun d -> output.Add $"ERROR: {d}")
+                    // Jenkins prints `ERROR: …` for a FAILED step. It does not for
+                    // an unstable one — `junit` marks the build unstable without
+                    // an ERROR line, so emitting one there is a false divergence.
+                    if result.Status = BuildStatus.Failure then
+                        result.Diagnostic |> Option.iter (fun d -> output.Add $"ERROR: {d}")
 
                     status <- BuildStatus.worstOf status result.Status
 
@@ -94,4 +103,5 @@ module FogellSide =
                 { Result = BuildStatus.toWireString status
                   Output = Trace.normaliseOutput output
                   WorkspaceHash = workspaceHash
-                  WorkspaceFiles = files }
+                  WorkspaceFiles = files
+                  ReportedFailureReason = Trace.reportedFailureReason output }

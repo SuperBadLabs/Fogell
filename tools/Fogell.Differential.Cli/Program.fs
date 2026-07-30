@@ -22,10 +22,16 @@ let main argv =
             | null | "" -> None
             | v -> Some v
 
+        let collector =
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE_CMD" with
+            | null | "" -> None
+            | v -> Some v
+
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
-              WorkspaceRoot = jenkinsWorkspace }
+              WorkspaceRoot = jenkinsWorkspace
+              WorkspaceCollector = collector }
 
         let fogellRoot =
             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
@@ -33,7 +39,12 @@ let main argv =
         Directory.CreateDirectory fogellRoot |> ignore
 
         printfn "jenkins:   %s (core %s)" baseUrl core
-        printfn "workspace: %s" (defaultArg jenkinsWorkspace "<not collected — workspace hashes NOT compared>")
+        printfn
+            "workspace: %s"
+            (match jenkinsWorkspace, collector with
+             | Some p, _ -> $"local {p}"
+             | None, Some c -> $"remote collector: {c.Substring(0, min 60 c.Length)}..."
+             | None, None -> "<not collected — workspace hashes NOT compared>")
         printfn ""
 
         let receipts =
@@ -41,8 +52,27 @@ let main argv =
             |> List.mapi (fun i file ->
                 let name = Path.GetFileName file
                 let script = File.ReadAllText file
-                // job name must be stable so the workspace path is predictable
-                let job = "diff" + string i
+                // Job names MUST be derived from the file, not its index: an
+                // index-derived name reshuffles when a case is added, and the
+                // new occupant inherits the previous run's workspace. That
+                // showed up as a phantom workspace-hash divergence.
+                let job =
+                    "diff-"
+                    + Text.RegularExpressions.Regex.Replace(
+                        Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
+
+                // wipe any stale workspace so a hash can only match on merit
+                match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
+                | null
+                | "" -> ()
+                | template ->
+                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                    psi.ArgumentList.Add "-c"
+                    psi.ArgumentList.Add(template.Replace("{job}", job))
+                    psi.RedirectStandardOutput <- true
+                    psi.RedirectStandardError <- true
+                    use p = Diagnostics.Process.Start psi
+                    p.WaitForExit 30_000 |> ignore
 
                 let jenkins = Jenkins.run cfg job script
                 let fogell = FogellSide.run fogellRoot job script

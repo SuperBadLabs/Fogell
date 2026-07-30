@@ -19,7 +19,13 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int option
-      OnLine: (string -> unit) option }
+      OnLine: (string -> unit) option
+      /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
+      Named: (string * string) list
+      /// Where publishing steps write. None disables them by failing closed.
+      Artifacts: ArtifactStore option
+      /// Identifies this build in the artifact store.
+      BuildKey: string }
 
 type StepResult =
     { Status: BuildStatus
@@ -31,6 +37,10 @@ type StepResult =
       ProcessGroupId: int option
       /// Populated for shell steps so callers can assert on containment.
       Termination: Termination option
+      /// Relative paths published by `archiveArtifacts`, in sorted order.
+      Archived: string list
+      /// Test totals parsed by `junit`: total, failed, skipped.
+      TestTotals: (int * int * int) option
       Diagnostic: string option }
 
 module Executor =
@@ -43,6 +53,8 @@ module Executor =
           DurationMs = 0L
           ProcessGroupId = None
           Termination = None
+          Archived = []
+          TestTotals = None
           Diagnostic = None }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
@@ -108,12 +120,80 @@ module Executor =
               DurationMs = run.DurationMs
               ProcessGroupId = run.ProcessGroupId
               Termination = run.Termination
+              Archived = []
+              TestTotals = None
               Diagnostic = diagnostic }
+
+    /// Read a step argument that may be positional or named, matching Jenkins'
+    /// tolerance for `archiveArtifacts '*.jar'` and
+    /// `archiveArtifacts artifacts: '*.jar'`.
+    let private argument (request: StepRequest) (names: string list) =
+        match request.Script with
+        | Some v when v <> "" -> Some v
+        | _ -> names |> List.tryPick (fun n -> request.Named |> List.tryPick (fun (k, v) -> if k = n then Some v else None))
+
+    /// Jenkins accepts a comma-separated glob list in one string.
+    let private patterns (raw: string) =
+        raw.Split(',') |> Array.map (fun s -> s.Trim()) |> Array.filter (fun s -> s <> "") |> Array.toList
+
+    /// FG-042. `archiveArtifacts artifacts: '<glob>' [, allowEmptyArchive: true]`
+    let private runArchive (request: StepRequest) : StepResult =
+        match request.Artifacts, argument request [ "artifacts" ] with
+        | None, _ ->
+            { ok Failure with
+                Diagnostic = Some "archiveArtifacts requires an artifact store; none configured" }
+        | _, None ->
+            { ok Failure with
+                Diagnostic = Some "archiveArtifacts requires an 'artifacts' pattern" }
+        | Some store, Some raw ->
+            // Jenkins prints this banner before archiving. Emitting the same line
+            // is parity; excluding it from comparison would merely hide a
+            // difference the user can see.
+            request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
+            let published = Publish.archive store request.BuildKey request.Workspace (patterns raw)
+
+            let allowEmpty =
+                request.Named
+                |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
+
+            if List.isEmpty published && not allowEmpty then
+                // Jenkins fails the build here rather than passing quietly, and
+                // a silent empty archive is the worst outcome for a user.
+                { ok Failure with
+                    Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
+            else
+                { ok Success with Archived = published }
+
+    /// FG-043. `junit '<glob>'` / `junit testResults: '<glob>'`
+    let private runJUnit (request: StepRequest) : StepResult =
+        match argument request [ "testResults"; "pattern" ] with
+        | None ->
+            { ok Failure with
+                Diagnostic = Some "junit requires a 'testResults' pattern" }
+        | Some raw ->
+            request.OnLine |> Option.iter (fun f -> f "Recording test results")
+
+            match Publish.parseJUnit request.Workspace (patterns raw) with
+            | Result.Error e -> { ok Failure with Diagnostic = Some e }
+            | Result.Ok(total, failed, skipped) ->
+                // Jenkins marks the build UNSTABLE (not failed) when tests fail:
+                // the build worked, the code did not.
+                let status = if failed > 0 then Unstable else Success
+
+                { ok status with
+                    TestTotals = Some(total, failed, skipped)
+                    Diagnostic =
+                        if failed > 0 then
+                            Some $"{failed} of {total} test(s) failed"
+                        else
+                            None }
 
     /// Dispatch a requested effect. Steps Fogell does not implement fail closed
     /// with a named reason — never a silent success (ADR 0001).
     let runStep (request: StepRequest) : StepResult =
         match request.Name, request.Script with
+        | "archiveArtifacts", _ -> runArchive request
+        | "junit", _ -> runJUnit request
         | ("sh" | "bat"), Some script -> runShell request script
         | ("sh" | "bat"), None ->
             { ok Failure with

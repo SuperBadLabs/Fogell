@@ -1,0 +1,24 @@
+ differential/cases/archive-artifacts.Jenkinsfile   |  12 +++
+ differential/cases/archive-empty-fails.Jenkinsfile |  10 ++
+ differential/cases/junit-failing.Jenkinsfile       |  12 +++
+ differential/cases/junit-passing.Jenkinsfile       |  12 +++
+ .../receipts/archive-artifacts.receipt.txt         |  39 +++++++
+ .../receipts/archive-empty-fails.receipt.txt       |  33 ++++++
+ differential/receipts/echo-only.receipt.txt        |  15 +--
+ differential/receipts/env-scoping.receipt.txt      |  15 +--
+ differential/receipts/junit-failing.receipt.txt    |  37 +++++++
+ differential/receipts/junit-passing.receipt.txt    |  37 +++++++
+ differential/receipts/nonzero-exit.receipt.txt     |  21 ++--
+ differential/receipts/shell-and-file.receipt.txt   |  17 ++--
+ docs/EXECUTION_BOARD.md                            |   9 +-
+ scripts/run-differential.sh                        |  19 ++++
+ src/Fogell.Differential/Compare.fs                 |  12 +++
+ src/Fogell.Differential/Fogell.fs                  |  18 +++-
+ src/Fogell.Differential/Jenkins.fs                 |  31 ++++--
+ src/Fogell.Differential/Trace.fs                   |  87 +++++++++++++++-
+ src/Fogell.Execution/Executor.fs                   |  82 ++++++++++++++-
+ src/Fogell.Execution/Fogell.Execution.fsproj       |   1 +
+ src/Fogell.Execution/Publish.fs                    | 112 +++++++++++++++++++++
+ tests/Fogell.Execution.Tests/Tests.fs              |   5 +-
+ tools/Fogell.Differential.Cli/Program.fs           |  38 ++++++-
+ 23 files changed, 622 insertions(+), 52 deletions(-)

@@ -15,9 +15,20 @@ type JenkinsConfig =
     { BaseUrl: string
       /// Recorded in the receipt so the claim names what it was measured against.
       CoreVersion: string
-      /// A directory visible to BOTH engines, so the workspace can be hashed.
-      /// Jenkins runs in a container, so this is the host path of its workspace.
-      WorkspaceRoot: string option }
+      /// A directory visible to this process, when Jenkins shares a filesystem.
+      WorkspaceRoot: string option
+      /// FG-002b. Jenkins usually does NOT share a filesystem — it runs in a
+      /// container, often on another host. Rather than give up on comparing
+      /// workspaces (which would cap every receipt at PROVEN-PARTIAL forever),
+      /// the harness can be handed a command that hashes the workspace WHERE IT
+      /// LIVES and prints `<sha256>  <relative-path>` lines on stdout.
+      ///
+      /// `{job}` is substituted with the job name. Example:
+      ///   ssh luigi 'podman exec jenkins-lab sh -c "cd /var/jenkins_home/workspace/{job} && find . -type f | sort | xargs -r sha256sum"'
+      ///
+      /// The output is normalised through exactly the same exclusion rules as a
+      /// local hash, so neither side gets a different definition of "workspace".
+      WorkspaceCollector: string option }
 
 module Jenkins =
 
@@ -96,15 +107,19 @@ module Jenkins =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/consoleText").Result
 
                     let workspaceHash, files =
-                        match cfg.WorkspaceRoot with
-                        | Some root -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
-                        | None -> "not-collected", []
+                        match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
+                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
+                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", jobName))
+                        | None, None -> "not-collected", []
+
+                    let rawLines = console.Replace("\r\n", "\n").Split '\n'
 
                     let trace =
                         { Result = terminal
-                          Output = Trace.normaliseOutput (console.Replace("\r\n", "\n").Split '\n')
+                          Output = Trace.normaliseOutput rawLines
                           WorkspaceHash = workspaceHash
-                          WorkspaceFiles = files }
+                          WorkspaceFiles = files
+                          ReportedFailureReason = Trace.reportedFailureReason rawLines }
 
                     post $"/job/{jobName}/doDelete" None |> ignore
                     Ok trace
