@@ -66,6 +66,10 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   mask it; the receipt showed Jenkins masks both.)
 - `stash` with the default `allowEmpty: false` and no matching files **fails the
   build** — later steps do not run. (Proven: `stash-empty-fails`.)
+- On a plain job — no SCM, not multibranch, first build, started by a user — every
+  context-dependent `when` condition (`buildingTag`, `changeRequest`, `changeset`,
+  `changelog`, `triggeredBy`, `isRestartedRun`) is **false** and its stage is skipped,
+  with the build succeeding. (Proven: `when-context-conditions`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

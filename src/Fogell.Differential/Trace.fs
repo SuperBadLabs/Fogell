@@ -165,6 +165,10 @@ module Trace =
         // thing this contract exists to avoid. Both engines say it; the wording is not
         // compared, and the load-bearing evidence is that the value never appears.
         || t.StartsWith "Masking supported pattern matches of "
+        // FG-048b. Jenkins warns about an empty changelog when evaluating `changeset` or
+        // `changelog` on a first build. Engine narration about its own evaluation, not
+        // build output — and imitating the sentence would be over-fitting again.
+        || t.StartsWith "Warning, empty changelog"
         // FG-049. A failing `post` step makes Jenkins print a Java exception and
         // stack trace into the build log. It is the engine explaining itself, which
         // is what this predicate is for — and matching a stack trace verbatim would

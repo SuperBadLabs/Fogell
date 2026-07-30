@@ -454,7 +454,59 @@ module FogellSide =
                 // This is a source-level approximation of Jenkins' object comparison,
                 // not the real thing: `equals expected: 2, actual: 2.0` would still
                 // be called unequal. Stated rather than implied.
-                | WhenEquals(expected, actual) -> Some(expected.Trim() = actual.Trim())
+                | WhenEquals(expected, actual) ->
+                    // An operand is either a LITERAL (quoted, or a bare number) or an
+                    // EXPRESSION such as `env.X` / `params.Y`. Comparing an expression's
+                    // SOURCE TEXT against a literal is silently wrong — `equals
+                    // actual: env.X, expected: 'y'` compared the string "env.X" — so
+                    // expression-shaped operands are resolved from the environment first.
+                    let resolveOperand (raw: string) =
+                        let t = raw.Trim()
+
+                        if t.StartsWith "'" || t.StartsWith "\"" then
+                            t.Trim('\'', '"')
+                        elif t.Length > 0 && (Char.IsDigit t[0] || t[0] = '-') then
+                            t
+                        else
+                            let bare = if t.StartsWith "env." then t.Substring 4 else t
+
+                            match Map.tryFind bare env with
+                            | Some v -> v
+                            | None -> t
+
+                    Some(resolveOperand expected = resolveOperand actual)
+
+                // Neutral: an evaluation-ORDER directive never decides whether a stage runs.
+                | WhenEvaluationOption -> Some true
+
+                // FG-048b. MEASURED on the pinned Jenkins: on a plain job — no SCM
+                // changelog, no multibranch metadata, not a restart, triggered by a user —
+                // every one of these is FALSE and its stage is skipped, with the build
+                // succeeding. Before this they failed CLOSED, refusing up to 15 corpus
+                // files outright, and a refusal is still a broken lift-and-shift.
+                //
+                // The BOUNDARY, stated rather than implied: only the context-absent case
+                // is receipt-proven. A real multibranch build where CHANGE_ID exists, or a
+                // build with an actual changelog, is NOT covered by that measurement —
+                // those paths use the variable when present and are unproven until this
+                // harness can produce such a build (FG-048c).
+                | WhenBuildingTag -> Some(Map.containsKey "TAG_NAME" env)
+                | WhenChangeRequest -> Some(Map.containsKey "CHANGE_ID" env)
+                | WhenIsRestartedRun ->
+                    // Nothing in this engine restarts a run yet, so this cannot be true.
+                    Some false
+                | WhenTriggeredBy cause ->
+                    // The trigger is recorded in BUILD_CAUSE when we know it; absent means
+                    // "started by a user", which no named trigger cause matches.
+                    match Map.tryFind "BUILD_CAUSE" env with
+                    | Some actual -> Some(actual.Trim() = cause.Trim())
+                    | None -> Some false
+                | WhenChangeset _
+                | WhenChangelog _ ->
+                    // Both need an SCM changelog. There is none, and Jenkins itself warns
+                    // "empty changelog, probably because this is the first build" and
+                    // evaluates false.
+                    Some false
 
                 | WhenNot inner -> evalWhen stage inner |> Option.map not
 

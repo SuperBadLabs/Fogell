@@ -193,7 +193,11 @@ let private whenEqualsCondition: P<WhenCondition> =
     >>. sepBy1
             (identifier .>> symbol ":"
              .>>. (attempt (stringLiteral |>> fun v -> $"'{v}'")
-                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || isLetter c) .>> ws)))
+                   // `_` belongs here: the last unmodelled `when` in the corpus was
+                   // `equals expected: 'False', actual: _deploy_to_nexus`, and omitting
+                   // underscore from an IDENTIFIER charset made that whole condition
+                   // unmodelled — so the stage failed closed over one character.
+                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)))
             (symbol ",")
     .>> ws
     |>> fun pairs ->
@@ -203,13 +207,27 @@ let private whenEqualsCondition: P<WhenCondition> =
             | Some e, Some a -> WhenEquals(e, a)
             | _ -> WhenUnmodelled("equals", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
 
+/// A `;` between conditions. `anyOf { branch 'a'; branch 'b' }` is idiomatic and
+/// appeared in 6 corpus files, where `many whenCondition` stopped at the semicolon, the
+/// closing brace failed to match, and the WHOLE anyOf degraded to unmodelled — so those
+/// stages failed closed.
+let private whenSeparators: P<unit> = skipMany (skipChar ';' >>. ws)
+
 let rec private whenCondition: P<WhenCondition> =
     parse {
         let! _ = ws
         return! choice
                     // Same key validation as `tag`: a named argument that is not
                     // `pattern:` must not be mistaken for the branch pattern.
-                    [ attempt (
+                    [ // FG-048b. Context-dependent conditions. The zero-argument forms
+                      // accept optional empty parens, as Jenkinsfiles write them.
+                      attempt (keyword "buildingTag" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenBuildingTag)
+                      attempt (keyword "changeRequest" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenChangeRequest)
+                      attempt (keyword "isRestartedRun" >>. opt (attempt (balancedRaw '(' ')')) .>> ws >>% WhenIsRestartedRun)
+                      attempt (keyword "changeset" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangeset)
+                      attempt (keyword "changelog" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenChangelog)
+                      attempt (keyword "triggeredBy" >>. ((attempt (identifier .>> symbol ":" >>. stringLiteral)) <|> stringLiteral) .>> ws |>> WhenTriggeredBy)
+                      attempt (
                           keyword "branch"
                           >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
                                 |>> fun (k, v) -> if k = "pattern" then WhenBranch v else WhenUnmodelled("branch", $"{k}: {v}"))
@@ -219,9 +237,18 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition
                       attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
-                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAllOf)
-                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) .>> ws |>> WhenAnyOf)
+                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
+                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
+                      // `beforeAgent true` and friends are OPTIONS — they change WHEN the
+                      // condition is evaluated (before allocating an agent), never WHETHER
+                      // it holds. Treated as unmodelled they made the whole `when` fail
+                      // closed, refusing a stage Jenkins runs.
+                      attempt (
+                          (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
+                          >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
+                          .>> ws
+                          >>% WhenEvaluationOption)
                       // Unrecognised condition. `.>> ws` is load-bearing: without
                       // it this branch ends mid-line, the enclosing `}` fails to
                       // match, and the ENTIRE `when` section falls through to the

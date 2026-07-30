@@ -147,6 +147,48 @@ let structure =
               Expect.equal e.Stages.[0].When (Some(WhenEquals("2", "2"))) "equals pair"
           }
 
+          test "context-dependent when conditions are modelled, not refused" {
+              // MEASURED: on a plain job all six are FALSE and their stages are skipped,
+              // with the build succeeding. They used to fail CLOSED, refusing the file.
+              let one w =
+                  (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+
+              Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "buildingTag"
+              Expect.equal (one "changeRequest()") (Some WhenChangeRequest) "changeRequest"
+              Expect.equal (one "isRestartedRun()") (Some WhenIsRestartedRun) "isRestartedRun"
+              Expect.equal (one "changeset '**/*.java'") (Some(WhenChangeset "**/*.java")) "changeset"
+              Expect.equal (one "changelog '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "changelog"
+              Expect.equal (one "triggeredBy 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "triggeredBy"
+          }
+
+          test "semicolon-separated conditions inside anyOf parse" {
+              // `anyOf { branch 'a'; branch 'b' }` is idiomatic and appeared in 6 corpus
+              // files. `many whenCondition` stopped at the semicolon, the closing brace
+              // failed, and the WHOLE anyOf degraded to unmodelled — so it failed closed.
+              let p = ok (mk "    stage('a') { when { anyOf { branch 'master'; branch 'staging' } } steps { echo 'x' } }")
+              Expect.equal p.Stages.[0].When (Some(WhenAnyOf [ WhenBranch "master"; WhenBranch "staging" ])) "both branches"
+          }
+
+          test "beforeAgent is an evaluation option, not a condition" {
+              // It changes WHEN the condition is evaluated, never WHETHER it holds.
+              // Treated as unmodelled it made the whole `when` fail closed.
+              let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
+              Expect.equal p.Stages.[0].When (Some(WhenAllOf [ WhenEvaluationOption; WhenBranch "main" ])) "neutral option kept"
+          }
+
+          test "an equals operand may be a bare identifier with an underscore" {
+              // The last unmodelled `when` in the corpus was
+              // `equals expected: 'False', actual: _deploy_to_nexus` — one character
+              // missing from an identifier charset made the stage fail closed.
+              let p = ok (mk "    stage('a') { when { equals expected: 'False', actual: _deploy_to_nexus } steps { echo 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenEquals(e, a)) ->
+                  Expect.equal e "'False'" "quoted literal keeps its quotes"
+                  Expect.equal a "_deploy_to_nexus" "identifier operand survives"
+              | other -> failtest $"expected WhenEquals, got {other}"
+          }
+
           test "a named when argument that is not `pattern` fails closed" {
               // REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
               // `tag comparator: 'REGEXP'` was read as pattern = "REGEXP" — a

@@ -1,0 +1,10 @@
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Ir/Pipeline.fs
+ M src/Fogell.Pipeline.Parser/Parser.fs
+ M tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? differential/cases/when-context-conditions.Jenkinsfile
+?? differential/receipts/when-context-conditions.receipt.txt
+?? evidence/20260730T091612Z-fg-048b/
