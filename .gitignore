@@ -1,0 +1,6 @@
+bin/
+obj/
+.forge-home/
+.fogell-home/
+evidence/**/workspace/
+*.user

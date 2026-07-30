@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Incomplete matches are errors, not warnings: an unhandled DU case in a
+         parser or interpreter is a silent compatibility bug. Inherited from
+         Forge, which learned it the hard way. -->
+    <WarningsAsErrors>$(WarningsAsErrors);FS0025;FS0026</WarningsAsErrors>
+  </PropertyGroup>
+</Project>
