@@ -112,6 +112,23 @@ let stringLiteralWithKind: P<string * bool> =
               // expand. Only single-quoted forms are literal.
               attempt (quoted "/" |>> fun s -> s, true) ])
 
+/// Quote KIND without the NUL sentinel, for consumers that forward the value verbatim
+/// instead of interpolating it.
+///
+/// REVIEW FIX (Codex, PR #17 round 4): using [stringLiteralWithKind] for every step's
+/// named arguments put the sentinel into values that nothing restores — only the `input`
+/// rendering path calls `interpolate` — so `sh(script: "echo \$BUILD_NUMBER")` handed
+/// the shell an embedded NUL. The sentinel exists solely to survive interpolation, so it
+/// must not be written where interpolation never happens.
+let stringLiteralWithKindPlain: P<string * bool> =
+    lexeme (
+        choice
+            [ attempt (tripleQuoted "'''" |>> fun s -> s, false)
+              attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
+              attempt (quoted "'" |>> fun s -> s, false)
+              attempt (quoted "\"" |>> fun s -> s, true)
+              attempt (quoted "/" |>> fun s -> s, true) ])
+
 let stringLiteral: P<string> =
     lexeme (
         choice

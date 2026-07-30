@@ -30,6 +30,9 @@ type Step =
       /// coincides with Groovy's for the common case; `input` has no shell.
       /// Mirrors Stage.EnvironmentLiteralNames.
       LiteralNamedArgs: Set<string>
+      /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
+      /// is literal on Jenkins, and the positional form is as common as the named one.
+      LiteralPositionalArgs: Set<int>
       /// Raw source of the arguments, retained because ADR 0002 says the
       /// interpreter — not the parser — decides what an expression means.
       RawArgs: string

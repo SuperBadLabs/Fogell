@@ -1214,14 +1214,23 @@ module FogellSide =
                     // single-quoted argument stays literal, which is why the parser now
                     // records which named args were single-quoted — shell steps never
                     // needed this because the shell does its own expansion.
-                    let render (argName: string) (raw: string) =
-                        if step.LiteralNamedArgs.Contains argName then
+                    // `message` may arrive positionally (`input 'Deploy ${X}?'`) or named,
+                    // and Jenkins treats a single-quoted one as LITERAL either way. The
+                    // named-only check interpolated every positional prompt.
+                    let messageIsLiteral =
+                        if step.Named |> List.exists (fun (k, _) -> k = "message") then
+                            step.LiteralNamedArgs.Contains "message"
+                        else
+                            step.LiteralPositionalArgs.Contains 0
+
+                    let render (isLiteral: bool) (raw: string) =
+                        if isLiteral then
                             raw
                         else
                             interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
 
-                    emit (render "message" message)
-                    emit $"""{render "ok" okLabel} or Abort"""
+                    emit (render messageIsLiteral message)
+                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") okLabel} or Abort"""
 
                     match deadline with
                     | None ->
