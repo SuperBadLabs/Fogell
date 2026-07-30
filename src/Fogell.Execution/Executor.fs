@@ -309,7 +309,15 @@ module Executor =
         | Some raw ->
             request.OnLine |> Option.iter (fun f -> f "Recording test results")
 
-            match Publish.parseJUnit request.Workspace (patterns raw) with
+            let abort () =
+                let fired (f: (unit -> bool) option) =
+                    match f with
+                    | Some p -> (try p () with _ -> false)
+                    | None -> false
+
+                fired request.Interrupt || fired request.DeadlineExpired
+
+            match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
             | Result.Error e -> { ok Failure with Diagnostic = Some e }
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:

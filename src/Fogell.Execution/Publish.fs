@@ -84,6 +84,14 @@ module Publish =
                     File.Copy(Path.Combine(workspace, relative), dest, true)
                     published.Add relative
 
+                    // REVIEW FIX (Codex, PR #14 round 9): polling only BEFORE each copy
+                    // meant an interrupt firing during the only or final copy had no
+                    // later iteration to observe it, so `aborted` stayed false and the
+                    // step returned Success — a timeout expiring while the build stays
+                    // green. A copy cannot be interrupted mid-file, but once it returns
+                    // the interruption must still be classified.
+                    if abort () then aborted <- true
+
         List.ofSeq published, aborted
 
     let archive store buildKey workspace patterns =
@@ -91,7 +99,11 @@ module Publish =
 
     /// Parse JUnit XML totals. Reads only the attributes every producer emits;
     /// a malformed report is reported, not silently counted as zero.
-    let parseJUnit (workspace: string) (patterns: string list) : Result<int * int * int, string> =
+    /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
+    /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
+    /// only archive read it, so a `timeout` whose last step is `junit` could scan many
+    /// reports and return Success or Unstable after the deadline.
+    let parseJUnitWithAbort (workspace: string) (patterns: string list) (abort: unit -> bool) : Result<int * int * int, string> =
         let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
 
         if List.isEmpty files then
@@ -102,7 +114,13 @@ module Publish =
             let mutable skipped = 0
             let mutable malformed = []
 
+            let mutable aborted = false
+
             for relative in files do
+              if not aborted then
+                if abort () then
+                    aborted <- true
+                else
                 try
                     let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
 
@@ -126,6 +144,14 @@ module Publish =
                 with ex ->
                     malformed <- $"{relative}: {ex.GetType().Name}" :: malformed
 
-            match malformed with
-            | [] -> Ok(total, failed, skipped)
-            | errs -> Error("unparsable test report(s): " + String.concat "; " errs)
+            // Same rule as the archive path: once a report has been parsed, an
+            // interruption observed afterwards still counts.
+            if not aborted && abort () then aborted <- true
+
+            match aborted, malformed with
+            | true, _ -> Error "aborted: the step's deadline expired while reading test reports"
+            | false, [] -> Ok(total, failed, skipped)
+            | false, errs -> Error("unparsable test report(s): " + String.concat "; " errs)
+
+    let parseJUnit (workspace: string) (patterns: string list) =
+        parseJUnitWithAbort workspace patterns (fun () -> false)

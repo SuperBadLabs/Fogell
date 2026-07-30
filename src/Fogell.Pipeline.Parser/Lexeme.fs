@@ -70,7 +70,12 @@ let private escapedCharKeepingDollar: P<string> =
         | 'n' -> "\n"
         | 't' -> "\t"
         | 'r' -> "\r"
-        | '$' -> "\\$"
+        // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is
+        // an escaped BACKSLASH followed by a live interpolation — Groovy yields one
+        // backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
+        // cases indistinguishable downstream, so that value came out as a literal
+        // `$X`. NUL cannot occur in an environment value, so it cannot collide.
+        | '$' -> "\u0000"
         | c -> string c
 
 /// Variants used where interpolation provenance matters, so \$ is preserved.

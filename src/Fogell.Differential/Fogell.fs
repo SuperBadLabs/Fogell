@@ -106,20 +106,21 @@ module FogellSide =
                         | v -> v
 
                 let pattern =
-                    // escaped dollar | ${ dotted } | $dotted
-                    @"\\(\$)|\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
+                    // parser replaced it with a NUL sentinel, restored below.
+                    @"\${([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)}|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
 
-                Text.RegularExpressions.Regex.Replace(
-                    value,
-                    pattern,
-                    fun m ->
-                        if m.Groups[1].Success then
-                            // escaped: emit a literal dollar, expand nothing
-                            "$"
-                        elif m.Groups[2].Success then
-                            resolveName m.Groups[2].Value
-                        else
-                            resolveName m.Groups[3].Value)
+                let expanded =
+                    Text.RegularExpressions.Regex.Replace(
+                        value,
+                        pattern,
+                        fun m ->
+                            if m.Groups[1].Success then resolveName m.Groups[1].Value
+                            else resolveName m.Groups[2].Value)
+
+                // Restore escaped dollars as literal text, after expansion so they
+                // cannot themselves be expanded.
+                expanded.Replace("\u0000", "$")
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the

@@ -542,6 +542,42 @@ let externalInterrupt =
               | None -> failtest "an abort must carry a diagnostic"
           }
 
+          test "junit honours an expired deadline instead of returning a result" {
+              // REVIEW FIX (Codex, PR #14 round 9): DeadlineExpired was DOCUMENTED as
+              // polled by "archive, junit" and only archive read it, so a `timeout`
+              // whose last step is `junit` could scan reports and return Success or
+              // Unstable after the deadline — leaving the build non-aborted.
+              let root = tempRoot ()
+              let ws = match Workspace.createFresh root (key ()) with
+                       | Result.Ok p -> p
+                       | Result.Error e -> failwith e.Describe
+
+              File.WriteAllText(
+                  Path.Combine(ws, "report.xml"),
+                  "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
+
+              let r =
+                  Executor.runStep
+                      { Name = "junit"
+                        Script = None
+                        Workspace = ws
+                        Environment = []
+                        TimeoutMs = None
+                        Interrupt = None
+                        DeadlineExpired = Some(fun () -> true)
+                        Secrets = []
+                        OnLine = None
+                        Named = [ "testResults", "report.xml" ]
+                        Artifacts = None
+                        BuildKey = "k" }
+
+              Expect.notEqual r.Status Success "an expired deadline must not yield a result"
+
+              match r.Diagnostic with
+              | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
+              | None -> failtest "an aborted junit must carry a diagnostic"
+          }
+
           test "an interrupt that never fires leaves the step alone" {
               // Guard against the previous class of vacuous test: if the poll
               // were treated as truthy, or called once at the wrong moment, the
