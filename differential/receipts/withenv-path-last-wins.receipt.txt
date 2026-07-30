@@ -1,0 +1,43 @@
+# Differential receipt — withenv-path-last-wins.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         18f54e6f71aa04e5f6b6f0baddbd00f96fd61ca31e25f0aa2e0c5fded8c023d3
+
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
+    provenance — but when the traced command contains a literal newline the trace spans
+    several lines and only the FIRST begins with '+ '. A continuation line is not
+    distinguishable from real output (the line after a trace is USUALLY real output), so
+    it is compared as output. Cases whose commands embed a newline must therefore carry
+    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+    counted as a reported reason instead, since it explains the engine, not the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+
+## Jenkins
+  result:         success
+  workspace-hash: ac1f228c5f7c22d20e1010a0148e301416cfed461a165f24b796a918bf09b304
+  output (0 lines):
+  workspace:
+    5df5280fdf7c  head.txt
+
+## Fogell
+  result:         success
+  workspace-hash: ac1f228c5f7c22d20e1010a0148e301416cfed461a165f24b796a918bf09b304
+  output (0 lines):
+  workspace:
+    5df5280fdf7c  head.txt

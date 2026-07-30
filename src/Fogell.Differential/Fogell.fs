@@ -714,9 +714,15 @@ module FogellSide =
                     // anywhere, this defaulted to "" and produced `/tools:`, wiping the
                     // inherited PATH so ordinary tools in /usr/bin vanished. An earlier
                     // revision had this fallback and a later edit of mine dropped it.
+                    // REVIEW FIX (Codex, PR #14 round 11): tryPick took the FIRST plain
+                    // PATH in the list, but the environment is last-wins, so
+                    // ['PATH=/first', 'PATH=/second', 'PATH+TOOLS=/tools'] produced
+                    // `/tools:/first` and discarded the effective `/second`.
                     let basePath =
                         plainBindings
-                        |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
+                        |> List.filter (fun (k, _) -> k = "PATH")
+                        |> List.tryLast
+                        |> Option.map snd
                         |> Option.orElse outerPath
                         |> Option.defaultWith (fun () ->
                             match Environment.GetEnvironmentVariable "PATH" with

@@ -80,7 +80,12 @@ module Publish =
             |> List.sort
 
         let published = System.Collections.Generic.List<string>()
-        let mutable aborted = false
+
+        // REVIEW FIX (Codex, PR #14 round 11): with `allowEmptyArchive: true` and no
+        // matches, the copy loop never runs, so neither polling site was reached and an
+        // interrupt during the (potentially long) glob scan left the step Successful.
+        // Poll once after expansion, before the loop can decline to execute.
+        let mutable aborted = abort ()
 
         for relative in matched do
             if not aborted then
