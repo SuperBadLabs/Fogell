@@ -179,42 +179,16 @@ module FogellSide =
                         | null -> ""
                         | v -> v
 
-                let pattern =
-                    // ${ dotted } | $dotted. An escaped dollar never reaches here: the
-                    // parser replaced it with a NUL sentinel, restored below.
-                    //
-                    // A Codex review (PR #14 round 13) asked for the bracketed
-                    // `env['NAME']` spelling to be supported too. MEASURED on the pinned
-                    // Jenkins, that request is wrong: the sandbox REJECTS it —
-                    //   Scripts not permitted to use staticMethod
-                    //   org.codehaus.groovy.runtime.DefaultGroovyMethods getAt
-                    // and the build fails. Supporting it would make Fogell RUN what
-                    // Jenkins REFUSES, which is the same divergence direction rejected
-                    // for stage-level failFast: a pipeline that works here would fail
-                    // there. Dotted only, and the comment on `resolveName` no longer
-                    // claims otherwise.
-                    let ident = "[A-Za-z_][A-Za-z0-9_]*"
-                    let dotted = ident + "(?:\." + ident + ")*"
-                    // The BRACED form captures ANY content: `${1 + 1}` is a legal GString
-                    // and Jenkins evaluates it. Restricting the MATCH to identifiers meant
-                    // such a placeholder never reached the callback at all, so it was
-                    // emitted verbatim — the callback's expression branch was unreachable
-                    // code. The bare `$name` form stays identifier-only, as Groovy does.
-                    @"\${([^}]*)}|\$(" + dotted + ")"
-
-                // `${...}` may hold a real Groovy expression, not just a variable path —
-                // `input message: "Approve build ${1 + 1}?"` displays "Approve build 2?".
-                // The identifier-only regex left such text verbatim. The bounded
-                // interpreter already in this project evaluates it, with an EMPTY step
-                // vocabulary so a prompt cannot invoke build steps.
+                // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
+                // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
+                // Jenkins. The bounded interpreter already in this project evaluates it,
+                // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
                 let evalExpression (source: string) =
                     match Fogell.Groovy.Parser.Parser.parse source with
                     | Result.Error _ -> None
                     | Result.Ok script ->
-                        let bindings =
-                            known
-                            |> Map.map (fun _ v -> VStr v)
-                            |> fun m -> m |> Map.add "env" (VMap(known |> Map.map (fun _ v -> VStr v)))
+                        let asValues = known |> Map.map (fun _ v -> VStr v)
+                        let bindings = asValues |> Map.add "env" (VMap asValues)
 
                         let outcome =
                             Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
@@ -223,24 +197,74 @@ module FogellSide =
                         | None, Some v -> Some(Value.toDisplay v)
                         | _ -> None
 
-                let expanded =
-                    Text.RegularExpressions.Regex.Replace(
-                        value,
-                        pattern,
-                        fun m ->
-                            if m.Groups[1].Success then
-                                let inner = m.Groups[1].Value
+                // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
+                // the first `}` even when it belongs to a nested expression or a quoted
+                // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
+                // Groovy's boundary is the BALANCED brace, with quotes respected.
+                let findClose (text: string) (openIdx: int) =
+                    let mutable i = openIdx + 2 // past "${"
+                    let mutable depth = 1
+                    let mutable quote = '\000'
+                    let mutable closeAt = -1
 
-                                // A bare or dotted identifier resolves from the
-                                // environment; anything else is an expression.
-                                if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
-                                    resolveName inner
-                                else
-                                    match evalExpression inner with
-                                    | Some v -> v
-                                    | None -> m.Value
+                    while closeAt < 0 && i < text.Length do
+                        let c = text[i]
+
+                        if quote <> '\000' then
+                            if c = '\\' then i <- i + 1
+                            elif c = quote then quote <- '\000'
+                        elif c = '\'' || c = '"' then
+                            quote <- c
+                        elif c = '{' then
+                            depth <- depth + 1
+                        elif c = '}' then
+                            depth <- depth - 1
+                            if depth = 0 then closeAt <- i
+
+                        i <- i + 1
+
+                    closeAt
+
+                let expanded =
+                    let sb = Text.StringBuilder()
+                    let mutable i = 0
+
+                    while i < value.Length do
+                        if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
+                            match findClose value i with
+                            | -1 ->
+                                sb.Append value[i] |> ignore
+                                i <- i + 1
+                            | closeAt ->
+                                let inner = value.Substring(i + 2, closeAt - i - 2)
+
+                                let rendered =
+                                    if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
+                                        resolveName inner
+                                    else
+                                        match evalExpression inner with
+                                        | Some v -> v
+                                        | None -> value.Substring(i, closeAt - i + 1)
+
+                                sb.Append rendered |> ignore
+                                i <- closeAt + 1
+                        elif value[i] = '$' then
+                            // Bare `$name` stays identifier-only, as Groovy does.
+                            let m =
+                                Text.RegularExpressions.Regex.Match(
+                                    value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
+
+                            if m.Success then
+                                sb.Append(resolveName m.Groups[1].Value) |> ignore
+                                i <- i + m.Length
                             else
-                                resolveName m.Groups[2].Value)
+                                sb.Append value[i] |> ignore
+                                i <- i + 1
+                        else
+                            sb.Append value[i] |> ignore
+                            i <- i + 1
+
+                    sb.ToString()
 
                 // Restore escaped dollars as literal text, after expansion so they
                 // cannot themselves be expanded.
@@ -1273,11 +1297,20 @@ module FogellSide =
                     let messageKey =
                         if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
 
+                    // Three kinds, not two. A single-quoted argument is literal text; a
+                    // double-quoted one is a GString to interpolate; an UNQUOTED one is a
+                    // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
+                    // evaluates and which was being displayed as its own source text.
                     let render (isLiteral: bool) (argName: string) (raw: string) =
-                        if isLiteral then
-                            raw
+                        let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                        if isLiteral then raw
+                        elif step.ExpressionArgs.Contains argName then
+                            // Wrapped so the whole argument is evaluated, not scanned for
+                            // placeholders it does not contain.
+                            interpolate env ("${" + raw + "}")
                         else
-                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) (sourceOf argName raw)
+                            interpolate env (sourceOf argName raw)
 
                     emit (render messageIsLiteral messageKey message)
                     emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""

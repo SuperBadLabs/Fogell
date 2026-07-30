@@ -26,7 +26,7 @@ let private namedArgWithKind: P<string * string * string * bool> =
             (stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
             <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
-                 |>> fun s -> s.Trim(), s.Trim(), false)))
+                 |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
 let private namedArg: P<string * string> =
@@ -44,7 +44,7 @@ let private positionalArgWithKind: P<string * string * bool> =
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
-         |>> fun s -> s.Trim(), s.Trim(), false)
+         |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
@@ -52,7 +52,7 @@ let private positionalArg: P<string> =
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
-let private argList: P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list> =
+let private argList: P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string>> =
     let one =
         (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
 
@@ -61,7 +61,14 @@ let private argList: P<(string * string) list * string list * Set<string> * Set<
             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
             let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
-            let namedSource = namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc)
+            // An UNQUOTED value is marked at capture; the marker never escapes this
+            // function — it becomes membership of ExpressionArgs instead.
+            let namedSource =
+                namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc.TrimStart '\u0001')
+
+            let namedExpr =
+                namedWithKind
+                |> List.choose (fun (n, _, esc, _) -> if esc.StartsWith "\u0001" then Some n else None)
             let posWithKind = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
             let pos = posWithKind |> List.map (fun (v, _, _) -> v)
 
@@ -74,9 +81,14 @@ let private argList: P<(string * string) list * string list * Set<string> * Set<
             // The `#0`, `#1`… entries the Step doc describes. They were documented and
             // never produced, so a positional prompt fell back to the plain value and
             // expanded an escaped dollar.
-            let posSource = posWithKind |> List.mapi (fun i (_, esc, _) -> $"#{i}", esc)
+            let posSource = posWithKind |> List.mapi (fun i (_, esc, _) -> $"#{i}", esc.TrimStart '\u0001')
 
-            named, pos, literal, literalPos, namedSource @ posSource
+            let posExpr =
+                posWithKind
+                |> List.mapi (fun i (_, esc, _) -> i, esc)
+                |> List.choose (fun (i, esc) -> if esc.StartsWith "\u0001" then Some $"#{i}" else None)
+
+            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr)
 
 let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
@@ -102,20 +114,20 @@ stepRef.Value <-
             (choice
                 [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
                   attempt (hspaces >>. argList) |>> Choice2Of2
-                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [])) ])
+                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [], Set.empty)) ])
             (fun pos name args -> pos, name, args)
     .>>. opt (attempt stepBlock)
     |>> fun ((pos, name, args), block) ->
-            let named, positional, literalNamed, literalPositional, interpolationSource =
+            let named, positional, literalNamed, literalPositional, interpolationSource, expressionArgs =
                 match args with
                 | Choice1Of2 raw ->
                     // re-parse the captured paren body for named/positional
                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
-                    | ParserResult.Success((n, p, lit, litPos, src), _, _) -> n, p, lit, litPos, src
+                    | ParserResult.Success((n, p, lit, litPos, src, expr), _, _) -> n, p, lit, litPos, src, expr
                     | ParserResult.Failure _ ->
-                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty, []
-                | Choice2Of2(n, p, lit, litPos, src) -> n, p, lit, litPos, src
+                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty, Set.empty, [], Set.empty
+                | Choice2Of2(n, p, lit, litPos, src, expr) -> n, p, lit, litPos, src, expr
 
             { Name = name
               Positional = positional
@@ -123,6 +135,7 @@ stepRef.Value <-
               LiteralNamedArgs = literalNamed
               LiteralPositionalArgs = literalPositional
               InterpolationSource = interpolationSource
+              ExpressionArgs = expressionArgs
               Block = defaultArg block []
               RawArgs =
                 match args with

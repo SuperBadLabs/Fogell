@@ -41,6 +41,10 @@ type Step =
       /// should not have been, which is cosmetic, whereas one that forgets to strip a
       /// sentinel corrupts a command.
       InterpolationSource: (string * string) list
+      /// Argument names (or `#0`, `#1`…) whose value was written UNQUOTED, and is
+      /// therefore a Groovy EXPRESSION rather than text — `input message: env.TARGET`.
+      /// Jenkins evaluates it; emitting the source text shows `env.TARGET` to the user.
+      ExpressionArgs: Set<string>
       /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
       /// is literal on Jenkins, and the positional form is as common as the named one.
       LiteralPositionalArgs: Set<int>
