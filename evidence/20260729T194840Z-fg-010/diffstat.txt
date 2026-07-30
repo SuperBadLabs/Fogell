@@ -1,0 +1,19 @@
+ Fogell.slnx                                        |   7 +
+ corpus/BASELINE-DECLARATIVE-SCORE.tsv              | 229 +++++++++++++++
+ docs/EXECUTION_BOARD.md                            |  12 +-
+ evidence/README.md                                 |  22 ++
+ scripts/seal-evidence.sh                           |  27 ++
+ src/Fogell.Admission/Errors.fs                     |  84 ++++++
+ src/Fogell.Admission/Fogell.Admission.fsproj       |   8 +
+ src/Fogell.Admission/Limits.fs                     | 123 ++++++++
+ src/Fogell.Ir/Fogell.Ir.fsproj                     |   8 +
+ src/Fogell.Ir/Pipeline.fs                          |  96 ++++++
+ src/Fogell.Ir/Position.fs                          |  11 +
+ .../Fogell.Pipeline.Parser.fsproj                  |  12 +
+ src/Fogell.Pipeline.Parser/Lexeme.fs               | 141 +++++++++
+ src/Fogell.Pipeline.Parser/Parser.fs               | 326 +++++++++++++++++++++
+ .../Fogell.Pipeline.Parser.Tests.fsproj            |   8 +
+ tests/Fogell.Pipeline.Parser.Tests/Tests.fs        | 164 +++++++++++
+ .../Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj |  11 +
+ tools/Fogell.Corpus.Score/Program.fs               |  48 +++
+ 18 files changed, 1332 insertions(+), 5 deletions(-)

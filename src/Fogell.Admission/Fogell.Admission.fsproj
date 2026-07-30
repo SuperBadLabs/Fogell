@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Errors.fs" />
+    <Compile Include="Limits.fs" />
+  </ItemGroup>
+  <ItemGroup><ProjectReference Include="../Fogell.Ir/Fogell.Ir.fsproj" /></ItemGroup>
+</Project>
