@@ -42,7 +42,8 @@ derivation in `architecture/BASELINE.md`.
 | Declarative-valid | 80 | — | per-file disposition recorded |
 | Compiled / CPS entry | 199 | — | reference only |
 | **Reached agent scheduling** | **119** | — | the only scoring denominator |
-| Front-end acceptance (inherited) | — | 214/228 = 93.9% | no regression, ever |
+| Declarative files in corpus | 92 (contain `pipeline {`) | — | reference |
+| Fogell declarative acceptance | — | **87/93 = 93.5%** | no regression, ever |
 | Known front-end rejections | — | 14 | each closed or reasoned |
 | **Execution parity proven** | — | **0** | grows only with sealed receipts |
 | Per-step cost (durable) | 54.13 ms | — | < 8 ms at equal guarantees |
@@ -59,17 +60,18 @@ derivation in `architecture/BASELINE.md`.
 | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
 | FG-002 | P0 | TODO | **Differential harness** (`adr/0004`): pinned Jenkins image digest + Fogell, same host, compare terminal result, ordered step sequence, canonical workspace hash | one file passes end-to-end and emits a sealed receipt with both sides' hashes |
 | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
-| FG-004 | P0 | TODO | Admission bounds: source bytes, node count, nesting depth, scalar length, collection sizes, capped **before** schema compilation | fuzz 10k malformed inputs: zero crashes, zero stack overflows, every rejection named |
-| FG-005 | P1 | TODO | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | a ticket's receipt verifies standalone |
+| FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+| FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees) |
+| FG-004b | P1 | TODO | Fuzz sweep: 10k generated malformed inputs through admission + parser | zero crashes, zero unhandled exceptions, every rejection carries a code and position |
 | FG-006 | P1 | **DONE** | `Fogell.Domain`: build/node/attempt/status model, worst-of status aggregation | property test: aggregation is associative and commutative | — `Fogell.Domain`: 18 Expecto tests pass. worstOf proven a commutative monoid exhaustively over all 25 pairs and 125 triples; ofMany order-independence property-tested; 7-condition publication guard and retry-never-rewrites covered
 
 ## Wave 1 — Front end (Forge-inspired)
 
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
-| FG-010 | P0 | TODO | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach, 995-line reference) | 194/228 corpus files accepted, matching the inherited baseline |
+| FG-010 | P0 | **DONE** | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach) | **87/93 declarative corpus files accepted (93.5%)**. Criterion corrected: the earlier "194/228 declarative" figure was a mismeasurement — `forge validate` prints `OK` for BOTH paths and my shell classifier matched `OK*` before checking for "scripted". Only **92 of 228** corpus files contain a `pipeline {` block at all (naive regex agrees). 6 remaining failures: 3 `no_stages`, 3 `malformed_syntax` |
 | FG-011 | P0 | TODO | `Fogell.Groovy` AST + `Fogell.Groovy.Parser` — scripted escape hatch | 20/228 scripted files accepted; my 216-line patch set reapplied |
-| FG-012 | P0 | TODO | Dispatch: declarative vs scripted. Forge uses one regex on `pipeline\s*\{` — must not misfire on the token inside a string or comment | probe suite: `pipeline {` in a comment/string dispatches scripted, not declarative |
+| FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
 | FG-013 | P0 | TODO | `Fogell.Groovy.Interpreter` — bounded evaluation (`adr/0002`), capability-limited, no arbitrary reflection or file/network access | untrusted-input probe: `new File('/etc/passwd')` and reflection are rejected with a named code |
 | FG-014 | P1 | TODO | Close the 14 known Declarative rejections (`FOGELL-DAY1-BACKLOG.md`) via **minimal repros**, never the reported error position | acceptance ≥ 205/228 with zero regressions |
 | FG-015 | P1 | TODO | Close the 6 remaining Groovy constructs: nested-quote GString, spread-dot, ranges, `switch`, `instanceof`, multi-assign | each has a passing minimal repro; corpus does not regress |

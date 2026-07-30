@@ -1,8 +1,15 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fogell.Admission/Fogell.Admission.fsproj" />
     <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
+    <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+    <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+    <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />
   </Folder>
 </Solution>

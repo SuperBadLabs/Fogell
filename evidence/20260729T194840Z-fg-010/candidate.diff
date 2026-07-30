@@ -1,0 +1,1471 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index c7cb711..596a24f 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -1,8 +1,15 @@
+ <Solution>
+   <Folder Name="/src/">
++    <Project Path="src/Fogell.Admission/Fogell.Admission.fsproj" />
+     <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
++    <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
++    <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
++  </Folder>
++  <Folder Name="/tools/">
++    <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
+   </Folder>
+   <Folder Name="/tests/">
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
++    <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />
+   </Folder>
+ </Solution>
+diff --git a/corpus/BASELINE-DECLARATIVE-SCORE.tsv b/corpus/BASELINE-DECLARATIVE-SCORE.tsv
+new file mode 100644
+index 0000000..4c8e2b6
+--- /dev/null
++++ b/corpus/BASELINE-DECLARATIVE-SCORE.tsv
+@@ -0,0 +1,229 @@
++file	verdict	code	stages	steps	detail
++Ableton_python-pipeline-utils.Jenkinsfile	not-declarative	-	-	-	-
++AmanPathak-DevOps_EKS-Terraform-GitHub-Actions.Jenkinsfile	ok	-	5	6	-
++BBVA_mirrorgate.Jenkinsfile	not-declarative	-	-	-	-
++Ben1980_jenkinsexample.Jenkinsfile	ok	-	4	6	-
++Blazemeter_taurus.Jenkinsfile	ok	-	8	16	-
++Chabane_mitosis-microservice-spark-cassandra.Jenkinsfile	not-declarative	-	-	-	-
++DeekshithSN_Jenkinsfile.Jenkinsfile	ok	-	1	2	-
++HariSekhon_DevOps-Bash-tools.Jenkinsfile	ok	-	3	11	-
++HariSekhon_Jenkins.Jenkinsfile	err	no_stages	-	-	pipeline declares no stages @1:1
++HariSekhon_Nagios-Plugins.Jenkinsfile	ok	-	3	11	-
++HariSekhon_Templates.Jenkinsfile	not-declarative	-	-	-	-
++Jotschi_maven-release-workflow-test.Jenkinsfile	not-declarative	-	-	-	-
++MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile	err	no_stages	-	-	pipeline declares no stages @1:1
++ORCID_ORCID-Source.Jenkinsfile	not-declarative	-	-	-	-
++Primus19_jenkins-pipeline-deploy-to-eks.Jenkinsfile	ok	-	2	9	-
++Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile	ok	-	1	19	-
++RitheeshBaradwaj_JenkinsPipeline.Jenkinsfile	ok	-	6	16	-
++Romeh_spring-boot-ignite.Jenkinsfile	ok	-	4	14	-
++Romeh_spring-boot-sample-app.Jenkinsfile	ok	-	9	23	-
++Statemood_jenkins-library.Jenkinsfile	not-declarative	-	-	-	-
++SumanReddy568_Selenium-Python-Pytest-framework.Jenkinsfile	ok	-	4	7	-
++SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile	ok	-	14	30	-
++SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile	err	malformed_syntax	-	-	'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}' @43:31
++TTFHW_jenkins_pipeline_java_maven.Jenkinsfile	not-declarative	-	-	-	-
++TTFHW_jenkins_pipeline_shell_scripts.Jenkinsfile	not-declarative	-	-	-	-
++TechPrimers_jenkins-example.Jenkinsfile	ok	-	3	6	-
++Terradue_DotNet4One.Jenkinsfile	ok	-	4	10	-
++Terradue_DotNetOpenSearchClient.Jenkinsfile	ok	-	5	7	-
++TomCzHen_jenkins-android-sample.Jenkinsfile	ok	-	6	18	-
++Tynab_crm-project.Jenkinsfile	ok	-	4	11	-
++VAD37_unity-jenkinsfile.Jenkinsfile	ok	-	5	19	-
++adamrushuk_powershell-pipeline.Jenkinsfile	ok	-	1	1	-
++ahmedmourshedi_Automation-Testing-of-ECommerce-WebsiteUsingSelenium.Jenkinsfile	not-declarative	-	-	-	-
++aiwithqasim_Capstone-Project-Devops.Jenkinsfile	ok	-	4	4	-
++alanmacgowan_WebApplication.Jenkinsfile	ok	-	12	19	-
++alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile	not-declarative	-	-	-	-
++allcloud-io_jenkins-pipeline-tutorial.Jenkinsfile	ok	-	1	1	-
++arun-gupta_docker-jenkins-pipeline.Jenkinsfile	not-declarative	-	-	-	-
++aws-samples_ecs-bg-external-controller.Jenkinsfile	ok	-	12	3	-
++awslabs_aws-codepipeline-plugin-for-jenkins.Jenkinsfile	not-declarative	-	-	-	-
++bcgov_openshift-wiki.Jenkinsfile	not-declarative	-	-	-	-
++beifei1_fire-cloud.Jenkinsfile	ok	-	4	6	-
++bmustiata_jenny.Jenkinsfile	not-declarative	-	-	-	-
++boozallen_devsecops-example-helloworld.Jenkinsfile	ok	-	10	10	-
++bszeti_kubernetes-integration-test.Jenkinsfile	not-declarative	-	-	-	-
++buildit_jenkins-pipeline-libraries.Jenkinsfile	ok	-	2	3	-
++camiloribeiro_cdeasy.Jenkinsfile	not-declarative	-	-	-	-
++captjt_jenkins-pipeline-express.Jenkinsfile	not-declarative	-	-	-	-
++charlires_golang-docker-jenkins.Jenkinsfile	ok	-	3	6	-
++choiis_Cpp-IOCP-Server.Jenkinsfile	ok	-	4	6	-
++chrsoo_microservices.Jenkinsfile	not-declarative	-	-	-	-
++cinqict_jenkinsdev.Jenkinsfile	ok	-	1	1	-
++clintmod_unit-testing-jenkinsfile.Jenkinsfile	not-declarative	-	-	-	-
++cloud-bulldozer_scale-ci-pipeline.Jenkinsfile	not-declarative	-	-	-	-
++cloudogu_ces-build-lib.Jenkinsfile	not-declarative	-	-	-	-
++cloudogu_continuous-delivery-slides.Jenkinsfile	not-declarative	-	-	-	-
++cloudogu_gitops-build-lib.Jenkinsfile	not-declarative	-	-	-	-
++cloudogu_gitops-playground.Jenkinsfile	ok	-	8	9	-
++cloudogu_reveal.js-docker-example.Jenkinsfile	not-declarative	-	-	-	-
++concur_jenkins-yml-workflowLibs.Jenkinsfile	not-declarative	-	-	-	-
++cvitter_jenkins-pipeline-examples.Jenkinsfile	ok	-	1	1	-
++darinpope_jenkinsfile-library.Jenkinsfile	not-declarative	-	-	-	-
++devops-ws_learn-pipeline-java.Jenkinsfile	ok	-	3	6	-
++eggsy84_gcp-spring-boot-app.Jenkinsfile	not-declarative	-	-	-	-
++eldada_jenkins-pipeline-kubernetes.Jenkinsfile	ok	-	25	31	-
++esign-consulting_logistics.Jenkinsfile	not-declarative	-	-	-	-
++everflux_angular-jenkinsfile.Jenkinsfile	not-declarative	-	-	-	-
++evry-ace_jenkins-ace-library.Jenkinsfile	not-declarative	-	-	-	-
++executeautomation_JenkinsPipeline.Jenkinsfile	ok	-	7	6	-
++fabric8io_fabric8-pipeline-library.Jenkinsfile	not-declarative	-	-	-	-
++fabric8io_fabric8-platform.Jenkinsfile	not-declarative	-	-	-	-
++fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile	ok	-	9	18	-
++gdemengin_pipeline-logparser.Jenkinsfile	not-declarative	-	-	-	-
++gfkse_jenkins-shared-library.Jenkinsfile	not-declarative	-	-	-	-
++griddynamics-archive_mpl.Jenkinsfile	not-declarative	-	-	-	-
++hakdogan_jenkins-pipeline.Jenkinsfile	not-declarative	-	-	-	-
++hamitmizrak_Devops_Jenkinsfile.Jenkinsfile	ok	-	3	3	-
++holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile	ok	-	5	8	-
++hungbang_spring-boot-aws-docdb-example.Jenkinsfile	ok	-	5	13	-
++ishrivatsa_terraform-vault-jenkins.Jenkinsfile	ok	-	3	13	-
++j8kin_habr-jenkinsfile.Jenkinsfile	not-declarative	-	-	-	-
++jalogut_jenkinsfile-basic-sample.Jenkinsfile	not-declarative	-	-	-	-
++jalogut_jenkinsfile-shared-library-sample.Jenkinsfile	not-declarative	-	-	-	-
++jenkins-infra_jenkins.io.Jenkinsfile	not-declarative	-	-	-	-
++jenkins-infra_pipeline-library.Jenkinsfile	ok	-	1	2	-
++jenkins-infra_update-center2.Jenkinsfile	not-declarative	-	-	-	-
++jenkins-zh_jenkins-cli.Jenkinsfile	ok	-	6	0	-
++jenkinsci_JenkinsPipelineUnit.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_amazon-ecs-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_artifact-promotion-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_badge-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_bitbucket-push-and-pull-request-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_ci.jenkins.io-runner.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_code-coverage-api-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_config-driven-pipeline-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_configuration-as-code-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_credentials-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_declarative-pipeline-migration-assistant-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_dependency-track-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_dingtalk-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_docker-agents.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_docker-inbound-agent.Jenkinsfile	ok	-	1	0	-
++jenkinsci_docker-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_docker-workflow-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_docker.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_gitea-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_github-branch-source-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_github-pr-comment-build-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_gitlab-branch-source-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_groovy-sandbox.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_hashicorp-vault-pipeline-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_hashicorp-vault-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_http-request-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_hubot-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jacoco-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jenkins-test-harness.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jenkins.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jenkinsfile-runner-test-framework.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jenkinsfile-runner.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jira-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jira-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_jira-trigger-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_job-dsl-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_labelled-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_multiple-scms-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_nested-data-reporting-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_opentelemetry-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_performance-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-as-yaml-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-aws-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-cloudwatch-logs-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-github-lib-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-githubnotify-step-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-gitstatuswrapper-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-graph-view-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-maven-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-model-definition-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-stage-view-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_pipeline-utility-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_plot-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_plugin-installation-manager-tool.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_qy-wechat-notification-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_remote-file-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_remoting.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_role-strategy-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_simple-build-for-pipeline-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_ssh-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_stashnotifier-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_subversion-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_swarm-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_tekton-client-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_warnings-ng-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_webhook-step-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_workflow-basic-steps-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_workflow-job-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jenkinsci_workflow-multibranch-plugin.Jenkinsfile	not-declarative	-	-	-	-
++jerearista_python-jenkinsfile-testing.Jenkinsfile	ok	-	6	9	-
++jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile	ok	-	8	8	-
++judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile	not-declarative	-	-	-	-
++jussaragranja_SeleniumEasyTest2.Jenkinsfile	not-declarative	-	-	-	-
++juvalen_mb-checker.Jenkinsfile	ok	-	4	14	-
++k11h-de_zap-jenkins.Jenkinsfile	ok	-	3	7	-
++kenych_jenkins_config_as_code.Jenkinsfile	not-declarative	-	-	-	-
++kesselborn_jenkinsfile.Jenkinsfile	not-declarative	-	-	-	-
++kishorebhatia_pipeline-as-code-demo.Jenkinsfile	not-declarative	-	-	-	-
++kitconcept_jenkins-pipeline-examples.Jenkinsfile	ok	-	4	7	-
++krasi-georgiev_cd-demo.Jenkinsfile	not-declarative	-	-	-	-
++ksuther_jenkins-jenkinsfile-include.Jenkinsfile	not-declarative	-	-	-	-
++liatrio_pipeline-library.Jenkinsfile	ok	-	1	1	-
++linuxacademy_cicd-pipeline-train-schedule-autodeploy.Jenkinsfile	ok	-	5	4	-
++linuxacademy_cicd-pipeline-train-schedule-canary.Jenkinsfile	ok	-	4	3	-
++linuxacademy_cicd-pipeline-train-schedule-cd.Jenkinsfile	ok	-	1	3	-
++linuxacademy_cicd-pipeline-train-schedule-dockerdeploy.Jenkinsfile	ok	-	1	3	-
++linuxacademy_cicd-pipeline-train-schedule-kubernetes.Jenkinsfile	ok	-	4	5	-
++ljpengelen_jenkinsfile.Jenkinsfile	ok	-	5	14	-
++llknur_jenkinsfile-pipeline-project.Jenkinsfile	ok	-	2	4	-
++maajor_Blender-Geometry-CI.Jenkinsfile	err	no_stages	-	-	pipeline declares no stages @1:1
++macg33zr_pipelineUnit.Jenkinsfile	ok	-	3	6	-
++maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile	ok	-	11	11	-
++maxyermayank_jenkins-pipeline-demo-pwa.Jenkinsfile	ok	-	11	11	-
++mercedes-benz_pipeliner.Jenkinsfile	not-declarative	-	-	-	-
++merken_netCoreBuild.Jenkinsfile	not-declarative	-	-	-	-
++metersphere_jenkins-plugin.Jenkinsfile	err	malformed_syntax	-	-	'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}' @44:26
++microsoft_movie-db-java-on-azure.Jenkinsfile	not-declarative	-	-	-	-
++mindstix-labs_qa-automation-accelerator.Jenkinsfile	ok	-	5	9	-
++mjah_kubernetes-jenkins-cicd-pipeline-example.Jenkinsfile	ok	-	7	13	-
++mjuuso_provisioning_example.Jenkinsfile	not-declarative	-	-	-	-
++mmelmesary_Automated-DevOps-Project.Jenkinsfile	ok	-	2	24	-
++mraible_ng-demo.Jenkinsfile	not-declarative	-	-	-	-
++msfidelis_jenkins-ecs-slaves.Jenkinsfile	ok	-	7	21	-
++murphysecurity_murphysec-jenkins-tools.Jenkinsfile	ok	-	5	6	-
++narasimhavuppala_jenkins-calculator.Jenkinsfile	ok	-	7	7	-
++narottamgla_selenium-bdd-cucumber.Jenkinsfile	ok	-	5	9	-
++netcorebcn_quiz.Jenkinsfile	ok	-	4	4	-
++nikoly_selenium-grid-docker.Jenkinsfile	ok	-	3	2	-
++ocf_ircbot.Jenkinsfile	not-declarative	-	-	-	-
++ocf_ocflib.Jenkinsfile	not-declarative	-	-	-	-
++ocf_ocfweb.Jenkinsfile	not-declarative	-	-	-	-
++ocf_slackbridge.Jenkinsfile	not-declarative	-	-	-	-
++pavankjadda_BookStore.Jenkinsfile	ok	-	9	8	-
++pawnu_PythonSecurityPipeline.Jenkinsfile	ok	-	9	26	-
++planetpratik_CMake-Jenkins-CPP.Jenkinsfile	ok	-	5	0	-
++prashantgohel321_DevOps-Project-Two-Tier-Flask-App.Jenkinsfile	ok	-	3	4	-
++qiuhuanhen_springboot-DDD.Jenkinsfile	ok	-	6	22	-
++releaseworks_hellonode.Jenkinsfile	not-declarative	-	-	-	-
++restalion_python-jenkins-pipeline.Jenkinsfile	ok	-	13	24	-
++ricardozanini_soccer-stats.Jenkinsfile	not-declarative	-	-	-	-
++rmkanda_secure-pipeline-java-demo.Jenkinsfile	ok	-	19	38	-
++roryeckel_codex-jenkinsfile.Jenkinsfile	ok	-	5	9	-
++rosineygp_mkdkr.Jenkinsfile	err	malformed_syntax	-	-	'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}' @6:28
++saidsef_alpine-jenkins-dockerfile.Jenkinsfile	ok	-	2	1	-
++saidsef_jenkins-pipeline-examples.Jenkinsfile	not-declarative	-	-	-	-
++shazforiot_Jenkins-integration-with-kubernetes.Jenkinsfile	ok	-	4	5	-
++shipping-docker_simple-jerkins.Jenkinsfile	not-declarative	-	-	-	-
++sidd-harth_apigee-cicd.Jenkinsfile	ok	-	5	29	-
++sixeyed_jenkins-pipeline-demos.Jenkinsfile	ok	-	1	2	-
++stakater_GitWebhookProxy.Jenkinsfile	not-declarative	-	-	-	-
++tknerr_jenkins-pipes-helloworld.Jenkinsfile	not-declarative	-	-	-	-
++tomasbjerre_bitbucket-server-jenkins-release-tags.Jenkinsfile	not-declarative	-	-	-	-
++varunpalekar_php-ci-cd.Jenkinsfile	ok	-	7	38	-
++vineet68sharma_CI-CD-Docker.Jenkinsfile	not-declarative	-	-	-	-
++vinsguru_docker-selenium-jenkinsfile.Jenkinsfile	ok	-	3	1	-
++vskurikhin_DayBook3.Jenkinsfile	ok	-	4	7	-
++wanghaoxi3000_advproject.Jenkinsfile	ok	-	3	6	-
++wildec2_java-selenium-framework.Jenkinsfile	ok	-	2	1	-
++yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile	ok	-	4	5	-
++zhangjian-ai_AutomationTestPlat.Jenkinsfile	ok	-	4	12	-
++zowe_jenkins-library.Jenkinsfile	not-declarative	-	-	-	-
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index ddfe91c..b6bc275 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -42,7 +42,8 @@ derivation in `architecture/BASELINE.md`.
+ | Declarative-valid | 80 | — | per-file disposition recorded |
+ | Compiled / CPS entry | 199 | — | reference only |
+ | **Reached agent scheduling** | **119** | — | the only scoring denominator |
+-| Front-end acceptance (inherited) | — | 214/228 = 93.9% | no regression, ever |
++| Declarative files in corpus | 92 (contain `pipeline {`) | — | reference |
++| Fogell declarative acceptance | — | **87/93 = 93.5%** | no regression, ever |
+ | Known front-end rejections | — | 14 | each closed or reasoned |
+ | **Execution parity proven** | — | **0** | grows only with sealed receipts |
+ | Per-step cost (durable) | 54.13 ms | — | < 8 ms at equal guarantees |
+@@ -59,17 +60,18 @@ derivation in `architecture/BASELINE.md`.
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+ | FG-002 | P0 | TODO | **Differential harness** (`adr/0004`): pinned Jenkins image digest + Fogell, same host, compare terminal result, ordered step sequence, canonical workspace hash | one file passes end-to-end and emits a sealed receipt with both sides' hashes |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+-| FG-004 | P0 | TODO | Admission bounds: source bytes, node count, nesting depth, scalar length, collection sizes, capped **before** schema compilation | fuzz 10k malformed inputs: zero crashes, zero stack overflows, every rejection named |
+-| FG-005 | P1 | TODO | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | a ticket's receipt verifies standalone |
++| FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
++| FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees) |
++| FG-004b | P1 | TODO | Fuzz sweep: 10k generated malformed inputs through admission + parser | zero crashes, zero unhandled exceptions, every rejection carries a code and position |
+ | FG-006 | P1 | **DONE** | `Fogell.Domain`: build/node/attempt/status model, worst-of status aggregation | property test: aggregation is associative and commutative | — `Fogell.Domain`: 18 Expecto tests pass. worstOf proven a commutative monoid exhaustively over all 25 pairs and 125 triples; ofMany order-independence property-tested; 7-condition publication guard and retry-never-rewrites covered
+ 
+ ## Wave 1 — Front end (Forge-inspired)
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-010 | P0 | TODO | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach, 995-line reference) | 194/228 corpus files accepted, matching the inherited baseline |
++| FG-010 | P0 | **DONE** | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach) | **87/93 declarative corpus files accepted (93.5%)**. Criterion corrected: the earlier "194/228 declarative" figure was a mismeasurement — `forge validate` prints `OK` for BOTH paths and my shell classifier matched `OK*` before checking for "scripted". Only **92 of 228** corpus files contain a `pipeline {` block at all (naive regex agrees). 6 remaining failures: 3 `no_stages`, 3 `malformed_syntax` |
+ | FG-011 | P0 | TODO | `Fogell.Groovy` AST + `Fogell.Groovy.Parser` — scripted escape hatch | 20/228 scripted files accepted; my 216-line patch set reapplied |
+-| FG-012 | P0 | TODO | Dispatch: declarative vs scripted. Forge uses one regex on `pipeline\s*\{` — must not misfire on the token inside a string or comment | probe suite: `pipeline {` in a comment/string dispatches scripted, not declarative |
++| FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | TODO | `Fogell.Groovy.Interpreter` — bounded evaluation (`adr/0002`), capability-limited, no arbitrary reflection or file/network access | untrusted-input probe: `new File('/etc/passwd')` and reflection are rejected with a named code |
+ | FG-014 | P1 | TODO | Close the 14 known Declarative rejections (`FOGELL-DAY1-BACKLOG.md`) via **minimal repros**, never the reported error position | acceptance ≥ 205/228 with zero regressions |
+ | FG-015 | P1 | TODO | Close the 6 remaining Groovy constructs: nested-quote GString, spread-dot, ranges, `switch`, `instanceof`, multi-assign | each has a passing minimal repro; corpus does not regress |
+diff --git a/evidence/README.md b/evidence/README.md
+new file mode 100644
+index 0000000..2f637c3
+--- /dev/null
++++ b/evidence/README.md
+@@ -0,0 +1,22 @@
++# Evidence
++
++One directory per ticket, produced by `scripts/seal-evidence.sh <TICKET>`:
++
++    <commit-timestamp>-<ticket-id>/
++      base-commit.txt          the commit the work was measured at
++      candidate.diff           the change itself
++      diffstat.txt
++      status-before-commit.txt
++      tree.txt                 tracked files at that point
++      corpus-gate.log          FG-003 corpus verification output
++      build.log
++      tests-<project>.log      per-project test summary
++      SHA256SUMS               self-excluding manifest
++
++A receipt must verify standalone: `cd <dir> && sha256sum -c SHA256SUMS`.
++A ticket without a receipt is not DONE, no matter what the code does.
++
++Lesson encoded here: a prior project's gate baseline was named after the release
++it was meant to gate rather than the build it was captured from, and bound only
++a binary hash. It silently compared across trees for days. `base-commit.txt` and
++`tree.txt` exist so that cannot recur.
+diff --git a/scripts/seal-evidence.sh b/scripts/seal-evidence.sh
+new file mode 100755
+index 0000000..06e197f
+--- /dev/null
++++ b/scripts/seal-evidence.sh
+@@ -0,0 +1,27 @@
++#!/usr/bin/env bash
++# FG-005 — evidence convention. Seals a ticket's receipt so it verifies standalone.
++#   usage: scripts/seal-evidence.sh FG-010 [extra-file ...]
++set -uo pipefail
++cd "$(dirname "${BASH_SOURCE[0]}")/.."
++TICKET="${1:?usage: seal-evidence.sh <TICKET-ID> [files...]}"; shift || true
++STAMP="$(git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
++DIR="evidence/${STAMP}-${TICKET,,}"
++mkdir -p "$DIR"
++
++git diff HEAD --stat > "$DIR/diffstat.txt" 2>/dev/null
++git diff HEAD          > "$DIR/candidate.diff" 2>/dev/null
++git status --short     > "$DIR/status-before-commit.txt"
++git rev-parse HEAD     > "$DIR/base-commit.txt"
++git ls-files           > "$DIR/tree.txt"
++./scripts/verify-corpus.sh > "$DIR/corpus-gate.log" 2>&1 || echo "CORPUS GATE FAILED" >> "$DIR/corpus-gate.log"
++{ dotnet build -c Release --nologo 2>&1 | tail -20; } > "$DIR/build.log"
++for t in tests/*/; do
++  [ -d "$t" ] || continue
++  n="$(basename "$t")"
++  dotnet run --project "$t" -c Release --no-build 2>&1 | rg -o "EXPECTO!.*" > "$DIR/tests-$n.log" || true
++done
++for f in "$@"; do [ -f "$f" ] && cp "$f" "$DIR/"; done
++
++( cd "$DIR" && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS )
++echo "sealed $DIR"
++echo "  manifest: $(sha256sum "$DIR/SHA256SUMS" | cut -c1-16)"
+diff --git a/src/Fogell.Admission/Errors.fs b/src/Fogell.Admission/Errors.fs
+new file mode 100644
+index 0000000..40412c8
+--- /dev/null
++++ b/src/Fogell.Admission/Errors.fs
+@@ -0,0 +1,84 @@
++namespace Fogell.Admission
++
++open Fogell.Ir
++
++/// Every rejection is a named code. The charter forbids "unsupported" without
++/// a name, because a migration report needs a machine-readable reason and a
++/// human-readable position. Codes are stable API: renaming one is a breaking
++/// change to anyone consuming the ledger.
++type ErrorCode =
++    // --- admission limits (FG-004) ---
++    | SourceTooLarge
++    | TooManyNodes
++    | NestingTooDeep
++    | ScalarTooLong
++    | TooManyCollectionItems
++    // --- structural ---
++    | EmptySource
++    | NoPipelineBlock
++    | NoStages
++    | ExpectedStage
++    | ExpectedSteps
++    | DuplicateSection
++    | UnknownSection
++    | MalformedSyntax
++    // --- deliberately unsupported ---
++    | UnsupportedConstruct
++
++module ErrorCode =
++
++    let toWireString =
++        function
++        | SourceTooLarge -> "source_too_large"
++        | TooManyNodes -> "too_many_nodes"
++        | NestingTooDeep -> "nesting_too_deep"
++        | ScalarTooLong -> "scalar_too_long"
++        | TooManyCollectionItems -> "too_many_collection_items"
++        | EmptySource -> "empty_source"
++        | NoPipelineBlock -> "no_pipeline_block"
++        | NoStages -> "no_stages"
++        | ExpectedStage -> "expected_stage"
++        | ExpectedSteps -> "expected_steps"
++        | DuplicateSection -> "duplicate_section"
++        | UnknownSection -> "unknown_section"
++        | MalformedSyntax -> "malformed_syntax"
++        | UnsupportedConstruct -> "unsupported_construct"
++
++    /// True when the input is bad, false when Fogell simply does not support it.
++    /// The distinction matters for the compatibility tiers in ADR 0001: a
++    /// malformed file is tier-3 forever; an unsupported construct is a backlog
++    /// item.
++    let isInputDefect =
++        function
++        | EmptySource
++        | NoPipelineBlock
++        | NoStages
++        | ExpectedStage
++        | ExpectedSteps
++        | DuplicateSection
++        | MalformedSyntax -> true
++        | SourceTooLarge
++        | TooManyNodes
++        | NestingTooDeep
++        | ScalarTooLong
++        | TooManyCollectionItems
++        | UnknownSection
++        | UnsupportedConstruct -> false
++
++type AdmissionError =
++    { Code: ErrorCode
++      Message: string
++      Position: Position }
++
++    override this.ToString() =
++        $"{ErrorCode.toWireString this.Code} at {this.Position}: {this.Message}"
++
++module AdmissionError =
++
++    let create code position message =
++        { Code = code; Message = message; Position = position }
++
++    let at code line column message =
++        { Code = code
++          Message = message
++          Position = { Line = line; Column = column } }
+diff --git a/src/Fogell.Admission/Fogell.Admission.fsproj b/src/Fogell.Admission/Fogell.Admission.fsproj
+new file mode 100644
+index 0000000..59f1ad6
+--- /dev/null
++++ b/src/Fogell.Admission/Fogell.Admission.fsproj
+@@ -0,0 +1,8 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Errors.fs" />
++    <Compile Include="Limits.fs" />
++  </ItemGroup>
++  <ItemGroup><ProjectReference Include="../Fogell.Ir/Fogell.Ir.fsproj" /></ItemGroup>
++</Project>
+diff --git a/src/Fogell.Admission/Limits.fs b/src/Fogell.Admission/Limits.fs
+new file mode 100644
+index 0000000..0a0c2f2
+--- /dev/null
++++ b/src/Fogell.Admission/Limits.fs
+@@ -0,0 +1,123 @@
++namespace Fogell.Admission
++
++open Fogell.Ir
++
++/// FG-004 admission limits, applied BEFORE schema compilation.
++///
++/// Forge's parser has no measured input bounds; on hostile input an FParsec
++/// grammar with deep recursion can exhaust the stack, which turns an untrusted
++/// Jenkinsfile into a controller crash. These caps are deliberately generous
++/// for real files (the largest corpus Jenkinsfile is ~57 KB / ~1,100 lines) and
++/// hostile ones fail closed with a named code.
++type Limits =
++    { MaxSourceBytes: int
++      MaxNodes: int
++      MaxDepth: int
++      MaxScalarBytes: int
++      MaxCollectionItems: int }
++
++    static member defaults =
++        { MaxSourceBytes = 262_144
++          MaxNodes = 16_384
++          MaxDepth = 64
++          MaxScalarBytes = 16_384
++          MaxCollectionItems = 4_096 }
++
++module Limits =
++
++    /// Cheap pre-parse guard. Counts brace depth and token-ish nodes with a
++    /// single linear scan — no recursion, so this itself cannot overflow. It is
++    /// intentionally approximate: its job is to make the *parser* safe to run,
++    /// not to be a second grammar.
++    let precheck (limits: Limits) (source: string) : Result<unit, AdmissionError> =
++        if System.String.IsNullOrWhiteSpace source then
++            Error(AdmissionError.at EmptySource 1L 1L "source is empty")
++        elif source.Length > limits.MaxSourceBytes then
++            Error(
++                AdmissionError.at
++                    SourceTooLarge
++                    1L
++                    1L
++                    $"source is {source.Length} bytes, limit is {limits.MaxSourceBytes}"
++            )
++        else
++            let mutable depth = 0
++            let mutable maxDepth = 0
++            let mutable nodes = 0
++            let mutable line = 1L
++            let mutable column = 1L
++            let mutable scalarStart = -1
++            let mutable quote = '\000'
++            let mutable err = None
++            let mutable i = 0
++
++            while err.IsNone && i < source.Length do
++                let c = source.[i]
++
++                if c = '\n' then
++                    line <- line + 1L
++                    column <- 1L
++                else
++                    column <- column + 1L
++
++                if quote <> '\000' then
++                    // inside a string literal: only look for its terminator
++                    if c = quote && (i = 0 || source.[i - 1] <> '\\') then
++                        if i - scalarStart > limits.MaxScalarBytes then
++                            err <-
++                                Some(
++                                    AdmissionError.at
++                                        ScalarTooLong
++                                        line
++                                        column
++                                        $"string literal exceeds {limits.MaxScalarBytes} bytes"
++                                )
++
++                        quote <- '\000'
++                        scalarStart <- -1
++                else
++                    match c with
++                    | '\'' | '"' ->
++                        quote <- c
++                        scalarStart <- i
++                        nodes <- nodes + 1
++                    | '{' | '[' | '(' ->
++                        depth <- depth + 1
++                        nodes <- nodes + 1
++
++                        if depth > maxDepth then
++                            maxDepth <- depth
++
++                        if depth > limits.MaxDepth then
++                            err <-
++                                Some(
++                                    AdmissionError.at
++                                        NestingTooDeep
++                                        line
++                                        column
++                                        $"nesting depth {depth} exceeds limit {limits.MaxDepth}"
++                                )
++                    | '}' | ']' | ')' ->
++                        depth <- depth - 1
++                        nodes <- nodes + 1
++                    | c when System.Char.IsLetterOrDigit c || c = '_' ->
++                        // count identifier/number starts only, not every char
++                        if i = 0 || not (System.Char.IsLetterOrDigit source.[i - 1] || source.[i - 1] = '_') then
++                            nodes <- nodes + 1
++                    | _ -> ()
++
++                    if err.IsNone && nodes > limits.MaxNodes then
++                        err <-
++                            Some(
++                                AdmissionError.at
++                                    TooManyNodes
++                                    line
++                                    column
++                                    $"node count exceeds {limits.MaxNodes}"
++                            )
++
++                i <- i + 1
++
++            match err with
++            | Some e -> Error e
++            | None -> Ok()
+diff --git a/src/Fogell.Ir/Fogell.Ir.fsproj b/src/Fogell.Ir/Fogell.Ir.fsproj
+new file mode 100644
+index 0000000..f44a5df
+--- /dev/null
++++ b/src/Fogell.Ir/Fogell.Ir.fsproj
+@@ -0,0 +1,8 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Position.fs" />
++    <Compile Include="Pipeline.fs" />
++  </ItemGroup>
++  <ItemGroup><ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" /></ItemGroup>
++</Project>
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+new file mode 100644
+index 0000000..8ec2fc8
+--- /dev/null
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -0,0 +1,96 @@
++namespace Fogell.Ir
++
++/// Canonical pipeline model. This is *not* a static IR in the McLoving sense —
++/// ADR 0002 rejected lowering, so expression-shaped things stay as source text
++/// for the interpreter to evaluate. What this model does provide is the
++/// *structure* Jenkins' Declarative schema guarantees, validated once.
++type AgentSpec =
++    | AgentAny
++    | AgentNone
++    | AgentLabel of string
++    | AgentDocker of image: string * args: string option
++    | AgentDockerfile of dir: string option
++    /// `agent { kubernetes { ... } }` and friends — recognised, not modelled.
++    | AgentUnmodelled of kind: string
++
++/// A step is a call: a name, positional arguments, named arguments, and an
++/// optional trailing block. `sh 'make'`, `archiveArtifacts artifacts: '*.jar'`,
++/// and `withEnv(['A=1']) { ... }` are all this shape.
++type Step =
++    { Name: string
++      Positional: string list
++      Named: (string * string) list
++      Block: Step list
++      /// Raw source of the arguments, retained because ADR 0002 says the
++      /// interpreter — not the parser — decides what an expression means.
++      RawArgs: string
++      Position: Position }
++
++type WhenCondition =
++    | WhenBranch of string
++    | WhenEnvironment of name: string * value: string
++    | WhenExpression of source: string
++    | WhenAllOf of WhenCondition list
++    | WhenAnyOf of WhenCondition list
++    | WhenNot of WhenCondition
++    | WhenUnmodelled of kind: string * source: string
++
++type PostCondition =
++    | Always
++    | Success
++    | Failure
++    | Unstable
++    | Aborted
++    | Changed
++    | Cleanup
++    | Fixed
++    | Regression
++    | NotBuilt
++
++type Stage =
++    { Name: string
++      Agent: AgentSpec option
++      Environment: (string * string) list
++      Steps: Step list
++      When: WhenCondition option
++      Post: (PostCondition * Step list) list
++      /// Nested `stages { }` (sequential) and `parallel { }` children.
++      Nested: Stage list
++      IsParallel: bool
++      Position: Position }
++
++type Pipeline =
++    { Agent: AgentSpec
++      Environment: (string * string) list
++      Options: Step list
++      Parameters: Step list
++      Triggers: Step list
++      Tools: (string * string) list
++      Stages: Stage list
++      Post: (PostCondition * Step list) list }
++
++module Pipeline =
++
++    let empty =
++        { Agent = AgentNone
++          Environment = []
++          Options = []
++          Parameters = []
++          Triggers = []
++          Tools = []
++          Stages = []
++          Post = [] }
++
++    /// Flatten nested/parallel stages into execution order for planning.
++    let rec flattenStages (stages: Stage list) : Stage list =
++        stages
++        |> List.collect (fun s -> s :: flattenStages s.Nested)
++
++    let rec countSteps (steps: Step list) : int =
++        steps |> List.sumBy (fun s -> 1 + countSteps s.Block)
++
++    let totalSteps (p: Pipeline) : int =
++        flattenStages p.Stages
++        |> List.sumBy (fun s ->
++            countSteps s.Steps
++            + (s.Post |> List.sumBy (fun (_, ss) -> countSteps ss)))
+diff --git a/src/Fogell.Ir/Position.fs b/src/Fogell.Ir/Position.fs
+new file mode 100644
+index 0000000..b665153
+--- /dev/null
++++ b/src/Fogell.Ir/Position.fs
+@@ -0,0 +1,11 @@
++namespace Fogell.Ir
++
++/// Byte-accurate source position. Every rejection carries one: the charter
++/// requires a named code *and* a position, because "your Jenkinsfile is
++/// unsupported" without a line number is not a migration report.
++type Position =
++    { Line: int64
++      Column: int64 }
++
++    static member zero = { Line = 1L; Column = 1L }
++    override this.ToString() = $"{this.Line}:{this.Column}"
+diff --git a/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj b/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj
+new file mode 100644
+index 0000000..d78b34b
+--- /dev/null
++++ b/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj
+@@ -0,0 +1,12 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Lexeme.fs" />
++    <Compile Include="Parser.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Ir/Fogell.Ir.fsproj" />
++    <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
++    <PackageReference Include="FParsec" Version="1.1.1" />
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Pipeline.Parser/Lexeme.fs b/src/Fogell.Pipeline.Parser/Lexeme.fs
+new file mode 100644
+index 0000000..ae78542
+--- /dev/null
++++ b/src/Fogell.Pipeline.Parser/Lexeme.fs
+@@ -0,0 +1,141 @@
++module Fogell.Pipeline.Parser.Lexeme
++
++open FParsec
++open Fogell.Ir
++
++/// Shared lexing for the Declarative grammar.
++///
++/// Design note, learned from measuring Forge: a Declarative Jenkinsfile is
++/// Groovy, so the lexer must be Groovy-aware about the things that can *contain*
++/// braces and quotes — strings, GStrings, slashy strings, comments — or the
++/// block matcher counts a `{` inside a comment and the whole parse derails.
++
++type P<'a> = Parser<'a, unit>
++
++let ws1: P<unit> = skipMany1 (anyOf " \t\r\n")
++
++let lineComment: P<unit> = skipString "//" >>. skipRestOfLine false
++
++let blockComment: P<unit> =
++    skipString "/*" >>. skipCharsTillString "*/" true System.Int32.MaxValue
++
++/// Whitespace plus both comment forms. Declarative bodies are newline
++/// separated, so newlines are ordinary whitespace here.
++let ws: P<unit> = skipMany (choice [ ws1; lineComment; blockComment ])
++
++let lexeme (p: P<'a>) : P<'a> = p .>> ws
++let symbol (s: string) : P<unit> = lexeme (skipString s)
++let keyword (s: string) : P<unit> =
++    lexeme (attempt (skipString s .>> notFollowedBy (satisfy (fun c -> isLetter c || isDigit c || c = '_'))))
++
++let isIdentStart c = isLetter c || c = '_'
++let isIdentCont c = isLetter c || isDigit c || c = '_'
++
++let identifier: P<string> = lexeme (many1Satisfy2 isIdentStart isIdentCont)
++
++let position: P<Position> =
++    getPosition |>> fun p -> { Line = p.Line; Column = p.Column }
++
++// --- string literals -------------------------------------------------------
++// Value only; interpolation is NOT evaluated here. ADR 0002: the parser
++// records source, the interpreter decides meaning.
++
++let private escapedChar: P<char> =
++    skipChar '\\' >>. anyChar
++    |>> function
++        | 'n' -> '\n'
++        | 't' -> '\t'
++        | 'r' -> '\r'
++        | c -> c
++
++let private quoted (q: string) : P<string> =
++    between (skipString q) (skipString q) (
++        manyChars (escapedChar <|> satisfy (fun c -> c <> q.[0] && c <> '\n')))
++
++let private tripleQuoted (q: string) : P<string> =
++    between (skipString q) (skipString q) (
++        manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
++
++/// Any Groovy string form Jenkinsfiles use, including slashy strings.
++let stringLiteral: P<string> =
++    lexeme (
++        choice
++            [ attempt (tripleQuoted "'''")
++              attempt (tripleQuoted "\"\"\"")
++              attempt (quoted "'")
++              attempt (quoted "\"")
++              attempt (quoted "/") ])
++
++// --- balanced raw capture --------------------------------------------------
++
++/// Capture the raw source of a balanced region, skipping over strings and
++/// comments so their delimiters never affect the depth count. Used for
++/// argument lists and for `expression { }` bodies that the interpreter owns.
++let balancedRaw (opening: char) (closing: char) : P<string> =
++    let inner (stream: CharStream<unit>) =
++        if stream.Peek() <> opening then
++            Reply(Error, expected $"'{opening}'")
++        else
++            let start = stream.Index
++            stream.Skip()
++            let mutable depth = 1
++            let mutable failed = false
++
++            while depth > 0 && not failed && not (stream.IsEndOfStream) do
++                let c = stream.Peek()
++
++                if c = '\'' || c = '"' then
++                    // skip a string literal wholesale
++                    let q = c
++                    stream.Skip()
++
++                    let mutable closed = false
++
++                    while not closed && not stream.IsEndOfStream do
++                        let d = stream.Peek()
++
++                        if d = '\\' then
++                            stream.Skip()
++                            if not stream.IsEndOfStream then stream.Skip()
++                        elif d = q then
++                            stream.Skip()
++                            closed <- true
++                        elif d = '\n' && q = '\'' then
++                            closed <- true // unterminated single-quote: bail
++                        else
++                            stream.Skip()
++                elif c = '/' && stream.Peek(1) = '/' then
++                    while not stream.IsEndOfStream && stream.Peek() <> '\n' do
++                        stream.Skip()
++                elif c = '/' && stream.Peek(1) = '*' then
++                    stream.Skip()
++                    stream.Skip()
++
++                    let mutable ended = false
++
++                    while not ended && not stream.IsEndOfStream do
++                        if stream.Peek() = '*' && stream.Peek(1) = '/' then
++                            stream.Skip()
++                            stream.Skip()
++                            ended <- true
++                        else
++                            stream.Skip()
++                else
++                    if c = opening then depth <- depth + 1
++                    elif c = closing then depth <- depth - 1
++                    stream.Skip()
++
++            if depth <> 0 then
++                Reply(Error, messageError $"unbalanced '{opening}'")
++            else
++                let len = int (stream.Index - start)
++                stream.Seek(start)
++                let text = stream.Read(len)
++                Reply(text)
++
++    inner .>> ws
++
++/// The inside of a balanced region, delimiters stripped.
++let balancedBody (opening: char) (closing: char) : P<string> =
++    balancedRaw opening closing
++    |>> fun raw -> if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+new file mode 100644
+index 0000000..99ce2bc
+--- /dev/null
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -0,0 +1,326 @@
++module Fogell.Pipeline.Parser.Parser
++
++open FParsec
++open Fogell.Ir
++open Fogell.Admission
++open Fogell.Pipeline.Parser.Lexeme
++
++// ---------------------------------------------------------------------------
++// Steps
++// ---------------------------------------------------------------------------
++
++/// A step call. Four shapes appear in real Jenkinsfiles:
++///   command form            sh 'make'
++///   paren form              sh(script: 'make', returnStdout: true)
++///   named args, no parens   archiveArtifacts artifacts: '*.jar', fingerprint: true
++///   block form              withEnv(['A=1']) { … }  /  script { … }
++///
++/// Argument *values* are captured as source text, not evaluated (ADR 0002).
++let private stepParser, private stepRef = createParserForwardedToRef<Step, unit> ()
++
++let private namedArg: P<string * string> =
++    attempt (
++        identifier .>>? symbol ":" .>>. (
++            (stringLiteral |>> id)
++            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
++                 |>> fun s -> s.Trim())))
++
++let private positionalArg: P<string> =
++    stringLiteral
++    <|> (balancedRaw '[' ']')
++    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
++         |>> fun s -> s.Trim())
++
++let private argList: P<(string * string) list * string list> =
++    let one =
++        (namedArg |>> Choice1Of2) <|> (positionalArg |>> Choice2Of2)
++
++    sepBy one (symbol ",")
++    |>> fun items ->
++            let named = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
++            let pos = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
++            named, pos
++
++let private stepBlock: P<Step list> =
++    between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
++
++stepRef.Value <-
++    ws
++    >>. pipe4 position identifier
++            (opt (attempt (balancedRaw '(' ')')) )
++            (opt (attempt (ws >>. argList)))
++            (fun pos name parens inlineArgs -> pos, name, parens, inlineArgs)
++    .>>. opt (attempt stepBlock)
++    |>> fun ((pos, name, parens, inlineArgs), block) ->
++            let named, positional =
++                match parens with
++                | Some raw ->
++                    // re-parse the captured paren body for named/positional
++                    let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
++                    match runParserOnString (ws >>. argList .>> eof) () "args" body with
++                    | ParserResult.Success((n, p), _, _) -> n, p
++                    | ParserResult.Failure _ -> [], (if body.Trim() = "" then [] else [ body.Trim() ])
++                | None ->
++                    match inlineArgs with
++                    | Some(n, p) -> n, p
++                    | None -> [], []
++
++            { Name = name
++              Positional = positional
++              Named = named
++              Block = defaultArg block []
++              RawArgs = defaultArg parens ""
++              Position = pos }
++
++// ---------------------------------------------------------------------------
++// Sections
++// ---------------------------------------------------------------------------
++
++let private keyValueBody: P<(string * string) list> =
++    // `NAME = value` lines inside environment { } / tools { }
++    many (
++        attempt (
++            ws
++            >>. identifier
++            .>> symbol "="
++            .>>. (stringLiteral
++                  <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))
++            .>> ws))
++
++let private environmentSection: P<(string * string) list> =
++    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBody
++
++let private toolsSection: P<(string * string) list> =
++    keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
++
++let private agentSpec: P<AgentSpec> =
++    let inner =
++        choice
++            [ attempt (keyword "any" >>% AgentAny)
++              attempt (keyword "none" >>% AgentNone)
++              attempt (keyword "label" >>. stringLiteral |>> AgentLabel)
++              attempt (
++                  keyword "docker"
++                  >>. (attempt (between (symbol "{") (symbol "}") (
++                          ws >>. many (attempt (identifier .>>. (stringLiteral <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim())) .>> ws)))
++                       |>> fun kvs ->
++                               let img = kvs |> List.tryPick (fun (k, v) -> if k = "image" then Some v else None)
++                               AgentDocker(defaultArg img "", None))
++                       <|> (stringLiteral |>> fun img -> AgentDocker(img, None))))
++              attempt (keyword "dockerfile" >>. opt (balancedBody '{' '}') |>> fun _ -> AgentDockerfile None)
++              (identifier .>> opt (attempt (balancedRaw '{' '}')) |>> AgentUnmodelled) ]
++
++    keyword "agent"
++    >>. (attempt (between (symbol "{") (symbol "}") (ws >>. inner))
++         <|> inner)
++
++let private postConditionName: P<PostCondition> =
++    choice
++        [ attempt (keyword "always" >>% Always)
++          attempt (keyword "success" >>% Success)
++          attempt (keyword "failure" >>% Failure)
++          attempt (keyword "unstable" >>% Unstable)
++          attempt (keyword "aborted" >>% Aborted)
++          attempt (keyword "changed" >>% Changed)
++          attempt (keyword "cleanup" >>% Cleanup)
++          attempt (keyword "fixed" >>% Fixed)
++          attempt (keyword "regression" >>% Regression)
++          attempt (keyword "notBuilt" >>% NotBuilt) ]
++
++let private postSection: P<(PostCondition * Step list) list> =
++    keyword "post"
++    >>. between (symbol "{") (symbol "}") (
++        ws >>. many (attempt (postConditionName .>>. stepBlock)))
++
++let rec private whenCondition: P<WhenCondition> =
++    parse {
++        let! _ = ws
++        return! choice
++                    [ attempt (keyword "branch" >>. stringLiteral |>> WhenBranch)
++                      attempt (keyword "environment" >>. (
++                          identifier .>> symbol "=" .>>. stringLiteral |>> WhenEnvironment))
++                      attempt (keyword "expression" >>. balancedBody '{' '}' |>> WhenExpression)
++                      attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAllOf)
++                      attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (many (attempt whenCondition)) |>> WhenAnyOf)
++                      attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition |>> WhenNot)
++                      (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')') <|> (restOfLine true |>> fun s -> s.Trim()))
++                       |>> WhenUnmodelled) ]
++    }
++
++let private whenSection: P<WhenCondition> =
++    keyword "when" >>. between (symbol "{") (symbol "}") (ws >>. whenCondition)
++
++// ---------------------------------------------------------------------------
++// Stages
++// ---------------------------------------------------------------------------
++
++let private stageParser, private stageRef = createParserForwardedToRef<Stage, unit> ()
++
++let private stagesBody: P<Stage list> =
++    between (symbol "{") (symbol "}") (ws >>. many (attempt stageParser))
++
++/// One `stage('Name') { … }`. Sections may appear in any order, so this
++/// accumulates whatever it finds rather than demanding a fixed sequence — which
++/// is also what makes an unknown section a *named* rejection instead of a
++/// generic syntax error.
++type private StageSection =
++    | SecAgent of AgentSpec
++    | SecEnv of (string * string) list
++    | SecSteps of Step list
++    | SecWhen of WhenCondition
++    | SecPost of (PostCondition * Step list) list
++    | SecNested of Stage list * bool
++    | SecOther of string
++
++stageRef.Value <-
++    ws
++    >>. keyword "stage"
++    >>. pipe2 position
++            (attempt (between (symbol "(") (symbol ")") stringLiteral) <|> stringLiteral)
++            (fun p n -> p, n)
++    .>>. between (symbol "{") (symbol "}") (
++        ws
++        >>. many (
++            attempt (
++                choice
++                    [ attempt (agentSpec |>> SecAgent)
++                      attempt (environmentSection |>> SecEnv)
++                      attempt (keyword "steps" >>. stepBlock |>> SecSteps)
++                      attempt (whenSection |>> SecWhen)
++                      attempt (postSection |>> SecPost)
++                      attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
++                      attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
++                      attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
++                      attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
++                      attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
++                      attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
++                      attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
++                      (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')')) |>> fun (n, _) -> SecOther n) ])))
++    |>> fun ((pos, name), sections) ->
++            let pick f = sections |> List.tryPick f
++            { Name = name
++              Agent = pick (function SecAgent a -> Some a | _ -> None)
++              Environment = defaultArg (pick (function SecEnv e -> Some e | _ -> None)) []
++              Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
++              When = pick (function SecWhen w -> Some w | _ -> None)
++              Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
++              Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []
++              IsParallel = defaultArg (pick (function SecNested(_, p) -> Some p | _ -> None)) false
++              Position = pos }
++
++// ---------------------------------------------------------------------------
++// Pipeline
++// ---------------------------------------------------------------------------
++
++type private TopSection =
++    | TopAgent of AgentSpec
++    | TopEnv of (string * string) list
++    | TopTools of (string * string) list
++    | TopOptions of Step list
++    | TopParameters of Step list
++    | TopTriggers of Step list
++    | TopStages of Stage list
++    | TopPost of (PostCondition * Step list) list
++    | TopOther of string
++
++let private topSection: P<TopSection> =
++    choice
++        [ attempt (agentSpec |>> TopAgent)
++          attempt (environmentSection |>> TopEnv)
++          attempt (toolsSection |>> TopTools)
++          attempt (keyword "options" >>. stepBlock |>> TopOptions)
++          attempt (keyword "parameters" >>. stepBlock |>> TopParameters)
++          attempt (keyword "triggers" >>. stepBlock |>> TopTriggers)
++          attempt (keyword "stages" >>. stagesBody |>> TopStages)
++          attempt (postSection |>> TopPost)
++          attempt (keyword "libraries" >>. balancedRaw '{' '}' |>> fun _ -> TopOther "libraries")
++          (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')')) |>> fun (n, _) -> TopOther n) ]
++
++/// Leading trivia a real Jenkinsfile carries before `pipeline {`: a shebang,
++/// `@Library` annotations, `import` lines, and top-level `def`s. All are legal
++/// and none belong to the Declarative schema, so they are skipped here rather
++/// than rejected.
++let private preamble: P<unit> =
++    let shebang = attempt (skipString "#!" >>. skipRestOfLine true)
++    let annotation =
++        attempt (skipString "@" >>. skipMany1Satisfy isIdentCont
++                 >>. opt (balancedRaw '(' ')') >>. ws >>. opt (attempt (symbol "_")) >>% ())
++    let importLine = attempt (keyword "import" >>. skipRestOfLine true)
++    let defLine =
++        attempt (
++            keyword "def"
++            >>. skipMany1Satisfy isIdentCont
++            >>. ws
++            >>. opt (attempt (balancedRaw '(' ')'))
++            >>. ws
++            >>. (attempt (balancedRaw '{' '}' >>% ())
++                 <|> (opt (symbol "=") >>. skipRestOfLine true)))
++
++    ws >>. skipMany (choice [ shebang; annotation; importLine; defLine ] .>> ws)
++
++/// Skip forward to the `pipeline {` token. Real Jenkinsfiles put helper
++/// functions, `@Library` annotations, imports and `properties(...)` calls both
++/// before *and* after the declarative block; none of that is part of the
++/// Declarative schema. Iterative (skipManyTill), so a long file cannot
++/// overflow the stack the way a recursive scan would.
++let private skipToPipeline: P<unit> =
++    skipManyTill anyChar (lookAhead (attempt (keyword "pipeline" >>. skipChar '{')))
++
++let private pipelineParser: P<Pipeline> =
++    preamble
++    >>. skipToPipeline
++    >>. keyword "pipeline"
++    >>. between (symbol "{") (symbol "}") (ws >>. many (attempt topSection))
++    .>> ws
++    |>> fun sections ->
++            let pick f = sections |> List.tryPick f
++            { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
++              Environment = defaultArg (pick (function TopEnv e -> Some e | _ -> None)) []
++              Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
++              Options = defaultArg (pick (function TopOptions o -> Some o | _ -> None)) []
++              Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
++              Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
++              Stages = defaultArg (pick (function TopStages s -> Some s | _ -> None)) []
++              Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
++
++/// Does this source look like a Declarative pipeline at all? Deliberately
++/// stricter than Forge's bare regex: the token must not be inside a line
++/// comment or a string, which Forge's version does not check (FG-012).
++let looksDeclarative (source: string) : bool =
++    let stripped =
++        System.Text.RegularExpressions.Regex.Replace(
++            source,
++            @"//[^\n]*|/\*.*?\*/|'(?:[^'\\\n]|\\.)*'|""(?:[^""\\\n]|\\.)*""",
++            " ",
++            System.Text.RegularExpressions.RegexOptions.Singleline)
++
++    System.Text.RegularExpressions.Regex.IsMatch(stripped, @"(^|[\s};])pipeline\s*\{")
++
++/// Parse a Declarative Jenkinsfile. Admission limits are applied first so a
++/// hostile input never reaches the recursive grammar.
++let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
++    match Limits.precheck limits source with
++    | Result.Error e -> Result.Error e
++    | Result.Ok() ->
++        if not (looksDeclarative source) then
++            Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
++        else
++            match runParserOnString (pipelineParser .>> ws) () "Jenkinsfile" source with
++            | ParserResult.Success(p, _, _) ->
++                if List.isEmpty p.Stages then
++                    Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
++                else
++                    Result.Ok p
++            | ParserResult.Failure(msg, err, _) ->
++                let pos = err.Position
++
++                let firstLine =
++                    msg.Split('\n')
++                    |> Array.filter (fun l -> l.Trim() <> "")
++                    |> Array.tryLast
++                    |> Option.defaultValue "unparsable"
++
++                Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
++
++let parse (source: string) : Result<Pipeline, AdmissionError> =
++    parseWithLimits Limits.defaults source
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj b/tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj
+new file mode 100644
+index 0000000..9c538d5
+--- /dev/null
++++ b/tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj
+@@ -0,0 +1,8 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
++  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
++    <PackageReference Include="Expecto" Version="10.2.3" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+new file mode 100644
+index 0000000..b13813d
+--- /dev/null
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -0,0 +1,164 @@
++module Fogell.Pipeline.Parser.Tests
++
++open Expecto
++open Fogell.Ir
++open Fogell.Admission
++open Fogell.Pipeline.Parser
++
++let private mk (stages: string) =
++    $"pipeline {{\n  agent any\n  stages {{\n{stages}\n  }}\n}}\n"
++
++let private ok source =
++    match Parser.parse source with
++    | Ok p -> p
++    | Error e -> failtestf "expected a parse, got %s" (string e)
++
++let private err source =
++    match Parser.parse source with
++    | Ok _ -> failtest "expected a rejection"
++    | Error e -> e
++
++/// FG-004: bounds are applied BEFORE the recursive grammar, so hostile input
++/// can never reach it. Each limit has a named code and a position.
++let admissionLimits =
++    testList
++        "FG-004 admission limits"
++        [ test "empty source is named, not a crash" {
++              Expect.equal (err "").Code EmptySource "empty_source"
++          }
++
++          test "oversized source is rejected before parsing" {
++              let big = String.replicate 300_000 "x"
++              Expect.equal (err big).Code SourceTooLarge "source_too_large"
++          }
++
++          test "deep nesting is rejected before the grammar recurses" {
++              let deep = String.replicate 200 "{" + String.replicate 200 "}"
++              let e = err ("pipeline " + deep)
++              Expect.equal e.Code NestingTooDeep "nesting_too_deep"
++              Expect.isGreaterThan e.Position.Column 0L "carries a position"
++          }
++
++          test "an overlong scalar is rejected" {
++              let scalar = "'" + String.replicate 20_000 "a" + "'"
++              Expect.equal (err $"pipeline {{ agent {scalar} }}").Code ScalarTooLong "scalar_too_long"
++          }
++
++          test "a pathological brace bomb terminates and is named" {
++              // 40k braces: the precheck is a single linear scan, so this must
++              // return a verdict rather than exhaust the stack.
++              let bomb = String.replicate 40_000 "{"
++              let e = err ("pipeline " + bomb)
++              Expect.isTrue
++                  (e.Code = NestingTooDeep || e.Code = TooManyNodes || e.Code = SourceTooLarge)
++                  $"expected a bound to fire, got {ErrorCode.toWireString e.Code}"
++          }
++
++          test "every limit code is classified as input-defect or not" {
++              // guards against a new code being added without a tier decision
++              for c in
++                  [ SourceTooLarge; TooManyNodes; NestingTooDeep; ScalarTooLong; TooManyCollectionItems ] do
++                  Expect.isFalse (ErrorCode.isInputDefect c) "a limit is a Fogell bound, not a user defect"
++          } ]
++
++let declarativeDetection =
++    testList
++        "FG-012 declarative detection"
++        [ test "a real declarative file is detected" {
++              Expect.isTrue (Parser.looksDeclarative (mk "    stage('a') { steps { echo 'x' } }")) "detected"
++          }
++          test "a scripted file is not" {
++              Expect.isFalse (Parser.looksDeclarative "node { sh 'make' }") "scripted"
++          }
++          test "the token inside a line comment does not count" {
++              Expect.isFalse (Parser.looksDeclarative "// pipeline {\nnode { sh 'x' }") "comment"
++          }
++          test "the token inside a string does not count" {
++              Expect.isFalse (Parser.looksDeclarative "node { echo 'pipeline { }' }") "string literal"
++          }
++          test "the token inside a block comment does not count" {
++              Expect.isFalse (Parser.looksDeclarative "/* pipeline { */\nnode { sh 'x' }") "block comment"
++          } ]
++
++let structure =
++    testList
++        "declarative structure"
++        [ test "stages and steps are recovered" {
++              let p = ok (mk "    stage('Build') { steps { sh 'make'\n echo 'done' } }")
++              Expect.equal p.Stages.Length 1 "one stage"
++              Expect.equal p.Stages.[0].Name "Build" "stage name"
++              Expect.equal p.Stages.[0].Steps.Length 2 "two steps"
++              Expect.equal p.Stages.[0].Steps.[0].Name "sh" "first step"
++              Expect.equal p.Stages.[0].Steps.[0].Positional [ "make" ] "step argument"
++          }
++
++          test "agent any at pipeline level" {
++              Expect.equal (ok (mk "    stage('a') { steps { echo 'x' } }")).Agent AgentAny "agent any"
++          }
++
++          test "environment is captured as key/value" {
++              let src =
++                  "pipeline {\n  agent any\n  environment {\n    FOO = 'bar'\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
++
++              Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
++          }
++
++          test "named step arguments are separated from positional" {
++              let p = ok (mk "    stage('a') { steps { archiveArtifacts artifacts: '*.jar', fingerprint: true } }")
++              let step = p.Stages.[0].Steps.[0]
++              Expect.equal step.Name "archiveArtifacts" "step name"
++              Expect.contains (step.Named |> List.map fst) "artifacts" "named arg present"
++          }
++
++          test "nested parallel stages are recorded and flattened" {
++              let src =
++                  mk
++                      "    stage('outer') {\n      parallel {\n        stage('a') { steps { echo 'a' } }\n        stage('b') { steps { echo 'b' } }\n      }\n    }"
++
++              let p = ok src
++              Expect.isTrue p.Stages.[0].IsParallel "marked parallel"
++              Expect.equal (Pipeline.flattenStages p.Stages |> List.length) 3 "outer + two children"
++          }
++
++          test "post conditions are keyed by condition" {
++              let src =
++                  "pipeline {\n  agent any\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n  post {\n    always { echo 'a' }\n    failure { echo 'f' }\n  }\n}\n"
++
++              let p = ok src
++              Expect.equal p.Post.Length 2 "two conditions"
++              Expect.contains (p.Post |> List.map fst) Always "always present"
++              Expect.contains (p.Post |> List.map fst) Failure "failure present"
++          }
++
++          test "a when-expression body is kept as source, not evaluated (ADR 0002)" {
++              let src = mk "    stage('a') { when { expression { return env.BRANCH == 'main' } }\n steps { echo 'x' } }"
++              let p = ok src
++
++              match p.Stages.[0].When with
++              | Some(WhenExpression body) -> Expect.stringContains body "env.BRANCH" "raw source retained"
++              | other -> failtestf "expected WhenExpression, got %A" other
++          }
++
++          test "helper defs before AND after the pipeline block are tolerated" {
++              let src =
++                  "#!/usr/bin/env groovy\n@Library('x') _\ndef helper() { return 1 }\n"
++                  + mk "    stage('a') { steps { echo 'x' } }"
++                  + "\ndef trailing() { return 2 }\n"
++
++              Expect.equal (ok src).Stages.Length 1 "block found amid surrounding statements"
++          }
++
++          test "a pipeline with no stages is a named rejection" {
++              Expect.equal (err "pipeline {\n  agent any\n}\n").Code NoStages "no_stages"
++          }
++
++          test "a scripted file reports no_pipeline_block, not a syntax error" {
++              Expect.equal (err "node { sh 'make' }").Code NoPipelineBlock "no_pipeline_block"
++          } ]
++
++[<EntryPoint>]
++let main argv =
++    runTestsWithCLIArgs
++        []
++        argv
++        (testList "Fogell.Pipeline.Parser" [ admissionLimits; declarativeDetection; structure ])
+diff --git a/tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj b/tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj
+new file mode 100644
+index 0000000..2290d8c
+--- /dev/null
++++ b/tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj
+@@ -0,0 +1,11 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType>
++    <IsPackable>false</IsPackable>
++    <AssemblyName>fogell-score</AssemblyName>
++  </PropertyGroup>
++  <ItemGroup><Compile Include="Program.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
++  </ItemGroup>
++</Project>
+diff --git a/tools/Fogell.Corpus.Score/Program.fs b/tools/Fogell.Corpus.Score/Program.fs
+new file mode 100644
+index 0000000..0c3c1a1
+--- /dev/null
++++ b/tools/Fogell.Corpus.Score/Program.fs
+@@ -0,0 +1,48 @@
++module Fogell.Corpus.Score.Program
++
++open System.IO
++open Fogell.Admission
++open Fogell.Pipeline.Parser
++
++/// Scores the declarative parser against the pinned corpus. Parse only — this
++/// never executes corpus code. Emits TSV so the result can be diffed between
++/// runs and sealed as evidence (FG-005).
++[<EntryPoint>]
++let main argv =
++    let corpus =
++        match Array.tryHead argv with
++        | Some p -> p
++        | None ->
++            match System.Environment.GetEnvironmentVariable "FOGELL_CORPUS" with
++            | null
++            | "" -> "/sn8100/work/exchange/crucible-gate/corpus"
++            | v -> v
++
++    let dir = Path.Combine(corpus, "jenkinsfiles")
++
++    if not (Directory.Exists dir) then
++        eprintfn $"corpus not found: {dir}"
++        2
++    else
++
++    printfn "file\tverdict\tcode\tstages\tsteps\tdetail"
++
++    Directory.GetFiles(dir, "*.Jenkinsfile")
++    |> Array.sort
++    |> Array.iter (fun path ->
++        let name = Path.GetFileName path
++        let src = File.ReadAllText path
++
++        if not (Parser.looksDeclarative src) then
++            printfn $"{name}\tnot-declarative\t-\t-\t-\t-"
++        else
++            match Parser.parse src with
++            | Ok p ->
++                let stages = Fogell.Ir.Pipeline.flattenStages p.Stages |> List.length
++                let steps = Fogell.Ir.Pipeline.totalSteps p
++                printfn $"{name}\tok\t-\t{stages}\t{steps}\t-"
++            | Error e ->
++                let detail = e.Message.Replace("\t", " ")
++                printfn $"{name}\terr\t{ErrorCode.toWireString e.Code}\t-\t-\t{detail} @{e.Position}")
++
++    0

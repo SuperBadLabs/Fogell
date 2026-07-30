@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Position.fs" />
+    <Compile Include="Pipeline.fs" />
+  </ItemGroup>
+  <ItemGroup><ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" /></ItemGroup>
+</Project>
