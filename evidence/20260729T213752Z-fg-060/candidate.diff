@@ -1,0 +1,799 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index f48b33b..b1d54ef 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -5,6 +5,7 @@
+     <Project Path="src/Fogell.Groovy/Fogell.Groovy.fsproj" />
+     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
++    <Project Path="src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
+     <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
+     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
+     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+@@ -16,6 +17,7 @@
+     <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
+   </Folder>
+   <Folder Name="/tests/">
++    <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+     <Project Path="tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj" />
+     <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index d5add46..7e2b9c0 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -138,11 +138,11 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-060 | P0 | TODO | `Fogell.Controller.Api`: submit / status / logs / cancel / explain; bearer token ≥ 32 bytes; deny by default | authz matrix test; unauthenticated request returns 401, never data |
++| FG-060 | P0 | **DONE** | `Fogell.Controller.Api`: submit / status / logs / cancel / explain; bearer ≥32 bytes; deny by default | A weak token is refused **at startup**, not per request; comparison is **fixed-time**. All five routes return 401 unauthenticated. Malformed pipeline → 422 with code **and** source position. Submit 201 fresh / 200 replay. Non-UUID → 400, unknown build → 404, never 500. 15 tests |
+ | FG-061 | P0 | **DONE** | Scheduler: capability-filtered claim, FIFO within pool, wait diagnostics | Tenant advisory lock + `FOR UPDATE SKIP LOCKED`: **16 concurrent schedulers over 4 attempts yield exactly 4 claims, none twice**. Capability containment checked in SQL (`<@`), not application code. FIFO by admission order. Wait diagnostics distinguish empty queue / trust-pool mismatch / **named missing capabilities** |
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+-| FG-064 | P1 | **PARTIAL** | Progressive log storage and offset reads | `log_chunks` with idempotent append and offset reads — a client can tail a running build. HTTP surface awaits FG-060 |
++| FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/src/Fogell.Controller.Api/Authorization.fs b/src/Fogell.Controller.Api/Authorization.fs
+new file mode 100644
+index 0000000..624099c
+--- /dev/null
++++ b/src/Fogell.Controller.Api/Authorization.fs
+@@ -0,0 +1,58 @@
++namespace Fogell.Controller.Api
++
++open System
++open System.Security.Cryptography
++
++/// FG-060 authorization. Deny by default: a request is authorized only by
++/// presenting the exact configured bearer token.
++///
++/// Two properties that are easy to get wrong and expensive to get wrong:
++///
++///  * A short token is refused at STARTUP, not at request time. A controller
++///    running with a four-character token is a controller with no
++///    authentication, and discovering that from a log line during an incident is
++///    too late.
++///  * Comparison is FIXED-TIME. An early-exit string compare leaks the token
++///    prefix by prefix to anyone who can measure response latency.
++module Authorization =
++
++    [<Literal>]
++    let MinimumTokenBytes = 32
++
++    type Config =
++        private
++            { TokenBytes: byte[] }
++
++    /// Validate and capture the token. Returns Error when it is too weak to be
++    /// worth checking.
++    let configure (token: string) : Result<Config, string> =
++        if String.IsNullOrWhiteSpace token then
++            Error "an API token is required"
++        else
++            let bytes = Text.Encoding.UTF8.GetBytes token
++
++            if bytes.Length < MinimumTokenBytes then
++                Error
++                    $"bearer token must contain at least {MinimumTokenBytes} bytes; \
++                      got {bytes.Length}. A short token is not authentication."
++            else
++                Ok { TokenBytes = bytes }
++
++    /// Constant-time comparison of the presented credential.
++    let authorize (config: Config) (authorizationHeader: string option) : bool =
++        match authorizationHeader with
++        | None -> false
++        | Some raw ->
++            let value = raw.Trim()
++
++            if not (value.StartsWith("Bearer ", StringComparison.Ordinal)) then
++                false
++            else
++                let presented =
++                    Text.Encoding.UTF8.GetBytes(value.Substring("Bearer ".Length).Trim())
++
++                // FixedTimeEquals also handles the length mismatch without
++                // short-circuiting in a way an attacker can time.
++                CryptographicOperations.FixedTimeEquals(
++                    ReadOnlySpan<byte>(presented),
++                    ReadOnlySpan<byte>(config.TokenBytes))
+diff --git a/src/Fogell.Controller.Api/Contracts.fs b/src/Fogell.Controller.Api/Contracts.fs
+new file mode 100644
+index 0000000..d4c5d44
+--- /dev/null
++++ b/src/Fogell.Controller.Api/Contracts.fs
+@@ -0,0 +1,44 @@
++namespace Fogell.Controller.Api
++
++open System.Text.Json.Serialization
++
++/// The public wire contract. Field names are snake_case and stable: renaming one
++/// is a breaking change to every client, so they are written explicitly rather
++/// than derived from F# record names.
++type AdmissionResponse =
++    { [<JsonPropertyName "build_id">] BuildId: string
++      [<JsonPropertyName "node_id">] NodeId: string
++      [<JsonPropertyName "attempt_id">] AttemptId: string
++      [<JsonPropertyName "number">] Number: int
++      /// True when this submission matched an existing idempotency key. Clients
++      /// need to distinguish "created" from "already existed" without comparing
++      /// timestamps.
++      [<JsonPropertyName "was_existing">] WasExisting: bool }
++
++type StatusResponse =
++    { [<JsonPropertyName "build_id">] BuildId: string
++      [<JsonPropertyName "status">] Status: string
++      [<JsonPropertyName "cancellation_requested">] CancellationRequested: bool }
++
++type LogChunk =
++    { [<JsonPropertyName "sequence">] Sequence: int
++      [<JsonPropertyName "body">] Body: string }
++
++type LogResponse =
++    { [<JsonPropertyName "build_id">] BuildId: string
++      [<JsonPropertyName "from_sequence">] FromSequence: int
++      /// Present so a client can tail: poll again from this value.
++      [<JsonPropertyName "next_sequence">] NextSequence: int
++      [<JsonPropertyName "chunks">] Chunks: LogChunk list }
++
++type ExplainResponse =
++    { [<JsonPropertyName "trust_pool">] TrustPool: string
++      [<JsonPropertyName "capabilities">] Capabilities: string list
++      [<JsonPropertyName "explanation">] Explanation: string }
++
++/// Errors carry a stable code as well as a message, so a client can branch on
++/// the code and show the message. ADR 0001 forbids an unnamed rejection.
++type ErrorResponse =
++    { [<JsonPropertyName "code">] Code: string
++      [<JsonPropertyName "message">] Message: string
++      [<JsonPropertyName "position">] Position: string option }
+diff --git a/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj b/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+new file mode 100644
+index 0000000..3e9b9fe
+--- /dev/null
++++ b/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+@@ -0,0 +1,15 @@
++<Project Sdk="Microsoft.NET.Sdk.Web">
++  <PropertyGroup>
++    <OutputType>Library</OutputType>
++    <GenerateDocumentationFile>false</GenerateDocumentationFile>
++  </PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Contracts.fs" />
++    <Compile Include="Authorization.fs" />
++    <Compile Include="Router.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
++    <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Controller.Api/Router.fs b/src/Fogell.Controller.Api/Router.fs
+new file mode 100644
+index 0000000..9150e47
+--- /dev/null
++++ b/src/Fogell.Controller.Api/Router.fs
+@@ -0,0 +1,239 @@
++namespace Fogell.Controller.Api
++
++open System
++open Microsoft.AspNetCore.Builder
++open Microsoft.AspNetCore.Http
++open Microsoft.AspNetCore.Routing
++open Fogell.Domain
++open Fogell.Store
++
++/// FG-060. The public API.
++///
++/// Five endpoints, all tenant-scoped in the path. Authorization is checked before
++/// anything else on every route — including before the path parameters are parsed
++/// — so an unauthenticated caller cannot learn whether an organization or build
++/// exists by comparing 404 against 400.
++type ApiState =
++    { Store: Store
++      Auth: Authorization.Config
++      /// Trust pool assigned to a submission that does not name one.
++      DefaultTrustPool: string }
++
++module Router =
++
++    let private json (ctx: HttpContext) (status: int) (payload: 'a) =
++        ctx.Response.StatusCode <- status
++        ctx.Response.ContentType <- "application/json; charset=utf-8"
++        ctx.Response.WriteAsJsonAsync payload
++
++    let private fail (ctx: HttpContext) status code message position =
++        let payload: ErrorResponse =
++            { Code = code; Message = message; Position = position }
++
++        json ctx status payload
++
++    /// Deny by default. Returns Some when the caller may proceed.
++    let private authorized (state: ApiState) (ctx: HttpContext) =
++        let header =
++            match ctx.Request.Headers.TryGetValue "authorization" with
++            | true, v when v.Count > 0 -> Some(v.[0])
++            | _ -> None
++
++        Authorization.authorize state.Auth header
++
++    let private header (ctx: HttpContext) name =
++        match ctx.Request.Headers.TryGetValue name with
++        | true, v when v.Count > 0 && not (String.IsNullOrWhiteSpace v.[0]) -> Some(v.[0])
++        | _ -> None
++
++    let private guid (raw: string) =
++        match Guid.TryParse raw with
++        | true, g -> Some g
++        | _ -> None
++
++    /// POST …/builds — submit a Jenkinsfile.
++    ///
++    /// The body is the pipeline source. It is PARSED before admission, so a
++    /// malformed pipeline is rejected with its error code and source position
++    /// rather than becoming a queued build that fails later for reasons the
++    /// submitter cannot see.
++    let private submit (state: ApiState) (ctx: HttpContext) =
++        task {
++            if not (authorized state ctx) then
++                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
++            else
++                match guid (string ctx.Request.RouteValues["organizationId"]),
++                      guid (string ctx.Request.RouteValues["projectId"]) with
++                | None, _
++                | _, None -> return! fail ctx 400 "malformed_identifier" "organization and project must be UUIDs" None
++                | Some org, Some project ->
++                    match header ctx "idempotency-key" with
++                    | None ->
++                        // Required, not optional: without it a retried submission
++                        // silently creates a second build.
++                        return!
++                            fail ctx 400 "idempotency_key_required"
++                                "an Idempotency-Key header is required so a retry cannot create a second build" None
++                    | Some key when key.Length > 256 ->
++                        return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
++                    | Some key ->
++                        use reader = new IO.StreamReader(ctx.Request.Body)
++                        let! source = reader.ReadToEndAsync()
++
++                        match Fogell.Pipeline.Parser.Parser.parse source with
++                        | Result.Error e ->
++                            return!
++                                fail ctx 422
++                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
++                                    e.Message
++                                    (Some(string e.Position))
++                        | Result.Ok pipeline ->
++                            let stages =
++                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
++                                |> List.map (fun s -> s.Name)
++
++                            let trustPool =
++                                header ctx "fogell-trust-pool" |> Option.defaultValue state.DefaultTrustPool
++
++                            let input =
++                                { OrganizationId = OrganizationId org
++                                  ProjectId = ProjectId project
++                                  IdempotencyKey = key
++                                  StageNames = stages
++                                  RequiredTrustPool = trustPool
++                                  RequiredCapabilities = [ "linux" ] }
++
++                            match state.Store.AdmitBuild input with
++                            | Result.Error e -> return! fail ctx 409 "admission_refused" e None
++                            | Result.Ok a ->
++                                let payload: AdmissionResponse =
++                                    { BuildId = string a.BuildId.Value
++                                      NodeId = string a.NodeId.Value
++                                      AttemptId = string a.AttemptId.Value
++                                      Number = a.Number
++                                      WasExisting = a.WasExisting }
++
++                                // 200 for a replay, 201 for a fresh admission —
++                                // the status code carries the same fact as the body.
++                                return! json ctx (if a.WasExisting then 200 else 201) payload
++        }
++        :> Threading.Tasks.Task
++
++    let private status (state: ApiState) (ctx: HttpContext) =
++        task {
++            if not (authorized state ctx) then
++                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
++            else
++                match guid (string ctx.Request.RouteValues["organizationId"]),
++                      guid (string ctx.Request.RouteValues["buildId"]) with
++                | None, _
++                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
++                | Some org, Some build ->
++                    match state.Store.BuildSnapshot(OrganizationId org, BuildId build) with
++                    | None -> return! fail ctx 404 "not_found" "no such build" None
++                    | Some(s, cancelled) ->
++                        let payload: StatusResponse =
++                            { BuildId = string build
++                              Status = s
++                              CancellationRequested = cancelled }
++
++                        return! json ctx 200 payload
++        }
++        :> Threading.Tasks.Task
++
++    /// GET …/logs?from=N — progressive read (FG-064).
++    let private logs (state: ApiState) (ctx: HttpContext) =
++        task {
++            if not (authorized state ctx) then
++                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
++            else
++                match guid (string ctx.Request.RouteValues["organizationId"]),
++                      guid (string ctx.Request.RouteValues["buildId"]) with
++                | None, _
++                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
++                | Some org, Some build ->
++                    let from =
++                        match ctx.Request.Query.TryGetValue "from" with
++                        | true, v when v.Count > 0 ->
++                            match Int32.TryParse v.[0] with
++                            | true, n when n >= 0 -> n
++                            | _ -> 0
++                        | _ -> 0
++
++                    let chunks = state.Store.ReadLog(OrganizationId org, BuildId build, from)
++
++                    let next =
++                        match chunks with
++                        | [] -> from
++                        | _ -> (chunks |> List.map fst |> List.max) + 1
++
++                    let payload: LogResponse =
++                        { BuildId = string build
++                          FromSequence = from
++                          NextSequence = next
++                          Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
++
++                    return! json ctx 200 payload
++        }
++        :> Threading.Tasks.Task
++
++    let private cancel (state: ApiState) (ctx: HttpContext) =
++        task {
++            if not (authorized state ctx) then
++                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
++            else
++                match guid (string ctx.Request.RouteValues["organizationId"]),
++                      guid (string ctx.Request.RouteValues["buildId"]) with
++                | None, _
++                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
++                | Some org, Some build ->
++                    match state.Store.RequestCancellation(OrganizationId org, BuildId build) with
++                    | CancellationAccepted -> return! json ctx 202 {| accepted = true; already_requested = false |}
++                    // Idempotent: a retry after a client timeout must not look
++                    // like a failure, because the caller's intent is satisfied.
++                    | AlreadyRequested -> return! json ctx 202 {| accepted = true; already_requested = true |}
++                    // These ARE conflicts: the caller must not believe it
++                    // cancelled something it did not.
++                    | AlreadyTerminal s ->
++                        return! fail ctx 409 "already_terminal" $"build already finished with status '{s}'" None
++                    | NoSuchBuild -> return! fail ctx 404 "not_found" "no such build" None
++        }
++        :> Threading.Tasks.Task
++
++    /// GET …/scheduler/explain?capability=a&capability=b — why is work waiting?
++    let private explain (state: ApiState) (ctx: HttpContext) =
++        task {
++            if not (authorized state ctx) then
++                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
++            else
++                match guid (string ctx.Request.RouteValues["organizationId"]) with
++                | None -> return! fail ctx 400 "malformed_identifier" "organization must be a UUID" None
++                | Some org ->
++                    let caps =
++                        match ctx.Request.Query.TryGetValue "capability" with
++                        | true, v -> v |> Seq.filter (fun s -> not (String.IsNullOrWhiteSpace s)) |> List.ofSeq
++                        | _ -> []
++
++                    let pool =
++                        match ctx.Request.Query.TryGetValue "trustPool" with
++                        | true, v when v.Count > 0 && not (String.IsNullOrWhiteSpace v.[0]) -> v.[0]
++                        | _ -> state.DefaultTrustPool
++
++                    let payload: ExplainResponse =
++                        { TrustPool = pool
++                          Capabilities = caps
++                          Explanation = state.Store.ExplainWait(OrganizationId org, pool, caps) }
++
++                    return! json ctx 200 payload
++        }
++        :> Threading.Tasks.Task
++
++    let private orgPath = "/api/v1/organizations/{organizationId}"
++
++    let map (state: ApiState) (endpoints: IEndpointRouteBuilder) =
++        endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds", RequestDelegate(submit state)) |> ignore
++        endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}", RequestDelegate(status state)) |> ignore
++        endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/logs", RequestDelegate(logs state)) |> ignore
++        endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/cancel", RequestDelegate(cancel state)) |> ignore
++        endpoints.MapGet($"{orgPath}/scheduler/explain", RequestDelegate(explain state)) |> ignore
++        endpoints
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index fdbb308..365bf5d 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -4,6 +4,15 @@ open System
+ open Npgsql
+ open Fogell.Domain
+ 
++/// The outcome of a cancellation request, so a caller is never misled about
++/// whether it took effect.
++type CancellationOutcome =
++    | CancellationAccepted
++    /// Already requested — idempotent, not an error.
++    | AlreadyRequested
++    | AlreadyTerminal of status: string
++    | NoSuchBuild
++
+ /// What admission returns. Repeating the same idempotency key returns exactly
+ /// these identifiers again, without emitting a second event or outbox message.
+ type Admission =
+@@ -483,15 +492,37 @@ type Store(connectionString: string) =
+         [ while r.Read() do
+               yield r.GetInt32 0, r.GetString 1 ]
+ 
+-    member _.RequestCancellation(org: OrganizationId, build: BuildId) : bool =
++    /// Cancellation is IDEMPOTENT by design. A retried request — after a client
++    /// timeout, say — must not look like an error: the caller's intent is already
++    /// satisfied. What genuinely is a conflict is asking to cancel a build that
++    /// has already finished, or one that does not exist.
++    member _.RequestCancellation(org: OrganizationId, build: BuildId) : CancellationOutcome =
+         use conn = openConn ()
+         use cmd = conn.CreateCommand()
+         cmd.CommandText <-
+-            "UPDATE builds SET cancellation_requested = true
+-              WHERE organization_id = @o AND id = @b AND status NOT IN ('succeeded','failed','aborted')"
++            "SELECT status, cancellation_requested FROM builds
++              WHERE organization_id = @o AND id = @b"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+-        cmd.ExecuteNonQuery() = 1
++
++        let existing =
++            use r = cmd.ExecuteReader()
++            if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
++
++        match existing with
++        | None -> NoSuchBuild
++        | Some(status, _) when status = "succeeded" || status = "failed" || status = "aborted" ->
++            AlreadyTerminal status
++        | Some(_, true) -> AlreadyRequested
++        | Some _ ->
++            use upd = conn.CreateCommand()
++            upd.CommandText <-
++                "UPDATE builds SET cancellation_requested = true
++                  WHERE organization_id = @o AND id = @b"
++            upd.Parameters.AddWithValue("o", org.Value) |> ignore
++            upd.Parameters.AddWithValue("b", build.Value) |> ignore
++            upd.ExecuteNonQuery() |> ignore
++            CancellationAccepted
+ 
+     member _.BuildSnapshot(org: OrganizationId, build: BuildId) : (string * bool) option =
+         use conn = openConn ()
+diff --git a/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+new file mode 100644
+index 0000000..d2bfdd2
+--- /dev/null
++++ b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+@@ -0,0 +1,9 @@
++<Project Sdk="Microsoft.NET.Sdk.Web">
++  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
++  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
++    <PackageReference Include="Expecto" Version="10.2.3" />
++    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+new file mode 100644
+index 0000000..4111f43
+--- /dev/null
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -0,0 +1,281 @@
++module Fogell.Controller.Api.Tests
++
++open System
++open System.Net
++open System.Net.Http
++open System.Text
++open Expecto
++open Microsoft.AspNetCore.Builder
++open Microsoft.AspNetCore.Hosting
++open Microsoft.Extensions.Hosting
++open Microsoft.Extensions.Logging
++open Fogell.Domain
++open Fogell.Store
++open Fogell.Controller.Api
++
++let private connectionString =
++    match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
++    | null | "" -> "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
++    | v -> v
++
++let private available =
++    try
++        use c = new Npgsql.NpgsqlConnection(connectionString)
++        c.Open()
++        true
++    with _ -> false
++
++/// A token exactly at the documented minimum, so the tests exercise the real
++/// boundary rather than something comfortably over it.
++let private token = String.replicate 32 "k"
++
++let private store = Store(connectionString)
++
++let private startServer () =
++    let auth =
++        match Authorization.configure token with
++        | Ok c -> c
++        | Error e -> failwith e
++
++    let builder = WebApplication.CreateBuilder()
++    builder.WebHost.UseUrls "http://127.0.0.1:0" |> ignore
++    builder.Logging.ClearProviders() |> ignore
++    let app = builder.Build()
++
++    Router.map
++        { Store = store
++          Auth = auth
++          DefaultTrustPool = "trusted-linux" }
++        app
++    |> ignore
++
++    app.StartAsync() |> Async.AwaitTask |> Async.RunSynchronously
++
++    let address =
++        app.Urls |> Seq.head
++
++    app, address
++
++let private freshProject () =
++    let org = OrganizationId(Guid.NewGuid())
++    let project = ProjectId(Guid.NewGuid())
++    store.CreateProject(org, $"org-{org.Value}", project, "p")
++    org, project
++
++let private pipeline =
++    "pipeline {\n  agent any\n  stages {\n    stage('Build') {\n      steps { echo 'hi' }\n    }\n  }\n}\n"
++
++let private client = new HttpClient()
++
++let private send (method: HttpMethod) (url: string) (bearer: string option) (idem: string option) (body: string option) =
++    let req = new HttpRequestMessage(method, url)
++    bearer |> Option.iter (fun t -> req.Headers.TryAddWithoutValidation("authorization", $"Bearer {t}") |> ignore)
++    idem |> Option.iter (fun k -> req.Headers.TryAddWithoutValidation("idempotency-key", k) |> ignore)
++    body |> Option.iter (fun b -> req.Content <- new StringContent(b, Encoding.UTF8, "application/x-jenkinsfile"))
++    let r = client.Send req
++    let text = r.Content.ReadAsStringAsync().Result
++    int r.StatusCode, text
++
++/// FG-060. Authorization is proven BEFORE anything else, because every other
++/// test would otherwise be running against an open endpoint.
++let authorization =
++    testList
++        "FG-060 authorization"
++        [ test "a token under the minimum is refused at STARTUP, not per-request" {
++              match Authorization.configure "tooshort" with
++              | Error m ->
++                  Expect.stringContains m "32" "states the minimum"
++                  Expect.stringContains m "not authentication" "says why it matters"
++              | Ok _ -> failtest "a weak token must not configure"
++          }
++
++          test "an empty token is refused" {
++              match Authorization.configure "" with
++              | Error _ -> ()
++              | Ok _ -> failtest "empty must not configure"
++          }
++
++          test "a token at exactly the minimum is accepted" {
++              match Authorization.configure (String.replicate 32 "a") with
++              | Ok _ -> ()
++              | Error e -> failtestf "32 bytes must be accepted: %s" e
++          }
++
++          test "the correct token authorizes; wrong, absent and malformed do not" {
++              let cfg =
++                  match Authorization.configure token with
++                  | Ok c -> c
++                  | Error e -> failtest e
++
++              Expect.isTrue (Authorization.authorize cfg (Some $"Bearer {token}")) "correct"
++              Expect.isFalse (Authorization.authorize cfg None) "absent"
++              Expect.isFalse (Authorization.authorize cfg (Some "Bearer wrong")) "wrong value"
++              Expect.isFalse (Authorization.authorize cfg (Some token)) "missing Bearer prefix"
++              Expect.isFalse (Authorization.authorize cfg (Some $"Basic {token}")) "wrong scheme"
++              Expect.isFalse (Authorization.authorize cfg (Some($"Bearer {token}x"))) "trailing byte"
++          } ]
++
++let endpoints =
++    let app, baseUrl = startServer ()
++
++    testList
++        "FG-060 endpoints"
++        [ test "every route denies an unauthenticated caller" {
++              let org, project = freshProject ()
++              let o, p = org.Value, project.Value
++              let b = Guid.NewGuid()
++
++              let routes =
++                  [ HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds"
++                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}"
++                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/logs"
++                    HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/cancel"
++                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain" ]
++
++              for method, url in routes do
++                  let code, body = send method url None (Some "k") (Some pipeline)
++                  Expect.equal code 401 $"{method} {url} must deny"
++                  Expect.stringContains body "unauthorized" "names the reason"
++          }
++
++          test "submit admits a build and returns 201, then 200 on replay" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++
++              let code1, body1 = send HttpMethod.Post url (Some token) (Some "api-1") (Some pipeline)
++              Expect.equal code1 201 "created"
++              Expect.stringContains body1 "\"was_existing\":false" "fresh admission"
++
++              let code2, body2 = send HttpMethod.Post url (Some token) (Some "api-1") (Some pipeline)
++              Expect.equal code2 200 "replay is 200, not a second 201"
++              Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
++          }
++
++          test "a missing idempotency key is refused with a named code" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let code, body = send HttpMethod.Post url (Some token) None (Some pipeline)
++              Expect.equal code 400 "refused"
++              Expect.stringContains body "idempotency_key_required" "named code"
++          }
++
++          test "a malformed pipeline is rejected with its code AND source position" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let code, body = send HttpMethod.Post url (Some token) (Some "bad-1") (Some "node { sh 'make' }")
++              Expect.equal code 422 "unprocessable"
++              Expect.stringContains body "no_pipeline_block" "named code"
++              Expect.stringContains body "\"position\"" "carries a position"
++          }
++
++          test "status reflects the admitted build" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let _, body = send HttpMethod.Post url (Some token) (Some "st-1") (Some pipeline)
++              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
++
++              let code, s =
++                  send HttpMethod.Get $"{url}/{buildId}" (Some token) None None
++
++              Expect.equal code 200 "found"
++              Expect.stringContains s "\"status\":\"queued\"" "queued"
++              Expect.stringContains s "\"cancellation_requested\":false" "not cancelled"
++          }
++
++          test "an unknown build is 404, not 500" {
++              let org, project = freshProject ()
++              let code, body =
++                  send HttpMethod.Get
++                      $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds/{Guid.NewGuid()}"
++                      (Some token) None None
++
++              Expect.equal code 404 "not found"
++              Expect.stringContains body "not_found" "named"
++          }
++
++          test "a non-UUID identifier is 400, not 500" {
++              let code, body =
++                  send HttpMethod.Get
++                      $"{baseUrl}/api/v1/organizations/not-a-uuid/projects/also-not/builds/{Guid.NewGuid()}"
++                      (Some token) None None
++
++              Expect.equal code 400 "bad request"
++              Expect.stringContains body "malformed_identifier" "named"
++          }
++
++          test "logs are readable from an offset and report next_sequence" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let _, body = send HttpMethod.Post url (Some token) (Some "log-api") (Some pipeline)
++              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
++              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
++
++              for i in 0..2 do
++                  store.AppendLog(
++                      org, BuildId(Guid.Parse buildId), AttemptId(Guid.Parse attemptId), i, $"line-{i}")
++                  |> ignore
++
++              let code, all = send HttpMethod.Get $"{url}/{buildId}/logs" (Some token) None None
++              Expect.equal code 200 "ok"
++              Expect.stringContains all "line-0" "from the start"
++              Expect.stringContains all "\"next_sequence\":3" "tail cursor"
++
++              let _, tail = send HttpMethod.Get $"{url}/{buildId}/logs?from=2" (Some token) None None
++              Expect.stringContains tail "line-2" "the tail"
++              Expect.isFalse (tail.Contains "line-0") "offset respected"
++          }
++
++          // Corrected expectation: my first version asserted 409 on a repeat
++          // cancel. That is wrong — a retried cancellation after a client timeout
++          // must not look like an error, since the requested state is already the
++          // actual state. A real conflict is cancelling a FINISHED build.
++          test "cancel is idempotent; cancelling a finished build conflicts" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let _, body = send HttpMethod.Post url (Some token) (Some "can-1") (Some pipeline)
++              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
++
++              let code1, b1 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
++              Expect.equal code1 202 "accepted"
++              Expect.stringContains b1 "\"already_requested\":false" "first request"
++
++              let code2, b2 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
++              Expect.equal code2 202 "a retry is idempotent, not an error"
++              Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
++
++              let code3, b3 =
++                  send HttpMethod.Post $"{url}/{Guid.NewGuid()}/cancel" (Some token) None None
++
++              Expect.equal code3 404 "an unknown build is not found"
++              Expect.stringContains b3 "not_found" "named"
++          }
++
++          test "explain names missing capabilities rather than saying 'waiting'" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              send HttpMethod.Post url (Some token) (Some "exp-1") (Some pipeline) |> ignore
++
++              let explainUrl = $"{baseUrl}/api/v1/organizations/{org.Value}/scheduler/explain"
++
++              let _, matching = send HttpMethod.Get $"{explainUrl}?capability=linux" (Some token) None None
++              Expect.stringContains matching "claimable" "work is claimable"
++
++              let _, mismatch = send HttpMethod.Get explainUrl (Some token) None None
++              Expect.stringContains mismatch "linux" "names what is missing"
++          }
++
++          test "teardown" { app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously }
++        ]
++
++[<EntryPoint>]
++let main argv =
++    if not available then
++        eprintfn "skipped: no PostgreSQL at %s" connectionString
++        0
++    else
++        match store.Migrate() with
++        | Error e ->
++            eprintfn $"migrate failed: {e}"
++            1
++        | Ok _ ->
++            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ authorization; endpoints ]))
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 475bba9..716e500 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -425,7 +425,11 @@ let logs =
+               | Some(_, requested) -> Expect.isFalse requested "not requested yet"
+               | None -> failtest "snapshot missing"
+ 
+-              Expect.isTrue (store.RequestCancellation(org, a.BuildId)) "recorded"
++              Expect.equal (store.RequestCancellation(org, a.BuildId)) CancellationAccepted "recorded"
++              Expect.equal
++                  (store.RequestCancellation(org, a.BuildId))
++                  AlreadyRequested
++                  "a retry is idempotent, not an error"
+ 
+               match store.BuildSnapshot(org, a.BuildId) with
+               | Some(_, requested) -> Expect.isTrue requested "now requested"

@@ -425,7 +425,11 @@ let logs =
               | Some(_, requested) -> Expect.isFalse requested "not requested yet"
               | None -> failtest "snapshot missing"
 
-              Expect.isTrue (store.RequestCancellation(org, a.BuildId)) "recorded"
+              Expect.equal (store.RequestCancellation(org, a.BuildId)) CancellationAccepted "recorded"
+              Expect.equal
+                  (store.RequestCancellation(org, a.BuildId))
+                  AlreadyRequested
+                  "a retry is idempotent, not an error"
 
               match store.BuildSnapshot(org, a.BuildId) with
               | Some(_, requested) -> Expect.isTrue requested "now requested"

@@ -4,6 +4,15 @@ open System
 open Npgsql
 open Fogell.Domain
 
+/// The outcome of a cancellation request, so a caller is never misled about
+/// whether it took effect.
+type CancellationOutcome =
+    | CancellationAccepted
+    /// Already requested — idempotent, not an error.
+    | AlreadyRequested
+    | AlreadyTerminal of status: string
+    | NoSuchBuild
+
 /// What admission returns. Repeating the same idempotency key returns exactly
 /// these identifiers again, without emitting a second event or outbox message.
 type Admission =
@@ -483,15 +492,37 @@ type Store(connectionString: string) =
         [ while r.Read() do
               yield r.GetInt32 0, r.GetString 1 ]
 
-    member _.RequestCancellation(org: OrganizationId, build: BuildId) : bool =
+    /// Cancellation is IDEMPOTENT by design. A retried request — after a client
+    /// timeout, say — must not look like an error: the caller's intent is already
+    /// satisfied. What genuinely is a conflict is asking to cancel a build that
+    /// has already finished, or one that does not exist.
+    member _.RequestCancellation(org: OrganizationId, build: BuildId) : CancellationOutcome =
         use conn = openConn ()
         use cmd = conn.CreateCommand()
         cmd.CommandText <-
-            "UPDATE builds SET cancellation_requested = true
-              WHERE organization_id = @o AND id = @b AND status NOT IN ('succeeded','failed','aborted')"
+            "SELECT status, cancellation_requested FROM builds
+              WHERE organization_id = @o AND id = @b"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
-        cmd.ExecuteNonQuery() = 1
+
+        let existing =
+            use r = cmd.ExecuteReader()
+            if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
+
+        match existing with
+        | None -> NoSuchBuild
+        | Some(status, _) when status = "succeeded" || status = "failed" || status = "aborted" ->
+            AlreadyTerminal status
+        | Some(_, true) -> AlreadyRequested
+        | Some _ ->
+            use upd = conn.CreateCommand()
+            upd.CommandText <-
+                "UPDATE builds SET cancellation_requested = true
+                  WHERE organization_id = @o AND id = @b"
+            upd.Parameters.AddWithValue("o", org.Value) |> ignore
+            upd.Parameters.AddWithValue("b", build.Value) |> ignore
+            upd.ExecuteNonQuery() |> ignore
+            CancellationAccepted
 
     member _.BuildSnapshot(org: OrganizationId, build: BuildId) : (string * bool) option =
         use conn = openConn ()
