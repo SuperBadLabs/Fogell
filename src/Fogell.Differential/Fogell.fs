@@ -1208,8 +1208,20 @@ module FogellSide =
                         |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
                         |> Option.defaultValue "Proceed"
 
-                    emit message
-                    emit $"{okLabel} or Abort"
+                    // REVIEW FIX (Codex, PR #17 round 3): Jenkins evaluates a GString
+                    // before showing the prompt, so `input message: "Build ${env.X}?"`
+                    // displays the VALUE. Emitting the parser's raw text diverged. A
+                    // single-quoted argument stays literal, which is why the parser now
+                    // records which named args were single-quoted — shell steps never
+                    // needed this because the shell does its own expansion.
+                    let render (argName: string) (raw: string) =
+                        if step.LiteralNamedArgs.Contains argName then
+                            raw
+                        else
+                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
+
+                    emit (render "message" message)
+                    emit $"""{render "ok" okLabel} or Abort"""
 
                     match deadline with
                     | None ->
@@ -1238,14 +1250,20 @@ module FogellSide =
                         let mutable bySibling = false
 
                         while not stop do
-                            let left = int (defaultArg (remainingMs deadline) 0)
+                            // REVIEW FIX (Codex, PR #17 round 3): narrowing to int here
+                            // wrapped negative for a deadline past Int32.MaxValue ms — a
+                            // `timeout(time: 30, unit: 'DAYS') { input … }` satisfied
+                            // `left <= 1` and aborted the prompt IMMEDIATELY. Compare at
+                            // full width; only the sleep interval is narrowed, and it is
+                            // bounded by 250 anyway.
+                            let left = defaultArg (remainingMs deadline) 0L
 
-                            if left <= 1 then stop <- true
+                            if left <= 1L then stop <- true
                             elif interruptedBySibling () then
                                 stop <- true
                                 bySibling <- true
                             else
-                                System.Threading.Thread.Sleep(min 250 (max 10 left))
+                                System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
 
                         // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
                         // timeout, and a silent abort here would be the defect this

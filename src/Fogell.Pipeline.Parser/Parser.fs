@@ -18,6 +18,16 @@ open Fogell.Pipeline.Parser.Lexeme
 /// Argument *values* are captured as source text, not evaluated (ADR 0002).
 let private stepParser, private stepRef = createParserForwardedToRef<Step, unit> ()
 
+/// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
+/// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
+let private namedArgWithKind: P<string * string * bool> =
+    attempt (
+        identifier .>>? symbol ":" .>>. (
+            (stringLiteralWithKind |>> fun (v, interpolates) -> v, not interpolates)
+            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+                 |>> fun s -> s.Trim(), false)))
+    |>> fun (n, (v, isLiteral)) -> n, v, isLiteral
+
 let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
@@ -31,15 +41,17 @@ let private positionalArg: P<string> =
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
-let private argList: P<(string * string) list * string list> =
+let private argList: P<(string * string) list * string list * Set<string>> =
     let one =
-        (namedArg |>> Choice1Of2) <|> (positionalArg |>> Choice2Of2)
+        (namedArgWithKind |>> Choice1Of2) <|> (positionalArg |>> Choice2Of2)
 
     sepBy one (symbol ",")
     |>> fun items ->
-            let named = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
+            let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
+            let named = namedWithKind |> List.map (fun (n, v, _) -> n, v)
+            let literal = namedWithKind |> List.choose (fun (n, _, lit) -> if lit then Some n else None) |> Set.ofList
             let pos = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
-            named, pos
+            named, pos, literal
 
 let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
@@ -65,23 +77,25 @@ stepRef.Value <-
             (choice
                 [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
                   attempt (hspaces >>. argList) |>> Choice2Of2
-                  preturn (Choice2Of2([], [])) ])
+                  preturn (Choice2Of2([], [], Set.empty)) ])
             (fun pos name args -> pos, name, args)
     .>>. opt (attempt stepBlock)
     |>> fun ((pos, name, args), block) ->
-            let named, positional =
+            let named, positional, literalNamed =
                 match args with
                 | Choice1Of2 raw ->
                     // re-parse the captured paren body for named/positional
                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
-                    | ParserResult.Success((n, p), _, _) -> n, p
-                    | ParserResult.Failure _ -> [], (if body.Trim() = "" then [] else [ body.Trim() ])
-                | Choice2Of2(n, p) -> n, p
+                    | ParserResult.Success((n, p, lit), _, _) -> n, p, lit
+                    | ParserResult.Failure _ ->
+                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty
+                | Choice2Of2(n, p, lit) -> n, p, lit
 
             { Name = name
               Positional = positional
               Named = named
+              LiteralNamedArgs = literalNamed
               Block = defaultArg block []
               RawArgs =
                 match args with

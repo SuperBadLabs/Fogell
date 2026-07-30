@@ -1,0 +1,158 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 1e600ec..aab6003 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **52/52 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **53/53 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 298ab39..a6cf54f 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1208,8 +1208,20 @@ module FogellSide =
+                         |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+                         |> Option.defaultValue "Proceed"
+ 
+-                    emit message
+-                    emit $"{okLabel} or Abort"
++                    // REVIEW FIX (Codex, PR #17 round 3): Jenkins evaluates a GString
++                    // before showing the prompt, so `input message: "Build ${env.X}?"`
++                    // displays the VALUE. Emitting the parser's raw text diverged. A
++                    // single-quoted argument stays literal, which is why the parser now
++                    // records which named args were single-quoted — shell steps never
++                    // needed this because the shell does its own expansion.
++                    let render (argName: string) (raw: string) =
++                        if step.LiteralNamedArgs.Contains argName then
++                            raw
++                        else
++                            interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) raw
++
++                    emit (render "message" message)
++                    emit $"""{render "ok" okLabel} or Abort"""
+ 
+                     match deadline with
+                     | None ->
+@@ -1238,14 +1250,20 @@ module FogellSide =
+                         let mutable bySibling = false
+ 
+                         while not stop do
+-                            let left = int (defaultArg (remainingMs deadline) 0)
++                            // REVIEW FIX (Codex, PR #17 round 3): narrowing to int here
++                            // wrapped negative for a deadline past Int32.MaxValue ms — a
++                            // `timeout(time: 30, unit: 'DAYS') { input … }` satisfied
++                            // `left <= 1` and aborted the prompt IMMEDIATELY. Compare at
++                            // full width; only the sleep interval is narrowed, and it is
++                            // bounded by 250 anyway.
++                            let left = defaultArg (remainingMs deadline) 0L
+ 
+-                            if left <= 1 then stop <- true
++                            if left <= 1L then stop <- true
+                             elif interruptedBySibling () then
+                                 stop <- true
+                                 bySibling <- true
+                             else
+-                                System.Threading.Thread.Sleep(min 250 (max 10 left))
++                                System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+ 
+                         // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
+                         // timeout, and a silent abort here would be the defect this
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index 1e05625..c5ebee3 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -21,6 +21,15 @@ type Step =
+       Positional: string list
+       Named: (string * string) list
+       Block: Step list
++      /// Named arguments whose value was SINGLE-quoted, and so is literal.
++      ///
++      /// FG-046. Groovy interpolates a double-quoted GString and leaves a
++      /// single-quoted string alone, and a step that renders text itself — `input`'s
++      /// message and confirmation label — has to honour that. Shell steps get away
++      /// without it because the shell performs its own `$VAR` expansion, which
++      /// coincides with Groovy's for the common case; `input` has no shell.
++      /// Mirrors Stage.EnvironmentLiteralNames.
++      LiteralNamedArgs: Set<string>
+       /// Raw source of the arguments, retained because ADR 0002 says the
+       /// interpreter — not the parser — decides what an expression means.
+       RawArgs: string
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index cd1e650..3126644 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -18,6 +18,16 @@ open Fogell.Pipeline.Parser.Lexeme
+ /// Argument *values* are captured as source text, not evaluated (ADR 0002).
+ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit> ()
+ 
++/// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
++/// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
++let private namedArgWithKind: P<string * string * bool> =
++    attempt (
++        identifier .>>? symbol ":" .>>. (
++            (stringLiteralWithKind |>> fun (v, interpolates) -> v, not interpolates)
++            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
++                 |>> fun s -> s.Trim(), false)))
++    |>> fun (n, (v, isLiteral)) -> n, v, isLiteral
++
+ let private namedArg: P<string * string> =
+     attempt (
+         identifier .>>? symbol ":" .>>. (
+@@ -31,15 +41,17 @@ let private positionalArg: P<string> =
+     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+          |>> fun s -> s.Trim())
+ 
+-let private argList: P<(string * string) list * string list> =
++let private argList: P<(string * string) list * string list * Set<string>> =
+     let one =
+-        (namedArg |>> Choice1Of2) <|> (positionalArg |>> Choice2Of2)
++        (namedArgWithKind |>> Choice1Of2) <|> (positionalArg |>> Choice2Of2)
+ 
+     sepBy one (symbol ",")
+     |>> fun items ->
+-            let named = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
++            let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
++            let named = namedWithKind |> List.map (fun (n, v, _) -> n, v)
++            let literal = namedWithKind |> List.choose (fun (n, _, lit) -> if lit then Some n else None) |> Set.ofList
+             let pos = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
+-            named, pos
++            named, pos, literal
+ 
+ let private stepBlock: P<Step list> =
+     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
+@@ -65,23 +77,25 @@ stepRef.Value <-
+             (choice
+                 [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
+                   attempt (hspaces >>. argList) |>> Choice2Of2
+-                  preturn (Choice2Of2([], [])) ])
++                  preturn (Choice2Of2([], [], Set.empty)) ])
+             (fun pos name args -> pos, name, args)
+     .>>. opt (attempt stepBlock)
+     |>> fun ((pos, name, args), block) ->
+-            let named, positional =
++            let named, positional, literalNamed =
+                 match args with
+                 | Choice1Of2 raw ->
+                     // re-parse the captured paren body for named/positional
+                     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+                     match runParserOnString (ws >>. argList .>> eof) () "args" body with
+-                    | ParserResult.Success((n, p), _, _) -> n, p
+-                    | ParserResult.Failure _ -> [], (if body.Trim() = "" then [] else [ body.Trim() ])
+-                | Choice2Of2(n, p) -> n, p
++                    | ParserResult.Success((n, p, lit), _, _) -> n, p, lit
++                    | ParserResult.Failure _ ->
++                        [], (if body.Trim() = "" then [] else [ body.Trim() ]), Set.empty
++                | Choice2Of2(n, p, lit) -> n, p, lit
+ 
+             { Name = name
+               Positional = positional
+               Named = named
++              LiteralNamedArgs = literalNamed
+               Block = defaultArg block []
+               RawArgs =
+                 match args with

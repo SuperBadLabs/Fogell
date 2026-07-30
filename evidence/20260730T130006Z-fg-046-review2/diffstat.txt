@@ -1,0 +1,5 @@
+ docs/EXECUTION_BOARD.md              |  2 +-
+ src/Fogell.Differential/Fogell.fs    | 28 +++++++++++++++++++++++-----
+ src/Fogell.Ir/Pipeline.fs            |  9 +++++++++
+ src/Fogell.Pipeline.Parser/Parser.fs | 32 +++++++++++++++++++++++---------
+ 4 files changed, 56 insertions(+), 15 deletions(-)

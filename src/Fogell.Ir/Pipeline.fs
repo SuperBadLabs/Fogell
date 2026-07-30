@@ -21,6 +21,15 @@ type Step =
       Positional: string list
       Named: (string * string) list
       Block: Step list
+      /// Named arguments whose value was SINGLE-quoted, and so is literal.
+      ///
+      /// FG-046. Groovy interpolates a double-quoted GString and leaves a
+      /// single-quoted string alone, and a step that renders text itself — `input`'s
+      /// message and confirmation label — has to honour that. Shell steps get away
+      /// without it because the shell performs its own `$VAR` expansion, which
+      /// coincides with Groovy's for the common case; `input` has no shell.
+      /// Mirrors Stage.EnvironmentLiteralNames.
+      LiteralNamedArgs: Set<string>
       /// Raw source of the arguments, retained because ADR 0002 says the
       /// interpreter — not the parser — decides what an expression means.
       RawArgs: string
