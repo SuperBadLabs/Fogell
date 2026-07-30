@@ -1,0 +1,1073 @@
+diff --git a/Fogell.slnx b/Fogell.slnx
+index 8d8c038..f48b33b 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -5,6 +5,7 @@
+     <Project Path="src/Fogell.Groovy/Fogell.Groovy.fsproj" />
+     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
++    <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
+     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
+     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+     <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
+@@ -12,6 +13,7 @@
+   </Folder>
+   <Folder Name="/tools/">
+     <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
++    <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
+   </Folder>
+   <Folder Name="/tests/">
+     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
+diff --git a/differential/cases/echo-only.Jenkinsfile b/differential/cases/echo-only.Jenkinsfile
+new file mode 100644
+index 0000000..32cd690
+--- /dev/null
++++ b/differential/cases/echo-only.Jenkinsfile
+@@ -0,0 +1,11 @@
++pipeline {
++  agent any
++  stages {
++    stage('Greet') {
++      steps {
++        echo 'hello from fogell'
++        echo 'second line'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/env-scoping.Jenkinsfile b/differential/cases/env-scoping.Jenkinsfile
+new file mode 100644
+index 0000000..21115d7
+--- /dev/null
++++ b/differential/cases/env-scoping.Jenkinsfile
+@@ -0,0 +1,22 @@
++pipeline {
++  agent any
++  environment {
++    SCOPE = 'pipeline'
++    SHARED = 'both'
++  }
++  stages {
++    stage('Outer') {
++      steps {
++        sh 'echo scope=$SCOPE shared=$SHARED'
++      }
++    }
++    stage('Override') {
++      environment {
++        SCOPE = 'stage'
++      }
++      steps {
++        sh 'echo scope=$SCOPE shared=$SHARED'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/nonzero-exit.Jenkinsfile b/differential/cases/nonzero-exit.Jenkinsfile
+new file mode 100644
+index 0000000..b60a799
+--- /dev/null
++++ b/differential/cases/nonzero-exit.Jenkinsfile
+@@ -0,0 +1,11 @@
++pipeline {
++  agent any
++  stages {
++    stage('Fail') {
++      steps {
++        sh 'echo before'
++        sh 'exit 3'
++      }
++    }
++  }
++}
+diff --git a/differential/cases/shell-and-file.Jenkinsfile b/differential/cases/shell-and-file.Jenkinsfile
+new file mode 100644
+index 0000000..2073c15
+--- /dev/null
++++ b/differential/cases/shell-and-file.Jenkinsfile
+@@ -0,0 +1,11 @@
++pipeline {
++  agent any
++  stages {
++    stage('Build') {
++      steps {
++        sh 'echo compiled > artifact.txt'
++        sh 'cat artifact.txt'
++      }
++    }
++  }
++}
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+new file mode 100644
+index 0000000..e27e53b
+--- /dev/null
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -0,0 +1,32 @@
++# Differential receipt — echo-only.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         d53429af41ed4dd8a21d77c7d7e076cd6532d0fdf5651a44275c9abda804f1f8
++
++VERDICT: PROVEN-PARTIAL — same result, same output.
++  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
++  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++
++## Jenkins
++  result:         success
++  workspace-hash: not-collected
++  output (2 lines):
++    | hello from fogell
++    | second line
++
++## Fogell
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (2 lines):
++    | hello from fogell
++    | second line
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+new file mode 100644
+index 0000000..46c8859
+--- /dev/null
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -0,0 +1,32 @@
++# Differential receipt — env-scoping.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         e4d2385f6d4f7ba163742509022e175d3c01d6027a5880a8dc0d0674bc406879
++
++VERDICT: PROVEN-PARTIAL — same result, same output.
++  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
++  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++
++## Jenkins
++  result:         success
++  workspace-hash: not-collected
++  output (2 lines):
++    | scope=pipeline shared=both
++    | scope=stage shared=both
++
++## Fogell
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (2 lines):
++    | scope=pipeline shared=both
++    | scope=stage shared=both
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+new file mode 100644
+index 0000000..fabdea3
+--- /dev/null
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -0,0 +1,32 @@
++# Differential receipt — nonzero-exit.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         7f5522957744dd4513aee85df40a199e3e4bcb5d8ef29b6ddd0ad7f521451756
++
++VERDICT: PROVEN-PARTIAL — same result, same output.
++  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
++  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++
++## Jenkins
++  result:         failure
++  workspace-hash: not-collected
++  output (2 lines):
++    | before
++    | ERROR: script returned exit code 3
++
++## Fogell
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (2 lines):
++    | before
++    | ERROR: script returned exit code 3
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+new file mode 100644
+index 0000000..5a35f69
+--- /dev/null
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -0,0 +1,32 @@
++# Differential receipt — shell-and-file.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         1e9e7daa752f8ab2361278906e165579c3cd8a51886876c4d00c7aa6087e9709
++
++VERDICT: PROVEN-PARTIAL — same result, same output.
++  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,
++  so this is NOT a tier-1 claim under ADR 0001. See FG-002b.
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps, ANSI escapes, blank lines
++  excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines
++  excluded: shell xtrace ('+ cmd') lines — provenance, not output
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners
++
++## Jenkins
++  result:         success
++  workspace-hash: not-collected
++  output (1 lines):
++    | compiled
++
++## Fogell
++  result:         success
++  workspace-hash: 5d74d13139d0acd504b6d49876dc58f9db07d73fddb74946bb35ce8ee8feee26
++  output (1 lines):
++    | compiled
++  workspace:
++    82bbb1ee2e80  artifact.txt
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 2808edb..e5021b6 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,8 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | TODO | **Differential harness** (`adr/0004`): pinned Jenkins image digest + Fogell, same host, compare terminal result, ordered step sequence, canonical workspace hash | one file passes end-to-end and emits a sealed receipt with both sides' hashes |
++| FG-002 | P0 | **PARTIAL** | **Differential harness** (`adr/0004`) | Harness runs both engines on the same Jenkinsfile and seals a receipt with the comparison contract stated in it. **4/4 files PROVEN-PARTIAL** (same terminal result, same normalised output). **tier-1 = 0/4**: Jenkins runs in a container on another host so its workspace is not collectable yet, and a receipt may not claim a workspace it never hashed. Closing that is FG-002b |
++| FG-002b | P0 | TODO | Collect Jenkins' workspace so the hash can actually be compared, making tier-1 reachable | a receipt shows two real workspace hashes and they match |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+ | FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees) |
+@@ -117,7 +118,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | id | pri | status | item | demand |
+ |---|---|---|---|---:|
+ | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+-| FG-041 | P0 | TODO | `echo`, `dir`, `withEnv`, `environment` scoping (lexical, stage overrides pipeline) | 35 / 15 / 11 |
++| FG-041 | P0 | **PARTIAL** | `echo`, `dir`, `environment` scoping (lexical, stage overrides pipeline) | `echo` and environment scoping proven by differential receipt (`env-scoping`, stage overrides pipeline, shared vars inherited). `dir` nests and auto-creates, refusing traversal. `withEnv` still outstanding — split to FG-041b |
++| FG-041b | P1 | TODO | `withEnv(['A=1']) { … }` block-scoped environment | differential receipt |
+ | FG-042 | P0 | TODO | `archiveArtifacts` + byte-exact retrieval at a stable URL | 34 files |
+ | FG-043 | P1 | TODO | `junit` test-result ingest and model | 26 files |
+ | FG-044 | P1 | TODO | `credentials` / `withCredentials`, scope-limited bindings | 22 files |
+diff --git a/src/Fogell.Differential/Compare.fs b/src/Fogell.Differential/Compare.fs
+new file mode 100644
+index 0000000..cf9df0e
+--- /dev/null
++++ b/src/Fogell.Differential/Compare.fs
+@@ -0,0 +1,189 @@
++namespace Fogell.Differential
++
++open System
++open System.IO
++open System.Security.Cryptography
++
++/// Why a comparison failed, named so a report is machine-readable.
++type Divergence =
++    | ResultDiffers of jenkins: string * fogell: string
++    | OutputDiffers of firstMismatchIndex: int * jenkins: string option * fogell: string option
++    | WorkspaceDiffers of jenkins: string * fogell: string
++    | JenkinsFailed of string
++    | FogellFailed of string
++
++    member this.Describe =
++        match this with
++        | ResultDiffers(j, f) -> $"terminal result: jenkins={j} fogell={f}"
++        | OutputDiffers(i, j, f) ->
++            let show = Option.defaultValue "<absent>"
++            $"output line {i}: jenkins={show j} fogell={show f}"
++        | WorkspaceDiffers(j, f) -> $"workspace hash: jenkins={j.Substring(0, 12)} fogell={f.Substring(0, 12)}"
++        | JenkinsFailed e -> $"jenkins side failed: {e}"
++        | FogellFailed e -> $"fogell side failed: {e}"
++
++/// The verdict for one file. ADR 0001's tiers, decided by evidence.
++type Verdict =
++    /// Same result and same output. Whether the WORKSPACE was also compared is
++    /// carried separately, because a receipt that says "same workspace" when no
++    /// workspace was collected is precisely the vacuous claim this harness
++    /// exists to prevent.
++    | Proven
++    /// Ran on both, but they disagree. NOT a Fogell bug by assumption — the
++    /// divergence is named so it can be adjudicated.
++    | Diverged of Divergence list
++    /// One side could not run it at all.
++    | NotComparable of Divergence
++
++type Receipt =
++    { File: string
++      Verdict: Verdict
++      JenkinsCore: string
++      Jenkins: Trace option
++      Fogell: Trace option
++      ComparisonContract: string list
++      /// Hash over the receipt's own comparable content, so a receipt cannot be
++      /// edited after the fact without detection.
++      Seal: string }
++
++module Compare =
++
++    let private sha256Text (text: string) =
++        use h = SHA256.Create()
++
++        Text.Encoding.UTF8.GetBytes text
++        |> h.ComputeHash
++        |> Convert.ToHexString
++        |> fun s -> s.ToLowerInvariant()
++
++    let private compareOutput (jenkins: string list) (fogell: string list) =
++        let rec walk i j f =
++            match j, f with
++            | [], [] -> None
++            | jh :: jt, fh :: ft ->
++                if jh = fh then walk (i + 1) jt ft
++                else Some(OutputDiffers(i, Some jh, Some fh))
++            | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
++            | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
++
++        walk 0 jenkins fogell
++
++    /// Compare two traces. Workspace hashes are only compared when BOTH sides
++    /// collected one — claiming a match against "not-collected" would be exactly
++    /// the sort of vacuous pass this harness exists to prevent.
++    /// True only when BOTH sides produced a real workspace hash.
++    let workspaceWasCompared (jenkins: Trace) (fogell: Trace) =
++        jenkins.WorkspaceHash <> "not-collected" && fogell.WorkspaceHash <> "not-collected"
++
++    let traces (jenkins: Trace) (fogell: Trace) : Verdict =
++        let divergences =
++            [ if jenkins.Result <> fogell.Result then
++                  ResultDiffers(jenkins.Result, fogell.Result)
++
++              match compareOutput jenkins.Output fogell.Output with
++              | Some d -> d
++              | None -> ()
++
++              if
++                  jenkins.WorkspaceHash <> "not-collected"
++                  && fogell.WorkspaceHash <> "not-collected"
++                  && jenkins.WorkspaceHash <> fogell.WorkspaceHash
++              then
++                  WorkspaceDiffers(jenkins.WorkspaceHash, fogell.WorkspaceHash) ]
++
++        if List.isEmpty divergences then Proven else Diverged divergences
++
++    let receipt (file: string) (core: string) (jenkins: Result<Trace, string>) (fogell: Result<Trace, string>) : Receipt =
++        let verdict, j, f =
++            match jenkins, fogell with
++            | Result.Error e, _ -> NotComparable(JenkinsFailed e), None, None
++            | _, Result.Error e -> NotComparable(FogellFailed e), None, None
++            | Result.Ok jt, Result.Ok ft -> traces jt ft, Some jt, Some ft
++
++        let comparable =
++            let render (t: Trace option) =
++                match t with
++                | Some x ->
++                    let joined = String.concat "\n" x.Output
++                    $"{x.Result}|{x.WorkspaceHash}|{joined}"
++                | None -> "<none>"
++
++            $"{file}\n{core}\n{render j}\n{render f}"
++
++        { File = file
++          Verdict = verdict
++          JenkinsCore = core
++          Jenkins = j
++          Fogell = f
++          ComparisonContract = Trace.comparisonContract
++          Seal = sha256Text comparable }
++
++    /// Render a receipt as text. Deliberately plain so it can be committed,
++    /// diffed and hashed alongside the code.
++    let render (r: Receipt) : string =
++        let sb = Text.StringBuilder()
++        let line (s: string) = sb.AppendLine s |> ignore
++
++        line $"# Differential receipt — {r.File}"
++        line ""
++        line $"jenkins-core: {r.JenkinsCore}"
++        line $"seal:         {r.Seal}"
++        line ""
++
++        let workspaceCompared =
++            match r.Jenkins, r.Fogell with
++            | Some j, Some f -> workspaceWasCompared j f
++            | _ -> false
++
++        match r.Verdict with
++        | Proven when workspaceCompared ->
++            line "VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash"
++        | Proven ->
++            line "VERDICT: PROVEN-PARTIAL — same result, same output."
++            line "  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,"
++            line "  so this is NOT a tier-1 claim under ADR 0001. See FG-002b."
++        | Diverged ds ->
++            line $"VERDICT: DIVERGED ({ds.Length})"
++
++            for d in ds do
++                line $"  - {d.Describe}"
++        | NotComparable d ->
++            line "VERDICT: NOT COMPARABLE"
++            line $"  - {d.Describe}"
++
++        line ""
++        line "## Comparison contract"
++
++        for c in r.ComparisonContract do
++            line $"  {c}"
++
++        let renderSide name (t: Trace option) =
++            line ""
++            line $"## {name}"
++
++            match t with
++            | None -> line "  (did not run)"
++            | Some x ->
++                line $"  result:         {x.Result}"
++                line $"  workspace-hash: {x.WorkspaceHash}"
++                line $"  output ({x.Output.Length} lines):"
++
++                for l in x.Output do
++                    line $"    | {l}"
++
++                if not (List.isEmpty x.WorkspaceFiles) then
++                    line "  workspace:"
++
++                    for path, hash in x.WorkspaceFiles do
++                        line $"    {hash.Substring(0, 12)}  {path}"
++
++        renderSide "Jenkins" r.Jenkins
++        renderSide "Fogell" r.Fogell
++        sb.ToString()
++
++    let seal (directory: string) (r: Receipt) : string =
++        Directory.CreateDirectory directory |> ignore
++        let safe = r.File.Replace("/", "_").Replace(".Jenkinsfile", "")
++        let path = Path.Combine(directory, $"{safe}.receipt.txt")
++        File.WriteAllText(path, render r)
++        path
+diff --git a/src/Fogell.Differential/Fogell.Differential.fsproj b/src/Fogell.Differential/Fogell.Differential.fsproj
+new file mode 100644
+index 0000000..313a686
+--- /dev/null
++++ b/src/Fogell.Differential/Fogell.Differential.fsproj
+@@ -0,0 +1,13 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Trace.fs" />
++    <Compile Include="Jenkins.fs" />
++    <Compile Include="Fogell.fs" />
++    <Compile Include="Compare.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
++    <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+new file mode 100644
+index 0000000..fcaa4a5
+--- /dev/null
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -0,0 +1,97 @@
++namespace Fogell.Differential
++
++open System.IO
++open Fogell.Domain
++open Fogell.Execution
++open Fogell.Ir
++
++/// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
++/// step, and reduces the run to a [Trace] in the same canonical form.
++module FogellSide =
++
++    /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
++    /// to make the differential meaningful; the durable scheduler (Wave 2) is a
++    /// separate concern and is not on this path.
++    let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
++        match Fogell.Pipeline.Parser.Parser.parse script with
++        | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
++        | Result.Ok pipeline ->
++            let output = System.Collections.Generic.List<string>()
++            let workspace = Path.Combine(workspaceRoot, jobName)
++            if Directory.Exists workspace then Directory.Delete(workspace, true)
++            Directory.CreateDirectory workspace |> ignore
++
++            /// Environment visible to a step: pipeline scope, overridden by stage
++            /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
++            let envFor (stage: Stage) =
++                (pipeline.Environment @ stage.Environment)
++                |> List.fold (fun acc (k, v) -> Map.add k v acc) Map.empty
++                |> Map.toList
++
++            let mutable status = BuildStatus.Success
++
++            let runStep (stage: Stage) (cwd: string) (step: Step) =
++                let script =
++                    match step.Positional with
++                    | s :: _ -> Some s
++                    | [] ->
++                        step.Named
++                        |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some v else None)
++
++                let result =
++                    Executor.runStep
++                        { Name = step.Name
++                          Script = script
++                          Workspace = cwd
++                          Environment = envFor stage
++                          TimeoutMs = Some 120_000
++                          OnLine = Some(fun l -> output.Add l) }
++
++                // Output arrives exactly once, via OnLine. An earlier version also
++                // appended result.Stdout, so every shell line was emitted twice and
++                // the differential reported a phantom divergence at line 1.
++                //
++                // stderr is not streamed by OnLine, so it is added here.
++                for line in result.Stderr.Replace("\r\n", "\n").Split '\n' do
++                    if line <> "" then output.Add line
++
++                // Jenkins prints its failure reason INTO the build log. Parity
++                // requires the same: a diagnostic the user cannot see is not a
++                // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
++                // opaque `exit code -1`, and we promised to be clearer, not quieter).
++                if result.Status <> BuildStatus.Success then
++                    result.Diagnostic
++                    |> Option.iter (fun d -> output.Add $"ERROR: {d}")
++
++                    status <- BuildStatus.worstOf status result.Status
++
++            let rec runStage (cwd: string) (stage: Stage) =
++                if status = BuildStatus.Success then
++                    for step in stage.Steps do
++                        if status = BuildStatus.Success then
++                            match step.Name, step.Positional with
++                            | "dir", (sub :: _) ->
++                                // `dir('x') { … }` — nested cwd, auto-created
++                                match Workspace.resolveUnder cwd sub with
++                                | Result.Error e ->
++                                    output.Add $"dir refused: {e.Describe}"
++                                    status <- BuildStatus.Failure
++                                | Result.Ok target ->
++                                    Directory.CreateDirectory target |> ignore
++                                    for inner in step.Block do
++                                        runStep stage target inner
++                            | _ -> runStep stage cwd step
++
++                    for nested in stage.Nested do
++                        runStage cwd nested
++
++            for stage in pipeline.Stages do
++                runStage workspace stage
++
++            let workspaceHash, files = Trace.hashWorkspace workspace
++
++            Result.Ok
++                { Result = BuildStatus.toWireString status
++                  Output = Trace.normaliseOutput output
++                  WorkspaceHash = workspaceHash
++                  WorkspaceFiles = files }
+diff --git a/src/Fogell.Differential/Jenkins.fs b/src/Fogell.Differential/Jenkins.fs
+new file mode 100644
+index 0000000..2c6b0fd
+--- /dev/null
++++ b/src/Fogell.Differential/Jenkins.fs
+@@ -0,0 +1,112 @@
++namespace Fogell.Differential
++
++open System
++open System.Net.Http
++open System.Text
++open System.Text.RegularExpressions
++
++/// The Jenkins side of the differential. Drives a PINNED Jenkins over its REST
++/// API, runs one Jenkinsfile, and reduces the run to a [Trace].
++///
++/// Pinning matters: a compatibility claim is against a specific Jenkins, not
++/// "Jenkins" in the abstract. The image digest and core version are recorded in
++/// every receipt.
++type JenkinsConfig =
++    { BaseUrl: string
++      /// Recorded in the receipt so the claim names what it was measured against.
++      CoreVersion: string
++      /// A directory visible to BOTH engines, so the workspace can be hashed.
++      /// Jenkins runs in a container, so this is the host path of its workspace.
++      WorkspaceRoot: string option }
++
++module Jenkins =
++
++    let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
++
++    let private crumb (cfg: JenkinsConfig) =
++        task {
++            let! body = client.GetStringAsync $"{cfg.BaseUrl}/crumbIssuer/api/json"
++            let field = Regex.Match(body, "\"crumbRequestField\":\"([^\"]+)\"").Groups[1].Value
++            let value = Regex.Match(body, "\"crumb\":\"([^\"]+)\"").Groups[1].Value
++            return field, value
++        }
++        |> fun t -> t.Result
++
++    let private xmlEscape (s: string) =
++        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;")
++
++    let private jobXml (script: string) =
++        "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
++        + "<properties>"
++        // PERFORMANCE_OPTIMIZED deliberately: the differential compares SEMANTICS,
++        // and MAX_SURVIVABILITY costs ~6.9 fsyncs per step without changing any
++        // observable output. Durability is compared separately, not here.
++        + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
++        + "<hint>PERFORMANCE_OPTIMIZED</hint>"
++        + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
++        + "</properties>"
++        + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition\" plugin=\"workflow-cps\">"
++        + $"<script>{xmlEscape script}</script><sandbox>true</sandbox></definition>"
++        + "<triggers/><disabled>false</disabled></flow-definition>"
++
++    /// Run one Jenkinsfile under a disposable job name and return its trace.
++    let run (cfg: JenkinsConfig) (jobName: string) (script: string) : Result<Trace, string> =
++        try
++            let field, value = crumb cfg
++
++            let post (path: string) (content: HttpContent option) =
++                let req = new HttpRequestMessage(HttpMethod.Post, $"{cfg.BaseUrl}{path}")
++                req.Headers.Add(field, value)
++                content |> Option.iter (fun c -> req.Content <- c)
++                let r = client.Send req
++                int r.StatusCode
++
++            post $"/job/{jobName}/doDelete" None |> ignore
++
++            let xml = new StringContent(jobXml script, Encoding.UTF8, "application/xml")
++            let created = post $"/createItem?name={jobName}" (Some xml)
++
++            if created <> 200 && created <> 201 then
++                Error $"createItem returned HTTP {created}"
++            else
++                post $"/job/{jobName}/build" None |> ignore
++
++                // poll to a terminal state
++                let mutable result = None
++                let mutable attempts = 0
++
++                while result.IsNone && attempts < 600 do
++                    Threading.Thread.Sleep 500
++                    attempts <- attempts + 1
++
++                    try
++                        let body =
++                            client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/api/json").Result
++
++                        if Regex.IsMatch(body, "\"building\":false") then
++                            let m = Regex.Match(body, "\"result\":\"([A-Z_]+)\"")
++                            if m.Success then result <- Some(m.Groups[1].Value.ToLowerInvariant())
++                    with _ ->
++                        ()
++
++                match result with
++                | None -> Error "jenkins build did not reach a terminal state"
++                | Some terminal ->
++                    let console =
++                        client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/consoleText").Result
++
++                    let workspaceHash, files =
++                        match cfg.WorkspaceRoot with
++                        | Some root -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
++                        | None -> "not-collected", []
++
++                    let trace =
++                        { Result = terminal
++                          Output = Trace.normaliseOutput (console.Replace("\r\n", "\n").Split '\n')
++                          WorkspaceHash = workspaceHash
++                          WorkspaceFiles = files }
++
++                    post $"/job/{jobName}/doDelete" None |> ignore
++                    Ok trace
++        with ex ->
++            Error ex.Message
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+new file mode 100644
+index 0000000..8def63b
+--- /dev/null
++++ b/src/Fogell.Differential/Trace.fs
+@@ -0,0 +1,124 @@
++namespace Fogell.Differential
++
++open System
++open System.IO
++open System.Security.Cryptography
++
++/// FG-002. The canonical form both engines are reduced to before comparison.
++///
++/// The hard part of a differential harness is deciding what "the same" means.
++/// Comparing raw console output is hopeless — timestamps, node names, plugin
++/// banners and ANSI codes all differ and none of it is semantics. So a run is
++/// reduced to three things that *are* semantics:
++///
++///   1. the terminal result
++///   2. the ordered sequence of observable step outputs
++///   3. a canonical hash of the workspace the run produced
++///
++/// Anything outside those three is deliberately not compared, and the reasons
++/// are recorded here rather than left implicit.
++type Trace =
++    { /// success | failure | aborted | unstable
++      Result: string
++      /// Ordered, normalised output lines attributable to the pipeline itself.
++      Output: string list
++      /// SHA-256 over (relative path, content hash) pairs, sorted.
++      WorkspaceHash: string
++      /// Files in the workspace, for a readable diff when hashes disagree.
++      WorkspaceFiles: (string * string) list }
++
++module Trace =
++
++    let private sha256Hex (bytes: byte[]) =
++        use h = SHA256.Create()
++        h.ComputeHash bytes |> Convert.ToHexString |> fun s -> s.ToLowerInvariant()
++
++    let private sha256Text (text: string) = sha256Hex (Text.Encoding.UTF8.GetBytes text)
++
++    /// Paths that are execution scaffolding rather than build output. Excluded
++    /// from the workspace hash because their presence is an engine detail:
++    /// Jenkins writes an `@tmp` sibling and durable-task spool files; Fogell
++    /// writes nothing comparable.
++    let private isScaffolding (relative: string) =
++        let p = relative.Replace('\\', '/')
++
++        p.StartsWith ".git/"
++        || p.Contains "@tmp/"
++        || p.EndsWith ".pid"
++        || p.StartsWith "durable-"
++        || p.Contains "/durable-"
++        || Path.GetFileName p = "jenkins-log.txt"
++        || Path.GetFileName p = "jenkins-result.txt"
++        || Path.GetFileName p = "script.sh"
++        || Path.GetFileName p = "script.sh.copy"
++
++    /// Hash a directory tree: sorted (relative path, content hash) pairs. Sorted
++    /// because directory enumeration order is not a semantic property.
++    let hashWorkspace (root: string) : string * (string * string) list =
++        if not (Directory.Exists root) then
++            sha256Text "", []
++        else
++            let entries =
++                Directory.GetFiles(root, "*", SearchOption.AllDirectories)
++                |> Array.choose (fun full ->
++                    let relative =
++                        Path.GetRelativePath(root, full).Replace('\\', '/')
++
++                    if isScaffolding relative then
++                        None
++                    else
++                        let content =
++                            try
++                                sha256Hex (File.ReadAllBytes full)
++                            with _ ->
++                                "unreadable"
++
++                        Some(relative, content))
++                |> Array.sortBy fst
++                |> Array.toList
++
++            let manifest =
++                entries |> List.map (fun (p, h) -> $"{p}\t{h}") |> String.concat "\n"
++
++            sha256Text manifest, entries
++
++    /// Normalise one output line so engine-specific decoration does not count as
++    /// a semantic difference. Every rule here is a measured difference between
++    /// the two engines, not a guess.
++    let normaliseLine (line: string) : string option =
++        let stripped =
++            Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
++
++        let t = stripped.Trim()
++
++        if t = "" then
++            None
++        // Jenkins pipeline-graph annotations: pure structure, no output
++        elif t.StartsWith "[Pipeline]" then None
++        // Jenkins node/workspace banners
++        elif t.StartsWith "Running on " || t.StartsWith "Running in " then None
++        elif t.StartsWith "Started by " then None
++        elif t.StartsWith "Resuming build" || t.StartsWith "Ready to run" then None
++        elif t.StartsWith "Finished:" then None
++        elif t.StartsWith "GitHub has been notified" then None
++        // `sh` xtrace echo: Jenkins prints `+ cmd`, and so does a shell with -x.
++        // The command text is not output, it is provenance.
++        elif t.StartsWith "+ " then None
++        // Jenkins prefixes workspace paths that differ by construction
++        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
++        else Some t
++
++    let normaliseOutput (lines: string seq) : string list =
++        lines |> Seq.choose normaliseLine |> List.ofSeq
++
++    /// The exclusions above are part of the contract, so they are published with
++    /// every receipt rather than buried in code.
++    let comparisonContract =
++        [ "compared: terminal result"
++          "compared: ordered normalised output lines"
++          "compared: canonical workspace hash over sorted (path, content-hash) pairs"
++          "excluded: timestamps, ANSI escapes, blank lines"
++          "excluded: [Pipeline] graph annotations, node/workspace banners, Started/Finished lines"
++          "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
++          "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
++          "not compared: wall-clock duration, log ordering across stdout/stderr, plugin banners" ]
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 184a2df..ef4cf81 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -9,8 +9,14 @@ open Fogell.Domain
+ type StepRequest =
+     { Name: string
+       Script: string option
+-      WorkspaceRoot: string
+-      AttemptKey: string
++      /// An ALREADY-CREATED directory the step runs in.
++      ///
++      /// Steps within one attempt share a workspace — step 2 reads what step 1
++      /// wrote — so workspace creation belongs to the attempt, not the step.
++      /// An earlier version had each step call Workspace.createFresh, which
++      /// correctly refused the existing directory and failed every `sh` step.
++      /// Use [Workspace.createFresh] once per attempt, then pass it here.
++      Workspace: string
+       Environment: (string * string) list
+       TimeoutMs: int option
+       OnLine: (string -> unit) option }
+@@ -47,14 +53,13 @@ module Executor =
+     /// `exit code -1` with no mention of a restart. Fogell owns the process, so
+     /// the diagnostic always says what happened.
+     let runShell (request: StepRequest) (script: string) : StepResult =
+-        match Workspace.createFresh request.WorkspaceRoot request.AttemptKey with
+-        | Result.Error e ->
++        if not (System.IO.Directory.Exists request.Workspace) then
+             { ok Failure with
+-                Diagnostic = Some $"workspace refused: {e.Describe}" }
+-        | Result.Ok workspace ->
++                Diagnostic = Some $"workspace '{request.Workspace}' does not exist; create it once per attempt" }
++        else
+             let run =
+                 ProcessGroup.run
+-                    { RunRequest.create (script, workspace) with
++                    { RunRequest.create (script, request.Workspace) with
+                         Environment = request.Environment
+                         TimeoutMs = request.TimeoutMs
+                         OnLine = request.OnLine }
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 828f39b..326e5dc 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -13,11 +13,17 @@ let private tempRoot () =
+ 
+ let private key () = "attempt-" + Guid.NewGuid().ToString("N").Substring(0, 8)
+ 
++/// A step request against a freshly created workspace. Creation is an
++/// attempt-level concern (FG-030); steps run inside what already exists.
+ let private request root script =
++    let ws =
++        match Workspace.createFresh root (key ()) with
++        | Result.Ok p -> p
++        | Result.Error e -> failwith e.Describe
++
+     { Name = "sh"
+       Script = Some script
+-      WorkspaceRoot = root
+-      AttemptKey = key ()
++      Workspace = ws
+       Environment = []
+       TimeoutMs = None
+       OnLine = None }
+@@ -145,8 +151,9 @@ let shellExecution =
+ 
+           test "the step runs inside its own fresh workspace" {
+               let root = tempRoot ()
+-              let r = Executor.runStep (request root "pwd")
+-              Expect.stringContains r.Stdout (Path.GetFileName(Path.GetFullPath root)) "cwd is under the root"
++              let req = request root "pwd"
++              let r = Executor.runStep req
++              Expect.stringContains r.Stdout (Path.GetFileName req.Workspace) "cwd is the attempt workspace"
+           }
+ 
+           test "environment is passed through" {
+@@ -228,8 +235,9 @@ let containment =
+               // success and abort, and JENKINS_NODE_COOKIE=dontKillMe is moot
+               // because nothing is killed. Fogell reaps the group.
+               let root = tempRoot ()
+-              let pidFile = Path.Combine(root, "daemon.pid")
+-              let r = Executor.runStep (request root (daemonScript pidFile + " echo spawned"))
++              let req = request root ""
++              let pidFile = Path.Combine(req.Workspace, "daemon.pid")
++              let r = Executor.runStep { req with Script = Some(daemonScript pidFile + " echo spawned") }
+ 
+               Expect.equal r.Status Success "step itself succeeded"
+ 
+@@ -246,11 +254,13 @@ let containment =
+ 
+           test "BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too" {
+               let root = tempRoot ()
+-              let pidFile = Path.Combine(root, "daemon.pid")
++              let req = request root ""
++              let pidFile = Path.Combine(req.Workspace, "daemon.pid")
+ 
+               let r =
+                   Executor.runStep
+-                      { request root (daemonScript pidFile + " sleep 30") with
++                      { req with
++                          Script = Some(daemonScript pidFile + " sleep 30")
+                           TimeoutMs = Some 1_200 }
+ 
+               Expect.equal r.Status Aborted "timed out"
+@@ -264,13 +274,14 @@ let containment =
+ 
+           test "reaping can be opted out of" {
+               let root = tempRoot ()
+-              let pidFile = Path.Combine(root, "daemon.pid")
+ 
+               let ws =
+                   match Workspace.createFresh root (key ()) with
+                   | Result.Ok p -> p
+                   | Result.Error e -> failtestf "%s" e.Describe
+ 
++              let pidFile = Path.Combine(ws, "daemon.pid")
++
+               let r =
+                   ProcessGroup.run
+                       { RunRequest.create (daemonScript pidFile + " echo spawned", ws) with
+diff --git a/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj b/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+new file mode 100644
+index 0000000..3eb9553
+--- /dev/null
++++ b/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+@@ -0,0 +1,10 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType><IsPackable>false</IsPackable>
++    <AssemblyName>fogell-diff</AssemblyName>
++  </PropertyGroup>
++  <ItemGroup><Compile Include="Program.fs" /></ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/Fogell.Differential/Fogell.Differential.fsproj" />
++  </ItemGroup>
++</Project>
+diff --git a/tools/Fogell.Differential.Cli/Program.fs b/tools/Fogell.Differential.Cli/Program.fs
+new file mode 100644
+index 0000000..2ec0ba2
+--- /dev/null
++++ b/tools/Fogell.Differential.Cli/Program.fs
+@@ -0,0 +1,91 @@
++module Fogell.Differential.Cli.Program
++
++open System
++open System.IO
++open Fogell.Differential
++
++/// FG-002. Runs one or more Jenkinsfiles through BOTH engines and seals a
++/// receipt per file.
++///
++/// Usage:
++///   fogell-diff <jenkins-url> <jenkins-core> <receipt-dir> <file.Jenkinsfile>...
++///
++/// Environment:
++///   FOGELL_JENKINS_WORKSPACE  host path of Jenkins' workspace root (optional;
++///                             without it, workspace hashes are not compared)
++[<EntryPoint>]
++let main argv =
++    match Array.toList argv with
++    | baseUrl :: core :: receiptDir :: (_ :: _ as files) ->
++        let jenkinsWorkspace =
++            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE" with
++            | null | "" -> None
++            | v -> Some v
++
++        let cfg =
++            { BaseUrl = baseUrl
++              CoreVersion = core
++              WorkspaceRoot = jenkinsWorkspace }
++
++        let fogellRoot =
++            Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
++
++        Directory.CreateDirectory fogellRoot |> ignore
++
++        printfn "jenkins:   %s (core %s)" baseUrl core
++        printfn "workspace: %s" (defaultArg jenkinsWorkspace "<not collected — workspace hashes NOT compared>")
++        printfn ""
++
++        let receipts =
++            files
++            |> List.mapi (fun i file ->
++                let name = Path.GetFileName file
++                let script = File.ReadAllText file
++                // job name must be stable so the workspace path is predictable
++                let job = "diff" + string i
++
++                let jenkins = Jenkins.run cfg job script
++                let fogell = FogellSide.run fogellRoot job script
++                let r = Compare.receipt name core jenkins fogell
++                let path = Compare.seal receiptDir r
++
++                let workspaceCompared =
++                    match r.Jenkins, r.Fogell with
++                    | Some j, Some f -> Compare.workspaceWasCompared j f
++                    | _ -> false
++
++                let verdict =
++                    match r.Verdict with
++                    | Proven when workspaceCompared -> "PROVEN"
++                    | Proven -> "PROVEN-PARTIAL"
++                    | Diverged ds -> $"DIVERGED({ds.Length})"
++                    | NotComparable _ -> "NOT-COMPARABLE"
++
++                printfn "  %-46s %-16s %s" (name.Substring(0, min 44 name.Length)) verdict (Path.GetFileName path)
++
++                match r.Verdict with
++                | Diverged ds -> for d in ds do printfn "        %s" d.Describe
++                | NotComparable d -> printfn "        %s" d.Describe
++                | Proven -> ()
++
++                r)
++
++        let isFull (r: Receipt) =
++            r.Verdict = Proven
++            && (match r.Jenkins, r.Fogell with
++                | Some j, Some f -> Compare.workspaceWasCompared j f
++                | _ -> false)
++
++        let full = receipts |> List.filter isFull |> List.length
++        let partial = receipts |> List.filter (fun r -> r.Verdict = Proven && not (isFull r)) |> List.length
++
++        printfn ""
++        printfn "tier-1 proven (incl. workspace): %d / %d" full receipts.Length
++        printfn "proven-partial (result+output):  %d / %d" partial receipts.Length
++
++        // Exit non-zero unless every file is fully proven. A partial pass is not
++        // a pass: it is a claim with a hole in it.
++        if full = receipts.Length then 0 else 1
++    | _ ->
++        eprintfn "usage: fogell-diff <jenkins-url> <jenkins-core> <receipt-dir> <file...>"
++        2

@@ -13,11 +13,17 @@ let private tempRoot () =
 
 let private key () = "attempt-" + Guid.NewGuid().ToString("N").Substring(0, 8)
 
+/// A step request against a freshly created workspace. Creation is an
+/// attempt-level concern (FG-030); steps run inside what already exists.
 let private request root script =
+    let ws =
+        match Workspace.createFresh root (key ()) with
+        | Result.Ok p -> p
+        | Result.Error e -> failwith e.Describe
+
     { Name = "sh"
       Script = Some script
-      WorkspaceRoot = root
-      AttemptKey = key ()
+      Workspace = ws
       Environment = []
       TimeoutMs = None
       OnLine = None }
@@ -145,8 +151,9 @@ let shellExecution =
 
           test "the step runs inside its own fresh workspace" {
               let root = tempRoot ()
-              let r = Executor.runStep (request root "pwd")
-              Expect.stringContains r.Stdout (Path.GetFileName(Path.GetFullPath root)) "cwd is under the root"
+              let req = request root "pwd"
+              let r = Executor.runStep req
+              Expect.stringContains r.Stdout (Path.GetFileName req.Workspace) "cwd is the attempt workspace"
           }
 
           test "environment is passed through" {
@@ -228,8 +235,9 @@ let containment =
               // success and abort, and JENKINS_NODE_COOKIE=dontKillMe is moot
               // because nothing is killed. Fogell reaps the group.
               let root = tempRoot ()
-              let pidFile = Path.Combine(root, "daemon.pid")
-              let r = Executor.runStep (request root (daemonScript pidFile + " echo spawned"))
+              let req = request root ""
+              let pidFile = Path.Combine(req.Workspace, "daemon.pid")
+              let r = Executor.runStep { req with Script = Some(daemonScript pidFile + " echo spawned") }
 
               Expect.equal r.Status Success "step itself succeeded"
 
@@ -246,11 +254,13 @@ let containment =
 
           test "BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too" {
               let root = tempRoot ()
-              let pidFile = Path.Combine(root, "daemon.pid")
+              let req = request root ""
+              let pidFile = Path.Combine(req.Workspace, "daemon.pid")
 
               let r =
                   Executor.runStep
-                      { request root (daemonScript pidFile + " sleep 30") with
+                      { req with
+                          Script = Some(daemonScript pidFile + " sleep 30")
                           TimeoutMs = Some 1_200 }
 
               Expect.equal r.Status Aborted "timed out"
@@ -264,12 +274,13 @@ let containment =
 
           test "reaping can be opted out of" {
               let root = tempRoot ()
-              let pidFile = Path.Combine(root, "daemon.pid")
 
               let ws =
                   match Workspace.createFresh root (key ()) with
                   | Result.Ok p -> p
                   | Result.Error e -> failtestf "%s" e.Describe
+
+              let pidFile = Path.Combine(ws, "daemon.pid")
 
               let r =
                   ProcessGroup.run

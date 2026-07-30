@@ -9,8 +9,14 @@ open Fogell.Domain
 type StepRequest =
     { Name: string
       Script: string option
-      WorkspaceRoot: string
-      AttemptKey: string
+      /// An ALREADY-CREATED directory the step runs in.
+      ///
+      /// Steps within one attempt share a workspace — step 2 reads what step 1
+      /// wrote — so workspace creation belongs to the attempt, not the step.
+      /// An earlier version had each step call Workspace.createFresh, which
+      /// correctly refused the existing directory and failed every `sh` step.
+      /// Use [Workspace.createFresh] once per attempt, then pass it here.
+      Workspace: string
       Environment: (string * string) list
       TimeoutMs: int option
       OnLine: (string -> unit) option }
@@ -47,14 +53,13 @@ module Executor =
     /// `exit code -1` with no mention of a restart. Fogell owns the process, so
     /// the diagnostic always says what happened.
     let runShell (request: StepRequest) (script: string) : StepResult =
-        match Workspace.createFresh request.WorkspaceRoot request.AttemptKey with
-        | Result.Error e ->
+        if not (System.IO.Directory.Exists request.Workspace) then
             { ok Failure with
-                Diagnostic = Some $"workspace refused: {e.Describe}" }
-        | Result.Ok workspace ->
+                Diagnostic = Some $"workspace '{request.Workspace}' does not exist; create it once per attempt" }
+        else
             let run =
                 ProcessGroup.run
-                    { RunRequest.create (script, workspace) with
+                    { RunRequest.create (script, request.Workspace) with
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = request.OnLine }
