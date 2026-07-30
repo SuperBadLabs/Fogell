@@ -76,9 +76,25 @@ module Executor =
                         TimeoutMs = request.TimeoutMs
                         OnLine = request.OnLine }
 
+            let signalName =
+                function
+                | 1 -> "SIGHUP"
+                | 2 -> "SIGINT"
+                | 9 -> "SIGKILL"
+                | 15 -> "SIGTERM"
+                | n -> $"signal {n}"
+
             let status, exitCode, diagnostic =
                 match run.Outcome with
                 | Completed 0 -> Success, Some 0, None
+                // FG-033: name the signal and say who did not do it, so the
+                // operator is not left guessing at an opaque code.
+                | Signalled s ->
+                    Failure,
+                    None,
+                    Some
+                        $"step process was terminated by {signalName s} from outside the engine \
+                          (not a Fogell timeout or cancellation); its effect may be incomplete"
                 | Completed code ->
                     Failure,
                     Some code,

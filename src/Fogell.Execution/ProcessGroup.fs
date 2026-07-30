@@ -16,6 +16,13 @@ open System.Threading
 /// `setsid`; untrusted multi-tenant work needs VM-level isolation.
 type Outcome =
     | Completed of exitCode: int
+    /// FG-033. The step's process was terminated by a signal from OUTSIDE this
+    /// engine — an operator, an OOM killer, a container stop.
+    ///
+    /// Jenkins takes ~10 minutes to conclude anything here and then reports
+    /// `exit code -1` with no mention of why (JB-DUR-005). Fogell owns the
+    /// process, so it knows immediately and names the signal.
+    | Signalled of signal: int
     | TimedOut
     | Cancelled
 
@@ -244,7 +251,12 @@ module ProcessGroup =
                     else
                         None
 
-                Completed code, t
+                // On Linux a process killed by signal N reports 128+N. Reporting
+                // that as an ordinary exit code is how "exit code -1" happens.
+                let outcome =
+                    if code > 128 && code < 165 then Signalled(code - 128) else Completed code
+
+                outcome, t
             else
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300

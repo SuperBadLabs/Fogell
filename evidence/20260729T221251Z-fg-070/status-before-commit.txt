@@ -1,0 +1,7 @@
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Execution/Executor.fs
+M  src/Fogell.Execution/Fogell.Execution.fsproj
+M  src/Fogell.Execution/ProcessGroup.fs
+A  src/Fogell.Execution/Secrets.fs
+M  tests/Fogell.Execution.Tests/Tests.fs
+?? evidence/20260729T221251Z-fg-070/

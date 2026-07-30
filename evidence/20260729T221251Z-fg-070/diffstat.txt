@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md                      |   6 +-
+ src/Fogell.Execution/Executor.fs             |  16 +++
+ src/Fogell.Execution/Fogell.Execution.fsproj |   1 +
+ src/Fogell.Execution/ProcessGroup.fs         |  14 ++-
+ src/Fogell.Execution/Secrets.fs              | 108 ++++++++++++++++
+ tests/Fogell.Execution.Tests/Tests.fs        | 176 ++++++++++++++++++++++++++-
+ 6 files changed, 316 insertions(+), 5 deletions(-)

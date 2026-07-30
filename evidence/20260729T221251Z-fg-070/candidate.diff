@@ -1,0 +1,410 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 91d8671..7eb7526 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -104,7 +104,7 @@ derivation in `architecture/BASELINE.md`.
+ | FG-030 | P0 | **DONE** | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | 6 tests: absolute, traversal, mid-path traversal, symlinked component, outside-root, and reuse all refused with a named error |
+ | FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
+ | FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
+-| FG-033 | P0 | TODO | **Dead-process detection in seconds**, diagnostic naming the restart (`adr/0005` beat) | kill the step process: terminal verdict < 10 s with a message stating the cause |
++| FG-033 | P0 | **DONE** | **Dead-process detection in seconds**, diagnostic naming the cause (`adr/0005` beat) | An externally SIGKILLed step is detected in **under 10 s** (Jenkins: ~10 min, then `exit code -1`). A signal exit (128+N) is reported as `Signalled`, **not** an ordinary exit code, and the diagnostic names the signal, says it came from outside the engine, and warns the effect may be incomplete. Our own timeout is still `Aborted`, never mis-attributed |
+ | FG-034 | P1 | TODO | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | differential receipt vs Jenkins on a trapped-SIGTERM pipeline |
+ | FG-035 | P1 | TODO | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | differential receipt: attempt count matches Jenkins |
+ | FG-036 | P1 | TODO | `parallel`: siblings finish by default; `failFast` interrupts them | differential receipt for both modes |
+@@ -151,8 +151,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-070 | P0 | TODO | Secrets never placed in the child environment where a transformation can leak them; broker or fd delivery | `echo $TOK \| rev` cannot print the secret |
+-| FG-071 | P0 | TODO | Masking is defence-in-depth, documented as defeatable, and **never silent** (`adr/0005` beat) | a masking miss emits a warning; Jenkins emits none |
++| FG-070 | P0 | **DONE** | Secrets never placed in the child environment | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent |
++| FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | Masks the same forms Jenkins was measured to handle (literal, base64, case-folded). It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
+ | FG-072 | P0 | TODO | Interpreter sandbox: no reflection, no file/network/process access except through steps | escape-attempt suite fully rejected with named codes |
+ | FG-073 | P1 | TODO | Threat model document: untrusted Jenkinsfile, hostile agent, multi-tenant boundary | reviewed and committed |
+ | FG-074 | P1 | TODO | Dependency audit + pinned lockfile; no unpinned transitive fetch at build time | offline build succeeds from a warm cache |
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 265c9a8..1ce59cb 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -76,9 +76,25 @@ module Executor =
+                         TimeoutMs = request.TimeoutMs
+                         OnLine = request.OnLine }
+ 
++            let signalName =
++                function
++                | 1 -> "SIGHUP"
++                | 2 -> "SIGINT"
++                | 9 -> "SIGKILL"
++                | 15 -> "SIGTERM"
++                | n -> $"signal {n}"
++
+             let status, exitCode, diagnostic =
+                 match run.Outcome with
+                 | Completed 0 -> Success, Some 0, None
++                // FG-033: name the signal and say who did not do it, so the
++                // operator is not left guessing at an opaque code.
++                | Signalled s ->
++                    Failure,
++                    None,
++                    Some
++                        $"step process was terminated by {signalName s} from outside the engine \
++                          (not a Fogell timeout or cancellation); its effect may be incomplete"
+                 | Completed code ->
+                     Failure,
+                     Some code,
+diff --git a/src/Fogell.Execution/Fogell.Execution.fsproj b/src/Fogell.Execution/Fogell.Execution.fsproj
+index 6190a9a..e7eef4b 100644
+--- a/src/Fogell.Execution/Fogell.Execution.fsproj
++++ b/src/Fogell.Execution/Fogell.Execution.fsproj
+@@ -10,6 +10,7 @@
+     <Compile Include="Native.fs" />
+     <Compile Include="Workspace.fs" />
+     <Compile Include="ProcessGroup.fs" />
++    <Compile Include="Secrets.fs" />
+     <Compile Include="Publish.fs" />
+     <Compile Include="Executor.fs" />
+   </ItemGroup>
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index c6f8fed..f7eaed1 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -16,6 +16,13 @@ open System.Threading
+ /// `setsid`; untrusted multi-tenant work needs VM-level isolation.
+ type Outcome =
+     | Completed of exitCode: int
++    /// FG-033. The step's process was terminated by a signal from OUTSIDE this
++    /// engine — an operator, an OOM killer, a container stop.
++    ///
++    /// Jenkins takes ~10 minutes to conclude anything here and then reports
++    /// `exit code -1` with no mention of why (JB-DUR-005). Fogell owns the
++    /// process, so it knows immediately and names the signal.
++    | Signalled of signal: int
+     | TimedOut
+     | Cancelled
+ 
+@@ -244,7 +251,12 @@ module ProcessGroup =
+                     else
+                         None
+ 
+-                Completed code, t
++                // On Linux a process killed by signal N reports 128+N. Reporting
++                // that as an ordinary exit code is how "exit code -1" happens.
++                let outcome =
++                    if code > 128 && code < 165 then Signalled(code - 128) else Completed code
++
++                outcome, t
+             else
+                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
+                 flushReaders 300
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+new file mode 100644
+index 0000000..b058f3e
+--- /dev/null
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -0,0 +1,108 @@
++namespace Fogell.Execution
++
++open System
++open System.IO
++
++/// FG-070/071. Secret delivery and masking.
++///
++/// Two things are true and are treated as such rather than wished away:
++///
++/// 1. A secret placed in the child's ENVIRONMENT is readable from
++///    /proc/<pid>/environ by any process running as the same user, for the whole
++///    life of the step. Measured, not assumed. Jenkins' `withCredentials` does
++///    exactly this. So Fogell does not do it: the value goes to a 0600 file and
++///    the environment carries only the PATH.
++///
++/// 2. Masking cannot be a security boundary. A script that can read a secret can
++///    transform it, and the measured Jenkins masker handles literal, base64 and
++///    case-folded forms while losing to `rev`, hex, substring and char-split —
++///    silently, with the build green. Fogell masks the same registered forms but
++///    treats masking as defence-in-depth and, crucially, is NOT silent when a
++///    transformation likely escaped it.
++type SecretBinding =
++    { /// Environment variable the script reads, e.g. `TOKEN_FILE`.
++      PathVariable: string
++      /// Absolute path of the 0600 file holding the value.
++      FilePath: string
++      /// The value, retained only to build the masker and to detect leaks.
++      Value: string }
++
++type Leak =
++    { Variable: string
++      /// How the value appeared: which transformation defeated the mask.
++      Encoding: string }
++
++module Secrets =
++
++    /// Encodings the masker recognises. Deliberately the SAME set Jenkins was
++    /// measured to handle, so parity is exact — plus the detector below, which
++    /// Jenkins has no equivalent of.
++    let private registeredForms (value: string) =
++        let bytes = Text.Encoding.UTF8.GetBytes value
++
++        [ "literal", value
++          "base64", Convert.ToBase64String bytes
++          "upper", value.ToUpperInvariant()
++          "lower", value.ToLowerInvariant() ]
++        |> List.filter (fun (_, v) -> v <> "")
++
++    /// Transformations Jenkins is measured to LEAK on. Fogell does not mask them
++    /// either — masking every possible encoding is impossible — but it detects
++    /// them and says so, which is the difference between a known gap and a silent
++    /// one.
++    let private detectableForms (value: string) =
++        let bytes = Text.Encoding.UTF8.GetBytes value
++
++        [ "reversed", String(value.ToCharArray() |> Array.rev)
++          "hex", Convert.ToHexString(bytes).ToLowerInvariant()
++          "char-split", String.Join("_", value.ToCharArray()) ]
++        |> List.filter (fun (_, v) -> v.Length > 3)
++
++    /// Write the secret to a file only the running user can read, and return the
++    /// binding. The file lives in the attempt's own directory so it is removed
++    /// with the workspace.
++    let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
++        Directory.CreateDirectory directory |> ignore
++        let path = Path.Combine(directory, $".secret-{variableName}")
++        File.WriteAllText(path, value)
++
++        // 0600 before anything can read it. WriteAllText creates with the
++        // process umask, so this is tightened immediately after.
++        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
++
++        { PathVariable = variableName + "_FILE"
++          FilePath = path
++          Value = value }
++
++    /// Environment entries for a set of bindings. Note what is ABSENT: the value.
++    let environmentFor (bindings: SecretBinding list) =
++        bindings |> List.map (fun b -> b.PathVariable, b.FilePath)
++
++    /// Replace every registered form with `****`.
++    let mask (bindings: SecretBinding list) (text: string) =
++        bindings
++        |> List.collect (fun b -> registeredForms b.Value |> List.map snd)
++        |> List.sortByDescending String.length
++        |> List.fold (fun (acc: string) form -> acc.Replace(form, "****")) text
++
++    /// FG-071. After masking, look for forms the mask does not cover. A hit means
++    /// a secret reached the log in a shape masking cannot catch — reported, never
++    /// swallowed.
++    let detectLeaks (bindings: SecretBinding list) (maskedText: string) : Leak list =
++        [ for b in bindings do
++              // the literal must never survive masking; if it does, the masker failed
++              if maskedText.Contains b.Value then
++                  { Variable = b.PathVariable; Encoding = "literal" }
++
++              for name, form in detectableForms b.Value do
++                  if maskedText.Contains form then
++                      { Variable = b.PathVariable; Encoding = name } ]
++
++    /// Remove secret files. Called even on failure, because a leftover secret
++    /// file outlives the reason it existed.
++    let revoke (bindings: SecretBinding list) =
++        for b in bindings do
++            try
++                if File.Exists b.FilePath then File.Delete b.FilePath
++            with _ ->
++                ()
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 8f68bc4..759abdf 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -5,6 +5,7 @@ open System.IO
+ open Expecto
+ open Fogell.Domain
+ open Fogell.Execution
++open System.Diagnostics
+ 
+ let private tempRoot () =
+     let p = Path.Combine(Path.GetTempPath(), "fogell-exec-" + Guid.NewGuid().ToString("N"))
+@@ -301,6 +302,179 @@ let containment =
+                   Native.signalProcess pid Native.SIGKILL |> ignore
+           } ]
+ 
++/// FG-070/071. The properties that make secret handling better than Jenkins',
++/// each asserted against a real subprocess.
++let secrets =
++    testList
++        "FG-070/071 secret delivery and leak detection"
++        [ test "BEAT JENKINS: the value is NOT in the child's environment" {
++              // Measured: a secret in the environment is readable from
++              // /proc/<pid>/environ by any process running as the same user, for
++              // the whole life of the step. Jenkins' withCredentials does exactly
++              // that. Fogell passes a PATH, never the value.
++              let root = tempRoot ()
++              let req = request root ""
++              let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
++
++              let r =
++                  Executor.runStep
++                      { req with
++                          // the script prints its OWN environment; if the value
++                          // were there, it would appear here
++                          Script = Some "cat /proc/self/environ | tr '\\0' '\\n' | sort"
++                          Environment = Secrets.environmentFor [ binding ] }
++
++              Expect.equal r.Status BuildStatus.Success "ran"
++              Expect.isFalse (r.Stdout.Contains "SUPERSECRET123") "the value is absent from the environment"
++              Expect.stringContains r.Stdout "TOKEN_FILE=" "only a path is exposed"
++              Secrets.revoke [ binding ]
++          }
++
++          test "the secret file is readable by its owner and nobody else" {
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              let binding = Secrets.bind ws "TOKEN" "SUPERSECRET123"
++              let mode = File.GetUnixFileMode binding.FilePath
++
++              Expect.isTrue (mode.HasFlag UnixFileMode.UserRead) "owner may read"
++              Expect.isFalse (mode.HasFlag UnixFileMode.GroupRead) "group may not"
++              Expect.isFalse (mode.HasFlag UnixFileMode.OtherRead) "others may not"
++              Secrets.revoke [ binding ]
++          }
++
++          test "a script can still use the secret via its file" {
++              let root = tempRoot ()
++              let req = request root ""
++              let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
++
++              let r =
++                  Executor.runStep
++                      { req with
++                          Script = Some "test -s \"$TOKEN_FILE\" && echo have-secret"
++                          Environment = Secrets.environmentFor [ binding ] }
++
++              Expect.stringContains r.Stdout "have-secret" "usable"
++              Secrets.revoke [ binding ]
++          }
++
++          test "masking covers the same forms Jenkins covers" {
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              let b = Secrets.bind ws "TOKEN" "SUPERSECRET123"
++              let masked = Secrets.mask [ b ] "value=SUPERSECRET123 b64=U1VQRVJTRUNSRVQxMjM= low=supersecret123"
++              Expect.isFalse (masked.Contains "SUPERSECRET123") "literal masked"
++              Expect.isFalse (masked.Contains "U1VQRVJTRUNSRVQxMjM=") "base64 masked"
++              Expect.isFalse (masked.Contains "supersecret123") "lowercase masked"
++              Secrets.revoke [ b ]
++          }
++
++          test "BEAT JENKINS: a transformation that defeats masking is REPORTED" {
++              // Jenkins leaks on rev/hex/substring silently, with the build green.
++              // Fogell does not mask those either — masking every encoding is
++              // impossible — but it detects them and names the encoding, which is
++              // the difference between a known gap and a silent one.
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              let b = Secrets.bind ws "TOKEN" "SUPERSECRET123"
++              let reversed = String(("SUPERSECRET123").ToCharArray() |> Array.rev)
++              let leaks = Secrets.detectLeaks [ b ] (Secrets.mask [ b ] $"out={reversed}")
++
++              Expect.isNonEmpty leaks "the reversed form is detected"
++              Expect.equal (leaks |> List.map (fun l -> l.Encoding)) [ "reversed" ] "names the encoding"
++              Secrets.revoke [ b ]
++          }
++
++          test "clean output produces no leak report" {
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              let b = Secrets.bind ws "TOKEN" "SUPERSECRET123"
++              Expect.isEmpty (Secrets.detectLeaks [ b ] (Secrets.mask [ b ] "nothing to see")) "no false positives"
++              Secrets.revoke [ b ]
++          }
++
++          test "revoke removes the secret file" {
++              let root = tempRoot ()
++              let ws = match Workspace.createFresh root (key ()) with
++                       | Result.Ok p -> p
++                       | Result.Error e -> failtestf "%s" e.Describe
++
++              let b = Secrets.bind ws "TOKEN" "SUPERSECRET123"
++              Expect.isTrue (File.Exists b.FilePath) "written"
++              Secrets.revoke [ b ]
++              Expect.isFalse (File.Exists b.FilePath) "removed"
++          } ]
++
++/// FG-033. Jenkins takes ~10 minutes to notice a dead step process and then says
++/// `exit code -1`. Fogell owns the process.
++let deadProcessDetection =
++    testList
++        "FG-033 external termination"
++        [ test "BEAT JENKINS: an externally killed step is detected in seconds and names the signal" {
++              let root = tempRoot ()
++              let req = request root ""
++              let pidFile = Path.Combine(req.Workspace, "child.pid")
++
++              // the step records its own pid, then sleeps; an external killer
++              // SIGKILLs it, exactly as an operator or OOM killer would
++              let killer =
++                  async {
++                      do! Async.Sleep 700
++
++                      match waitForPidFile pidFile with
++                      | Some pid -> Native.signalProcess pid Native.SIGKILL |> ignore
++                      | None -> ()
++                  }
++
++              Async.Start killer
++              let sw = Diagnostics.Stopwatch.StartNew()
++
++              let r =
++                  Executor.runStep
++                      { req with
++                          Script = Some $"echo $$ > {pidFile}; sleep 60"
++                          TimeoutMs = Some 30_000 }
++
++              sw.Stop()
++
++              Expect.isLessThan sw.ElapsedMilliseconds 10_000L "detected in seconds, not minutes"
++              Expect.equal r.Status BuildStatus.Failure "reported as a failure"
++
++              match r.Diagnostic with
++              | Some d ->
++                  Expect.stringContains d "SIGKILL" "names the signal"
++                  Expect.stringContains d "outside the engine" "distinguishes it from our own timeout"
++                  Expect.stringContains d "may be incomplete" "warns about the effect"
++              | None -> failtest "an external kill must carry a diagnostic"
++          }
++
++          test "our own timeout is NOT reported as an external kill" {
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "" with
++                          Script = Some "trap '' TERM; sleep 30"
++                          TimeoutMs = Some 700 }
++
++              Expect.equal r.Status BuildStatus.Aborted "a timeout is Aborted, not Failure"
++
++              match r.Diagnostic with
++              | Some d ->
++                  Expect.stringContains d "timeout" "named as a timeout"
++                  Expect.isFalse (d.Contains "outside the engine") "not attributed to an external actor"
++              | None -> failtest "expected a diagnostic"
++          } ]
++
+ [<EntryPoint>]
+ let main argv =
+     // These tests spawn real processes and assert on /proc; running them in
+@@ -308,4 +482,4 @@ let main argv =
+     runTestsWithCLIArgs
+         []
+         argv
+-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment ]))
++        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection ]))

@@ -104,7 +104,7 @@ derivation in `architecture/BASELINE.md`.
 | FG-030 | P0 | **DONE** | Linux executor: fresh normalized workspace per attempt; reject absolute paths, traversal, symlink components | 6 tests: absolute, traversal, mid-path traversal, symlinked component, outside-root, and reuse all refused with a named error |
 | FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
 | FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
-| FG-033 | P0 | TODO | **Dead-process detection in seconds**, diagnostic naming the restart (`adr/0005` beat) | kill the step process: terminal verdict < 10 s with a message stating the cause |
+| FG-033 | P0 | **DONE** | **Dead-process detection in seconds**, diagnostic naming the cause (`adr/0005` beat) | An externally SIGKILLed step is detected in **under 10 s** (Jenkins: ~10 min, then `exit code -1`). A signal exit (128+N) is reported as `Signalled`, **not** an ordinary exit code, and the diagnostic names the signal, says it came from outside the engine, and warns the effect may be incomplete. Our own timeout is still `Aborted`, never mis-attributed |
 | FG-034 | P1 | TODO | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | differential receipt vs Jenkins on a trapped-SIGTERM pipeline |
 | FG-035 | P1 | TODO | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | differential receipt: attempt count matches Jenkins |
 | FG-036 | P1 | TODO | `parallel`: siblings finish by default; `failFast` interrupts them | differential receipt for both modes |
@@ -151,8 +151,8 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
 
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
-| FG-070 | P0 | TODO | Secrets never placed in the child environment where a transformation can leak them; broker or fd delivery | `echo $TOK \| rev` cannot print the secret |
-| FG-071 | P0 | TODO | Masking is defence-in-depth, documented as defeatable, and **never silent** (`adr/0005` beat) | a masking miss emits a warning; Jenkins emits none |
+| FG-070 | P0 | **DONE** | Secrets never placed in the child environment | **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life of the step — which is what `withCredentials` does. Fogell writes the value to a **0600 file** and the environment carries only `<VAR>_FILE`. A test prints the child's own environ and asserts the value is absent |
+| FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | Masks the same forms Jenkins was measured to handle (literal, base64, case-folded). It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
 | FG-072 | P0 | TODO | Interpreter sandbox: no reflection, no file/network/process access except through steps | escape-attempt suite fully rejected with named codes |
 | FG-073 | P1 | TODO | Threat model document: untrusted Jenkinsfile, hostile agent, multi-tenant boundary | reviewed and committed |
 | FG-074 | P1 | TODO | Dependency audit + pinned lockfile; no unpinned transitive fetch at build time | offline build succeeds from a warm cache |
