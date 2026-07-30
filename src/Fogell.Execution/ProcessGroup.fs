@@ -58,7 +58,15 @@ type RunRequest =
       /// NOT do this — measured: `nohup`ed children survive both success and
       /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
       /// killed. FG-032 beats that, with an opt-out.
-      ReapGroup: bool }
+      ReapGroup: bool
+      /// FG-036. Polled while the step runs; when it returns true the step is
+      /// interrupted from OUTSIDE — a `failFast` sibling failing, or an operator
+      /// abort. It takes the same SIGTERM -> grace -> SIGKILL path a timeout
+      /// takes, because JB-FAIL-003 measured Jenkins using ONE interrupt
+      /// mechanism for both, and a script's trap handler cannot tell them apart.
+      /// The outcome is [Cancelled], not [TimedOut]: the step did not run out of
+      /// time, so reporting a timeout would misattribute the cause.
+      Interrupt: (unit -> bool) option }
 
     static member create(command, workingDirectory) =
         { Command = command
@@ -67,7 +75,8 @@ type RunRequest =
           TimeoutMs = None
           GraceMs = 2_000
           OnLine = None
-          ReapGroup = true }
+          ReapGroup = true
+          Interrupt = None }
 
 module ProcessGroup =
 
@@ -210,6 +219,11 @@ module ProcessGroup =
         // grandchild inherits them — so a step that spawns a daemon would hang
         // the executor forever. Wait on the process handle only, then give the
         // async readers a bounded window to flush.
+        let interrupted () =
+            match request.Interrupt with
+            | Some p -> (try p () with _ -> false)
+            | None -> false
+
         let waitForProcessExit (budgetMs: int option) =
             let deadline =
                 budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
@@ -221,7 +235,7 @@ module ProcessGroup =
                 | Some(clock, ms) -> clock.ElapsedMilliseconds >= int64 ms
                 | None -> false
 
-            while not exited && not (expired ()) do
+            while not exited && not (expired ()) && not (interrupted ()) do
                 Thread.Sleep 10
                 exited <- proc.HasExited
 
@@ -260,7 +274,9 @@ module ProcessGroup =
             else
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
-                TimedOut, t
+                // Distinguish the two ways a step can fail to finish. Both take
+                // the same signal path; only the reported cause differs.
+                (if interrupted () then Cancelled else TimedOut), t
 
         sw.Stop()
 

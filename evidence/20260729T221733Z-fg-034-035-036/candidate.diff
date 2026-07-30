@@ -1,0 +1,920 @@
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+index 740d981..232b610 100644
+--- a/differential/receipts/archive-artifacts.receipt.txt
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+index 229dfbf..c9f9b43 100644
+--- a/differential/receipts/archive-empty-fails.receipt.txt
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index cadcb80..9c56bc2 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index 1bbb2e7..b299907 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+index 0fd6340..554f74b 100644
+--- a/differential/receipts/junit-failing.receipt.txt
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+index 190ca8c..3c836c5 100644
+--- a/differential/receipts/junit-passing.receipt.txt
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index a0175e8..4b683cb 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index 42c0c79..2ae15d8 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -18,6 +18,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
++    counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+ 
+ ## Jenkins
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 7eb7526..e7141eb 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -43,7 +43,7 @@ derivation in `architecture/BASELINE.md`.
+ | Compiled / CPS entry | 199 | — | reference only |
+ | **Reached agent scheduling** | **119** | — | the only scoring denominator |
+ | Declarative files in corpus | 92 (contain `pipeline {`) | — | reference |
+-| Fogell declarative acceptance | — | **87/93 = 93.5%** | no regression, ever |
++| Fogell declarative acceptance | — | **88/93 = 94.6%** | no regression, ever |
+ | Fogell scripted acceptance | — | **109/135 = 80.7%** | no regression, ever |
+ | Fogell total accepted | — | **196/228 = 86.0%** | no regression, ever |
+ | Known front-end rejections | — | 14 | each closed or reasoned |
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **8/8 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **14/14 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -72,7 +72,7 @@ derivation in `architecture/BASELINE.md`.
+ 
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+-| FG-010 | P0 | **DONE** | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach) | **87/93 declarative corpus files accepted (93.5%)**. Criterion corrected: the earlier "194/228 declarative" figure was a mismeasurement — `forge validate` prints `OK` for BOTH paths and my shell classifier matched `OK*` before checking for "scripted". Only **92 of 228** corpus files contain a `pipeline {` block at all (naive regex agrees). 6 remaining failures: 3 `no_stages`, 3 `malformed_syntax` |
++| FG-010 | P0 | **DONE** | `Fogell.Pipeline.Parser` — typed Declarative parser (Forge approach) | **88/93 declarative corpus files accepted (94.6%)** — was 87 until FG-036 added the stage-level `failFast` directive. Criterion corrected: the earlier "194/228 declarative" figure was a mismeasurement — `forge validate` prints `OK` for BOTH paths and my shell classifier matched `OK*` before checking for "scripted". Only **92 of 228** corpus files contain a `pipeline {` block at all (naive regex agrees). 5 remaining failures: 2 `no_stages`, 3 `malformed_syntax` |
+ | FG-011 | P0 | **DONE** | `Fogell.Groovy` AST + `Fogell.Groovy.Parser` — scripted escape hatch | **109/135 scripted files accepted (80.7%)**. Every construct proven necessary against Forge is present from the start: shebang, `@Library`->`library()`, `import`, trailing commas, slashy strings, `=~`/`==~`, typed closure params, `final`, `x++`, C-style `for`, ranges, `switch`, `instanceof`, spread-dot, safe-nav, multi-assign |
+ | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
+@@ -105,9 +105,9 @@ derivation in `architecture/BASELINE.md`.
+ | FG-031 | P0 | **DONE** | Process group per step; SIGTERM then grace then SIGKILL (`adr/0005` match) | A `trap ... TERM` handler runs and writes its marker before death (graceful, no escalation). A step that ignores TERM is escalated to SIGKILL with `Escalated = true` |
+ | FG-032 | P0 | **DONE** | **Reap the step's process group at step end**, with an opt-out (`adr/0005` beat) | A real backgrounded daemon (pid recorded to a file) is dead after **success** and after **timeout**; the opt-out keeps it alive. Leaks are counted and reported in the diagnostic, never ignored |
+ | FG-033 | P0 | **DONE** | **Dead-process detection in seconds**, diagnostic naming the cause (`adr/0005` beat) | An externally SIGKILLed step is detected in **under 10 s** (Jenkins: ~10 min, then `exit code -1`). A signal exit (128+N) is reported as `Signalled`, **not** an ordinary exit code, and the diagnostic names the signal, says it came from outside the engine, and warns the effect may be incomplete. Our own timeout is still `Aborted`, never mis-attributed |
+-| FG-034 | P1 | TODO | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | differential receipt vs Jenkins on a trapped-SIGTERM pipeline |
+-| FG-035 | P1 | TODO | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | differential receipt: attempt count matches Jenkins |
+-| FG-036 | P1 | TODO | `parallel`: siblings finish by default; `failFast` interrupts them | differential receipt for both modes |
++| FG-034 | P1 | **DONE** | `timeout` and cancellation semantics identical to Jenkins' interrupt contract | `timeout-seconds` receipt PROVEN tier-1: `timeout(time: 3, unit: 'SECONDS')` around `sleep 60` aborts on both engines with an identical workspace (`started.txt` present, `finished.txt` absent). Jenkins' **default unit is MINUTES** — measured, and honoured. Interruption is polled while the step runs and takes the trappable SIGTERM → grace → SIGKILL path; a step interrupted from outside reports `Cancelled`, never `TimedOut`, so the cause is not misattributed |
++| FG-035 | P1 | **DONE** | `retry(N)` = N total attempts, no backoff (`adr/0005` match) | Two receipts PROVEN tier-1. `retry-exhausts`: the body appends a line per attempt, and `attempts.txt` has **exactly 3 lines with the same hash on both engines** — the count is evidence, not a claim. `retry-succeeds`: fail-then-succeed is **SUCCESS** on both; the first version reported `failure` because a failed attempt bumped the monotone build status, so a retry attempt now writes to a throwaway sink |
++| FG-036 | P1 | **DONE** | `parallel`: siblings finish by default; `failFast` interrupts them | Three receipts PROVEN tier-1. `parallel-siblings-finish`: the slow branch's `slow.txt` is **present** on both engines despite its sibling failing. `parallel-failfast` and `parallel-always-failfast`: `late.txt` is **absent** on both — the sleeping branch was interrupted mid-`sleep 45`. Jenkins corrected three assumptions here: `failFast` is stage-level (Jenkins *rejects* it inside `parallel { }`), declarative emits no `[branch]` prefix, and a failFast build is `failure` not `aborted` (see `adr/0005`) |
+ | FG-037 | P1 | TODO | **No steps-per-stage ceiling** (`adr/0005` beat) | 400-step stage runs; Jenkins fails at 251; receipt records both |
+ | FG-038 | P2 | TODO | Windows executor via Job Objects, P/Invoke confined to one project (`adr/0006`) | platform-parity suite; requires a Windows host — blocked until one exists |
+ 
+diff --git a/docs/adr/0005-inherited-jenkins-semantics.md b/docs/adr/0005-inherited-jenkins-semantics.md
+index edae973..6688d16 100644
+--- a/docs/adr/0005-inherited-jenkins-semantics.md
++++ b/docs/adr/0005-inherited-jenkins-semantics.md
+@@ -10,8 +10,26 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
+ 
+ - Interrupt is a **trappable SIGTERM** with a grace window before hard kill
+   (measured ~4 s); scripts rely on trapping it.
+-- `retry(N)` is N total attempts, no backoff.
+-- `parallel` lets siblings finish; `failFast` interrupts them.
++- `retry(N)` is N total attempts, no backoff. A body that fails once and then
++  succeeds is a **SUCCESS** build: a retried failure leaves no mark on the
++  result. (Proven: `retry-exhausts`, `retry-succeeds` receipts.)
++- `timeout`'s default unit is **MINUTES**, not seconds. `timeout(3)` is three
++  minutes; an engine that assumes seconds is wrong by 60x in the direction that
++  kills working builds. (Proven: `timeout-seconds` receipt.)
++- `parallel` lets siblings finish; `failFast` interrupts them. Three things about
++  it were **measured, not assumed**, and each corrected a wrong implementation:
++  - `failFast true` is a **stage-level** directive, a sibling of `parallel`.
++    Jenkins *rejects* it inside the `parallel { }` block —
++    `Expected a stage @ line 9`. `parallelsAlwaysFailFast()` is the
++    pipeline-wide equivalent.
++  - Declarative Jenkins emits **no `[branchName]` prefix** on parallel branch
++    output; that belongs to the scripted `parallel` map form. Adding one is not
++    a courtesy, it is a divergence.
++  - A build whose sibling was interrupted by `failFast` is **FAILURE**, not
++    ABORTED. The failing branch is the cause; the interruption is collateral,
++    and letting it dominate reports the wrong terminal state.
++  (Proven: `parallel-siblings-finish`, `parallel-failfast`,
++  `parallel-always-failfast` receipts.)
+ - Approval/`input` state survives a controller restart.
+ - Agent-side output is buffered locally and recovered by offset on reconnect: a
+   46 s network partition cost **zero** log lines.
+diff --git a/src/Fogell.Differential/Compare.fs b/src/Fogell.Differential/Compare.fs
+index 2e4e76b..f1a81eb 100644
+--- a/src/Fogell.Differential/Compare.fs
++++ b/src/Fogell.Differential/Compare.fs
+@@ -58,7 +58,23 @@ module Compare =
+         |> Convert.ToHexString
+         |> fun s -> s.ToLowerInvariant()
+ 
+-    let private compareOutput (jenkins: string list) (fogell: string list) =
++    /// FG-036. Ordering relaxation for parallel runs, stated rather than hidden.
++    ///
++    /// Two concurrent branches produce their lines in whatever order the OS
++    /// scheduler chose. Comparing that as a SEQUENCE would make the receipt a
++    /// race: it would pass or fail on scheduling, not on semantics. So for a
++    /// pipeline containing a `parallel` block, output is compared as a sorted
++    /// MULTISET — every line must still be present, exactly as many times — but
++    /// the interleaving is not compared.
++    ///
++    /// MEASURED: declarative Jenkins does NOT prefix branch output with
++    /// `[branchName]`. That prefix belongs to the SCRIPTED `parallel` map form.
++    /// An earlier version of Fogell emitted it and produced a divergence on every
++    /// parallel case; the fix was to stop inventing attribution Jenkins does not
++    /// provide. It also means the relaxation genuinely loses information — with
++    /// no prefix, a line cannot be attributed to a branch at all — which is why
++    /// the parallel receipts lean on the WORKSPACE hash for their real claim.
++    let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
+         let rec walk i j f =
+             match j, f with
+             | [], [] -> None
+@@ -68,7 +84,10 @@ module Compare =
+             | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
+             | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
+ 
+-        walk 0 jenkins fogell
++        if concurrent then
++            walk 0 (List.sort jenkins) (List.sort fogell)
++        else
++            walk 0 jenkins fogell
+ 
+     /// Compare two traces. Workspace hashes are only compared when BOTH sides
+     /// collected one — claiming a match against "not-collected" would be exactly
+@@ -82,7 +101,7 @@ module Compare =
+             [ if jenkins.Result <> fogell.Result then
+                   ResultDiffers(jenkins.Result, fogell.Result)
+ 
+-              match compareOutput jenkins.Output fogell.Output with
++              match compareOutput (jenkins.Concurrent || fogell.Concurrent) jenkins.Output fogell.Output with
+               | Some d -> d
+               | None -> ()
+ 
+@@ -127,7 +146,16 @@ module Compare =
+           JenkinsCore = core
+           Jenkins = j
+           Fogell = f
+-          ComparisonContract = Trace.comparisonContract
++          ComparisonContract =
++            Trace.comparisonContract
++            @ (if [ j; f ] |> List.choose id |> List.exists (fun t -> t.Concurrent) then
++                   [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
++                     "  branches interleave nondeterministically, so a sequence comparison would"
++                     "  pass or fail on OS scheduling. Line content and multiplicity ARE compared;"
++                     "  order is NOT, and declarative Jenkins emits no branch prefix to attribute"
++                     "  a line by. The load-bearing claim for these cases is the workspace hash." ]
++               else
++                   [])
+           Seal = sha256Text comparable }
+ 
+     /// Render a receipt as text. Deliberately plain so it can be committed,
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 80ef46f..09dfdef 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1,10 +1,25 @@
+ namespace Fogell.Differential
+ 
++open System
+ open System.IO
+ open Fogell.Domain
+ open Fogell.Execution
+ open Fogell.Ir
+ 
++/// FG-036. What one parallel branch (or the single implicit branch of a
++/// sequential pipeline) needs to know about itself.
++type BranchCtx =
++    { /// Polled while a shell step runs; true means a failFast sibling failed.
++      Interrupt: (unit -> bool) option
++      /// Branch-local failure. Deliberately NOT the build status: a failed
++      /// branch fails the build but does not halt its siblings.
++      Failed: bool ref
++      /// Where this branch's step statuses go. Normally the build status; inside
++      /// a `retry` attempt, a throwaway sink — a failed attempt that is retried
++      /// must not leave a permanent mark on the build, and the build status is a
++      /// monotone worst-of that could never be walked back.
++      Sink: BuildStatus -> unit }
++
+ /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
+ /// step, and reduces the run to a [Trace] in the same canonical form.
+ module FogellSide =
+@@ -17,6 +32,17 @@ module FogellSide =
+         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+         | Result.Ok pipeline ->
+             let output = System.Collections.Generic.List<string>()
++            // Parallel branches append from several threads at once.
++            let outputLock = obj ()
++
++            /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
++            /// with NO `[branchName]` prefix — that belongs to the scripted
++            /// `parallel` map form. Fogell emitted one until the receipt said
++            /// otherwise, which diverged every parallel case. Inventing attribution
++            /// the reference engine does not provide is not a favour, it is a
++            /// divergence.
++            let emit (line: string) =
++                lock outputLock (fun () -> output.Add line)
+             let workspace = Path.Combine(workspaceRoot, jobName)
+             // artifacts live OUTSIDE the workspace so archiving cannot perturb
+             // the workspace hash the differential compares
+@@ -32,8 +58,13 @@ module FogellSide =
+                 |> Map.toList
+ 
+             let mutable status = BuildStatus.Success
++            let statusLock = obj ()
++            let bump (s: BuildStatus) = lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
+ 
+-            let runStep (stage: Stage) (cwd: string) (step: Step) =
++            let runStepWithRef = ref (fun (_: BranchCtx) (_: Stage) (_: string) (_: Step) (_: int option) -> ())
++            let runStepWith ctx stage cwd step budget = runStepWithRef.Value ctx stage cwd step budget
++
++            let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (budget: int option option) =
+                 let script =
+                     match step.Positional with
+                     | s :: _ -> Some s
+@@ -47,8 +78,9 @@ module FogellSide =
+                           Script = script
+                           Workspace = cwd
+                           Environment = envFor stage
+-                          TimeoutMs = Some 120_000
+-                          OnLine = Some(fun l -> output.Add l)
++                          TimeoutMs = defaultArg budget (Some 120_000)
++                          OnLine = Some emit
++                          Interrupt = ctx.Interrupt
+                           Named = step.Named
+                           Artifacts = Some(ArtifactStore.under artifactRoot)
+                           BuildKey = jobName }
+@@ -59,43 +91,226 @@ module FogellSide =
+                 //
+                 // stderr is not streamed by OnLine, so it is added here.
+                 for line in result.Stderr.Replace("\r\n", "\n").Split '\n' do
+-                    if line <> "" then output.Add line
++                    if line <> "" then emit line
+ 
+                 // Jenkins prints its failure reason INTO the build log. Parity
+                 // requires the same: a diagnostic the user cannot see is not a
+                 // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
+                 // opaque `exit code -1`, and we promised to be clearer, not quieter).
+                 if result.Status <> BuildStatus.Success then
++                    // Was this step stopped because a failFast SIBLING failed?
++                    // MEASURED (FG-036): Jenkins reports such a build as FAILURE,
++                    // not ABORTED — the sibling's failure is the cause and the
++                    // interruption is collateral. Letting the collateral abort
++                    // dominate (worstOf puts Aborted above Failure) reported
++                    // `aborted` where Jenkins reports `failure`.
++                    let interruptedBySibling =
++                        result.Status = BuildStatus.Aborted
++                        && (match ctx.Interrupt with
++                            | Some p -> p ()
++                            | None -> false)
++
+                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
+                     // an unstable one — `junit` marks the build unstable without
+                     // an ERROR line, so emitting one there is a false divergence.
+-                    if result.Status = BuildStatus.Failure then
+-                        result.Diagnostic |> Option.iter (fun d -> output.Add $"ERROR: {d}")
++                    // An ABORTED step is narrated too (Jenkins: "Sending interrupt
++                    // signal to process / Terminated"), and silence on an abort is
++                    // the JB-DUR-005 defect we promised to beat.
++                    if result.Status = BuildStatus.Failure || result.Status = BuildStatus.Aborted then
++                        result.Diagnostic |> Option.iter (fun d -> emit $"ERROR: {d}")
+ 
+-                    status <- BuildStatus.worstOf status result.Status
++                    // Only a FAILED or ABORTED step halts the branch. An
++                    // unstable one does not: `junit` marks the build unstable and
++                    // returns normally, so Jenkins runs the following steps. It
++                    // also means `retry` does not re-run an unstable body —
++                    // retry catches exceptions, and unstable throws none.
++                    if result.Status <> BuildStatus.Unstable then
++                        ctx.Failed.Value <- true
+ 
+-            let rec runStage (cwd: string) (stage: Stage) =
+-                if status = BuildStatus.Success then
++                    if not interruptedBySibling then ctx.Sink result.Status
++
++            /// Parse `timeout(time: 5, unit: 'SECONDS')` / `timeout(5)` into ms.
++            /// Jenkins' default unit is MINUTES, which is a trap for anyone who
++            /// assumes seconds; matching it matters more than being intuitive.
++            let timeoutMs (step: Step) =
++                let value =
++                    step.Named
++                    |> List.tryPick (fun (k, v) -> if k = "time" then Some v else None)
++                    |> Option.orElse (List.tryHead step.Positional)
++                    |> Option.bind (fun v -> match Int32.TryParse(v.Trim()) with
++                                             | true, n -> Some n
++                                             | _ -> None)
++
++                let unit =
++                    step.Named
++                    |> List.tryPick (fun (k, v) -> if k = "unit" then Some(v.Trim().Trim('\'').ToUpperInvariant()) else None)
++                    |> Option.defaultValue "MINUTES"
++
++                value
++                |> Option.map (fun n ->
++                    match unit with
++                    | "SECONDS" -> n * 1_000
++                    | "MILLISECONDS" -> n
++                    | "HOURS" -> n * 3_600_000
++                    | _ -> n * 60_000)
++
++            let retryCount (step: Step) =
++                step.Named
++                |> List.tryPick (fun (k, v) -> if k = "count" then Some v else None)
++                |> Option.orElse (List.tryHead step.Positional)
++                |> Option.bind (fun v -> match Int32.TryParse(v.Trim()) with
++                                         | true, n -> Some n
++                                         | _ -> None)
++                |> Option.defaultValue 1
++
++            runStepWithRef.Value <- fun ctx stage cwd step budget ->
++                runStepInner ctx stage cwd step (budget |> Option.map Some)
++
++            let runStep ctx (stage: Stage) (cwd: string) (step: Step) = runStepInner ctx stage cwd step None
++
++            /// `parallelsAlwaysFailFast()` in top-level options is equivalent to
++            /// writing `failFast true` in every parallel block.
++            let alwaysFailFast =
++                pipeline.Options |> List.exists (fun o -> o.Name = "parallelsAlwaysFailFast")
++
++            /// A branch stops early when it has failed, or when a failFast
++            /// sibling asked it to stop. Kept separate from the global `status`:
++            /// a failing branch marks the BUILD failed but must not stop its
++            /// siblings (JB-FAIL-006).
++            let halted (ctx: BranchCtx) =
++                ctx.Failed.Value
++                || (match ctx.Interrupt with
++                    | Some p -> p ()
++                    | None -> false)
++
++            let rec runStage (ctx: BranchCtx) (cwd: string) (stage: Stage) =
++                if not (halted ctx) then
+                     for step in stage.Steps do
+-                        if status = BuildStatus.Success then
++                        if not (halted ctx) then
+                             match step.Name, step.Positional with
++                            // JB-FAIL-001/002: timeout and abort share one
++                            // interrupt path, and the interrupt is a trappable
++                            // SIGTERM with a grace window.
++                            | "timeout", _ when not (List.isEmpty step.Block) ->
++                                let budget = timeoutMs step
++
++                                for inner in step.Block do
++                                    if not (halted ctx) then
++                                        runStepWith ctx stage cwd inner budget
++
++                            // JB-FAIL-005: retry(N) is N TOTAL attempts, not N
++                            // retries after the first, and there is no backoff.
++                            // `retry(3)` around a step that always fails runs it
++                            // exactly three times.
++                            | "retry", _ when not (List.isEmpty step.Block) ->
++                                let attempts = max 1 (retryCount step)
++                                let mutable attempt = 1
++                                let mutable settled = false
++
++                                while not settled && attempt <= attempts do
++                                    // Each attempt gets a fresh failure flag AND a
++                                    // throwaway status sink. MEASURED (FG-035): a
++                                    // body that fails once then succeeds is a
++                                    // SUCCESS build on Jenkins. Bumping the build
++                                    // status from the failed attempt reported
++                                    // `failure` with an identical workspace — the
++                                    // work was right, the bookkeeping was not.
++                                    let attemptStatus = ref BuildStatus.Success
++
++                                    let attemptCtx =
++                                        { ctx with
++                                            Failed = ref false
++                                            Sink = fun s -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value s }
++
++                                    for inner in step.Block do
++                                        if not (halted attemptCtx) then
++                                            runStepWith attemptCtx stage cwd inner None
++
++                                    if not attemptCtx.Failed.Value then
++                                        // A retried body may still have gone
++                                        // unstable; that is not a retryable
++                                        // failure, so it must reach the build.
++                                        ctx.Sink attemptStatus.Value
++                                        settled <- true
++                                    elif attempt < attempts then
++                                        // Jenkins prints this between attempts, with
++                                        // no delay: retry does not back off.
++                                        emit "Retrying"
++                                        attempt <- attempt + 1
++                                    else
++                                        // Final attempt failed: now it is the
++                                        // build's failure.
++                                        ctx.Sink attemptStatus.Value
++                                        ctx.Failed.Value <- true
++                                        attempt <- attempt + 1
++
+                             | "dir", (sub :: _) ->
+                                 // `dir('x') { … }` — nested cwd, auto-created
+                                 match Workspace.resolveUnder cwd sub with
+                                 | Result.Error e ->
+-                                    output.Add $"dir refused: {e.Describe}"
+-                                    status <- BuildStatus.Failure
++                                    emit $"dir refused: {e.Describe}"
++                                    ctx.Failed.Value <- true
++                                    bump BuildStatus.Failure
+                                 | Result.Ok target ->
+                                     Directory.CreateDirectory target |> ignore
+                                     for inner in step.Block do
+-                                        runStep stage target inner
+-                            | _ -> runStep stage cwd step
++                                        runStep ctx stage target inner
++                            | _ -> runStep ctx stage cwd step
+ 
+-                    for nested in stage.Nested do
+-                        runStage cwd nested
++                    if stage.IsParallel && not (List.isEmpty stage.Nested) then
++                        // JB-FAIL-006/007. Branches run concurrently and, by
++                        // default, a failing branch does NOT stop its siblings —
++                        // they run to completion and the build takes the worst
++                        // result. `failFast true` interrupts them instead.
++                        //
++                        // Branches share the workspace, as measured on Jenkins:
++                        // one `agent` means one workspace, and two branches
++                        // writing the same path race. That is a Jenkins footgun
++                        // we reproduce rather than silently fix, because a
++                        // lift-and-shift promise means their pipeline behaves the
++                        // same way here, bugs included.
++                        let failFast = stage.FailFast || alwaysFailFast
++                        let anyFailed = ref false
++
++                        let branches =
++                            stage.Nested
++                            |> List.map (fun branch ->
++                                let branchCtx =
++                                    { Failed = ref false
++                                      Sink = bump
++                                      Interrupt =
++                                        if failFast then
++                                            Some(fun () -> anyFailed.Value)
++                                        else
++                                            ctx.Interrupt }
++
++                                branchCtx,
++                                System.Threading.Tasks.Task.Run(fun () ->
++                                    runStage branchCtx cwd branch
++
++                                    if branchCtx.Failed.Value then
++                                        anyFailed.Value <- true))
++
++                        // Every branch is awaited even under failFast: an
++                        // interrupted branch still has a process group to reap,
++                        // and abandoning it is how orphans happen (FG-032).
++                        branches
++                        |> List.iter (fun (_, t) ->
++                            try
++                                t.Wait()
++                            with _ ->
++                                ())
++
++                        if branches |> List.exists (fun (bc, _) -> bc.Failed.Value) then
++                            ctx.Failed.Value <- true
++                    else
++                        for nested in stage.Nested do
++                            runStage ctx cwd nested
++
++            let root = { Interrupt = None; Failed = ref false; Sink = bump }
+ 
+             for stage in pipeline.Stages do
+-                runStage workspace stage
++                runStage root workspace stage
+ 
+             let workspaceHash, files = Trace.hashWorkspace workspace
+ 
+@@ -104,4 +319,5 @@ module FogellSide =
+                   Output = Trace.normaliseOutput output
+                   WorkspaceHash = workspaceHash
+                   WorkspaceFiles = files
++                  Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
+                   ReportedFailureReason = Trace.reportedFailureReason output }
+diff --git a/src/Fogell.Differential/Jenkins.fs b/src/Fogell.Differential/Jenkins.fs
+index d4fde53..1c755b8 100644
+--- a/src/Fogell.Differential/Jenkins.fs
++++ b/src/Fogell.Differential/Jenkins.fs
+@@ -119,6 +119,9 @@ module Jenkins =
+                           Output = Trace.normaliseOutput rawLines
+                           WorkspaceHash = workspaceHash
+                           WorkspaceFiles = files
++                          // Jenkins does not tell us whether the script had a
++                          // parallel block; the side that parses does.
++                          Concurrent = false
+                           ReportedFailureReason = Trace.reportedFailureReason rawLines }
+ 
+                     post $"/job/{jobName}/doDelete" None |> ignore
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 8263e9c..a7b8c28 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -26,6 +26,11 @@ type Trace =
+       WorkspaceHash: string
+       /// Files in the workspace, for a readable diff when hashes disagree.
+       WorkspaceFiles: (string * string) list
++      /// FG-036. True when the pipeline contained a `parallel` block, which is a
++      /// property of the SCRIPT rather than of either engine's behaviour. Only
++      /// the side that parses (Fogell) can set it; Compare takes the disjunction.
++      /// It exists to trigger the documented output-ordering relaxation.
++      Concurrent: bool
+       /// Whether the engine reported a reason for a non-success.
+       ///
+       /// The exact wording is NOT compared: Jenkins' text comes from whichever
+@@ -141,6 +146,25 @@ module Trace =
+     let isDiagnosticLine (t: string) =
+         t.StartsWith "ERROR:"
+         || t.StartsWith "FATAL:"
++        // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
++        // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
++        // nested steps due to timeout / Sending interrupt signal to process /
++        // Terminated / Timeout has been exceeded", and a failFast parallel prints
++        // "Failed in branch <name>". None of it is step output — it is the engine
++        // explaining what it did to the step, which is exactly the category this
++        // predicate exists for. Comparing the sentences verbatim would over-fit
++        // to timeout-plugin wording; what must agree is that SOMETHING was said.
++        || t.StartsWith "Timeout set to expire"
++        || t.StartsWith "Timeout has been exceeded"
++        || t.StartsWith "Cancelling nested steps"
++        || t.StartsWith "Sending interrupt signal to process"
++        || t = "Terminated"
++        || t.StartsWith "Failed in branch "
++        || t.StartsWith "Aborted by "
++        // The timeout plugin appends an opaque correlation id. It carries no
++        // semantics and its value changes every run, so it could never be
++        // compared even in principle.
++        || t.Contains "workflow.actions.ErrorAction$ErrorId"
+         || t.Contains "doesn\u2019t match anything"
+         || t.Contains "doesn't match anything"
+         || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
+@@ -204,4 +228,6 @@ module Trace =
+           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
+           "  (Jenkins' wording comes from whichever plugin implements the step;"
+           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
++          "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
++          "  counted as a reported reason instead, since it explains the engine, not the step"
+           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 1ce59cb..1a37bc5 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -24,6 +24,9 @@ type StepRequest =
+       Named: (string * string) list
+       /// Where publishing steps write. None disables them by failing closed.
+       Artifacts: ArtifactStore option
++      /// FG-036. Polled while a shell step runs; true interrupts it. Used by
++      /// `parallel(failFast: true)` to stop siblings once one branch has failed.
++      Interrupt: (unit -> bool) option
+       /// Identifies this build in the artifact store.
+       BuildKey: string }
+ 
+@@ -72,6 +75,7 @@ module Executor =
+             let run =
+                 ProcessGroup.run
+                     { RunRequest.create (script, request.Workspace) with
++                        Interrupt = request.Interrupt
+                         Environment = request.Environment
+                         TimeoutMs = request.TimeoutMs
+                         OnLine = request.OnLine }
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index f7eaed1..63693ce 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -58,7 +58,15 @@ type RunRequest =
+       /// NOT do this — measured: `nohup`ed children survive both success and
+       /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
+       /// killed. FG-032 beats that, with an opt-out.
+-      ReapGroup: bool }
++      ReapGroup: bool
++      /// FG-036. Polled while the step runs; when it returns true the step is
++      /// interrupted from OUTSIDE — a `failFast` sibling failing, or an operator
++      /// abort. It takes the same SIGTERM -> grace -> SIGKILL path a timeout
++      /// takes, because JB-FAIL-003 measured Jenkins using ONE interrupt
++      /// mechanism for both, and a script's trap handler cannot tell them apart.
++      /// The outcome is [Cancelled], not [TimedOut]: the step did not run out of
++      /// time, so reporting a timeout would misattribute the cause.
++      Interrupt: (unit -> bool) option }
+ 
+     static member create(command, workingDirectory) =
+         { Command = command
+@@ -67,7 +75,8 @@ type RunRequest =
+           TimeoutMs = None
+           GraceMs = 2_000
+           OnLine = None
+-          ReapGroup = true }
++          ReapGroup = true
++          Interrupt = None }
+ 
+ module ProcessGroup =
+ 
+@@ -210,6 +219,11 @@ module ProcessGroup =
+         // grandchild inherits them — so a step that spawns a daemon would hang
+         // the executor forever. Wait on the process handle only, then give the
+         // async readers a bounded window to flush.
++        let interrupted () =
++            match request.Interrupt with
++            | Some p -> (try p () with _ -> false)
++            | None -> false
++
+         let waitForProcessExit (budgetMs: int option) =
+             let deadline =
+                 budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
+@@ -221,7 +235,7 @@ module ProcessGroup =
+                 | Some(clock, ms) -> clock.ElapsedMilliseconds >= int64 ms
+                 | None -> false
+ 
+-            while not exited && not (expired ()) do
++            while not exited && not (expired ()) && not (interrupted ()) do
+                 Thread.Sleep 10
+                 exited <- proc.HasExited
+ 
+@@ -260,7 +274,9 @@ module ProcessGroup =
+             else
+                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
+                 flushReaders 300
+-                TimedOut, t
++                // Distinguish the two ways a step can fail to finish. Both take
++                // the same signal path; only the reported cause differs.
++                (if interrupted () then Cancelled else TimedOut), t
+ 
+         sw.Stop()
+ 
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index 8ec2fc8..32f19da 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -57,6 +57,10 @@ type Stage =
+       /// Nested `stages { }` (sequential) and `parallel { }` children.
+       Nested: Stage list
+       IsParallel: bool
++      /// `failFast true` inside a `parallel { }` block, or inherited from the
++      /// top-level `parallelsAlwaysFailFast()` option. Only meaningful when
++      /// IsParallel is true.
++      FailFast: bool
+       Position: Position }
+ 
+ type Pipeline =
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 99ce2bc..ffb8a0c 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -159,6 +159,21 @@ let private stageParser, private stageRef = createParserForwardedToRef<Stage, un
+ let private stagesBody: P<Stage list> =
+     between (symbol "{") (symbol "}") (ws >>. many (attempt stageParser))
+ 
++/// `failFast true` — a STAGE-level directive, sibling of `parallel`.
++///
++/// MEASURED, not assumed. The first version parsed it INSIDE the `parallel { }`
++/// block; real Jenkins 2.568.1 rejects that outright:
++///
++///   WorkflowScript: 9: Expected a stage @ line 9, column 17.
++///   failFast true
++///
++/// A differential receipt caught it. Accepting a form the reference engine
++/// refuses is not leniency — it means a pipeline that runs here fails there,
++/// which is the exact opposite of the lift-and-shift promise.
++let private failFastDirective: P<bool> =
++    keyword "failFast" >>. ws >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
++    .>> ws
++
+ /// One `stage('Name') { … }`. Sections may appear in any order, so this
+ /// accumulates whatever it finds rather than demanding a fixed sequence — which
+ /// is also what makes an unknown section a *named* rejection instead of a
+@@ -170,6 +185,7 @@ type private StageSection =
+     | SecWhen of WhenCondition
+     | SecPost of (PostCondition * Step list) list
+     | SecNested of Stage list * bool
++    | SecFailFast of bool
+     | SecOther of string
+ 
+ stageRef.Value <-
+@@ -190,6 +206,7 @@ stageRef.Value <-
+                       attempt (postSection |>> SecPost)
+                       attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
+                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
++                      attempt (failFastDirective |>> SecFailFast)
+                       attempt (keyword "options" >>. stepBlock |>> fun _ -> SecOther "options")
+                       attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
+                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
+@@ -206,6 +223,7 @@ stageRef.Value <-
+               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
+               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []
+               IsParallel = defaultArg (pick (function SecNested(_, p) -> Some p | _ -> None)) false
++              FailFast = defaultArg (pick (function SecFailFast f -> Some f | _ -> None)) false
+               Position = pos }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 759abdf..e332845 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -27,6 +27,7 @@ let private request root script =
+       Workspace = ws
+       Environment = []
+       TimeoutMs = None
++      Interrupt = None
+       OnLine = None
+       Named = []
+       Artifacts = None
+@@ -475,6 +476,66 @@ let deadProcessDetection =
+               | None -> failtest "expected a diagnostic"
+           } ]
+ 
++let externalInterrupt =
++    testList
++        "FG-036 external interruption of a running step"
++        [ test "an interrupt stops a running step and reports Aborted, not TimedOut" {
++              // failFast needs to stop a sibling that is ALREADY running. A flag
++              // checked only between steps cannot do that, so the interrupt is
++              // polled while the process runs and takes the same
++              // SIGTERM -> grace -> SIGKILL path a timeout takes (JB-FAIL-003).
++              let root = tempRoot ()
++              let marker = Path.Combine(root, "trapped.txt")
++              let stop = ref false
++
++              // Release the interrupt shortly after the step starts, so the
++              // step is genuinely mid-flight and not merely never launched.
++              let releaser =
++                  System.Threading.Tasks.Task.Run(fun () ->
++                      System.Threading.Thread.Sleep 700
++                      stop.Value <- true)
++
++              let sw = Diagnostics.Stopwatch.StartNew()
++
++              let r =
++                  Executor.runStep
++                      { request root $"trap 'echo caught > {marker}; exit 0' TERM; sleep 30" with
++                          // 60s: far longer than the test tolerates, so a pass
++                          // cannot come from the timeout path by accident.
++                          TimeoutMs = Some 60_000
++                          Interrupt = Some(fun () -> stop.Value) }
++
++              sw.Stop()
++              releaser.Wait()
++
++              Expect.equal r.Status Aborted "interrupted step is aborted"
++              Expect.isLessThan sw.ElapsedMilliseconds 15_000L "interrupted promptly, not on the 60s timeout"
++              Expect.isTrue (File.Exists marker) "the TERM handler ran — the interrupt is trappable"
++
++              match r.Diagnostic with
++              | Some d ->
++                  // The cause must not be misreported. A step interrupted by a
++                  // sibling did not run out of time, and calling it a timeout
++                  // sends the operator to the wrong place.
++                  Expect.isFalse (d.ToLowerInvariant().Contains "timeout") $"cause is not a timeout: {d}"
++              | None -> failtest "an abort must carry a diagnostic"
++          }
++
++          test "an interrupt that never fires leaves the step alone" {
++              // Guard against the previous class of vacuous test: if the poll
++              // were treated as truthy, or called once at the wrong moment, the
++              // test above would still pass. This one fails if it is.
++              let r =
++                  Executor.runStep
++                      { request (tempRoot ()) "echo done" with
++                          TimeoutMs = Some 30_000
++                          Interrupt = Some(fun () -> false) }
++
++              Expect.equal r.Status Success "an un-fired interrupt changes nothing"
++              Expect.stringContains r.Stdout "done" "the step ran to completion"
++          } ]
++
++
+ [<EntryPoint>]
+ let main argv =
+     // These tests spawn real processes and assert on /proc; running them in
+@@ -482,4 +543,4 @@ let main argv =
+     runTestsWithCLIArgs
+         []
+         argv
+-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection ]))
++        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt ]))
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index b13813d..09132d5 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -110,6 +110,46 @@ let structure =
+               Expect.contains (step.Named |> List.map fst) "artifacts" "named arg present"
+           }
+ 
++          test "failFast is a STAGE-level directive, as Jenkins requires" {
++              // MEASURED: Jenkins 2.568.1 rejects `failFast true` INSIDE the
++              // parallel block with "Expected a stage". The accepted form is a
++              // sibling of `parallel`, and a differential receipt is what
++              // corrected the first implementation.
++              let src =
++                  mk
++                      "    stage('outer') {\n      failFast true\n      parallel {\n        stage('a') { steps { echo 'a' } }\n        stage('b') { steps { echo 'b' } }\n      }\n    }"
++
++              let p = ok src
++              Expect.isTrue p.Stages.[0].IsParallel "marked parallel"
++              Expect.isTrue p.Stages.[0].FailFast "failFast recorded"
++              Expect.equal p.Stages.[0].Nested.Length 2 "both branches present"
++          }
++
++          test "a parallel block without failFast defaults to false" {
++              let src =
++                  mk
++                      "    stage('outer') {\n      parallel {\n        stage('a') { steps { echo 'a' } }\n      }\n    }"
++
++              Expect.isFalse (ok src).Stages.[0].FailFast "default is let siblings finish"
++          }
++
++          test "failFast false is honoured as written" {
++              let src =
++                  mk
++                      "    stage('outer') {\n      failFast false\n      parallel {\n        stage('a') { steps { echo 'a' } }\n      }\n    }"
++
++              let p = ok src
++              Expect.isFalse p.Stages.[0].FailFast "explicit false"
++              Expect.equal p.Stages.[0].Nested.Length 1 "branch survived"
++          }
++
++          test "parallelsAlwaysFailFast is captured as a pipeline option" {
++              let src =
++                  "pipeline {\n  agent any\n  options {\n    parallelsAlwaysFailFast()\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
++
++              Expect.contains ((ok src).Options |> List.map (fun o -> o.Name)) "parallelsAlwaysFailFast" "option recorded"
++          }
++
+           test "nested parallel stages are recorded and flattened" {
+               let src =
+                   mk

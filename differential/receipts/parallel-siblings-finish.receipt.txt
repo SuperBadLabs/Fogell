@@ -1,7 +1,7 @@
-# Differential receipt — archive-artifacts.Jenkinsfile
+# Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         471151c262fe943469c44e9aa74e1a27bdfd5bdd81bddaa7bb2365336fd0a337
+seal:         23c3fbadff3bfe2467df5c3c4e24bb7bfbdb08f495fc75d44a1638e52a9a267c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -21,21 +21,24 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
+    branches interleave nondeterministically, so a sequence comparison would
+    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
+    order is NOT, and declarative Jenkins emits no branch prefix to attribute
+    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (1 lines):
-    | Archiving artifacts
+  result:         failure
+  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+  output (0 lines):
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    bfbd1f4027c3  failed.txt
+    d117fa006ba9  slow.txt
 
 ## Fogell
-  result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (1 lines):
-    | Archiving artifacts
+  result:         failure
+  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+  output (0 lines):
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    bfbd1f4027c3  failed.txt
+    d117fa006ba9  slow.txt

@@ -1,7 +1,7 @@
-# Differential receipt — archive-artifacts.Jenkinsfile
+# Differential receipt — retry-succeeds.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         471151c262fe943469c44e9aa74e1a27bdfd5bdd81bddaa7bb2365336fd0a337
+seal:         8aacbe5b8845b8d5de79a7f494b6a0c1fc9aa2aec1263a1d950d15e1762cd9ac
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -24,18 +24,18 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
+  workspace-hash: ac2b1965a3f9071a83a2deb8ea0925d13b20a6d987baa2468c0f01ee0705de1c
   output (1 lines):
-    | Archiving artifacts
+    | Retrying
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    381aca7a98c6  attempts.txt
+    e3b0c44298fc  ok.txt
 
 ## Fogell
   result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
+  workspace-hash: ac2b1965a3f9071a83a2deb8ea0925d13b20a6d987baa2468c0f01ee0705de1c
   output (1 lines):
-    | Archiving artifacts
+    | Retrying
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    381aca7a98c6  attempts.txt
+    e3b0c44298fc  ok.txt

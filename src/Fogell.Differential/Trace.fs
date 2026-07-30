@@ -26,6 +26,11 @@ type Trace =
       WorkspaceHash: string
       /// Files in the workspace, for a readable diff when hashes disagree.
       WorkspaceFiles: (string * string) list
+      /// FG-036. True when the pipeline contained a `parallel` block, which is a
+      /// property of the SCRIPT rather than of either engine's behaviour. Only
+      /// the side that parses (Fogell) can set it; Compare takes the disjunction.
+      /// It exists to trigger the documented output-ordering relaxation.
+      Concurrent: bool
       /// Whether the engine reported a reason for a non-success.
       ///
       /// The exact wording is NOT compared: Jenkins' text comes from whichever
@@ -141,6 +146,25 @@ module Trace =
     let isDiagnosticLine (t: string) =
         t.StartsWith "ERROR:"
         || t.StartsWith "FATAL:"
+        // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
+        // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
+        // nested steps due to timeout / Sending interrupt signal to process /
+        // Terminated / Timeout has been exceeded", and a failFast parallel prints
+        // "Failed in branch <name>". None of it is step output — it is the engine
+        // explaining what it did to the step, which is exactly the category this
+        // predicate exists for. Comparing the sentences verbatim would over-fit
+        // to timeout-plugin wording; what must agree is that SOMETHING was said.
+        || t.StartsWith "Timeout set to expire"
+        || t.StartsWith "Timeout has been exceeded"
+        || t.StartsWith "Cancelling nested steps"
+        || t.StartsWith "Sending interrupt signal to process"
+        || t = "Terminated"
+        || t.StartsWith "Failed in branch "
+        || t.StartsWith "Aborted by "
+        // The timeout plugin appends an opaque correlation id. It carries no
+        // semantics and its value changes every run, so it could never be
+        // compared even in principle.
+        || t.Contains "workflow.actions.ErrorAction$ErrorId"
         || t.Contains "doesn\u2019t match anything"
         || t.Contains "doesn't match anything"
         || Text.RegularExpressions.Regex.IsMatch(t, @"^No artifacts found")
@@ -204,4 +228,6 @@ module Trace =
           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
           "  (Jenkins' wording comes from whichever plugin implements the step;"
           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
+          "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
+          "  counted as a reported reason instead, since it explains the engine, not the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

@@ -24,6 +24,9 @@ type StepRequest =
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
       Artifacts: ArtifactStore option
+      /// FG-036. Polled while a shell step runs; true interrupts it. Used by
+      /// `parallel(failFast: true)` to stop siblings once one branch has failed.
+      Interrupt: (unit -> bool) option
       /// Identifies this build in the artifact store.
       BuildKey: string }
 
@@ -72,6 +75,7 @@ module Executor =
             let run =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
+                        Interrupt = request.Interrupt
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = request.OnLine }

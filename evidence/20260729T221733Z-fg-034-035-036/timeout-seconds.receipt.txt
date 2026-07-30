@@ -1,7 +1,7 @@
-# Differential receipt — archive-artifacts.Jenkinsfile
+# Differential receipt — timeout-seconds.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         471151c262fe943469c44e9aa74e1a27bdfd5bdd81bddaa7bb2365336fd0a337
+seal:         6f521022b2fd0708758d5a6165c46069b9557bc48e96ad258f5d8f4bf0ce4d4c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -23,19 +23,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (1 lines):
-    | Archiving artifacts
+  result:         aborted
+  workspace-hash: d845872fd61e93bab23af3960c177e3c4db83971175ad0ab2a60576121c85055
+  output (0 lines):
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    ff0761fc5de7  started.txt
 
 ## Fogell
-  result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (1 lines):
-    | Archiving artifacts
+  result:         aborted
+  workspace-hash: d845872fd61e93bab23af3960c177e3c4db83971175ad0ab2a60576121c85055
+  output (0 lines):
   workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+    ff0761fc5de7  started.txt
