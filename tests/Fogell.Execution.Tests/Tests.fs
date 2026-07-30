@@ -28,6 +28,7 @@ let private request root script =
       Environment = []
       TimeoutMs = None
       Interrupt = None
+      DeadlineExpired = None
       Secrets = []
       OnLine = None
       Named = []
@@ -519,6 +520,25 @@ let externalInterrupt =
                   // sibling did not run out of time, and calling it a timeout
                   // sends the operator to the wrong place.
                   Expect.isFalse (d.ToLowerInvariant().Contains "timeout") $"cause is not a timeout: {d}"
+              | None -> failtest "an abort must carry a diagnostic"
+          }
+
+          test "an expired timeout is reported as a TIMEOUT, not a cancellation" {
+              // REVIEW FIX (Codex, PR #14 round 6): folding the deadline into the
+              // interrupt predicate made ProcessGroup classify an expired timeout as
+              // `Cancelled`, so the diagnostic said "step was cancelled" and stopped
+              // naming the timeout — losing exactly the cause distinction FG-033
+              // exists to preserve.
+              let r =
+                  Executor.runStep
+                      { request (tempRoot ()) "sleep 30" with
+                          TimeoutMs = Some 800L
+                          DeadlineExpired = Some(fun () -> true) }
+
+              Expect.equal r.Status Aborted "aborted"
+
+              match r.Diagnostic with
+              | Some d -> Expect.stringContains d "timeout" $"the cause is still named a timeout: {d}"
               | None -> failtest "an abort must carry a diagnostic"
           }
 

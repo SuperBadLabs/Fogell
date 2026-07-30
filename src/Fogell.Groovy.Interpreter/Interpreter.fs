@@ -357,7 +357,13 @@ module Interpreter =
             let v = evalExpr st env e
             st.LastValue <- Some v
             Env.withVar n v env
-        | SDef(n, None) -> Env.withVar n VNull env
+        // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
+        // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
+        // LastValue and the closure returned true. An uninitialised declaration
+        // evaluates to null.
+        | SDef(n, None) ->
+            st.LastValue <- Some VNull
+            Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value

@@ -169,14 +169,13 @@ module FogellSide =
                             | Some ms -> Some ms
                             | None -> Some 120_000L
                           OnLine = Some emit
-                          // The deadline is part of the interrupt, so it reaches every
-                          // step type — not just the shell runner. `archiveArtifacts`
-                          // polls it between files.
-                          Interrupt =
-                            match deadline, ctx.Interrupt with
-                            | None, i -> i
-                            | Some d, None -> Some(fun () -> runClock.ElapsedMilliseconds >= d)
-                            | Some d, Some i -> Some(fun () -> runClock.ElapsedMilliseconds >= d || i ())
+                          // External cancellation only — a failFast sibling. The
+                          // deadline reaches the shell runner through TimeoutMs and
+                          // self-working steps through DeadlineExpired, so an expired
+                          // timeout is still reported as a timeout.
+                          Interrupt = ctx.Interrupt
+                          DeadlineExpired =
+                            deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
                           Secrets = []
                           Named = step.Named
                           Artifacts = Some(ArtifactStore.under artifactRoot)
@@ -687,11 +686,18 @@ module FogellSide =
                     // 'PATH+TOOLS=/tools'])` produced `/tools:<outer-path>` and
                     // silently discarded `/custom` — the augmentation has to build on
                     // the plain PATH supplied by the SAME invocation when there is one.
+                    // REVIEW FIX (Codex, PR #14 round 6): with no PATH declared
+                    // anywhere, this defaulted to "" and produced `/tools:`, wiping the
+                    // inherited PATH so ordinary tools in /usr/bin vanished. An earlier
+                    // revision had this fallback and a later edit of mine dropped it.
                     let basePath =
                         plainBindings
                         |> List.tryPick (fun (k, v) -> if k = "PATH" then Some v else None)
                         |> Option.orElse outerPath
-                        |> Option.defaultValue ""
+                        |> Option.defaultWith (fun () ->
+                            match Environment.GetEnvironmentVariable "PATH" with
+                            | null -> ""
+                            | p -> p)
 
                     let bindings =
                         if List.isEmpty pathAdditions then

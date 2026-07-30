@@ -26,7 +26,19 @@ type StepRequest =
       Artifacts: ArtifactStore option
       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
+      ///
+      /// EXTERNAL cancellation only. A `timeout` deadline travels in [TimeoutMs]
+      /// and, for steps that do their own work, in [DeadlineExpired].
+      ///
+      /// REVIEW FIX (Codex, PR #14 round 6): folding the deadline into this
+      /// predicate made `ProcessGroup.run` classify an expired timeout as
+      /// `Cancelled`, so the diagnostic read "step was cancelled" instead of naming
+      /// the timeout — losing the distinction FG-033 exists to preserve.
       Interrupt: (unit -> bool) option
+      /// Polled by steps that perform their own work (archive, junit) so a
+      /// `timeout` bounds them too. Kept separate from [Interrupt] so the reported
+      /// CAUSE stays correct.
+      DeadlineExpired: (unit -> bool) option
       /// FG-071. Secret bindings live for this step. Output is masked against
       /// them ON THE WAY OUT — including the streaming path.
       ///
@@ -246,10 +258,15 @@ module Executor =
             // difference the user can see.
             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
 
+            // Either cause stops the archive; the diagnostic names neither, because
+            // this layer cannot tell a deadline from a failed failFast sibling.
             let abort () =
-                match request.Interrupt with
-                | Some p -> (try p () with _ -> false)
-                | None -> false
+                let fired (f: (unit -> bool) option) =
+                    match f with
+                    | Some p -> (try p () with _ -> false)
+                    | None -> false
+
+                fired request.Interrupt || fired request.DeadlineExpired
 
             let published, aborted =
                 Publish.archiveWithAbort store request.BuildKey request.Workspace (patterns raw) abort

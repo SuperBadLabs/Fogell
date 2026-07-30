@@ -42,7 +42,12 @@
         reviews  (gh (str "/pulls/" pr "/reviews"))
         ;; A "round" is a distinct comment timestamp minute — the bots post a
         ;; whole review at once.
-        title-of (fn [c]
+        ;; REVIEW FIX (Codex, PR #14 round 6): identity was the TRUNCATED title, so two
+        ;; findings sharing their first 72 characters collapsed and a round could
+        ;; report "0 NEW" — which this script itself calls safe to skip. Second time a
+        ;; flaw of the very class this tool prevents has been found inside it. Identity
+        ;; is the full normalised title; truncation is for display only.
+        full-title (fn [c]
                    (-> (get c "body")
                        (str/replace #"!\[P\d Badge\]\(https[^)]*\)" "")
                        (str/replace #"[*#]|<sub>|</sub>" "")
@@ -50,8 +55,8 @@
                        (->> (remove str/blank?))
                        first
                        (or "")
-                       str/trim
-                       (as-> t (subs t 0 (min 72 (count t))))))
+                       str/trim))
+        title-of (fn [c] (let [t (full-title c)] (subs t 0 (min 72 (count t)))))
         rounds (->> comments
                     (group-by #(subs (get % "created_at") 0 16))
                     (sort-by key))
@@ -66,16 +71,16 @@
            seen #{}
            n 1]
       (when stamp
-        (let [titles (map title-of cs)
+        (let [titles (map full-title cs)
               fresh  (remove seen titles)]
           (println (format "\nround %d  %sZ  commit %s  (%d comment(s), %d NEW)"
                            n stamp (get shas stamp "?") (count cs) (count fresh)))
           (doseq [c cs
-                  :let [t (title-of c)]]
+                  :let [t (full-title c)]]
             (println (format "  %-4s %-28s %s"
                              (if (seen t) "seen" "NEW")
                              (str (last (str/split (get c "path") #"/")) ":"
                                   (or (get c "line") (get c "original_line")))
-                             t)))
+                             (title-of c))))
           (recur more (into seen titles) (inc n)))))
     (println "\nEvery NEW line must be triaged before merging. A round with 0 NEW is the only safe one to skip.")))
