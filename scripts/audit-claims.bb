@@ -50,17 +50,38 @@
                   block (->> (subvec v start (inc stop))
                              (keep #(second (re-find #"^\s*(?://|///)\s?(.*)$" %)))
                              (str/join " "))
-                  named (filter #(str/includes? block %) receipts)]
-            :when (empty? named)]
+                  named (filter #(str/includes? block %) receipts)
+                  ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
+                  ;; behaviours cannot be receipted without over-fitting (a REJECTION makes
+                  ;; both engines fail, leaving only narration to compare). Saying so is a
+                  ;; valid answer; saying nothing is not. They are counted separately so the
+                  ;; admission stays visible instead of quietly passing.
+                  unproven? (str/includes? block "UNPROVEN")]
+            :when (and (empty? named) (not unproven?))]
         {:file (str (fs/relativize root f)) :line (inc i)
-         :text (str/trim (subs line 0 (min 100 (count line))))})]
+         :text (str/trim (subs line 0 (min 100 (count line))))})
+
+      unproven-count
+      (count (for [f sources
+                   :let [lines (str/split-lines (slurp f))]
+                   [i line] (map-indexed vector lines)
+                   :when (str/includes? line "MEASURED")
+                   :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
+                         v (vec lines)
+                         start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
+                         stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
+                         blk (str/join " " (subvec v start (inc stop)))]
+                   :when (str/includes? blk "UNPROVEN")]
+               1))]
 
   (println (format "MEASURED claims: %d source files scanned, %d receipts available"
                    (count sources) (count receipts)))
   (if (empty? findings)
-    (println "every MEASURED claim names a receipt that exists")
+    (println (format "every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (%d)"
+                     unproven-count))
     (do
-      (println (format "\n%d claim(s) name NO receipt — a reader cannot verify these:\n" (count findings)))
+      (println (format "\n%d claim(s) neither cite a receipt nor admit UNPROVEN (%d admitted):\n"
+                       (count findings) unproven-count))
       (doseq [{:keys [file line text]} findings]
         (println (format "  %s:%d\n    %s" file line text)))
       (println "\nEach must either cite its receipt, or say it is UNPROVEN.")))

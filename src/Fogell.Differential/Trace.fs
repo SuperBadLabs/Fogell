@@ -153,6 +153,7 @@ module Trace =
         // explaining what it did to the step, which is exactly the category this
         // predicate exists for. Comparing the sentences verbatim would over-fit
         // to timeout-plugin wording; what must agree is that SOMETHING was said.
+        // Receipt: `timeout-seconds`.
         || t.StartsWith "Timeout set to expire"
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"

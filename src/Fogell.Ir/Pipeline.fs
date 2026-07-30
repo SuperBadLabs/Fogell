@@ -62,6 +62,7 @@ type WhenCondition =
     /// them is FALSE and the stage is skipped, and the build is a success. Modelling that
     /// is what turns a fail-closed refusal into a working build for the corpus files
     /// using them.
+    /// Receipt: `when-context-conditions`.
     | WhenBuildingTag
     | WhenChangeRequest
     | WhenChangeset of pattern: string

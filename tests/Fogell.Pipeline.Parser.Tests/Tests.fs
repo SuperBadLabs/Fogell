@@ -150,6 +150,7 @@ let structure =
           test "context-dependent when conditions are modelled, not refused" {
               // MEASURED: on a plain job all six are FALSE and their stages are skipped,
               // with the build succeeding. They used to fail CLOSED, refusing the file.
+              // Receipt: `when-context-conditions`.
               let one w =
                   (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
 
@@ -187,6 +188,7 @@ let structure =
               // REJECTED with a compilation error. An earlier version of this test asserted
               // `glob` was legal — it encoded a key I had invented, so the test agreed with
               // the bug instead of catching it.
+              // Receipt: `when-scm-pattern-keys`.
               Expect.equal (one "changeset pattern: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the measured key works"
               Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
               Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
@@ -217,6 +219,8 @@ let structure =
               //   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf,
               //   branch, buildingTag, changeRequest, changelog, changeset, environment,
               //   equals, expression, isRestartedRun, not, tag, triggeredBy
+              // UNPROVEN BY RECEIPT: see the note in Parser.fs — a rejection cannot be receipted
+              // without over-fitting to compiler wording. THIS test is the evidence.
               let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
               Expect.equal p.Stages.[0].When (Some(WhenBranch "main")) "the directive contributes nothing"
 
@@ -275,6 +279,7 @@ let structure =
               // parallel block with "Expected a stage". The accepted form is a
               // sibling of `parallel`, and a differential receipt is what
               // corrected the first implementation.
+              // UNPROVEN BY RECEIPT: see the note in Parser.fs. THIS test is the evidence.
               let src =
                   mk
                       "    stage('outer') {\n      failFast true\n      parallel {\n        stage('a') { steps { echo 'a' } }\n        stage('b') { steps { echo 'b' } }\n      }\n    }"

@@ -1,0 +1,11 @@
+M  docs/EXECUTION_BOARD.md
+M  scripts/audit-claims.bb
+M  scripts/build-and-test.sh
+M  src/Fogell.Differential/Compare.fs
+M  src/Fogell.Differential/Fogell.fs
+M  src/Fogell.Differential/Trace.fs
+M  src/Fogell.Execution/Secrets.fs
+M  src/Fogell.Ir/Pipeline.fs
+M  src/Fogell.Pipeline.Parser/Parser.fs
+M  tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+?? evidence/20260730T183654Z-fg-104-annotate/

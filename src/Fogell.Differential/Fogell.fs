@@ -36,6 +36,7 @@ type BranchCtx =
       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
       /// shadowed one reverts to its outer value.
+      /// Receipt: `withenv-scoping`.
       EnvOverlay: (string * string) list }
 
 /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
@@ -129,6 +130,7 @@ module FogellSide =
             /// otherwise, which diverged every parallel case. Inventing attribution
             /// the reference engine does not provide is not a favour, it is a
             /// divergence.
+            /// Receipt: `parallel-always-failfast`.
             let emit (line: string) =
                 lock outputLock (fun () -> output.Add line)
             let workspace = Path.Combine(workspaceRoot, jobName)
@@ -513,6 +515,7 @@ module FogellSide =
                     // `aborted` where Jenkins reports `failure`.
                     // Routed through the ONE model so the shell path cannot drift from
                     // the wrapper steps again.
+                    // Receipt: `parallel-failfast`.
                     let interruptedBySibling =
                         result.Status = BuildStatus.Aborted
                         && cancellationOf ctx deadline = SiblingFailed
@@ -608,6 +611,7 @@ module FogellSide =
             /// which `*` covers; `?`/`**` remain unimplemented and unclaimed.
             ///
             /// An absent variable is never a match: MEASURED, Jenkins skips the stage.
+            /// Receipt: `when-scm-and-equals`.
             let matchesGlob (pattern: string) (value: string option) =
                 match value with
                 | None -> false
@@ -643,6 +647,7 @@ module FogellSide =
                 // The glob path (variable PRESENT, pattern matched) is NOT
                 // receipt-proven: this harness has no multibranch job to exercise
                 // it. It is implemented from Jenkins' documented ant-style glob.
+                // Receipt: `when-scm-and-equals`.
                 | WhenBranch pattern -> Some(matchesGlob pattern (Map.tryFind "BRANCH_NAME" env))
                 | WhenTag pattern -> Some(matchesGlob pattern (Map.tryFind "TAG_NAME" env))
 
@@ -718,6 +723,7 @@ module FogellSide =
                 // build with an actual changelog, is NOT covered by that measurement —
                 // those paths use the variable when present and are unproven until this
                 // harness can produce such a build (FG-048c).
+                // Receipt: `when-context-conditions`.
                 | WhenBuildingTag -> Some(Map.containsKey "TAG_NAME" env)
                 | WhenChangeRequest -> Some(Map.containsKey "CHANGE_ID" env)
                 | WhenIsRestartedRun ->
@@ -732,6 +738,7 @@ module FogellSide =
                     // `environment { BUILD_CAUSE = 'TimerTrigger' }` would open a stage
                     // Jenkins skips, and nothing else in the engine ever produces that
                     // variable. A gate whose input the gated party controls is not a gate.
+                    // Receipt: `when-context-conditions`.
                     Some false
 
                 | WhenChangeset _
@@ -803,6 +810,10 @@ module FogellSide =
             ///
             /// The surprise is `changed` on build 1: with no previous result,
             /// Jenkins treats the result as changed.
+            /// PARTIALLY UNPROVEN: only build #1 is receipt-backed (post-order-failure,
+            /// post-order-success). `fixed`/`regression` need build HISTORY, which this harness
+            /// cannot produce — it deletes the job around every run. Measured once by a manual
+            /// four-build probe. FG-110 unblocks the receipt; FG-049b is the receipt.
             let postFires (cond: PostCondition) (result: BuildStatus) (previous: BuildStatus option) =
                 match cond with
                 | PostCondition.Always -> true
@@ -831,6 +842,7 @@ module FogellSide =
             /// regression -> <result arm> -> cleanup. The result arms are mutually
             /// exclusive, so their order relative to each other is unobservable
             /// and is not claimed.
+            /// Receipt: `post-order-failure`.
             let postRank (cond: PostCondition) =
                 match cond with
                 | PostCondition.Always -> 0
@@ -850,6 +862,7 @@ module FogellSide =
             /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
             ///
             /// A nested deadline can only tighten an inherited one, never extend it.
+            /// Receipt: `options-timeout-pipeline`.
             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
                 // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
                 // turned into None here, so the declared SAFETY BOUND silently vanished and
@@ -942,6 +955,7 @@ module FogellSide =
                         // deliberate — Jenkins says "Stage \"x\" skipped due to when
                         // conditional", and being quieter than Jenkins about why a
                         // stage did not run is the JB-DUR-005 defect in miniature.
+                        // Receipt: `when-conditions`.
                         emit $"Stage \"{stage.Name}\" skipped due to when conditional"
 
                     | None ->
@@ -1050,6 +1064,7 @@ module FogellSide =
                         // status from the failed attempt reported `failure` with an
                         // identical workspace — the work was right, the bookkeeping
                         // was not.
+                        // Receipt: `retry-succeeds`.
                         let attemptStatus = ref BuildStatus.Success
 
                         let attemptCtx =
@@ -1080,6 +1095,7 @@ module FogellSide =
                 // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
                 // after the block an added variable is UNSET and a shadowed one
                 // reverts, so the binding is an overlay on the inner scope only.
+                // Receipt: `withenv-scoping`.
                 | "withEnv", _ when not (List.isEmpty step.Block) ->
                     // The argument is a Groovy LIST literal, handed over as one
                     // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
@@ -1186,6 +1202,7 @@ module FogellSide =
                 // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
                 // the log as `****`, and unsets it after the block. It also prints
                 // "Masking supported pattern matches of $VAR", which is engine narration.
+                // Receipt: `credentials-string`.
                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
                     let typeName =
                         function
@@ -1368,6 +1385,7 @@ module FogellSide =
                     // MEASURED: the confirmation label is configurable and Jenkins prints
                     // it — `ok: 'Ship it'` yields "Ship it or Abort". Hardcoding "Proceed"
                     // diverged on any pipeline that customises it.
+                    // Receipt: `input-ok-label`.
                     let okLabel =
                         step.Named
                         |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
@@ -1506,6 +1524,7 @@ module FogellSide =
                             // not run. Reporting success would let the build continue
                             // having silently lost the inputs it asked for, and a later
                             // `unstash` would succeed with nothing.
+                            // Receipt: `stash-empty-fails`.
                             emit $"ERROR: No files included in stash ‘{n}’"
                             ctx.Failed.Value <- true
                             ctx.Sink BuildStatus.Failure

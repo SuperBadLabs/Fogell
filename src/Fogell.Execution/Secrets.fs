@@ -30,6 +30,7 @@ type SecretBinding =
       /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
       /// hardening property that was in any case already proven weaker than claimed
       /// (a same-UID reader follows the path and opens the file it owns).
+      /// Receipt: `credentials-string`.
       ValueVariable: string
       /// Companion variable carrying a path to a 0600 file with the same value. Kept
       /// as an ADDITION, not a replacement: scripts that prefer a file can use it.

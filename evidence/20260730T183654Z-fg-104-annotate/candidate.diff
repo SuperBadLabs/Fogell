@@ -1,0 +1,364 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index d76720b..5558d1a 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -188,7 +188,7 @@ converts that recurring cost into a one-time cost.
+ | FG-101 | **P0** | **DONE** | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+ | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
+ | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
+-| FG-104 | P1 | **PARTIAL** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. Remaining half: annotate the 30 (each cites its receipt or is marked UNPROVEN), then flip the check to `--strict` so it fails a build instead of printing at it. Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
++| FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. **Both halves done.** All 30 resolved: 23 now cite the receipt that proves them, and **6 admit UNPROVEN** — every one of the same kind, a Jenkins REJECTION, where a receipt would require both engines to fail and only their narration to differ, so forcing one to PROVEN would mean pattern-matching a compiler's error layout. The seventh is `post`'s `fixed`/`regression`, proven only for build #1 because the harness cannot produce build history (FG-110/FG-049b). The check is now **`--strict` and blocking**, verified both ways: a planted unbacked claim exits 1, a clean tree exits 0. An admission is a valid answer and is counted separately so it stays visible rather than quietly passing. Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
+ 
+ ## Wave 3.6 — Harness capability (unlocks five blocked tickets at once)
+ 
+diff --git a/scripts/audit-claims.bb b/scripts/audit-claims.bb
+index 294f523..cb75af5 100755
+--- a/scripts/audit-claims.bb
++++ b/scripts/audit-claims.bb
+@@ -50,17 +50,38 @@
+                   block (->> (subvec v start (inc stop))
+                              (keep #(second (re-find #"^\s*(?://|///)\s?(.*)$" %)))
+                              (str/join " "))
+-                  named (filter #(str/includes? block %) receipts)]
+-            :when (empty? named)]
++                  named (filter #(str/includes? block %) receipts)
++                  ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
++                  ;; behaviours cannot be receipted without over-fitting (a REJECTION makes
++                  ;; both engines fail, leaving only narration to compare). Saying so is a
++                  ;; valid answer; saying nothing is not. They are counted separately so the
++                  ;; admission stays visible instead of quietly passing.
++                  unproven? (str/includes? block "UNPROVEN")]
++            :when (and (empty? named) (not unproven?))]
+         {:file (str (fs/relativize root f)) :line (inc i)
+-         :text (str/trim (subs line 0 (min 100 (count line))))})]
++         :text (str/trim (subs line 0 (min 100 (count line))))})
++
++      unproven-count
++      (count (for [f sources
++                   :let [lines (str/split-lines (slurp f))]
++                   [i line] (map-indexed vector lines)
++                   :when (str/includes? line "MEASURED")
++                   :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
++                         v (vec lines)
++                         start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
++                         stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
++                         blk (str/join " " (subvec v start (inc stop)))]
++                   :when (str/includes? blk "UNPROVEN")]
++               1))]
+ 
+   (println (format "MEASURED claims: %d source files scanned, %d receipts available"
+                    (count sources) (count receipts)))
+   (if (empty? findings)
+-    (println "every MEASURED claim names a receipt that exists")
++    (println (format "every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (%d)"
++                     unproven-count))
+     (do
+-      (println (format "\n%d claim(s) name NO receipt — a reader cannot verify these:\n" (count findings)))
++      (println (format "\n%d claim(s) neither cite a receipt nor admit UNPROVEN (%d admitted):\n"
++                       (count findings) unproven-count))
+       (doseq [{:keys [file line text]} findings]
+         (println (format "  %s:%d\n    %s" file line text)))
+       (println "\nEach must either cite its receipt, or say it is UNPROVEN.")))
+diff --git a/scripts/build-and-test.sh b/scripts/build-and-test.sh
+index 00bd54b..9fd32d5 100755
+--- a/scripts/build-and-test.sh
++++ b/scripts/build-and-test.sh
+@@ -16,21 +16,20 @@ for p in tests/*/; do
+   [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
+ done
+ [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+-# FG-104. Reports MEASURED claims that name no receipt. NOT blocking yet: 26 pre-date the
+-# rule and are being annotated. Flip to --strict once that backlog is zero, so the check
+-# fails a build rather than printing at it.
++# FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The
++# backlog it was introduced against (30) is zero, so the check now fails the build instead
++# of printing at it — an advisory check nobody must act on decays into noise.
+ if [ -x scripts/audit-claims.bb ]; then
+-  echo "=== claim audit (FG-104, advisory) ==="
++  echo "=== claim audit (FG-104, blocking) ==="
+   # No `| head`: piping into head can SIGPIPE babashka and mask its exit status, which
+   # would make an advisory check silently become a broken one.
+   # Status captured explicitly: without it a babashka that cannot start is indistinguishable
+   # from a clean audit, and the planned `--strict` flip would never have failed a build.
+-  if ! audit_out="$(./scripts/audit-claims.bb 2>&1)"; then
+-    echo "CLAIM AUDIT FAILED TO RUN"; printf '%s\n' "$audit_out"; exit 1
++  if ! audit_out="$(./scripts/audit-claims.bb --strict 2>&1)"; then
++    echo "CLAIM AUDIT FAILED"; printf '%s\n' "$audit_out"; exit 1
+   fi
+   printf '%s\n' "$audit_out" | sed -n '1,3p'
+-  printf '%s\n' "$audit_out" | rg -c "name NO receipt" >/dev/null && \
+-    echo "  (advisory: run scripts/audit-claims.bb for the full list)"
++
+ fi
+ 
+ echo "OK"
+diff --git a/src/Fogell.Differential/Compare.fs b/src/Fogell.Differential/Compare.fs
+index f1a81eb..beaafd6 100644
+--- a/src/Fogell.Differential/Compare.fs
++++ b/src/Fogell.Differential/Compare.fs
+@@ -74,6 +74,7 @@ module Compare =
+     /// provide. It also means the relaxation genuinely loses information — with
+     /// no prefix, a line cannot be attributed to a branch at all — which is why
+     /// the parallel receipts lean on the WORKSPACE hash for their real claim.
++    /// Receipt: `parallel-siblings-finish`.
+     let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
+         let rec walk i j f =
+             match j, f with
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 627b904..07ab2c2 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -36,6 +36,7 @@ type BranchCtx =
+       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
+       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
+       /// shadowed one reverts to its outer value.
++      /// Receipt: `withenv-scoping`.
+       EnvOverlay: (string * string) list }
+ 
+ /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
+@@ -129,6 +130,7 @@ module FogellSide =
+             /// otherwise, which diverged every parallel case. Inventing attribution
+             /// the reference engine does not provide is not a favour, it is a
+             /// divergence.
++            /// Receipt: `parallel-always-failfast`.
+             let emit (line: string) =
+                 lock outputLock (fun () -> output.Add line)
+             let workspace = Path.Combine(workspaceRoot, jobName)
+@@ -513,6 +515,7 @@ module FogellSide =
+                     // `aborted` where Jenkins reports `failure`.
+                     // Routed through the ONE model so the shell path cannot drift from
+                     // the wrapper steps again.
++                    // Receipt: `parallel-failfast`.
+                     let interruptedBySibling =
+                         result.Status = BuildStatus.Aborted
+                         && cancellationOf ctx deadline = SiblingFailed
+@@ -608,6 +611,7 @@ module FogellSide =
+             /// which `*` covers; `?`/`**` remain unimplemented and unclaimed.
+             ///
+             /// An absent variable is never a match: MEASURED, Jenkins skips the stage.
++            /// Receipt: `when-scm-and-equals`.
+             let matchesGlob (pattern: string) (value: string option) =
+                 match value with
+                 | None -> false
+@@ -643,6 +647,7 @@ module FogellSide =
+                 // The glob path (variable PRESENT, pattern matched) is NOT
+                 // receipt-proven: this harness has no multibranch job to exercise
+                 // it. It is implemented from Jenkins' documented ant-style glob.
++                // Receipt: `when-scm-and-equals`.
+                 | WhenBranch pattern -> Some(matchesGlob pattern (Map.tryFind "BRANCH_NAME" env))
+                 | WhenTag pattern -> Some(matchesGlob pattern (Map.tryFind "TAG_NAME" env))
+ 
+@@ -718,6 +723,7 @@ module FogellSide =
+                 // build with an actual changelog, is NOT covered by that measurement —
+                 // those paths use the variable when present and are unproven until this
+                 // harness can produce such a build (FG-048c).
++                // Receipt: `when-context-conditions`.
+                 | WhenBuildingTag -> Some(Map.containsKey "TAG_NAME" env)
+                 | WhenChangeRequest -> Some(Map.containsKey "CHANGE_ID" env)
+                 | WhenIsRestartedRun ->
+@@ -732,6 +738,7 @@ module FogellSide =
+                     // `environment { BUILD_CAUSE = 'TimerTrigger' }` would open a stage
+                     // Jenkins skips, and nothing else in the engine ever produces that
+                     // variable. A gate whose input the gated party controls is not a gate.
++                    // Receipt: `when-context-conditions`.
+                     Some false
+ 
+                 | WhenChangeset _
+@@ -803,6 +810,10 @@ module FogellSide =
+             ///
+             /// The surprise is `changed` on build 1: with no previous result,
+             /// Jenkins treats the result as changed.
++            /// PARTIALLY UNPROVEN: only build #1 is receipt-backed (post-order-failure,
++            /// post-order-success). `fixed`/`regression` need build HISTORY, which this harness
++            /// cannot produce — it deletes the job around every run. Measured once by a manual
++            /// four-build probe. FG-110 unblocks the receipt; FG-049b is the receipt.
+             let postFires (cond: PostCondition) (result: BuildStatus) (previous: BuildStatus option) =
+                 match cond with
+                 | PostCondition.Always -> true
+@@ -831,6 +842,7 @@ module FogellSide =
+             /// regression -> <result arm> -> cleanup. The result arms are mutually
+             /// exclusive, so their order relative to each other is unobservable
+             /// and is not claimed.
++            /// Receipt: `post-order-failure`.
+             let postRank (cond: PostCondition) =
+                 match cond with
+                 | PostCondition.Always -> 0
+@@ -850,6 +862,7 @@ module FogellSide =
+             /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
+             ///
+             /// A nested deadline can only tighten an inherited one, never extend it.
++            /// Receipt: `options-timeout-pipeline`.
+             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+                 // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
+                 // turned into None here, so the declared SAFETY BOUND silently vanished and
+@@ -942,6 +955,7 @@ module FogellSide =
+                         // deliberate — Jenkins says "Stage \"x\" skipped due to when
+                         // conditional", and being quieter than Jenkins about why a
+                         // stage did not run is the JB-DUR-005 defect in miniature.
++                        // Receipt: `when-conditions`.
+                         emit $"Stage \"{stage.Name}\" skipped due to when conditional"
+ 
+                     | None ->
+@@ -1050,6 +1064,7 @@ module FogellSide =
+                         // status from the failed attempt reported `failure` with an
+                         // identical workspace — the work was right, the bookkeeping
+                         // was not.
++                        // Receipt: `retry-succeeds`.
+                         let attemptStatus = ref BuildStatus.Success
+ 
+                         let attemptCtx =
+@@ -1080,6 +1095,7 @@ module FogellSide =
+                 // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
+                 // after the block an added variable is UNSET and a shadowed one
+                 // reverts, so the binding is an overlay on the inner scope only.
++                // Receipt: `withenv-scoping`.
+                 | "withEnv", _ when not (List.isEmpty step.Block) ->
+                     // The argument is a Groovy LIST literal, handed over as one
+                     // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
+@@ -1186,6 +1202,7 @@ module FogellSide =
+                 // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
+                 // the log as `****`, and unsets it after the block. It also prints
+                 // "Masking supported pattern matches of $VAR", which is engine narration.
++                // Receipt: `credentials-string`.
+                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
+                     let typeName =
+                         function
+@@ -1368,6 +1385,7 @@ module FogellSide =
+                     // MEASURED: the confirmation label is configurable and Jenkins prints
+                     // it — `ok: 'Ship it'` yields "Ship it or Abort". Hardcoding "Proceed"
+                     // diverged on any pipeline that customises it.
++                    // Receipt: `input-ok-label`.
+                     let okLabel =
+                         step.Named
+                         |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+@@ -1506,6 +1524,7 @@ module FogellSide =
+                             // not run. Reporting success would let the build continue
+                             // having silently lost the inputs it asked for, and a later
+                             // `unstash` would succeed with nothing.
++                            // Receipt: `stash-empty-fails`.
+                             emit $"ERROR: No files included in stash ‘{n}’"
+                             ctx.Failed.Value <- true
+                             ctx.Sink BuildStatus.Failure
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 51dde0f..e67edb8 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -153,6 +153,7 @@ module Trace =
+         // explaining what it did to the step, which is exactly the category this
+         // predicate exists for. Comparing the sentences verbatim would over-fit
+         // to timeout-plugin wording; what must agree is that SOMETHING was said.
++        // Receipt: `timeout-seconds`.
+         || t.StartsWith "Timeout set to expire"
+         || t.StartsWith "Timeout has been exceeded"
+         || t.StartsWith "Cancelling nested steps"
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index b285321..b4a9351 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -30,6 +30,7 @@ type SecretBinding =
+       /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
+       /// hardening property that was in any case already proven weaker than claimed
+       /// (a same-UID reader follows the path and opens the file it owns).
++      /// Receipt: `credentials-string`.
+       ValueVariable: string
+       /// Companion variable carrying a path to a 0600 file with the same value. Kept
+       /// as an ADDITION, not a replacement: scripts that prefer a file can use it.
+diff --git a/src/Fogell.Ir/Pipeline.fs b/src/Fogell.Ir/Pipeline.fs
+index cdbc9b8..2f681e2 100644
+--- a/src/Fogell.Ir/Pipeline.fs
++++ b/src/Fogell.Ir/Pipeline.fs
+@@ -62,6 +62,7 @@ type WhenCondition =
+     /// them is FALSE and the stage is skipped, and the build is a success. Modelling that
+     /// is what turns a fail-closed refusal into a working build for the corpus files
+     /// using them.
++    /// Receipt: `when-context-conditions`.
+     | WhenBuildingTag
+     | WhenChangeRequest
+     | WhenChangeset of pattern: string
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index 9f799ed..8f85189 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -214,6 +214,7 @@ let private postSection: P<(PostCondition * Step list) list> =
+ /// Jenkins does not accept — so every real `environment` condition fell through
+ /// to the unmodelled branch, and from there (see below) out of the `when`
+ /// section entirely. Named arguments, in either order.
++/// Receipt: `when-conditions`.
+ let private whenEnvironmentCondition: P<WhenCondition> =
+     keyword "environment"
+     >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
+@@ -281,6 +282,7 @@ let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
+ /// was measured correct. Guessing a data-bound parameter name is not a small thing: it
+ /// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
+ /// it unmodelled rather than mistake it for the value.
++/// Receipt: `when-scm-pattern-keys`.
+ let private namedOrBare (key: string) : P<Result<string, string>> =
+     // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
+     // same shadowing that bit this file once before.
+@@ -359,6 +361,10 @@ let rec private whenCondition: P<WhenCondition> =
+ /// 'never' }` unconditionally TRUE here, running a stage on a pipeline Jenkins refuses to
+ /// COMPILE. That enumeration is also the authority for what a `when` may contain, and all
+ /// fourteen of those conditionals are modelled.
++/// UNPROVEN BY RECEIPT: measured by probe, but the case was DROPPED from the suite —
++/// both engines fail and only the narration differs (Jenkins prints a Groovy compile
++/// report, Fogell a stage-gate error), so forcing it to PROVEN would have meant
++/// pattern-matching a compiler's error layout. Held by a parser test instead.
+ let private whenDirective: P<unit> =
+     (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
+     >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
+@@ -379,6 +385,9 @@ let private whenSection: P<WhenCondition> =
+             //   content.
+             // Treating it as "nothing to gate on, so run" executed a stage on a pipeline
+             // Jenkins refuses to compile.
++            // UNPROVEN BY RECEIPT: measured by probe; no case in the suite, for the same reason
++            // as the nested-directive claim above — a rejection makes both engines fail and only
++            // the narration differ. Held by a parser test.
+             | [] -> WhenUnmodelled("when", "empty when closure")
+             | multiple -> WhenAllOf multiple
+ 
+@@ -408,6 +417,8 @@ let private stagesBody: P<Stage list> =
+ /// A differential receipt caught it. Accepting a form the reference engine
+ /// refuses is not leniency — it means a pipeline that runs here fails there,
+ /// which is the exact opposite of the lift-and-shift promise.
++/// UNPROVEN BY RECEIPT: measured on PR #12 from Jenkins' own rejection message; no case
++/// in the suite, same rejection-narration reason. Held by a parser test.
+ let private failFastDirective: P<bool> =
+     keyword "failFast" >>. ws >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
+     .>> ws
+diff --git a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+index ed507fd..110d676 100644
+--- a/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
++++ b/tests/Fogell.Pipeline.Parser.Tests/Tests.fs
+@@ -150,6 +150,7 @@ let structure =
+           test "context-dependent when conditions are modelled, not refused" {
+               // MEASURED: on a plain job all six are FALSE and their stages are skipped,
+               // with the build succeeding. They used to fail CLOSED, refusing the file.
++              // Receipt: `when-context-conditions`.
+               let one w =
+                   (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
+ 
+@@ -187,6 +188,7 @@ let structure =
+               // REJECTED with a compilation error. An earlier version of this test asserted
+               // `glob` was legal — it encoded a key I had invented, so the test agreed with
+               // the bug instead of catching it.
++              // Receipt: `when-scm-pattern-keys`.
+               Expect.equal (one "changeset pattern: '**/*.java'") (Some(WhenChangeset "**/*.java")) "the measured key works"
+               Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
+               Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
+@@ -217,6 +219,8 @@ let structure =
+               //   Unknown conditional beforeAgent. Valid conditionals are: allOf, anyOf,
+               //   branch, buildingTag, changeRequest, changelog, changeset, environment,
+               //   equals, expression, isRestartedRun, not, tag, triggeredBy
++              // UNPROVEN BY RECEIPT: see the note in Parser.fs — a rejection cannot be receipted
++              // without over-fitting to compiler wording. THIS test is the evidence.
+               let p = ok (mk "    stage('a') { when { beforeAgent true\n branch 'main' } steps { echo 'x' } }")
+               Expect.equal p.Stages.[0].When (Some(WhenBranch "main")) "the directive contributes nothing"
+ 
+@@ -275,6 +279,7 @@ let structure =
+               // parallel block with "Expected a stage". The accepted form is a
+               // sibling of `parallel`, and a differential receipt is what
+               // corrected the first implementation.
++              // UNPROVEN BY RECEIPT: see the note in Parser.fs. THIS test is the evidence.
+               let src =
+                   mk
+                       "    stage('outer') {\n      failFast true\n      parallel {\n        stage('a') { steps { echo 'a' } }\n        stage('b') { steps { echo 'b' } }\n      }\n    }"
