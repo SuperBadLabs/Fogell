@@ -267,7 +267,13 @@ module Stash =
     /// Restore a stash into the workspace. Missing name is an error, never a silent
     /// no-op: a build that carries on with none of the files it asked for is the
     /// silent-loss shape this project exists to avoid.
-    let restore (store: StashStore) (buildKey: string) (workspace: string) (name: string) =
+    let restore
+        (store: StashStore)
+        (buildKey: string)
+        (workspace: string)
+        (name: string)
+        (abort: unit -> bool)
+        =
         let source = dir store buildKey name
 
         if not (IO.Directory.Exists source) then
@@ -278,9 +284,22 @@ module Stash =
                 |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
                 |> Array.sort
 
-            for relative in files do
-                let dest = IO.Path.Combine(workspace, relative)
-                IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-                IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
+            // REVIEW FIX (Codex, PR #15): `restore` had no abort predicate and the
+            // dispatcher did no post-copy check, so a large `unstash` as the final step
+            // inside a `timeout` finished and reported success past the deadline.
+            let mutable aborted = abort ()
+            let restored = System.Collections.Generic.List<string>()
 
-            Ok(List.ofArray files)
+            for relative in files do
+                if not aborted then
+                    if abort () then
+                        aborted <- true
+                    else
+                        let dest = IO.Path.Combine(workspace, relative)
+                        IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+                        IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
+                        restored.Add relative
+                        if abort () then aborted <- true
+
+            if aborted then Error "aborted: the step was interrupted while restoring the stash"
+            else Ok(List.ofSeq restored)

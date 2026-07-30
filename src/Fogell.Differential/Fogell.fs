@@ -43,14 +43,26 @@ module FogellSide =
         | null
         | "" -> Map.empty
         | spec ->
-            spec.Split ','
+            // REVIEW FIX (Codex, PR #15): the type used to be INFERRED from whether the
+            // value contained a colon, so a perfectly ordinary secret text like
+            // `token=https://service/path` was read as username `https` / password
+            // `//service/path` and then rejected as a type mismatch. Secret text and file
+            // content are arbitrary bytes and colons are common in them. The type is now
+            // explicit: `id=text:VALUE`, `id=userpass:USER:PASS`, `id=file:CONTENT`.
+            // Only the FIRST colon after the type is structural.
+            spec.Split ';'
             |> Array.toList
             |> List.choose (fun entry ->
                 match entry.Split('=', 2) with
-                | [| id; value |] when id <> "" ->
-                    match value.Split(':', 2) with
-                    | [| u; p |] when value.Contains ':' -> Some(id.Trim(), UsernamePassword(u, p))
-                    | _ -> Some(id.Trim(), SecretText value)
+                | [| id; rest |] when id.Trim() <> "" ->
+                    match rest.Split(':', 2) with
+                    | [| "text"; v |] -> Some(id.Trim(), SecretText v)
+                    | [| "file"; v |] -> Some(id.Trim(), SecretFile("secret.dat", v))
+                    | [| "userpass"; v |] ->
+                        match v.Split(':', 2) with
+                        | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
+                        | _ -> None
+                    | _ -> None
                 | _ -> None)
             |> Map.ofList
 
@@ -848,6 +860,9 @@ module FogellSide =
                         // comment warns about, two lines above the code that did it. A
                         // mismatch is a misconfiguration and must fail before the body runs.
                         let mismatches = System.Collections.Generic.List<string>()
+                        // Non-secret variables that still have to reach the child, e.g. a
+                        // usernamePassword's username.
+                        let plainEnv = System.Collections.Generic.List<string * string>()
 
                         let bindings =
                             requests
@@ -863,6 +878,18 @@ module FogellSide =
                                 | BindUserPass(id, uv, pv) ->
                                     match store.[id] with
                                     | UsernamePassword(u, p) ->
+                                        // BOTH are masked. A Codex review (PR #15) said the
+                                        // username is not a secret on Jenkins and asked for
+                                        // it to be exported plainly — citing a comment I had
+                                        // written in the credentials-userpass case asserting
+                                        // exactly that. I had never measured it. A receipt
+                                        // that prints both to STDOUT settles it:
+                                        //   Jenkins: user-on-stdout=****
+                                        //   Jenkins: pass-on-stdout=****
+                                        // Jenkins registers both values with its masker, so
+                                        // masking both is parity and the "fix" broke it. My
+                                        // unverified comment became the reviewer's evidence,
+                                        // which is the real defect here.
                                         [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
                                     | other ->
                                         mismatches.Add
@@ -890,6 +917,12 @@ module FogellSide =
                         // Jenkins narrates the masking; excluded from comparison as
                         // engine narration, but said so a reader is not left guessing.
                         if mismatches.Count > 0 then
+                            // REVIEW FIX (Codex, PR #15): a mixed request creates the valid
+                            // bindings BEFORE the mismatch is noticed, and this branch
+                            // returned without revoking them — leaving secret files on disk
+                            // outside the workspace, so workspace cleanup never removed
+                            // them.
+                            Secrets.revoke bindings
                             emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
                             ctx.Failed.Value <- true
                             ctx.Sink BuildStatus.Failure
@@ -901,7 +934,8 @@ module FogellSide =
                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
-                        let overlay = ctx.EnvOverlay @ Secrets.environmentFor bindings
+                        let overlay =
+                            ctx.EnvOverlay @ List.ofSeq plainEnv @ Secrets.environmentFor bindings
                         let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
 
                         for st in step.Block do
@@ -951,10 +985,25 @@ module FogellSide =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     | Some n ->
+                        // REVIEW FIX (Codex, PR #15): this checked only ctx.Interrupt while
+                        // the archive and junit predicates combine interruption WITH the
+                        // deadline — so a stash inside a `timeout` could still finish past
+                        // it. Same predicate everywhere now.
                         let abort () =
-                            match ctx.Interrupt with
-                            | Some p -> (try p () with _ -> false)
-                            | None -> false
+                            let fired (p: (unit -> bool) option) =
+                                match p with
+                                | Some f -> (try f () with _ -> false)
+                                | None -> false
+
+                            fired ctx.Interrupt || (match remainingMs deadline with
+                                                    | Some ms -> ms <= 1
+                                                    | None -> false)
+
+                        let allowEmpty =
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "allowEmpty" then Some v else None)
+                            |> Option.map (fun v -> v.Trim().ToLowerInvariant() = "true")
+                            |> Option.defaultValue false
 
                         let saved, aborted = Stash.save store jobName cwd n includes abort
 
@@ -962,6 +1011,15 @@ module FogellSide =
                             emit "ERROR: stash aborted: the step was interrupted while copying"
                             ctx.Failed.Value <- true
                             ctx.Sink BuildStatus.Aborted
+                        elif List.isEmpty saved && not allowEmpty then
+                            // MEASURED: Jenkins FAILS the build here (default
+                            // allowEmpty: false) — the pipeline stops and later steps do
+                            // not run. Reporting success would let the build continue
+                            // having silently lost the inputs it asked for, and a later
+                            // `unstash` would succeed with nothing.
+                            emit $"ERROR: No files included in stash ‘{n}’"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
                         else
                             emit $"Stashed {saved.Length} file(s)"
 
@@ -981,7 +1039,17 @@ module FogellSide =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     | Some n ->
-                        match Stash.restore store jobName cwd n with
+                        let abort () =
+                            let fired (p: (unit -> bool) option) =
+                                match p with
+                                | Some f -> (try f () with _ -> false)
+                                | None -> false
+
+                            fired ctx.Interrupt || (match remainingMs deadline with
+                                                    | Some ms -> ms <= 1
+                                                    | None -> false)
+
+                        match Stash.restore store jobName cwd n abort with
                         | Result.Error e ->
                             // A missing stash FAILS. Carrying on with none of the files
                             // the build asked for is the silent-loss shape.

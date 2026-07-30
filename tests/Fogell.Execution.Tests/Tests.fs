@@ -384,7 +384,7 @@ let secrets =
               let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] (fun () -> false)
               Expect.equal a b "both saved"
 
-              match Stash.restore store "build-1" ws "x" with
+              match Stash.restore store "build-1" ws "x" (fun () -> false) with
               | Ok files -> Expect.equal files [ "f.txt" ] "restoring 'x' finds its own content"
               | Error e -> failtest e
           }

@@ -1,0 +1,20 @@
+  Fogell.Crash.Harness -> /home/srikanth/projects/fogell/tools/Fogell.Crash.Harness/bin/Release/net10.0/fogell-crash-harness.dll
+  Fogell.Admission -> /home/srikanth/projects/fogell/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Execution -> /home/srikanth/projects/fogell/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Execution.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+  Fogell.Differential -> /home/srikanth/projects/fogell/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Pipeline.Parser.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+  Fogell.Groovy.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Groovy.Tests/bin/Release/net10.0/Fogell.Groovy.Tests.dll
+  Fogell.Corpus.Score -> /home/srikanth/projects/fogell/tools/Fogell.Corpus.Score/bin/Release/net10.0/fogell-score.dll
+  Fogell.Differential.Cli -> /home/srikanth/projects/fogell/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+  Fogell.Controller.Api -> /home/srikanth/projects/fogell/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Controller.Api.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:00.94

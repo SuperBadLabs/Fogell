@@ -3,8 +3,12 @@
 // both must be unset after the block.
 //
 // The workspace records lengths and the username's masked state rather than values, so
-// the receipt proves the binding without committing a secret. The USERNAME is not a
-// secret on Jenkins and is not masked; the password is.
+// the receipt proves the binding without committing a secret.
+//
+// MEASURED (credentials-username-not-masked): Jenkins masks BOTH the username and the
+// password. An earlier version of this comment asserted the username was not masked, on
+// no evidence, and a reviewer reasonably cited it as fact when asking for a change that
+// would have broken parity. An unverified comment that sounds measured is a liability.
 pipeline {
     agent any
     stages {

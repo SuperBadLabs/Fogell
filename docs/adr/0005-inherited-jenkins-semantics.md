@@ -60,6 +60,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   every real pipeline reads `$TOKEN`, so a path-only binding breaks lift-and-shift.
 - `withCredentials([file(...)])` binds the requested variable to a **path** to a
   temporary file, not to the content. (Proven: `credentials-file`.)
+- `withCredentials([usernamePassword(...)])` masks **both** the username and the
+  password. (Proven: `credentials-userpass-masking`. A review asked for the username to
+  be exported unmasked, citing an unverified comment of mine that said Jenkins does not
+  mask it; the receipt showed Jenkins masks both.)
+- `stash` with the default `allowEmpty: false` and no matching files **fails the
+  build** — later steps do not run. (Proven: `stash-empty-fails`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
 - Approval/`input` state survives a controller restart.

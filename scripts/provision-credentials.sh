@@ -37,5 +37,16 @@ post_cred <<'XML'
 XML
 echo
 
+echo -n "fogell-file        (secret file)     -> HTTP "
+post_cred <<XML
+<org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl>
+  <scope>GLOBAL</scope><id>fogell-file</id><description>differential secret file</description>
+  <fileName>cert.pem</fileName><secretBytes>$(printf 'cert-file-body' | base64 -w0)</secretBytes>
+</org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl>
+XML
 echo
-echo "export FOGELL_CREDENTIALS='fogell-token=s3cr3t-value,fogell-userpass=deploy-bot:p4ssw0rd-value'"
+
+echo
+# The type is EXPLICIT. Inferring it from whether the value contains a colon broke any
+# secret text holding one — e.g. a URL — which is most of them.
+echo "export FOGELL_CREDENTIALS='fogell-token=text:s3cr3t-value;fogell-userpass=userpass:deploy-bot:p4ssw0rd-value;fogell-file=file:cert-file-body'"

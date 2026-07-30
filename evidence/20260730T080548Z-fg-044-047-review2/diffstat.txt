@@ -1,0 +1,9 @@
+ .../cases/credentials-userpass.Jenkinsfile         |  8 +-
+ docs/EXECUTION_BOARD.md                            |  2 +-
+ docs/adr/0005-inherited-jenkins-semantics.md       |  6 ++
+ scripts/provision-credentials.sh                   | 13 +++-
+ src/Fogell.Differential/Fogell.fs                  | 88 +++++++++++++++++++---
+ src/Fogell.Execution/Publish.fs                    | 31 ++++++--
+ src/Fogell.Execution/Secrets.fs                    |  8 +-
+ tests/Fogell.Execution.Tests/Tests.fs              |  2 +-
+ 8 files changed, 136 insertions(+), 22 deletions(-)

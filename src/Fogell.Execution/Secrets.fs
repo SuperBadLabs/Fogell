@@ -84,7 +84,13 @@ module Secrets =
     /// with the workspace.
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
         Directory.CreateDirectory directory |> ignore
-        let path = Path.Combine(directory, $".secret-{variableName}")
+        // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two
+        // bindings of the same variable — nested `withCredentials`, or concurrent
+        // parallel branches — shared one file. The inner one overwrote the outer, and
+        // revoking the inner deleted the file the outer's variable still pointed at.
+        // Jenkins allocates a fresh temporary path per binding; so do we.
+        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
         File.WriteAllText(path, value)
 
         // 0600 before anything can read it. WriteAllText creates with the
