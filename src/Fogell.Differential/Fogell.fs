@@ -376,7 +376,7 @@ module FogellSide =
                     let siblingAt = ctx.SiblingFailedAt.Value
                     let deadlineAt = defaultArg deadline Int64.MaxValue
 
-                    if siblingAt > 0L && siblingAt < deadlineAt then SiblingFailed
+                    if siblingAt >= 0L && siblingAt < deadlineAt then SiblingFailed
                     else DeadlineExpired
 
             /// Emit the reason, mark the branch failed, and sink the status the CAUSE
@@ -1595,8 +1595,10 @@ module FogellSide =
                         // works. A CancellationTokenSource is the synchronised
                         // signal this needs.
                         use siblingFailed = new System.Threading.CancellationTokenSource()
-                        // A ref cell so Interlocked can guard first-write-wins.
-                        let siblingFailedAt = ref 0L
+                        // -1 is UNSET. Zero is a real stopwatch reading — a branch that
+                        // fails during millisecond zero would otherwise store the sentinel
+                        // itself and read back as "never signalled".
+                        let siblingFailedAt = ref -1L
 
                         let branches =
                             stage.Nested
@@ -1615,7 +1617,13 @@ module FogellSide =
                                       Sink = ctx.Sink
                                       EnvOverlay = ctx.EnvOverlay
                                       Secrets = ctx.Secrets
-                                      SiblingFailedAt = siblingFailedAt
+                                      // The stamp must travel WITH the predicate it
+                                      // describes. A non-failFast block inherits the
+                                      // parent's interrupt, so inheriting a fresh local ref
+                                      // would have it read an unrelated time — or none —
+                                      // and call an outer sibling's failure a deadline.
+                                      SiblingFailedAt =
+                                        if failFast then siblingFailedAt else ctx.SiblingFailedAt
                                       Interrupt =
                                         if failFast then
                                             Some(fun () -> siblingFailed.IsCancellationRequested)
@@ -1643,7 +1651,7 @@ module FogellSide =
                                         // the misclassification this model exists to stop,
                                         // reintroduced by the timestamp added to fix it.
                                         System.Threading.Interlocked.CompareExchange(
-                                            siblingFailedAt, runClock.ElapsedMilliseconds, 0L)
+                                            siblingFailedAt, runClock.ElapsedMilliseconds, -1L)
                                         |> ignore
 
                                         siblingFailed.Cancel()))
@@ -1670,7 +1678,7 @@ module FogellSide =
                   Sink = bump
                   EnvOverlay = []
                   Secrets = []
-                  SiblingFailedAt = ref 0L }
+                  SiblingFailedAt = ref -1L }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
