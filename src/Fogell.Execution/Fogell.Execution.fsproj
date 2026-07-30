@@ -10,6 +10,7 @@
     <Compile Include="Native.fs" />
     <Compile Include="Workspace.fs" />
     <Compile Include="ProcessGroup.fs" />
+    <Compile Include="Secrets.fs" />
     <Compile Include="Publish.fs" />
     <Compile Include="Executor.fs" />
   </ItemGroup>
