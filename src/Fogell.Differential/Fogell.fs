@@ -99,16 +99,28 @@ module FogellSide =
                             | v -> v)
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
-                // Names whose value Groovy keeps VERBATIM. `withEnv` entries are
-                // handled at their own site, where the quote form is still visible.
-                let literal =
-                    Set.union pipeline.EnvironmentLiteralNames stage.EnvironmentLiteralNames
+                // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
+                // two scopes' literal-name sets, so a pipeline `VALUE = '$X'` followed
+                // by a stage `VALUE = "$X"` left the stage's GString literal — the
+                // name was still in the set. Codex had warned in round 4 to "carry
+                // provenance with each binding or resolve each scope using its own
+                // provenance", and I took the union shortcut anyway. Each scope is now
+                // resolved against ITS OWN provenance.
+                let withKind (names: Set<string>) (bindings: (string * string) list) =
+                    bindings |> List.map (fun (k, v) -> k, v, not (Set.contains k names))
 
-                (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
+                // Jenkins-provided values are plain strings, never GStrings; a
+                // withEnv overlay was already resolved where its quote form was known.
+                let scoped =
+                    withKind (jenkinsProvided |> List.map fst |> Set.ofList) jenkinsProvided
+                    @ withKind pipeline.EnvironmentLiteralNames pipeline.Environment
+                    @ withKind stage.EnvironmentLiteralNames stage.Environment
+                    @ withKind (overlay |> List.map fst |> Set.ofList) overlay
+
+                scoped
                 |> List.fold
-                    (fun acc (k, v) ->
-                        let resolved = if Set.contains k literal then v else interpolate acc v
-                        Map.add k resolved acc)
+                    (fun acc (k, v, interpolates) ->
+                        Map.add k (if interpolates then interpolate acc v else v) acc)
                     Map.empty
                 |> Map.toList
 

@@ -1,0 +1,101 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index a73468d..a30f1f2 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
++seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -44,5 +44,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index ab3860b..629c5a5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **31/31 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **32/32 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 8dc4547..dbcccf7 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -99,16 +99,28 @@ module FogellSide =
+                             | v -> v)
+ 
+             let envForWith (overlay: (string * string) list) (stage: Stage) =
+-                // Names whose value Groovy keeps VERBATIM. `withEnv` entries are
+-                // handled at their own site, where the quote form is still visible.
+-                let literal =
+-                    Set.union pipeline.EnvironmentLiteralNames stage.EnvironmentLiteralNames
++                // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
++                // two scopes' literal-name sets, so a pipeline `VALUE = '$X'` followed
++                // by a stage `VALUE = "$X"` left the stage's GString literal — the
++                // name was still in the set. Codex had warned in round 4 to "carry
++                // provenance with each binding or resolve each scope using its own
++                // provenance", and I took the union shortcut anyway. Each scope is now
++                // resolved against ITS OWN provenance.
++                let withKind (names: Set<string>) (bindings: (string * string) list) =
++                    bindings |> List.map (fun (k, v) -> k, v, not (Set.contains k names))
+ 
+-                (jenkinsProvided @ pipeline.Environment @ stage.Environment @ overlay)
++                // Jenkins-provided values are plain strings, never GStrings; a
++                // withEnv overlay was already resolved where its quote form was known.
++                let scoped =
++                    withKind (jenkinsProvided |> List.map fst |> Set.ofList) jenkinsProvided
++                    @ withKind pipeline.EnvironmentLiteralNames pipeline.Environment
++                    @ withKind stage.EnvironmentLiteralNames stage.Environment
++                    @ withKind (overlay |> List.map fst |> Set.ofList) overlay
++
++                scoped
+                 |> List.fold
+-                    (fun acc (k, v) ->
+-                        let resolved = if Set.contains k literal then v else interpolate acc v
+-                        Map.add k resolved acc)
++                    (fun acc (k, v, interpolates) ->
++                        Map.add k (if interpolates then interpolate acc v else v) acc)
+                     Map.empty
+                 |> Map.toList
+ 
+diff --git a/src/Fogell.Pipeline.Parser/Lexeme.fs b/src/Fogell.Pipeline.Parser/Lexeme.fs
+index 5b85401..aab66ee 100644
+--- a/src/Fogell.Pipeline.Parser/Lexeme.fs
++++ b/src/Fogell.Pipeline.Parser/Lexeme.fs
+@@ -66,8 +66,8 @@ let private tripleQuoted (q: string) : P<string> =
+ /// harness must never produce. Measured 53 single-quoted dollar-bearing
+ /// assignments in the 228-file corpus, so it is not hypothetical.
+ ///
+-/// Single-quoted and slashy strings are literal; double-quoted and triple-double
+-/// are GStrings and interpolate.
++/// Single-quoted forms are literal. Double-quoted, triple-double AND slashy are
++/// GStrings and interpolate.
+ let stringLiteralWithKind: P<string * bool> =
+     lexeme (
+         choice
+@@ -75,7 +75,10 @@ let stringLiteralWithKind: P<string * bool> =
+               attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
+               attempt (quoted "'" |>> fun s -> s, false)
+               attempt (quoted "\"" |>> fun s -> s, true)
+-              attempt (quoted "/" |>> fun s -> s, false) ])
++              // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
++              // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
++              // expand. Only single-quoted forms are literal.
++              attempt (quoted "/" |>> fun s -> s, true) ])
+ 
+ let stringLiteral: P<string> =
+     lexeme (

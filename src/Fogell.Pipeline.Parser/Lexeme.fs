@@ -66,8 +66,8 @@ let private tripleQuoted (q: string) : P<string> =
 /// harness must never produce. Measured 53 single-quoted dollar-bearing
 /// assignments in the 228-file corpus, so it is not hypothetical.
 ///
-/// Single-quoted and slashy strings are literal; double-quoted and triple-double
-/// are GStrings and interpolate.
+/// Single-quoted forms are literal. Double-quoted, triple-double AND slashy are
+/// GStrings and interpolate.
 let stringLiteralWithKind: P<string * bool> =
     lexeme (
         choice
@@ -75,7 +75,10 @@ let stringLiteralWithKind: P<string * bool> =
               attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
               attempt (quoted "'" |>> fun s -> s, false)
               attempt (quoted "\"" |>> fun s -> s, true)
-              attempt (quoted "/" |>> fun s -> s, false) ])
+              // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
+              // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
+              // expand. Only single-quoted forms are literal.
+              attempt (quoted "/" |>> fun s -> s, true) ])
 
 let stringLiteral: P<string> =
     lexeme (
