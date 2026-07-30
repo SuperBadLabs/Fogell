@@ -584,6 +584,23 @@ let maskingOnOutputPath =
               Expect.stringContains streamedText "reversed" "the warning names the defeating encoding"
           }
 
+          test "a transformed secret on STDERR is reported even with no OnLine callback" {
+              // REVIEW FIX (Codex, PR #13): detection ran only inside the stdout
+              // streaming callback, so this path returned the transformed secret
+              // silently — and silence is the one thing FG-071 promises never to do.
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
+
+              let r =
+                  Executor.runStep
+                      { request root "echo s3cr3t-value | rev >&2" with
+                          Secrets = [ binding ]
+                          OnLine = None }
+
+              Expect.stringContains r.Stderr "TOKEN" "the warning names the variable"
+              Expect.stringContains r.Stderr "reversed" "and the defeating encoding"
+          }
+
           test "no secrets configured means output is untouched" {
               // Guards against a masker that mangles ordinary builds.
               let r = Executor.runStep (request (tempRoot ()) "echo plain-output")

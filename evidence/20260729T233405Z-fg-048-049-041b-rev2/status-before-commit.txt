@@ -1,0 +1,35 @@
+ M differential/receipts/archive-artifacts.receipt.txt
+ M differential/receipts/archive-empty-fails.receipt.txt
+ M differential/receipts/echo-only.receipt.txt
+ M differential/receipts/env-scoping.receipt.txt
+ M differential/receipts/junit-failing.receipt.txt
+ M differential/receipts/junit-passing.receipt.txt
+ M differential/receipts/nested-wrappers.receipt.txt
+ M differential/receipts/nonzero-exit.receipt.txt
+ M differential/receipts/parallel-always-failfast.receipt.txt
+ M differential/receipts/parallel-failfast.receipt.txt
+ M differential/receipts/parallel-siblings-finish.receipt.txt
+ M differential/receipts/post-order-failure.receipt.txt
+ M differential/receipts/post-order-success.receipt.txt
+ M differential/receipts/retry-exhausts.receipt.txt
+ M differential/receipts/retry-succeeds.receipt.txt
+ M differential/receipts/shell-and-file.receipt.txt
+ M differential/receipts/timeout-block-deadline.receipt.txt
+ M differential/receipts/timeout-seconds.receipt.txt
+ M differential/receipts/when-conditions.receipt.txt
+ M differential/receipts/when-scm-and-equals.receipt.txt
+ M differential/receipts/withenv-scoping.receipt.txt
+ M docs/EXECUTION_BOARD.md
+ M src/Fogell.Differential/Fogell.fs
+ M src/Fogell.Differential/Trace.fs
+ M src/Fogell.Execution/Executor.fs
+ M src/Fogell.Groovy.Interpreter/Interpreter.fs
+ M tests/Fogell.Execution.Tests/Tests.fs
+ M tests/Fogell.Groovy.Tests/Tests.fs
+?? differential/cases/post-failure-stops-pipeline.Jenkinsfile
+?? differential/cases/when-env-expression.Jenkinsfile
+?? differential/cases/withenv-comma-value.Jenkinsfile
+?? differential/receipts/post-failure-stops-pipeline.receipt.txt
+?? differential/receipts/when-env-expression.receipt.txt
+?? differential/receipts/withenv-comma-value.receipt.txt
+?? evidence/20260729T233405Z-fg-048-049-041b-rev2/

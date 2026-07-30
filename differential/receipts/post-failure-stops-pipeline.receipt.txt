@@ -1,7 +1,7 @@
-# Differential receipt — post-order-failure.Jenkinsfile
+# Differential receipt — post-failure-stops-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a0d8a9137941405aa12b759053cf08af8f41d311d4bd793cbb06b1c9a54e09d9
+seal:         47c8bfea2497bed7436747385b794f91b16602f6eb200dd9351b201420f0f87a
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -30,18 +30,18 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | POST-always
-    | POST-changed
-    | POST-failure
-    | POST-cleanup
+  workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+  output (1 lines):
+    | Stage "Must not run" skipped due to earlier failure(s)
+  workspace:
+    9e2ec912af5d  body.txt
+    d526687a0564  post.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | POST-always
-    | POST-changed
-    | POST-failure
-    | POST-cleanup
+  workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
+  output (1 lines):
+    | Stage "Must not run" skipped due to earlier failure(s)
+  workspace:
+    9e2ec912af5d  body.txt
+    d526687a0564  post.txt

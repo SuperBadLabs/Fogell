@@ -106,13 +106,36 @@ module Executor =
 
                         f masked)
 
-            let run =
+            let runResult =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
                         Interrupt = request.Interrupt
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = onLine }
+
+            // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
+            // streaming callback, so a step with no OnLine — or one that wrote a
+            // transformed secret to STDERR — returned it with none of the warnings
+            // FG-071 promises. Reverse/hex/char-split forms survive masking BY
+            // DESIGN, so the warning is the entire guarantee, and it has to cover
+            // every path out of the step.
+            let maskedStdout = maskText runResult.Stdout
+            let maskedStderr = maskText runResult.Stderr
+
+            let bufferedLeaks =
+                [ maskedStdout; maskedStderr ]
+                |> List.collect (Secrets.detectLeaks request.Secrets)
+                |> List.map (fun l ->
+                    $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
+                |> List.distinct
+                |> List.filter (fun note -> not (leakReports.Contains note))
+
+            for note in bufferedLeaks do
+                leakReports.Add note
+                request.OnLine |> Option.iter (fun f -> f note)
+
+            let run = runResult
 
             let signalName =
                 function
@@ -181,8 +204,14 @@ module Executor =
               ExitCode = exitCode
               // Buffered output is masked too — a caller that reads Stdout
               // instead of streaming must not get a different secrecy guarantee.
-              Stdout = maskText run.Stdout
-              Stderr = maskText run.Stderr
+              Stdout = maskedStdout
+              // A caller with no OnLine still has to SEE the warning, or FG-071's
+              // "never silent" promise depends on how the caller chose to read.
+              Stderr =
+                if List.isEmpty bufferedLeaks then
+                    maskedStderr
+                else
+                    maskedStderr + String.concat "\n" bufferedLeaks + "\n"
               DurationMs = run.DurationMs
               ProcessGroupId = run.ProcessGroupId
               Termination = run.Termination

@@ -159,6 +159,14 @@ module Trace =
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
         || t.StartsWith "Failed in branch "
+        // FG-049. A failing `post` step makes Jenkins print a Java exception and
+        // stack trace into the build log. It is the engine explaining itself, which
+        // is what this predicate is for — and matching a stack trace verbatim would
+        // be over-fitting to a plugin's internals in the most extreme way available.
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
+        || t.StartsWith "hudson.AbortException"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
         || t.StartsWith "Aborted by "
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
@@ -216,19 +224,23 @@ module Trace =
     /// ONLY when such an interrupt was actually narrated earlier in the run.
     /// Everywhere else it is ordinary user output and is compared.
     let normaliseOutput (lines: string seq) : string list =
-        let mutable interruptNarrated = false
+        // REVIEW FIX (Codex, PR #13): the first version latched this flag for the
+        // whole build, so a legitimate `Terminated` printed much later — say by an
+        // `always` post block after a timeout — was still swallowed. Jenkins emits
+        // the pair ADJACENTLY ("Sending interrupt signal to process" then
+        // "Terminated"), so the window is exactly the next line and it closes
+        // immediately, whether or not it was used.
+        let mutable interruptJustNarrated = false
 
         [ for line in lines do
             let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+            let suppress = raw = "Terminated" && interruptJustNarrated
 
-            if raw.StartsWith "Sending interrupt signal to process"
-               || raw.StartsWith "Cancelling nested steps"
-               || raw.StartsWith "Timeout has been exceeded" then
-                interruptNarrated <- true
+            interruptJustNarrated <-
+                raw.StartsWith "Sending interrupt signal to process"
+                || raw.StartsWith "Cancelling nested steps"
 
-            if raw = "Terminated" && interruptNarrated then
-                ()
-            else
+            if not suppress then
                 match normaliseLine line with
                 | Some l -> yield l
                 | None -> () ]
@@ -257,6 +269,12 @@ module Trace =
           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
           "  (Jenkins' wording comes from whichever plugin implements the step;"
           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
+          "KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as"
+          "  provenance — but when the traced command contains a literal newline the trace spans"
+          "  several lines and only the FIRST begins with '+ '. A continuation line is not"
+          "  distinguishable from real output (the line after a trace is USUALLY real output), so"
+          "  it is compared as output. Cases whose commands embed a newline must therefore carry"
+          "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
           "  counted as a reported reason instead, since it explains the engine, not the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

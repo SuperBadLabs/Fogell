@@ -1,7 +1,7 @@
-# Differential receipt — post-order-failure.Jenkinsfile
+# Differential receipt — when-env-expression.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a0d8a9137941405aa12b759053cf08af8f41d311d4bd793cbb06b1c9a54e09d9
+seal:         5cba4d869393df736cf36ad49f2418b5b08203ce8f8dd96aa9cd40541b4bd9db
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -29,19 +29,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | POST-always
-    | POST-changed
-    | POST-failure
-    | POST-cleanup
+  result:         success
+  workspace-hash: 7d9e3d6f1e75f7dbc0cd667794386cb3a505bb7344a34f6d8fe4307e198d17f3
+  output (1 lines):
+    | Stage "env.X mismatches" skipped due to when conditional
+  workspace:
+    c2f0157e667a  envdot.txt
+    3cd79b0590bd  multi.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | POST-always
-    | POST-changed
-    | POST-failure
-    | POST-cleanup
+  result:         success
+  workspace-hash: 7d9e3d6f1e75f7dbc0cd667794386cb3a505bb7344a34f6d8fe4307e198d17f3
+  output (1 lines):
+    | Stage "env.X mismatches" skipped due to when conditional
+  workspace:
+    c2f0157e667a  envdot.txt
+    3cd79b0590bd  multi.txt

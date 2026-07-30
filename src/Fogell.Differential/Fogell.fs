@@ -75,8 +75,16 @@ module FogellSide =
             /// timeout budget to every step inside the block, so two 2 s steps
             /// inside `timeout(3, SECONDS)` both succeeded and the block ran ~4 s.
             /// Jenkins bounds the BLOCK, not each step.
+            /// REVIEW FIX (Codex, PR #13): this narrowed an int64 to int, so
+            /// `timeout(time: 30, unit: 'DAYS')` — 2,592,000,000 ms, past
+            /// Int32.MaxValue — wrapped negative and was floored to 1 ms, aborting
+            /// instantly. Fixing "DAYS silently means minutes" had introduced
+            /// "DAYS means one millisecond". Clamped at the executor's ceiling.
             let remainingMs (deadline: int64 option) =
-                deadline |> Option.map (fun d -> max 1 (int (d - runClock.ElapsedMilliseconds)))
+                deadline
+                |> Option.map (fun d ->
+                    let left = d - runClock.ElapsedMilliseconds
+                    int (max 1L (min left (int64 Int32.MaxValue))))
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
                 let script =
@@ -272,8 +280,14 @@ module FogellSide =
                     match Fogell.Groovy.Parser.Parser.parse source with
                     | Result.Error _ -> None
                     | Result.Ok script ->
+                        // REVIEW FIX (Codex, PR #13): only bare names were bound, so
+                        // the NORMAL Jenkins predicate `env.FOO == 'bar'` resolved
+                        // `env` to null, compared null to a string, and SKIPPED a
+                        // stage Jenkins runs. Both spellings are bound now.
+                        let asValues = env |> Map.map (fun _ v -> VStr v)
+
                         let genv =
-                            { Vars = env |> Map.map (fun _ v -> VStr v)
+                            { Vars = asValues |> Map.add "env" (VMap asValues)
                               Funcs = Map.empty }
 
                         let outcome = Interpreter.run Budget.defaults Set.empty genv script
@@ -400,7 +414,15 @@ module FogellSide =
                     // job (it deletes the job around every run). `fixed` and
                     // `regression` are therefore implemented and measured but not
                     // receipt-proven — see FG-049b.
-                    runPost { ctx with Failed = ref false } cwd stage stageStatus.Value None
+                    //
+                    // REVIEW FIX (Codex, PR #13): the post context's failure flag was
+                    // created fresh and then DISCARDED, so a failing `post` on an
+                    // otherwise successful stage marked the build failed but left the
+                    // pipeline runnable — later stages ran and a failFast parent was
+                    // never told. Jenkins propagates it.
+                    let postCtx = { ctx with Failed = ref false }
+                    runPost postCtx cwd stage stageStatus.Value None
+                    if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
             /// another wrapper used to be routed straight at `Executor.runStep`,
@@ -481,16 +503,18 @@ module FogellSide =
                     // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
                     // keeps ADR 0002's rule that expression-shaped text stays text
                     // until something needs its meaning.
+                    // REVIEW FIX (Codex, PR #13): splitting on every comma corrupted
+                    // any value containing one — `withEnv(['CSV=a,b'])` bound
+                    // `CSV=a` while Jenkins exposes `a,b`. Match the QUOTED list
+                    // elements instead, so commas inside an element are content.
                     let bindings =
                         step.Positional
                         |> List.collect (fun raw ->
-                            raw.Trim().Trim('[', ']').Split ','
-                            |> Array.toList
+                            [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
+                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ]
                             |> List.choose (fun entry ->
-                                let t = entry.Trim().Trim('\'', '"')
-
-                                match t.IndexOf '=' with
-                                | i when i > 0 -> Some(t.Substring(0, i), t.Substring(i + 1))
+                                match entry.IndexOf '=' with
+                                | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
                                 | _ -> None))
 
                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
@@ -590,7 +614,13 @@ module FogellSide =
             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
 
             for stage in pipeline.Stages do
-                runStage root workspace stage
+                if root.Failed.Value then
+                    // Jenkins names every stage it skips because of an earlier
+                    // failure. Being quieter than Jenkins about why a stage did not
+                    // run is the JB-DUR-005 defect in miniature, so we say it too.
+                    emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                else
+                    runStage root workspace stage
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only

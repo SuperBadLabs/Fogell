@@ -1,0 +1,753 @@
+diff --git a/differential/receipts/archive-artifacts.receipt.txt b/differential/receipts/archive-artifacts.receipt.txt
+index 7b683c3..dbb9087 100644
+--- a/differential/receipts/archive-artifacts.receipt.txt
++++ b/differential/receipts/archive-artifacts.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/archive-empty-fails.receipt.txt b/differential/receipts/archive-empty-fails.receipt.txt
+index e2b7177..2e3f678 100644
+--- a/differential/receipts/archive-empty-fails.receipt.txt
++++ b/differential/receipts/archive-empty-fails.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/echo-only.receipt.txt b/differential/receipts/echo-only.receipt.txt
+index 04c63fe..be2010f 100644
+--- a/differential/receipts/echo-only.receipt.txt
++++ b/differential/receipts/echo-only.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/env-scoping.receipt.txt b/differential/receipts/env-scoping.receipt.txt
+index cf91cb7..8d9b57f 100644
+--- a/differential/receipts/env-scoping.receipt.txt
++++ b/differential/receipts/env-scoping.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-failing.receipt.txt b/differential/receipts/junit-failing.receipt.txt
+index 01cb838..42952d1 100644
+--- a/differential/receipts/junit-failing.receipt.txt
++++ b/differential/receipts/junit-failing.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/junit-passing.receipt.txt b/differential/receipts/junit-passing.receipt.txt
+index 1d74201..18a56e6 100644
+--- a/differential/receipts/junit-passing.receipt.txt
++++ b/differential/receipts/junit-passing.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nested-wrappers.receipt.txt b/differential/receipts/nested-wrappers.receipt.txt
+index 651dcb5..d8661e7 100644
+--- a/differential/receipts/nested-wrappers.receipt.txt
++++ b/differential/receipts/nested-wrappers.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/nonzero-exit.receipt.txt b/differential/receipts/nonzero-exit.receipt.txt
+index 4ede0d0..363708c 100644
+--- a/differential/receipts/nonzero-exit.receipt.txt
++++ b/differential/receipts/nonzero-exit.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index ae0a606..a30f1f2 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         45275dcc843085f89ad3aa17afe058dc8d664bce790620f6d284e5d2009e1fa1
++seal:         e58e5d586ae063f90f6e1d465c9dbf611698b640ba28637fe72f98c3a117f74c
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+@@ -38,5 +44,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (2 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+diff --git a/differential/receipts/parallel-failfast.receipt.txt b/differential/receipts/parallel-failfast.receipt.txt
+index bf09533..6eb4795 100644
+--- a/differential/receipts/parallel-failfast.receipt.txt
++++ b/differential/receipts/parallel-failfast.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/parallel-siblings-finish.receipt.txt b/differential/receipts/parallel-siblings-finish.receipt.txt
+index 15b4580..c316db4 100644
+--- a/differential/receipts/parallel-siblings-finish.receipt.txt
++++ b/differential/receipts/parallel-siblings-finish.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-order-failure.receipt.txt b/differential/receipts/post-order-failure.receipt.txt
+index 6754d50..0716bc6 100644
+--- a/differential/receipts/post-order-failure.receipt.txt
++++ b/differential/receipts/post-order-failure.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/post-order-success.receipt.txt b/differential/receipts/post-order-success.receipt.txt
+index 9ffb05a..98fe207 100644
+--- a/differential/receipts/post-order-success.receipt.txt
++++ b/differential/receipts/post-order-success.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-exhausts.receipt.txt b/differential/receipts/retry-exhausts.receipt.txt
+index 1c22449..a17b17f 100644
+--- a/differential/receipts/retry-exhausts.receipt.txt
++++ b/differential/receipts/retry-exhausts.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/retry-succeeds.receipt.txt b/differential/receipts/retry-succeeds.receipt.txt
+index 971aeea..a0ac02c 100644
+--- a/differential/receipts/retry-succeeds.receipt.txt
++++ b/differential/receipts/retry-succeeds.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/shell-and-file.receipt.txt b/differential/receipts/shell-and-file.receipt.txt
+index 9cca65f..29e5f6d 100644
+--- a/differential/receipts/shell-and-file.receipt.txt
++++ b/differential/receipts/shell-and-file.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-block-deadline.receipt.txt b/differential/receipts/timeout-block-deadline.receipt.txt
+index 10eb42d..fea12e4 100644
+--- a/differential/receipts/timeout-block-deadline.receipt.txt
++++ b/differential/receipts/timeout-block-deadline.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/timeout-seconds.receipt.txt b/differential/receipts/timeout-seconds.receipt.txt
+index 19b276d..76e5eea 100644
+--- a/differential/receipts/timeout-seconds.receipt.txt
++++ b/differential/receipts/timeout-seconds.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-conditions.receipt.txt b/differential/receipts/when-conditions.receipt.txt
+index 283b87d..1010cc2 100644
+--- a/differential/receipts/when-conditions.receipt.txt
++++ b/differential/receipts/when-conditions.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/when-scm-and-equals.receipt.txt b/differential/receipts/when-scm-and-equals.receipt.txt
+index 3d9c722..b388e10 100644
+--- a/differential/receipts/when-scm-and-equals.receipt.txt
++++ b/differential/receipts/when-scm-and-equals.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/differential/receipts/withenv-scoping.receipt.txt b/differential/receipts/withenv-scoping.receipt.txt
+index a195940..5748d9a 100644
+--- a/differential/receipts/withenv-scoping.receipt.txt
++++ b/differential/receipts/withenv-scoping.receipt.txt
+@@ -18,6 +18,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+     (applies to failure/aborted only — an unstable build is explained by its test report)
+     (Jenkins' wording comes from whichever plugin implements the step;
+      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
++    provenance — but when the traced command contains a literal newline the trace spans
++    several lines and only the FIRST begins with '+ '. A continuation line is not
++    distinguishable from real output (the line after a trace is USUALLY real output), so
++    it is compared as output. Cases whose commands embed a newline must therefore carry
++    their claim in the workspace hash, not in stdout. Declared, not silently handled.
+   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
+     counted as a reported reason instead, since it explains the engine, not the step
+   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index d7322d9..6ac191f 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -60,7 +60,7 @@ derivation in `architecture/BASELINE.md`.
+ |---|---|---|---|---|
+ | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
+ | FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+-| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **21/21 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
++| FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **24/24 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+@@ -124,6 +124,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-042 | P0 | **PARTIAL** | `archiveArtifacts` with ant-glob expansion | Proven by receipt: multi-pattern archive (`out.txt, target/*.jar`) and the empty-match case, which Jenkins **fails** rather than passing quietly. Artifacts land outside the workspace so archiving cannot perturb the compared hash. Retrieval over a stable URL awaits the API — FG-042b |
+ | FG-043 | P1 | **DONE** | `junit` test-result ingest | Proven by receipt for passing and failing reports. Failing tests → **UNSTABLE**, not FAILURE (the build worked, the code did not) — matching Jenkins. A malformed report is reported, never silently counted as zero |
+ | FG-042b | P2 | TODO | Artifact retrieval at a stable URL, byte-exact | requires the controller API (FG-060) |
++| FG-002c | P2 | TODO | Handle Jenkins' multi-line `set -x` trace continuations | Jenkins runs `sh` under `set -x` and the trace is excluded as provenance, but a command containing a literal newline produces a trace spanning several lines where only the FIRST begins with `+ `. A continuation is not distinguishable from real output — the line after a trace is *usually* real output — so it is currently compared as output. Found while proving `withenv-comma-value`. Declared in the comparison contract printed into every receipt rather than silently handled; affects any case using `printf`/`sed`/`awk` with embedded newlines |
+ | FG-070b | P1 | TODO | Real secret isolation from a same-UID process | FG-070 cannot achieve this by file permissions, and the board no longer claims it does. Needs the step to run under a **different UID** (or in a user namespace) so `/proc/<pid>/environ` and the secret file are both unreadable to the tenant's other processes. Acceptance: a probe process running as the *original* user fails to read both, demonstrated the same way the original exposure was demonstrated |
+ | FG-048b | P1 | TODO | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. They currently fail **closed** with a named error, which is a deliberate, documented divergence from Jenkins (which would evaluate them false and skip). Fail-closed is right only as a temporary posture — a refused build is still a broken lift-and-shift, so these need modelling |
+ | FG-049b | P1 | TODO | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds |
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index ebb1c91..2c99f16 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -75,8 +75,16 @@ module FogellSide =
+             /// timeout budget to every step inside the block, so two 2 s steps
+             /// inside `timeout(3, SECONDS)` both succeeded and the block ran ~4 s.
+             /// Jenkins bounds the BLOCK, not each step.
++            /// REVIEW FIX (Codex, PR #13): this narrowed an int64 to int, so
++            /// `timeout(time: 30, unit: 'DAYS')` — 2,592,000,000 ms, past
++            /// Int32.MaxValue — wrapped negative and was floored to 1 ms, aborting
++            /// instantly. Fixing "DAYS silently means minutes" had introduced
++            /// "DAYS means one millisecond". Clamped at the executor's ceiling.
+             let remainingMs (deadline: int64 option) =
+-                deadline |> Option.map (fun d -> max 1 (int (d - runClock.ElapsedMilliseconds)))
++                deadline
++                |> Option.map (fun d ->
++                    let left = d - runClock.ElapsedMilliseconds
++                    int (max 1L (min left (int64 Int32.MaxValue))))
+ 
+             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
+                 let script =
+@@ -272,8 +280,14 @@ module FogellSide =
+                     match Fogell.Groovy.Parser.Parser.parse source with
+                     | Result.Error _ -> None
+                     | Result.Ok script ->
++                        // REVIEW FIX (Codex, PR #13): only bare names were bound, so
++                        // the NORMAL Jenkins predicate `env.FOO == 'bar'` resolved
++                        // `env` to null, compared null to a string, and SKIPPED a
++                        // stage Jenkins runs. Both spellings are bound now.
++                        let asValues = env |> Map.map (fun _ v -> VStr v)
++
+                         let genv =
+-                            { Vars = env |> Map.map (fun _ v -> VStr v)
++                            { Vars = asValues |> Map.add "env" (VMap asValues)
+                               Funcs = Map.empty }
+ 
+                         let outcome = Interpreter.run Budget.defaults Set.empty genv script
+@@ -400,7 +414,15 @@ module FogellSide =
+                     // job (it deletes the job around every run). `fixed` and
+                     // `regression` are therefore implemented and measured but not
+                     // receipt-proven — see FG-049b.
+-                    runPost { ctx with Failed = ref false } cwd stage stageStatus.Value None
++                    //
++                    // REVIEW FIX (Codex, PR #13): the post context's failure flag was
++                    // created fresh and then DISCARDED, so a failing `post` on an
++                    // otherwise successful stage marked the build failed but left the
++                    // pipeline runnable — later stages ran and a failFast parent was
++                    // never told. Jenkins propagates it.
++                    let postCtx = { ctx with Failed = ref false }
++                    runPost postCtx cwd stage stageStatus.Value None
++                    if postCtx.Failed.Value then ctx.Failed.Value <- true
+ 
+             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
+             /// another wrapper used to be routed straight at `Executor.runStep`,
+@@ -481,16 +503,18 @@ module FogellSide =
+                     // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
+                     // keeps ADR 0002's rule that expression-shaped text stays text
+                     // until something needs its meaning.
++                    // REVIEW FIX (Codex, PR #13): splitting on every comma corrupted
++                    // any value containing one — `withEnv(['CSV=a,b'])` bound
++                    // `CSV=a` while Jenkins exposes `a,b`. Match the QUOTED list
++                    // elements instead, so commas inside an element are content.
+                     let bindings =
+                         step.Positional
+                         |> List.collect (fun raw ->
+-                            raw.Trim().Trim('[', ']').Split ','
+-                            |> Array.toList
++                            [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
++                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ]
+                             |> List.choose (fun entry ->
+-                                let t = entry.Trim().Trim('\'', '"')
+-
+-                                match t.IndexOf '=' with
+-                                | i when i > 0 -> Some(t.Substring(0, i), t.Substring(i + 1))
++                                match entry.IndexOf '=' with
++                                | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
+                                 | _ -> None))
+ 
+                     let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
+@@ -590,7 +614,13 @@ module FogellSide =
+             let root = { Interrupt = None; Failed = ref false; Sink = bump; EnvOverlay = [] }
+ 
+             for stage in pipeline.Stages do
+-                runStage root workspace stage
++                if root.Failed.Value then
++                    // Jenkins names every stage it skips because of an earlier
++                    // failure. Being quieter than Jenkins about why a stage did not
++                    // run is the JB-DUR-005 defect in miniature, so we say it too.
++                    emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
++                else
++                    runStage root workspace stage
+ 
+             // Pipeline-level `post` is selected against the BUILD result, so it
+             // runs after every stage. Modelled as a synthetic stage carrying only
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index 49e95c3..4db498e 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -159,6 +159,14 @@ module Trace =
+         || t.StartsWith "Cancelling nested steps"
+         || t.StartsWith "Sending interrupt signal to process"
+         || t.StartsWith "Failed in branch "
++        // FG-049. A failing `post` step makes Jenkins print a Java exception and
++        // stack trace into the build log. It is the engine explaining itself, which
++        // is what this predicate is for — and matching a stack trace verbatim would
++        // be over-fitting to a plugin's internals in the most extreme way available.
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^Error when executing \w+ post condition")
++        || t.StartsWith "hudson.AbortException"
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^at [\w.$/]+\(.*\)$")
++        || Text.RegularExpressions.Regex.IsMatch(t, @"^at PluginClassLoader for ")
+         || t.StartsWith "Aborted by "
+         // The timeout plugin appends an opaque correlation id. It carries no
+         // semantics and its value changes every run, so it could never be
+@@ -216,19 +224,23 @@ module Trace =
+     /// ONLY when such an interrupt was actually narrated earlier in the run.
+     /// Everywhere else it is ordinary user output and is compared.
+     let normaliseOutput (lines: string seq) : string list =
+-        let mutable interruptNarrated = false
++        // REVIEW FIX (Codex, PR #13): the first version latched this flag for the
++        // whole build, so a legitimate `Terminated` printed much later — say by an
++        // `always` post block after a timeout — was still swallowed. Jenkins emits
++        // the pair ADJACENTLY ("Sending interrupt signal to process" then
++        // "Terminated"), so the window is exactly the next line and it closes
++        // immediately, whether or not it was used.
++        let mutable interruptJustNarrated = false
+ 
+         [ for line in lines do
+             let raw = Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
++            let suppress = raw = "Terminated" && interruptJustNarrated
+ 
+-            if raw.StartsWith "Sending interrupt signal to process"
+-               || raw.StartsWith "Cancelling nested steps"
+-               || raw.StartsWith "Timeout has been exceeded" then
+-                interruptNarrated <- true
++            interruptJustNarrated <-
++                raw.StartsWith "Sending interrupt signal to process"
++                || raw.StartsWith "Cancelling nested steps"
+ 
+-            if raw = "Terminated" && interruptNarrated then
+-                ()
+-            else
++            if not suppress then
+                 match normaliseLine line with
+                 | Some l -> yield l
+                 | None -> () ]
+@@ -257,6 +269,12 @@ module Trace =
+           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
+           "  (Jenkins' wording comes from whichever plugin implements the step;"
+           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
++          "KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as"
++          "  provenance — but when the traced command contains a literal newline the trace spans"
++          "  several lines and only the FIRST begins with '+ '. A continuation line is not"
++          "  distinguishable from real output (the line after a trace is USUALLY real output), so"
++          "  it is compared as output. Cases whose commands embed a newline must therefore carry"
++          "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
+           "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
+           "  counted as a reported reason instead, since it explains the engine, not the step"
+           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+diff --git a/src/Fogell.Execution/Executor.fs b/src/Fogell.Execution/Executor.fs
+index 27d4524..72bfddc 100644
+--- a/src/Fogell.Execution/Executor.fs
++++ b/src/Fogell.Execution/Executor.fs
+@@ -106,7 +106,7 @@ module Executor =
+ 
+                         f masked)
+ 
+-            let run =
++            let runResult =
+                 ProcessGroup.run
+                     { RunRequest.create (script, request.Workspace) with
+                         Interrupt = request.Interrupt
+@@ -114,6 +114,29 @@ module Executor =
+                         TimeoutMs = request.TimeoutMs
+                         OnLine = onLine }
+ 
++            // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
++            // streaming callback, so a step with no OnLine — or one that wrote a
++            // transformed secret to STDERR — returned it with none of the warnings
++            // FG-071 promises. Reverse/hex/char-split forms survive masking BY
++            // DESIGN, so the warning is the entire guarantee, and it has to cover
++            // every path out of the step.
++            let maskedStdout = maskText runResult.Stdout
++            let maskedStderr = maskText runResult.Stderr
++
++            let bufferedLeaks =
++                [ maskedStdout; maskedStderr ]
++                |> List.collect (Secrets.detectLeaks request.Secrets)
++                |> List.map (fun l ->
++                    $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
++                |> List.distinct
++                |> List.filter (fun note -> not (leakReports.Contains note))
++
++            for note in bufferedLeaks do
++                leakReports.Add note
++                request.OnLine |> Option.iter (fun f -> f note)
++
++            let run = runResult
++
+             let signalName =
+                 function
+                 | 1 -> "SIGHUP"
+@@ -181,8 +204,14 @@ module Executor =
+               ExitCode = exitCode
+               // Buffered output is masked too — a caller that reads Stdout
+               // instead of streaming must not get a different secrecy guarantee.
+-              Stdout = maskText run.Stdout
+-              Stderr = maskText run.Stderr
++              Stdout = maskedStdout
++              // A caller with no OnLine still has to SEE the warning, or FG-071's
++              // "never silent" promise depends on how the caller chose to read.
++              Stderr =
++                if List.isEmpty bufferedLeaks then
++                    maskedStderr
++                else
++                    maskedStderr + String.concat "\n" bufferedLeaks + "\n"
+               DurationMs = run.DurationMs
+               ProcessGroupId = run.ProcessGroupId
+               Termination = run.Termination
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 7de3a66..5c09d00 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -54,7 +54,16 @@ module Interpreter =
+           mutable Effects: Effect list
+           Budget: Budget
+           RegisteredSteps: Set<string>
+-          Defined: Set<string> }
++          Defined: Set<string>
++          /// FG-048. The value of the most recent expression statement.
++          ///
++          /// REVIEW FIX (Codex, PR #13): Groovy returns the last expression of a
++          /// closure even when earlier statements exist, but only a script that was
++          /// EXACTLY one expression produced a value here. So
++          /// `expression { def deploy = true; deploy }` returned None, which a
++          /// `when` reads as unevaluable and fails the build on — where Jenkins
++          /// simply runs the stage.
++          mutable LastValue: Value option }
+ 
+     let private tick (st: State) =
+         st.Steps <- st.Steps + 1
+@@ -321,7 +330,7 @@ module Interpreter =
+ 
+         match s with
+         | SExpr e ->
+-            evalExpr st env e |> ignore
++            st.LastValue <- Some(evalExpr st env e)
+             env
+         | SDef(n, Some e) -> Env.withVar n (evalExpr st env e) env
+         | SDef(n, None) -> Env.withVar n VNull env
+@@ -407,7 +416,8 @@ module Interpreter =
+               Effects = []
+               Budget = budget
+               RegisteredSteps = registeredSteps
+-              Defined = defined }
++              Defined = defined
++              LastValue = None }
+ 
+         // hoist declared functions so a call before its definition resolves
+         let hoisted =
+@@ -420,25 +430,13 @@ module Interpreter =
+                 env
+ 
+         try
+-            // A script that is exactly one expression has that expression's
+-            // value. Threading a value out of execBlock would change every
+-            // statement's signature for the sake of one caller, so the single
+-            // shape that needs it is handled here.
+-            match script with
+-            | [ SExpr e ] ->
+-                let v = evalExpr st hoisted e
++            let final = execBlock st hoisted script
+ 
+-                { Effects = List.rev st.Effects
+-                  Fault = None
+-                  Env = hoisted
+-                  Returned = Some v }
+-            | _ ->
+-                let final = execBlock st hoisted script
+-
+-                { Effects = List.rev st.Effects
+-                  Fault = None
+-                  Env = final
+-                  Returned = None }
++            { Effects = List.rev st.Effects
++              Fault = None
++              Env = final
++              // Groovy's last-expression-is-the-value, for any statement block.
++              Returned = st.LastValue }
+         with
+         | Stop f ->
+             { Effects = List.rev st.Effects
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 8e60899..a17a14a 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -584,6 +584,23 @@ let maskingOnOutputPath =
+               Expect.stringContains streamedText "reversed" "the warning names the defeating encoding"
+           }
+ 
++          test "a transformed secret on STDERR is reported even with no OnLine callback" {
++              // REVIEW FIX (Codex, PR #13): detection ran only inside the stdout
++              // streaming callback, so this path returned the transformed secret
++              // silently — and silence is the one thing FG-071 promises never to do.
++              let root = tempRoot ()
++              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
++
++              let r =
++                  Executor.runStep
++                      { request root "echo s3cr3t-value | rev >&2" with
++                          Secrets = [ binding ]
++                          OnLine = None }
++
++              Expect.stringContains r.Stderr "TOKEN" "the warning names the variable"
++              Expect.stringContains r.Stderr "reversed" "and the defeating encoding"
++          }
++
+           test "no secrets configured means output is untouched" {
+               // Guards against a masker that mangles ordinary builds.
+               let r = Executor.runStep (request (tempRoot ()) "echo plain-output")
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index 92a8db5..d4ed2a0 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -204,6 +204,33 @@ let semantics =
+               | other -> failtestf "unexpected effects: %A" other
+           } ]
+ 
++
++let predicateValues =
++    testList
++        "FG-048 a `when` predicate's VALUE"
++        [ test "a bare trailing expression is the value" {
++              Expect.equal (run "1 == 1").Returned (Some(VBool true)) "single expression"
++          }
++
++          test "a multi-statement closure returns its LAST expression" {
++              // REVIEW FIX (Codex, PR #13): only a script that was exactly one
++              // expression produced a value, so `def deploy = true; deploy` gave
++              // None — which a `when` reads as unevaluable and FAILS THE BUILD on,
++              // where Jenkins simply runs the stage. Groovy returns the last
++              // expression of a closure regardless of what precedes it.
++              Expect.equal (run "def deploy = true\ndeploy").Returned (Some(VBool true)) "last expression wins"
++          }
++
++          test "an explicit return still wins" {
++              Expect.equal (run "return false").Returned (Some(VBool false)) "explicit return"
++          }
++
++          test "a script with no expression has no value" {
++              // None must stay distinguishable from false: a predicate that produced
++              // nothing is unevaluable, not negative.
++              Expect.equal (run "def x = 1").Returned None "no trailing expression"
++          } ]
++
+ [<EntryPoint>]
+ let main argv =
+-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics ])
++    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues ])

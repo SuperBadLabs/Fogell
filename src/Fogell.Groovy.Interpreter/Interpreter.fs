@@ -54,7 +54,16 @@ module Interpreter =
           mutable Effects: Effect list
           Budget: Budget
           RegisteredSteps: Set<string>
-          Defined: Set<string> }
+          Defined: Set<string>
+          /// FG-048. The value of the most recent expression statement.
+          ///
+          /// REVIEW FIX (Codex, PR #13): Groovy returns the last expression of a
+          /// closure even when earlier statements exist, but only a script that was
+          /// EXACTLY one expression produced a value here. So
+          /// `expression { def deploy = true; deploy }` returned None, which a
+          /// `when` reads as unevaluable and fails the build on — where Jenkins
+          /// simply runs the stage.
+          mutable LastValue: Value option }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
@@ -321,7 +330,7 @@ module Interpreter =
 
         match s with
         | SExpr e ->
-            evalExpr st env e |> ignore
+            st.LastValue <- Some(evalExpr st env e)
             env
         | SDef(n, Some e) -> Env.withVar n (evalExpr st env e) env
         | SDef(n, None) -> Env.withVar n VNull env
@@ -407,7 +416,8 @@ module Interpreter =
               Effects = []
               Budget = budget
               RegisteredSteps = registeredSteps
-              Defined = defined }
+              Defined = defined
+              LastValue = None }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -420,25 +430,13 @@ module Interpreter =
                 env
 
         try
-            // A script that is exactly one expression has that expression's
-            // value. Threading a value out of execBlock would change every
-            // statement's signature for the sake of one caller, so the single
-            // shape that needs it is handled here.
-            match script with
-            | [ SExpr e ] ->
-                let v = evalExpr st hoisted e
+            let final = execBlock st hoisted script
 
-                { Effects = List.rev st.Effects
-                  Fault = None
-                  Env = hoisted
-                  Returned = Some v }
-            | _ ->
-                let final = execBlock st hoisted script
-
-                { Effects = List.rev st.Effects
-                  Fault = None
-                  Env = final
-                  Returned = None }
+            { Effects = List.rev st.Effects
+              Fault = None
+              Env = final
+              // Groovy's last-expression-is-the-value, for any statement block.
+              Returned = st.LastValue }
         with
         | Stop f ->
             { Effects = List.rev st.Effects
