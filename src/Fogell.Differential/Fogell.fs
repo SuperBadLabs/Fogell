@@ -195,15 +195,52 @@ module FogellSide =
                     // claims otherwise.
                     let ident = "[A-Za-z_][A-Za-z0-9_]*"
                     let dotted = ident + "(?:\." + ident + ")*"
-                    @"\${(" + dotted + @")}|\$(" + dotted + ")"
+                    // The BRACED form captures ANY content: `${1 + 1}` is a legal GString
+                    // and Jenkins evaluates it. Restricting the MATCH to identifiers meant
+                    // such a placeholder never reached the callback at all, so it was
+                    // emitted verbatim — the callback's expression branch was unreachable
+                    // code. The bare `$name` form stays identifier-only, as Groovy does.
+                    @"\${([^}]*)}|\$(" + dotted + ")"
+
+                // `${...}` may hold a real Groovy expression, not just a variable path —
+                // `input message: "Approve build ${1 + 1}?"` displays "Approve build 2?".
+                // The identifier-only regex left such text verbatim. The bounded
+                // interpreter already in this project evaluates it, with an EMPTY step
+                // vocabulary so a prompt cannot invoke build steps.
+                let evalExpression (source: string) =
+                    match Fogell.Groovy.Parser.Parser.parse source with
+                    | Result.Error _ -> None
+                    | Result.Ok script ->
+                        let bindings =
+                            known
+                            |> Map.map (fun _ v -> VStr v)
+                            |> fun m -> m |> Map.add "env" (VMap(known |> Map.map (fun _ v -> VStr v)))
+
+                        let outcome =
+                            Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
+
+                        match outcome.Fault, outcome.Returned with
+                        | None, Some v -> Some(Value.toDisplay v)
+                        | _ -> None
 
                 let expanded =
                     Text.RegularExpressions.Regex.Replace(
                         value,
                         pattern,
                         fun m ->
-                            if m.Groups[1].Success then resolveName m.Groups[1].Value
-                            else resolveName m.Groups[2].Value)
+                            if m.Groups[1].Success then
+                                let inner = m.Groups[1].Value
+
+                                // A bare or dotted identifier resolves from the
+                                // environment; anything else is an expression.
+                                if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
+                                    resolveName inner
+                                else
+                                    match evalExpression inner with
+                                    | Some v -> v
+                                    | None -> m.Value
+                            else
+                                resolveName m.Groups[2].Value)
 
                 // Restore escaped dollars as literal text, after expansion so they
                 // cannot themselves be expanded.
@@ -1232,13 +1269,17 @@ module FogellSide =
                         |> List.tryPick (fun (k, v) -> if k = argName then Some v else None)
                         |> Option.defaultValue fallback
 
+                    // A positional prompt's provenance lives under `#0`.
+                    let messageKey =
+                        if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
+
                     let render (isLiteral: bool) (argName: string) (raw: string) =
                         if isLiteral then
                             raw
                         else
                             interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList) (sourceOf argName raw)
 
-                    emit (render messageIsLiteral "message" message)
+                    emit (render messageIsLiteral messageKey message)
                     emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
 
                     match deadline with

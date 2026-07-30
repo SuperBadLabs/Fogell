@@ -39,11 +39,12 @@ let private namedArg: P<string * string> =
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
 /// Jenkins, and the positional form is as common as the named one — provenance was
 /// tracked for named arguments only, so every positional message was interpolated.
-let private positionalArgWithKind: P<string * bool> =
-    (stringLiteralWithKindPlain |>> fun (v, interpolates) -> v, not interpolates)
-    <|> (balancedRaw '[' ']' |>> fun v -> v, false)
+let private positionalArgWithKind: P<string * string * bool> =
+    (stringLiteralWithKindBoth
+     |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
+    <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
-         |>> fun s -> s.Trim(), false)
+         |>> fun s -> s.Trim(), s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
@@ -62,12 +63,20 @@ let private argList: P<(string * string) list * string list * Set<string> * Set<
             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
             let namedSource = namedWithKind |> List.map (fun (n, _, esc, _) -> n, esc)
             let posWithKind = items |> List.choose (function Choice2Of2 x -> Some x | _ -> None)
-            let pos = posWithKind |> List.map fst
+            let pos = posWithKind |> List.map (fun (v, _, _) -> v)
 
             let literalPos =
-                posWithKind |> List.mapi (fun i (_, lit) -> i, lit) |> List.choose (fun (i, lit) -> if lit then Some i else None) |> Set.ofList
+                posWithKind
+                |> List.mapi (fun i (_, _, lit) -> i, lit)
+                |> List.choose (fun (i, lit) -> if lit then Some i else None)
+                |> Set.ofList
 
-            named, pos, literal, literalPos, namedSource
+            // The `#0`, `#1`… entries the Step doc describes. They were documented and
+            // never produced, so a positional prompt fell back to the plain value and
+            // expanded an escaped dollar.
+            let posSource = posWithKind |> List.mapi (fun i (_, esc, _) -> $"#{i}", esc)
+
+            named, pos, literal, literalPos, namedSource @ posSource
 
 let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
