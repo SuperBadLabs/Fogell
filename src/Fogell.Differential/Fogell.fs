@@ -9,6 +9,12 @@ open Fogell.Groovy.Interpreter
 
 /// FG-036. What one parallel branch (or the single implicit branch of a
 /// sequential pipeline) needs to know about itself.
+/// FG-101. Why a step stopped. `Running` means it did not.
+type Cancellation =
+    | Running
+    | DeadlineExpired
+    | SiblingFailed
+
 type BranchCtx =
     { /// Polled while a shell step runs; true means a failFast sibling failed.
       Interrupt: (unit -> bool) option
@@ -326,6 +332,54 @@ module FogellSide =
             /// absolute point in time rather than a per-step budget.
             let runClock = Diagnostics.Stopwatch.StartNew()
 
+            /// FG-101. THE cancellation model: one predicate, one classification, one place
+            /// that decides `aborted` versus `failure`.
+            ///
+            /// The same logic was previously written six times — `stop()`, `abort()`, a
+            /// bare `expired`, `interruptedBySibling`, and two inline checks — and the CAUSE
+            /// was misclassified six times: shell steps, stash, unstash, deleteDir, input,
+            /// then input again as an ordering race. Twice I swept the class and the sweep
+            /// was itself incomplete, because it asked whether every site CHECKED rather
+            /// than whether every site checked in the right ORDER.
+            ///
+            /// Each rule below is established by a receipt, not by reasoning:
+            ///   deadline expired -> ABORTED, and the step must say so (JB-DUR-005)
+            ///   failFast sibling -> the build is a FAILURE; the sibling's failure is the
+            ///                       cause and this interruption is collateral, so the step
+            ///                       must NOT sink Aborted (parallel-failfast,
+            ///                       input-failfast-is-failure)
+            /// When both hold, the earlier event wins: a deadline already past preceded a
+            /// sibling seen on this poll.
+            let cancellationOf (ctx: BranchCtx) (deadline: int64 option) : Cancellation =
+                let expiredNow =
+                    match deadline with
+                    | Some d -> runClock.ElapsedMilliseconds >= d
+                    | None -> false
+
+                let siblingNow =
+                    match ctx.Interrupt with
+                    | Some p -> (try p () with _ -> false)
+                    | None -> false
+
+                if expiredNow then DeadlineExpired
+                elif siblingNow then SiblingFailed
+                else Running
+
+            /// Emit the reason, mark the branch failed, and sink the status the CAUSE
+            /// dictates. Every cancellable step routes through this so the classification
+            /// cannot drift per-step again.
+            let applyCancellation (ctx: BranchCtx) (what: string) (c: Cancellation) =
+                match c with
+                | Running -> ()
+                | SiblingFailed ->
+                    emit $"ERROR: {what} interrupted: a failFast sibling failed"
+                    ctx.Failed.Value <- true
+                | DeadlineExpired ->
+                    emit $"ERROR: {what} aborted: the step's deadline expired"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Aborted
+
+
             /// Remaining milliseconds before an absolute deadline, floored at 1.
             /// REVIEW FIX (Codex P1, PR #12): the first version handed the FULL
             /// timeout budget to every step inside the block, so two 2 s steps
@@ -439,11 +493,11 @@ module FogellSide =
                     // interruption is collateral. Letting the collateral abort
                     // dominate (worstOf puts Aborted above Failure) reported
                     // `aborted` where Jenkins reports `failure`.
+                    // Routed through the ONE model so the shell path cannot drift from
+                    // the wrapper steps again.
                     let interruptedBySibling =
                         result.Status = BuildStatus.Aborted
-                        && (match ctx.Interrupt with
-                            | Some p -> p ()
-                            | None -> false)
+                        && cancellationOf ctx deadline = SiblingFailed
 
                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
                     // an unstable one — `junit` marks the build unstable without
@@ -906,8 +960,15 @@ module FogellSide =
                     // pipeline runnable — later stages ran and a failFast parent was
                     // never told. Jenkins propagates it.
                     let postCtx = { ctx with Failed = ref false }
-                    // A stage's post runs under the same deadline as the stage itself.
-                    runPostWithDeadline postCtx cwd stage stageStatus.Value None deadline
+
+                    // MEASURED: a STAGE's `options { timeout }` bounds the stage's STEPS,
+                    // not its `post`. Jenkins ran the `aborted` arm after the stage
+                    // deadline expired (`cancellation-selects-post-arm`), while a
+                    // PIPELINE-level timeout DOES bound post (`options-timeout-wraps-post`).
+                    // Passing the stage's own expired deadline into post aborted every arm
+                    // before it could run — which would have silently swallowed exactly the
+                    // failure notifications a `post { aborted }` exists to send.
+                    runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
                     if postCtx.Failed.Value then ctx.Failed.Value <- true
 
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
@@ -1254,71 +1315,29 @@ module FogellSide =
                 // workspace, or the enclosing `dir` block's cwd — without removing the
                 // directory itself. It is what makes the stash test meaningful.
                 | "deleteDir", _ ->
-                    // Polling here has now been wrong twice: first absent altogether, then
-                    // checking only the deadline and only BEFORE each top-level entry — so a
-                    // fail-fast sibling could not stop it, and a single large directory
-                    // could cross the deadline with no later check. One predicate covering
-                    // both causes, checked before AND after each entry.
-                    let stop () =
-                        let interrupted =
-                            match ctx.Interrupt with
-                            | Some p -> (try p () with _ -> false)
-                            | None -> false
-
-                        let expired =
-                            match remainingMs deadline with
-                            | Some ms -> ms <= 1
-                            | None -> false
-
-                        interrupted, expired
-
+                    // Polled before AND after each top-level entry: a recursive delete can
+                    // itself outlast the deadline. Getting this wrong three times running
+                    // is what made FG-101 a ticket rather than another instance fix.
                     if Directory.Exists cwd then
-                        let mutable halt = false
+                        let mutable outcome = Running
 
                         for entry in Directory.GetFileSystemEntries cwd do
-                            if not halt then
-                                match stop () with
-                                | true, _
-                                | _, true -> halt <- true
-                                | _ ->
+                            if outcome = Running then
+                                match cancellationOf ctx deadline with
+                                | Running ->
                                     try
                                         if Directory.Exists entry then Directory.Delete(entry, true)
                                         else File.Delete entry
 
-                                        // A single recursive delete can itself outlast the
-                                        // deadline, so re-check immediately after it.
-                                        match stop () with
-                                        | true, _
-                                        | _, true -> halt <- true
-                                        | _ -> ()
+                                        outcome <- cancellationOf ctx deadline
                                     with ex ->
                                         emit $"ERROR: deleteDir could not remove {Path.GetFileName entry}: {ex.GetType().Name}"
                                         ctx.Failed.Value <- true
                                         ctx.Sink BuildStatus.Failure
+                                | c -> outcome <- c
 
-                        if halt then
-                            // Classify the CAUSE: a sibling's failure is a failure, a
-                            // deadline is an abort.
-                            let interrupted, _ = stop ()
+                        applyCancellation ctx "deleteDir" outcome
 
-                            if interrupted then
-                                emit "ERROR: deleteDir interrupted: a failFast sibling failed"
-                                ctx.Failed.Value <- true
-                            else
-                                emit "ERROR: deleteDir aborted: the step's deadline expired"
-                                ctx.Failed.Value <- true
-                                ctx.Sink BuildStatus.Aborted
-
-                // FG-046. `input` — human approval. MEASURED: Jenkins prints the message
-                // and "Proceed or Abort", then waits. Under a `timeout` the deadline
-                // expiring makes the build ABORTED and the following steps do not run.
-                //
-                // 22 corpus files use `input`; 10 of them wrap it in a timeout. Without a
-                // deadline Jenkins waits FOREVER for a human — faithful to reproduce, but
-                // there is no approver in this engine and no receipt can be taken of a
-                // pipeline that never ends. So the un-timed form fails closed with a named
-                // reason rather than silently inventing an approval or an abort: a
-                // DELIBERATE, documented divergence (see FG-046b for real approval).
                 | "input", _ ->
                     let message =
                         step.Positional
@@ -1400,53 +1419,22 @@ module FogellSide =
                         //
                         // Polling backs off instead of spinning at 50 ms: an `input` under
                         // an hour-long timeout woke ~72,000 times for nothing.
-                        let interruptedBySibling () =
-                            match ctx.Interrupt with
-                            | Some p -> (try p () with _ -> false)
-                            | None -> false
+                        // The ONE model. This loop got the cause wrong twice: once by
+                        // omitting the sibling check, once by testing expiry first so a
+                        // sibling failing in the final sleep lost a tie.
+                        let mutable outcome = Running
 
-                        let mutable stop = false
-                        let mutable bySibling = false
-
-                        while not stop do
-                            // REVIEW FIX (Codex, PR #17 round 3): narrowing to int here
-                            // wrapped negative for a deadline past Int32.MaxValue ms — a
-                            // `timeout(time: 30, unit: 'DAYS') { input … }` satisfied
-                            // `left <= 1` and aborted the prompt IMMEDIATELY. Compare at
-                            // full width; only the sleep interval is narrowed, and it is
-                            // bounded by 250 anyway.
-                            let left = defaultArg (remainingMs deadline) 0L
-
-                            // Record WHICH EVENT HAPPENED, not which branch is tested
-                            // first. Round 8 checked expiry first, so a sibling failing in
-                            // the final sleep lost; reordering merely swapped the bias, and
-                            // a deadline that genuinely expired first would then be
-                            // reported as a sibling interruption. Both are wrong for the
-                            // same reason — the priority of a test is not evidence about
-                            // the order of events.
-                            let siblingNow = interruptedBySibling ()
-                            let expiredNow = left <= 1L
-
-                            if siblingNow || expiredNow then
-                                stop <- true
-                                // A deadline that had ALREADY passed on the previous wake
-                                // is the earlier event; a sibling seen first this wake wins
-                                // only when the deadline has not yet passed.
-                                bySibling <- siblingNow && not expiredNow
-                            else
+                        while outcome = Running do
+                            match cancellationOf ctx deadline with
+                            | Running ->
+                                // Full-width comparison; only the sleep narrows, and it is
+                                // bounded by 250 anyway. A 30-day deadline once wrapped
+                                // negative here and aborted the prompt instantly.
+                                let left = defaultArg (remainingMs deadline) 0L
                                 System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+                            | c -> outcome <- c
 
-                        // An abort must be EXPLAINED (JB-DUR-005): Jenkins narrates its
-                        // timeout, and a silent abort here would be the defect this
-                        // project exists to beat. `ERROR:` lines are diagnostics — kept
-                        // out of the compared output, counted as a reported reason.
-                        ctx.Failed.Value <- true
-
-                        if bySibling then
-                            emit "ERROR: input interrupted: a failFast sibling failed"
-                        else
-                            emit "ERROR: input aborted: the approval deadline expired with no response"
-                            ctx.Sink BuildStatus.Aborted
+                        applyCancellation ctx "input" outcome
 
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive
@@ -1476,15 +1464,7 @@ module FogellSide =
                         // the archive and junit predicates combine interruption WITH the
                         // deadline — so a stash inside a `timeout` could still finish past
                         // it. Same predicate everywhere now.
-                        let abort () =
-                            let fired (p: (unit -> bool) option) =
-                                match p with
-                                | Some f -> (try f () with _ -> false)
-                                | None -> false
-
-                            fired ctx.Interrupt || (match remainingMs deadline with
-                                                    | Some ms -> ms <= 1
-                                                    | None -> false)
+                        let abort () = cancellationOf ctx deadline <> Running
 
                         let allowEmpty =
                             step.Named
@@ -1501,25 +1481,7 @@ module FogellSide =
                         let saved, aborted = Stash.save store jobName cwd n includes excludes abort
 
                         if aborted then
-                            // REVIEW FIX (Codex, PR #15 round 3): this always reported
-                            // Aborted, so a stash interrupted because a failFast SIBLING
-                            // failed turned the build from failure into aborted —
-                            // exactly the collateral-outranks-cause bug fixed for shell
-                            // steps in PR #13. The sibling's failure is the cause; only a
-                            // deadline is genuinely an abort.
-                            let bySibling =
-                                match ctx.Interrupt with
-                                | Some p -> (try p () with _ -> false)
-                                | None -> false
-
-                            emit
-                                (if bySibling then
-                                     "ERROR: stash interrupted: a failFast sibling failed"
-                                 else
-                                     "ERROR: stash aborted: the step's deadline expired while copying")
-
-                            ctx.Failed.Value <- true
-                            if not bySibling then ctx.Sink BuildStatus.Aborted
+                            applyCancellation ctx "stash" (cancellationOf ctx deadline)
                         elif List.isEmpty saved && not allowEmpty then
                             // MEASURED: Jenkins FAILS the build here (default
                             // allowEmpty: false) — the pipeline stops and later steps do
@@ -1548,15 +1510,7 @@ module FogellSide =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     | Some n ->
-                        let abort () =
-                            let fired (p: (unit -> bool) option) =
-                                match p with
-                                | Some f -> (try f () with _ -> false)
-                                | None -> false
-
-                            fired ctx.Interrupt || (match remainingMs deadline with
-                                                    | Some ms -> ms <= 1
-                                                    | None -> false)
+                        let abort () = cancellationOf ctx deadline <> Running
 
                         match Stash.restore store jobName cwd n abort with
                         | Result.Error e ->
@@ -1568,17 +1522,13 @@ module FogellSide =
                             // plain failure, so a `timeout` whose last step is `unstash`
                             // selected post { failure } where every other timed-out step
                             // selects post { aborted }.
-                            emit $"ERROR: {e}"
-                            ctx.Failed.Value <- true
-
-                            let bySibling =
-                                match ctx.Interrupt with
-                                | Some p -> (try p () with _ -> false)
-                                | None -> false
-
-                            if e.StartsWith "aborted:" && not bySibling then
-                                ctx.Sink BuildStatus.Aborted
+                            if e.StartsWith "aborted:" then
+                                applyCancellation ctx "unstash" (cancellationOf ctx deadline)
                             else
+                                // A MISSING stash is a genuine failure, not a
+                                // cancellation, and must not be classified by this model.
+                                emit $"ERROR: {e}"
+                                ctx.Failed.Value <- true
                                 ctx.Sink BuildStatus.Failure
                         | Result.Ok _ -> ()
 
