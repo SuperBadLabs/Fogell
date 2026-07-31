@@ -64,7 +64,13 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
-      Diagnostic: string option }
+      Diagnostic: string option
+      /// FG-103: the engine reporting on its OWN checks — a leak scan that could
+      /// not run, survivors it found — separate from the step's failure reason so
+      /// it can reach the receipt whatever the step's status. Folding it into
+      /// Diagnostic hid it: on success nothing printed, on failure the composed
+      /// ERROR line was normalised away, and the receipt stayed silent either way.
+      EngineNote: string option }
 
 module Executor =
 
@@ -78,7 +84,8 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
-          Diagnostic = None }
+          Diagnostic = None
+          EngineNote = None }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
@@ -199,28 +206,17 @@ module Executor =
                         $"step exceeded its {budget} ms timeout; {how}")
                 | Cancelled -> Aborted, None, Some "step was cancelled"
 
-            // FG-032: a leak is a defect, and it is reported rather than ignored.
-            let diagnostic =
+            // FG-032/FG-103: a leak is a defect and an unavailable check is an
+            // unknown — both are ENGINE findings, carried beside the step's own
+            // failure reason so they reach the receipt whatever the status is.
+            let engineNote =
                 match run.Termination with
                 | Some t when t.LeakedProcesses < 0 ->
-                    // FG-103: an unavailable check is SAID to be unavailable — the
-                    // alternative was a broken /proc reading as "no leaks".
-                    let leak = "leak check unavailable: the /proc scan failed, group state unknown"
-
-                    Some(
-                        match diagnostic with
-                        | Some d -> $"{d}; {leak}"
-                        | None -> leak
-                    )
+                    Some "leak check unavailable: the /proc scan failed, group state unknown"
                 | Some t when t.LeakedProcesses > 0 ->
-                    let leak = $"{t.LeakedProcesses} process(es) survived group reaping"
-
-                    Some(
-                        match diagnostic with
-                        | Some d -> $"{d}; {leak}"
-                        | None -> leak)
+                    Some $"{t.LeakedProcesses} process(es) survived group reaping"
                 | Some _
-                | None -> diagnostic
+                | None -> None
 
             { Status = status
               ExitCode = exitCode
@@ -239,7 +235,8 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
-              Diagnostic = diagnostic }
+              Diagnostic = diagnostic
+              EngineNote = engineNote }
 
     /// Read a step argument that may be positional or named, matching Jenkins'
     /// tolerance for `archiveArtifacts '*.jar'` and
