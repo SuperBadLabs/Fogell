@@ -35,6 +35,14 @@ let main argv =
             | null
             | "" -> []
             | cmd ->
+                // FAIL CLOSED (FG-103): a CONFIGURED collector that cannot deliver
+                // is a broken harness, and continuing with a partial replacement set
+                // would manufacture divergences with no indication why. Refuse the
+                // whole run instead.
+                let refuse (why: string) =
+                    eprintfn $"env collector failed: {why}; refusing to run with a partial canonicalisation set"
+                    exit 2
+
                 try
                     let psi = Diagnostics.ProcessStartInfo("/bin/sh")
                     psi.ArgumentList.Add "-c"
@@ -47,18 +55,26 @@ let main argv =
                     let reader = p.StandardOutput.ReadToEndAsync()
 
                     if not (p.WaitForExit 30_000) then
-                        try p.Kill(true) with _ -> ()
+                        (try p.Kill(true) with _ -> ())
+                        refuse "timed out after 30 s"
 
-                    let out = if reader.Wait 5_000 then reader.Result else ""
+                    if p.ExitCode <> 0 then refuse $"exit code {p.ExitCode}"
 
-                    out.Split '\n'
-                    |> Array.choose (fun line ->
-                        match line.IndexOf '=' with
-                        | i when i > 0 -> Some(line.Substring(0, i), line.Substring(i + 1).Trim())
-                        | _ -> None)
-                    |> Array.toList
-                with _ ->
-                    []
+                    let out = if reader.Wait 5_000 then reader.Result else refuse "output never arrived"; ""
+
+                    let parsed =
+                        out.Split '\n'
+                        |> Array.choose (fun line ->
+                            match line.IndexOf '=' with
+                            | i when i > 0 -> Some(line.Substring(0, i), line.Substring(i + 1).Trim())
+                            | _ -> None)
+                        |> Array.toList
+
+                    if List.isEmpty parsed then refuse "no NAME=VALUE lines in output"
+                    parsed
+                with
+                | :? System.ComponentModel.Win32Exception as e -> refuse e.Message; []
+                | :? AggregateException as e -> refuse e.InnerException.Message; []
 
         let envReplacements =
             Fogell.Differential.Trace.canonicalisedEnvNames
