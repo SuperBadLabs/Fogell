@@ -342,8 +342,9 @@ module Executor =
                 let advisory =
                     let q (x: string) = "\u2018" + x + "\u2019"
 
-                    // MEASURED: for a comma-separated list Jenkins validates the
-                    // individual Ant masks and speaks about the FIRST unmatched one —
+                    // MEASURED (receipt `archive-multi-pattern-advisory`): for a
+                    // comma-separated list Jenkins validates the
+                    // individual Ant masks, advising on the FIRST unmatched one —
                     // `missing/**,other-*.zip` advises on `missing/**` alone (the
                     // Configuration-error line keeps the full list).
                     let raw = raw.Split(',').[0].Trim()
