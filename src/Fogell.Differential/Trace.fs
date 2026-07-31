@@ -389,11 +389,22 @@ module Trace =
                         yield l
                 | None -> () ]
 
-    let normaliseOutputWith (workspaceRoots: string list) (lines: string seq) : string list =
+    /// The environment names whose ENGINE-INHERITED values are canonicalised to
+    /// `${'$'}{NAME}` in each engine's own trace. The compared xtrace expands what a
+    /// script references, and these differ between agents BY CONSTRUCTION — the
+    /// same reason the workspace path does. Curated, not blanket: replacing every
+    /// short env value would mangle unrelated output.
+    let canonicalisedEnvNames =
+        [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
+
+    let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
+        let ordered =
+            replacements
+            |> List.filter (fun (v, _) -> v <> "" && v.Length >= 4)
+            |> List.sortByDescending (fun (v, _) -> v.Length)
+
         let canonical (l: string) =
-            workspaceRoots
-            |> List.filter (fun r -> r <> "")
-            |> List.fold (fun (acc: string) root -> acc.Replace(root, "${WORKSPACE}")) l
+            ordered |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
 
         normaliseOutputInner (lines |> Seq.map canonical)
 

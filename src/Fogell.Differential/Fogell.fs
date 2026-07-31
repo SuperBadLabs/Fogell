@@ -1985,7 +1985,16 @@ module FogellSide =
             Result.Ok
                 { Result = BuildStatus.toWireString status
                   EngineNotes = List.ofSeq engineNotes
-                  Output = Trace.normaliseOutputWith [ workspace ] output
+                  Output =
+                    (let envReplacements =
+                        Trace.canonicalisedEnvNames
+                        |> List.choose (fun name ->
+                            match Environment.GetEnvironmentVariable name with
+                            | null
+                            | "" -> None
+                            | v -> Some(v, "${" + name + "}"))
+
+                     Trace.normaliseOutputWith ((workspace, "${WORKSPACE}") :: envReplacements) output)
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)

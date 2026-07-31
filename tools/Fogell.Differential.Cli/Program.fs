@@ -27,11 +27,17 @@ let main argv =
             | null | "" -> None
             | v -> Some v
 
+        let envCollector =
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_ENV_CMD" with
+            | null | "" -> None
+            | v -> Some v
+
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
-              WorkspaceCollector = collector }
+              WorkspaceCollector = collector
+              EnvCollector = envCollector }
 
         let fogellRoot =
             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))

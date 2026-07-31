@@ -24,6 +24,8 @@ fi
 # Jenkins does not share a filesystem with us, so the workspace is hashed WHERE
 # IT LIVES using the same manifest form as a local hash (see Trace.collectRemote).
 export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
+# engine-inherited env (PATH and friends) for trace canonicalisation
+export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
 export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
 dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }

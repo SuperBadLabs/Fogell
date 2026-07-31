@@ -28,7 +28,11 @@ type JenkinsConfig =
       ///
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
-      WorkspaceCollector: string option }
+      WorkspaceCollector: string option
+      /// Prints the ENGINE's environment as NAME=VALUE lines (e.g. `podman exec
+      /// … env`), so engine-inherited values canonicalise in the trace exactly as
+      /// the workspace path does. None → only the workspace canonicalises.
+      EnvCollector: string option }
 
 module Jenkins =
 
@@ -128,9 +132,41 @@ module Jenkins =
                                     let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
                                     if m.Success then Some m.Groups[1].Value else None)
 
-                             Trace.normaliseOutputWith
-                                 [ defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}" ]
-                                 rawLines)
+                             let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
+
+                             // engine-inherited env values, collected from the engine
+                             // itself — PATH and friends differ per agent by
+                             // construction, and the compared xtrace expands them
+                             let envReplacements =
+                                 match cfg.EnvCollector with
+                                 | None -> []
+                                 | Some cmd ->
+                                     try
+                                         let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                                         psi.ArgumentList.Add "-c"
+                                         psi.ArgumentList.Add cmd
+                                         psi.RedirectStandardOutput <- true
+                                         psi.UseShellExecute <- false
+                                         use p = Diagnostics.Process.Start psi
+                                         let out = p.StandardOutput.ReadToEnd()
+                                         p.WaitForExit 30_000 |> ignore
+
+                                         out.Split '\n'
+                                         |> Array.choose (fun line ->
+                                             match line.IndexOf '=' with
+                                             | i when i > 0 ->
+                                                 let name = line.Substring(0, i)
+
+                                                 if List.contains name Trace.canonicalisedEnvNames then
+                                                     Some(line.Substring(i + 1).Trim(), "${" + name + "}")
+                                                 else
+                                                     None
+                                             | _ -> None)
+                                         |> Array.toList
+                                     with _ ->
+                                         []
+
+                             Trace.normaliseOutputWith ((ws, "${WORKSPACE}") :: envReplacements) rawLines)
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a
