@@ -70,7 +70,6 @@ module Trace =
         || Path.GetFileName p = "jenkins-log.txt"
         || Path.GetFileName p = "jenkins-result.txt"
         || Path.GetFileName p = "script.sh"
-        || (Path.GetFileName p).StartsWith ".fogell-shebang-"
         || Path.GetFileName p = "script.sh.copy"
 
     /// Hash a directory tree: sorted (relative path, content hash) pairs. Sorted
@@ -207,7 +206,10 @@ module Trace =
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
-        || t.Contains "workflow.actions.ErrorAction$ErrorId"
+        || Text.RegularExpressions.Regex.IsMatch(
+            t,
+            @"^(Also:\s+)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        )
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between

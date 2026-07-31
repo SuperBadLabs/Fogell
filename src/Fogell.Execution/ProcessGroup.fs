@@ -207,10 +207,13 @@ module ProcessGroup =
         // guaranteed by the disposable below, exception paths included.
         let shebangFile =
             if request.Command.StartsWith "#!" then
-                // In the WORKSPACE, not the system temp dir: hardened hosts mount
-                // /tmp noexec, and a script that cannot exec is a broken step. The
-                // dotted prefix is scaffolding the workspace hash excludes.
-                let f = IO.Path.Combine(request.WorkingDirectory, $".fogell-shebang-{Guid.NewGuid():N}.sh")
+                // In the workspace's `@tmp` SIBLING — Jenkins' own durable-script
+                // location: executable where builds execute (hardened hosts mount
+                // /tmp noexec) and already excluded from the workspace hash as
+                // scaffolding, so no user-creatable basename is ever excluded.
+                let tmpDir = request.WorkingDirectory.TrimEnd('/') + "@tmp"
+                IO.Directory.CreateDirectory tmpDir |> ignore
+                let f = IO.Path.Combine(tmpDir, $"fogell-shebang-{Guid.NewGuid():N}.sh")
 
                 let mode =
                     IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
@@ -238,7 +241,12 @@ module ProcessGroup =
                             cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}") }
 
         match shebangFile with
-        | Some f -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"{f}\" 2>&1"
+        | Some f ->
+            // the path travels in an environment variable — interpolating it into
+            // the `sh -c` text would let the OUTER shell re-expand metacharacters a
+            // legitimate directory name can contain
+            psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$FOGELL_SHEBANG\" 2>&1"
+            psi.Environment["FOGELL_SHEBANG"] <- f
         | None ->
             psi.ArgumentList.Add
                 $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$FOGELL_SCRIPT\" 2>&1"
