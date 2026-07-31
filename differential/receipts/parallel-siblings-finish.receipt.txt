@@ -1,7 +1,7 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         22244081b6695ccb692cd2d60629b30ab5d794cc3cac980c1007b2f25ca9829d
+seal:         e62496dffea555a2c07e5a2dea7d1ccd86a87bd8eb336fdb3a80aa86b2180cc2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -13,6 +13,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
   compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
     trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
@@ -47,8 +53,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   output (5 lines):
     | + echo failing
     | + exit 3
-    | + sleep 6
     | Failed in branch quick-fail
+    | + sleep 6
     | + echo done
   workspace:
     bfbd1f4027c3  failed.txt

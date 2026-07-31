@@ -78,18 +78,47 @@ module Compare =
     /// TO STDOUT (`from-quick`, `from-slow`, both unprefixed). `parallel-siblings-finish`
     /// was cited first and cannot support this claim: its branches write FILES, so it emits
     /// no ordinary branch output at all.
-    let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
+    /// FG-102 round 48. dash's xtrace prints only the FIRST physical line of a
+    /// multiline word with the `+ ` prefix; continuation lines are bare, and dash
+    /// neither re-quotes nor marks the record's end (measured — /bin/sh is dash
+    /// on both engines), so one-sided normalisation cannot attribute them.
+    /// Resolution happens HERE, where both lines are visible: a mismatching pair
+    /// that becomes equal under the SAME inherited-env replacement list applied
+    /// to BOTH sides is the same expansion. Literals appear identically on both
+    /// sides and cancel, so the rule collapses only genuine inherited-value
+    /// differences — it can turn a divergence into an equality, never the
+    /// reverse, and stored receipt lines keep each engine's literal text. The
+    /// pair it cannot adjudicate — each side printing the OTHER's inherited
+    /// value as a literal — requires intent and joins the stated mimicry
+    /// residual.
+    let private compareOutput
+        (concurrent: bool)
+        (envReplacements: (string * string) list)
+        (jenkins: string list)
+        (fogell: string list)
+        =
+        let ordered =
+            envReplacements
+            |> List.filter (fun ((v: string), _) -> v <> "" && v.Length >= 4)
+            |> List.sortByDescending (fun ((v: string), _) -> v.Length)
+
+        let canon (l: string) =
+            ordered |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+
         let rec walk i j f =
             match j, f with
             | [], [] -> None
             | jh :: jt, fh :: ft ->
-                if jh = fh then walk (i + 1) jt ft
+                if jh = fh || canon jh = canon fh then walk (i + 1) jt ft
                 else Some(OutputDiffers(i, Some jh, Some fh))
             | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
             | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
 
         if concurrent then
-            walk 0 (List.sort jenkins) (List.sort fogell)
+            // Canonicalise BEFORE sorting so resolved-equal lines sort together;
+            // a multiset mismatch therefore reports canonical text, and the
+            // receipt's stored per-engine output remains literal.
+            walk 0 (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
         else
             walk 0 jenkins fogell
 
@@ -100,12 +129,14 @@ module Compare =
     let workspaceWasCompared (jenkins: Trace) (fogell: Trace) =
         jenkins.WorkspaceHash <> "not-collected" && fogell.WorkspaceHash <> "not-collected"
 
-    let traces (jenkins: Trace) (fogell: Trace) : Verdict =
+    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict =
         let divergences =
             [ if jenkins.Result <> fogell.Result then
                   ResultDiffers(jenkins.Result, fogell.Result)
 
-              match compareOutput (jenkins.Concurrent || fogell.Concurrent) jenkins.Output fogell.Output with
+              match
+                  compareOutput (jenkins.Concurrent || fogell.Concurrent) envReplacements jenkins.Output fogell.Output
+              with
               | Some d -> d
               | None -> ()
 
@@ -128,12 +159,18 @@ module Compare =
 
         if List.isEmpty divergences then Proven else Diverged divergences
 
-    let receipt (file: string) (core: string) (jenkins: Result<Trace, string>) (fogell: Result<Trace, string>) : Receipt =
+    let receipt
+        (file: string)
+        (core: string)
+        (envReplacements: (string * string) list)
+        (jenkins: Result<Trace, string>)
+        (fogell: Result<Trace, string>)
+        : Receipt =
         let verdict, j, f =
             match jenkins, fogell with
             | Result.Error e, _ -> NotComparable(JenkinsFailed e), None, None
             | _, Result.Error e -> NotComparable(FogellFailed e), None, None
-            | Result.Ok jt, Result.Ok ft -> traces jt ft, Some jt, Some ft
+            | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
 
         let comparable =
             let render (t: Trace option) =

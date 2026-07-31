@@ -1,7 +1,7 @@
-# Differential receipt — sh-gstring-interpolation.Jenkinsfile
+# Differential receipt — xtrace-continuation-inherited.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         69e6ffc08ac34bafaa4e82410f8bc47e7649956a07ca4d31d11c8bba60875bc8
+seal:         79261439687d9e5638114d69fc608c12ab3167d8780c6de87b54ccf18a7a1393
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -45,25 +45,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (8 lines):
-    | + echo double:prod
-    | double:prod
-    | + echo upper:PROD
-    | upper:PROD
-    | + echo literal:.
-    | literal:.
-    | + echo escaped:.
-    | escaped:.
+  output (4 lines):
+    | + printf %s head
+    | /var/jenkins_home/tail
+    | + echo done
+    | done
 
 ## Fogell
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (8 lines):
-    | + echo double:prod
-    | double:prod
-    | + echo upper:PROD
-    | upper:PROD
-    | + echo literal:.
-    | literal:.
-    | + echo escaped:.
-    | escaped:.
+  output (4 lines):
+    | + printf %s head
+    | /home/srikanth/tail
+    | + echo done
+    | done

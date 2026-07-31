@@ -516,6 +516,62 @@ let stringModel =
                       why
           } ]
 
+/// FG-102 round 48. dash prefixes only the FIRST physical line of a multiline
+/// traced word; continuation rows are bare, so inherited-env differences there
+/// are resolved two-sidedly at COMPARE time. These rows pin the rule's shape:
+/// it collapses a pair differing only by same-name inherited values, and it
+/// never manufactures a divergence from lines that were already equal.
+let continuationResolution =
+    let mkTrace output =
+        { Result = "success"
+          Output = output
+          WorkspaceHash = "not-collected"
+          WorkspaceFiles = []
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let repl =
+        [ "/var/jenkins_home", "${HOME}"; "/root", "${HOME}" ]
+
+    testList
+        "FG-102 xtrace continuation rows resolve two-sidedly"
+        [ test "a bare continuation row differing only by inherited HOME compares equal" {
+              let jenkins = mkTrace [ "+ printf %s head"; "/var/jenkins_home/tail" ]
+              let fogell = mkTrace [ "+ printf %s head"; "/root/tail" ]
+              Expect.equal (Compare.traces repl jenkins fogell) Proven "continuation resolves"
+          }
+
+          test "a multi-line continuation chain resolves on every row" {
+              let jenkins = mkTrace [ "+ printf %s top"; "middle"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "+ printf %s top"; "middle"; "/root" ]
+              Expect.equal (Compare.traces repl jenkins fogell) Proven "chain resolves"
+          }
+
+          test "a pair that differs beyond the inherited value still diverges" {
+              let jenkins = mkTrace [ "+ printf %s head"; "/var/jenkins_home/tail-a" ]
+              let fogell = mkTrace [ "+ printf %s head"; "/root/tail-b" ]
+
+              match Compare.traces repl jenkins fogell with
+              | Diverged [ OutputDiffers(1, Some "/var/jenkins_home/tail-a", Some "/root/tail-b") ] -> ()
+              | v -> failtest $"expected the literal pair reported, got {v}"
+          }
+
+          test "identical literal lines never diverge from the rule (literals cancel)" {
+              let jenkins = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
+              let fogell = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
+              Expect.equal (Compare.traces repl jenkins fogell) Proven "equal lines stay equal"
+          }
+
+          test "an empty replacement list leaves the comparison byte-exact" {
+              let jenkins = mkTrace [ "/var/jenkins_home" ]
+              let fogell = mkTrace [ "/root" ]
+
+              match Compare.traces [] jenkins fogell with
+              | Diverged [ OutputDiffers(0, _, _) ] -> ()
+              | v -> failtest $"expected divergence without replacements, got {v}"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel; continuationResolution ])

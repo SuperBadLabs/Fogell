@@ -164,7 +164,7 @@ let main argv =
 
                 let jenkins = Jenkins.run cfg envReplacements job script
                 let fogell = FogellSide.run envReplacements fogellRoot job script
-                let r = Compare.receipt name core jenkins fogell
+                let r = Compare.receipt name core envReplacements jenkins fogell
                 let path = Compare.seal receiptDir r
 
                 let workspaceCompared =
