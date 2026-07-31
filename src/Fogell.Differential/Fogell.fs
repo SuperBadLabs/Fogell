@@ -558,9 +558,10 @@ module FogellSide =
                 // appended result.Stdout, so every shell line was emitted twice and
                 // the differential reported a phantom divergence at line 1.
                 //
-                // stderr is not streamed by OnLine, so it is added here.
-                for line in result.Stderr.Replace("\r\n", "\n").Split '\n' do
-                    if line <> "" then emit line
+                // stderr STREAMS through OnLine exactly as stdout does — the
+                // comment here claimed otherwise and the loop it justified emitted
+                // every stderr line a SECOND time. Comment-as-specification drift,
+                // FG-104's own class, found when xtrace moved to stderr and doubled.
 
                 // Engine-health findings reach the receipt WHATEVER the step's
                 // status: on success nothing else would print them, and on failure
@@ -1074,12 +1075,6 @@ module FogellSide =
                     // FG-102, measured position: a stage-declared timeout announces its
                     // expiry right after the interrupted body, BEFORE the post arm the
                     // abort selects (`cancellation-selects-post-arm`).
-                    // The check is against the stage's OWN declared deadline — the
-                    // effective one can be an inherited outer bound, and announcing
-                    // the OUTER expiry here would double the sentence when the owner
-                    // announces it too.
-                    if body.Failed.Value && deadlineDidFire stageDeclaredDeadline then
-                        emit "Timeout has been exceeded"
 
                     // Stage post is selected against the STAGE's result, and
                     // `previous` is None because this harness runs one build per
@@ -1103,6 +1098,14 @@ module FogellSide =
                     // failure notifications a `post { aborted }` exists to send.
                     runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
                     if postCtx.Failed.Value then ctx.Failed.Value <- true
+
+                    // MEASURED position (`cancellation-selects-post-arm`): the
+                    // stage-declared expiry announces AFTER the post arm the abort
+                    // selected — Jenkins prints `+ echo right` first, then the
+                    // sentence. Own declared deadline only: the effective bound can
+                    // be an inherited outer one, whose OWNER announces it.
+                    if body.Failed.Value && deadlineDidFire stageDeclaredDeadline then
+                        emit "Timeout has been exceeded"
 
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
             /// another wrapper used to be routed straight at `Executor.runStep`,

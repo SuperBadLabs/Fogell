@@ -137,10 +137,13 @@ let shellExecution =
               | None -> failtest "a failure must carry a diagnostic"
           }
 
-          test "stderr is captured separately" {
+          test "stderr merges into the ordered stream, exactly as Jenkins' console does" {
+              // FG-102: the shell runs `2>&1`, because the xtrace lives on stderr and
+              // two async pipe readers deliver cross-stream events in racy order —
+              // output lines overtook their own `+` trace. One pipe is kernel-ordered,
+              // and Jenkins' console is the same merged stream.
               let r = Executor.runStep (request (tempRoot ()) "echo oops >&2")
-              Expect.stringContains r.Stderr "oops" "stderr"
-              Expect.isFalse (r.Stdout.Contains "oops") "not mixed into stdout"
+              Expect.stringContains r.Stdout "oops" "stderr content arrives in the ordered stream"
           }
 
           test "output streams while the step runs, not only at the end" {

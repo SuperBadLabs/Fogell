@@ -1,7 +1,7 @@
 # Differential receipt — gstring-comment-in-placeholder.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3f44973e8e4274e681fa637d9d309f7ea55bc824e70b680483e5cc9e3f1497ff
+seal:         d9514045b2a8816c1ab577848508936de6624fc47f34a943d441b6930e11eecc
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,19 +11,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps, ANSI escapes, blank lines
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
     (applies to failure/aborted only — an unstable build is explained by its test report)
     (Jenkins' wording comes from whichever plugin implements the step;
      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
-    provenance — but when the traced command contains a literal newline the trace spans
-    several lines and only the FIRST begins with '+ '. A continuation line is not
-    distinguishable from real output (the line after a trace is USUALLY real output), so
-    it is compared as output. Cases whose commands embed a newline must therefore carry
-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
   engine notes: printed in the receipt, never compared — the engine reporting
     on its own checks (e.g. an unavailable /proc scan), not on the build
@@ -44,15 +39,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (3 lines):
+  output (5 lines):
+    | + echo c:2
     | c:2
     | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
+    | + echo order:ord
     | order:ord
 
 ## Fogell
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (3 lines):
+  output (5 lines):
+    | + echo c:2
     | c:2
     | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
+    | + echo order:ord
     | order:ord

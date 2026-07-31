@@ -1,7 +1,7 @@
 # Differential receipt — withenv-escaped-dollar.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a73a35933a8c533210d04f89e02b39b4be386b6c24278f9665cd5e3373fa2bf8
+seal:         844b4ef05eb1e14c66293d93dc2a368afb07b359db7b3a38268c5baddc9349ab
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,19 +11,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps, ANSI escapes, blank lines
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
     (applies to failure/aborted only — an unstable build is explained by its test report)
     (Jenkins' wording comes from whichever plugin implements the step;
      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
-    provenance — but when the traced command contains a literal newline the trace spans
-    several lines and only the FIRST begins with '+ '. A continuation line is not
-    distinguishable from real output (the line after a trace is USUALLY real output), so
-    it is compared as output. Cases whose commands embed a newline must therefore carry
-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
   engine notes: printed in the receipt, never compared — the engine reporting
     on its own checks (e.g. an unavailable /proc scan), not on the build
@@ -44,7 +39,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: d95ddfed2e43af85c4b29a55ad7afea19e0d90835b5792939582c9895c378f07
-  output (0 lines):
+  output (2 lines):
+    | + echo hold-$SEED
+    | + echo live-seed
   workspace:
     14e0b6662f2a  kept.txt
     13111b0432d2  live.txt
@@ -52,7 +49,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         success
   workspace-hash: d95ddfed2e43af85c4b29a55ad7afea19e0d90835b5792939582c9895c378f07
-  output (0 lines):
+  output (2 lines):
+    | + echo hold-$SEED
+    | + echo live-seed
   workspace:
     14e0b6662f2a  kept.txt
     13111b0432d2  live.txt

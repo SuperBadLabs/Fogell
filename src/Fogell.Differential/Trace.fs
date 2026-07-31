@@ -251,16 +251,14 @@ module Trace =
         elif t = "Ready to run at" || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d") then None
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
         elif t.StartsWith "GitHub has been notified of this commit" then None
-        // `sh` xtrace echo: Jenkins prints `+ cmd`, and so does a shell with -x.
-        // The command text is not output, it is provenance.
-        elif t.StartsWith "+ " then None
+
         // Jenkins prefixes workspace paths that differ by construction
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
         // Plugin banners: an artifact of which plugins this Jenkins has installed,
         // not of Jenkins' behaviour. `[Checks API] No suitable checks publisher
         // found.` appears purely because the checks plugin is present and
         // unconfigured.
-        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[[A-Za-z][A-Za-z ]*(API|Plugin)\]") then None
+        elif t = "[Checks API] No suitable checks publisher found." then None
         // Engine diagnostic wording — captured as ReportedFailureReason instead.
         elif isDiagnosticLine t then None
         else Some t
@@ -374,19 +372,14 @@ module Trace =
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps, ANSI escapes, blank lines"
           "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"
-          "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
+          "compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the"
+          "  trace is identical emitted output, continuations included (retires FG-002c)"
           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
           "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"
           "compared as a BOOLEAN, not text: whether a failure reason was reported"
           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
           "  (Jenkins' wording comes from whichever plugin implements the step;"
           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
-          "KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as"
-          "  provenance — but when the traced command contains a literal newline the trace spans"
-          "  several lines and only the FIRST begins with '+ '. A continuation line is not"
-          "  distinguishable from real output (the line after a trace is USUALLY real output), so"
-          "  it is compared as output. Cases whose commands embed a newline must therefore carry"
-          "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: credential-masking narration — both engines announce it, wording differs"
           "engine notes: printed in the receipt, never compared — the engine reporting"
           "  on its own checks (e.g. an unavailable /proc scan), not on the build"

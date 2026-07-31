@@ -1,7 +1,7 @@
 # Differential receipt — cancellation-selects-post-arm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e7aa763cfe81b1c87e19c2dfc7399ecc367eaa58f900da85cd28fe6e1549b6f7
+seal:         62ec494655a2dc32ac5d390f697bb5a3becf3f7b2a47d42356d9f39ff40aeb49
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,19 +11,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps, ANSI escapes, blank lines
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
     (applies to failure/aborted only — an unstable build is explained by its test report)
     (Jenkins' wording comes from whichever plugin implements the step;
      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
-    provenance — but when the traced command contains a literal newline the trace spans
-    several lines and only the FIRST begins with '+ '. A continuation line is not
-    distinguishable from real output (the line after a trace is USUALLY real output), so
-    it is compared as output. Cases whose commands embed a newline must therefore carry
-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
   engine notes: printed in the receipt, never compared — the engine reporting
     on its own checks (e.g. an unavailable /proc scan), not on the build
@@ -44,11 +39,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (5 lines):
+  output (8 lines):
     | Timeout set to expire in 4 sec
+    | + echo started
+    | + sleep 60
     | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
+    | + echo right
     | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt
@@ -57,11 +55,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (5 lines):
+  output (8 lines):
     | Timeout set to expire in 4 sec
+    | + echo started
+    | + sleep 60
     | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
+    | + echo right
     | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt

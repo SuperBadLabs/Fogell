@@ -177,7 +177,16 @@ module ProcessGroup =
         psi.ArgumentList.Add "--wait"
         psi.ArgumentList.Add "/bin/sh"
         psi.ArgumentList.Add "-c"
-        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -c \"$FOGELL_SCRIPT\""
+        // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
+        // trace an EMITTED, COMPARED artifact on both engines (retiring the last
+        // wording-only suppression and FG-002c's continuation gap with it), and
+        // `-e` is the errexit semantics the receipts were already measured against.
+        // `2>&1` merges the streams IN THE SHELL: the trace goes to stderr, and
+        // .NET's two async pipe readers deliver cross-stream events in racy order —
+        // output lines overtook their own trace. One pipe is kernel-ordered, and it
+        // is also exactly what Jenkins' console is. The pgid marker stays on the
+        // OUTER stderr, printed before the exec redirects anything.
+        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$FOGELL_SCRIPT\" 2>&1"
         psi.Environment["FOGELL_SCRIPT"] <- request.Command
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true

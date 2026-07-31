@@ -1,7 +1,7 @@
 # Differential receipt — retry-exhausts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         24e11bb2b5c3ac18d6a0064161ec3d310b79619be9fde60b84cc82fe7db9c7d1
+seal:         51df2760b8289b25ff8b25b612c010b20f9848e1a56d815d0b4c1f348a9456e2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,19 +11,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps, ANSI escapes, blank lines
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
     (applies to failure/aborted only — an unstable build is explained by its test report)
     (Jenkins' wording comes from whichever plugin implements the step;
      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
-    provenance — but when the traced command contains a literal newline the trace spans
-    several lines and only the FIRST begins with '+ '. A continuation line is not
-    distinguishable from real output (the line after a trace is USUALLY real output), so
-    it is compared as output. Cases whose commands embed a newline must therefore carry
-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
   engine notes: printed in the receipt, never compared — the engine reporting
     on its own checks (e.g. an unavailable /proc scan), not on the build
@@ -44,17 +39,29 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
-  output (2 lines):
+  output (8 lines):
+    | + echo attempt
+    | + exit 7
     | Retrying
+    | + echo attempt
+    | + exit 7
     | Retrying
+    | + echo attempt
+    | + exit 7
   workspace:
     a3b4240ea304  attempts.txt
 
 ## Fogell
   result:         failure
   workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
-  output (2 lines):
+  output (8 lines):
+    | + echo attempt
+    | + exit 7
     | Retrying
+    | + echo attempt
+    | + exit 7
     | Retrying
+    | + echo attempt
+    | + exit 7
   workspace:
     a3b4240ea304  attempts.txt
