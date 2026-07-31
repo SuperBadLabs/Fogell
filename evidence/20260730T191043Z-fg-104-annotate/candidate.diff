@@ -1,0 +1,60 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 339cdd5..fde214e 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -188,7 +188,7 @@ converts that recurring cost into a one-time cost.
+ | FG-101 | **P0** | **DONE** | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+ | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
+ | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
+-| FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. **Both halves done.** All 30 resolved: 23 now cite the receipt that proves them, and **6 admit UNPROVEN** — every one of the same kind, a Jenkins REJECTION, where a receipt would require both engines to fail and only their narration to differ, so forcing one to PROVEN would mean pattern-matching a compiler's error layout. The seventh is `post`'s `fixed`/`regression`, proven only for build #1 because the harness cannot produce build history (FG-110/FG-049b). The check is now **`--strict` and blocking**, verified both ways: a planted unbacked claim exits 1, a clean tree exits 0. An admission is a valid answer and is counted separately so it stays visible rather than quietly passing. **Known limit, recorded in the script itself:** it verifies a receipt is NAMED, never that the named receipt EXERCISES the claim — its first review found three of my own citations pointing at receipts covering only part of their sentence. The check is a floor, not a ceiling Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
++| FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. **Both halves done.** All 30 resolved: 23 now cite the receipt that proves them, and **6 admit UNPROVEN** — every one of the same kind, a Jenkins REJECTION, where a receipt would require both engines to fail and only their narration to differ, so forcing one to PROVEN would mean pattern-matching a compiler's error layout. The seventh is `post`'s `fixed`/`regression`, proven only for build #1 because the harness cannot produce build history (FG-110/FG-049b). The check is now **`--strict` and blocking**, verified both ways: a planted unbacked claim exits 1, a clean tree exits 0. An admission is a valid answer and is counted separately so it stays visible rather than quietly passing. **Known limit, recorded in the script itself:** it verifies a receipt is NAMED, never that the named receipt EXERCISES the claim — its first review found three of my own citations pointing at receipts covering only part of their sentence. The check is a floor, not a ceiling. Across two review rounds it accepted **six** wrong citations of mine — receipts that emit no output cited for a masking claim, a file-writing case cited for a stdout claim, an accepted-forms case cited for a rejection. Every one was settled in seconds by OPENING the receipt, which is the step I kept skipping: I was citing from memory of what a case was called rather than from what it contains Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
+ 
+ ## Wave 3.6 — Harness capability (unlocks five blocked tickets at once)
+ 
+diff --git a/src/Fogell.Differential/Compare.fs b/src/Fogell.Differential/Compare.fs
+index beaafd6..c748b05 100644
+--- a/src/Fogell.Differential/Compare.fs
++++ b/src/Fogell.Differential/Compare.fs
+@@ -74,7 +74,10 @@ module Compare =
+     /// provide. It also means the relaxation genuinely loses information — with
+     /// no prefix, a line cannot be attributed to a branch at all — which is why
+     /// the parallel receipts lean on the WORKSPACE hash for their real claim.
+-    /// Receipt: `parallel-siblings-finish`.
++    /// Receipt: `parallel-always-failfast` — it is the case whose branches actually WRITE
++    /// TO STDOUT (`from-quick`, `from-slow`, both unprefixed). `parallel-siblings-finish`
++    /// was cited first and cannot support this claim: its branches write FILES, so it emits
++    /// no ordinary branch output at all.
+     let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
+         let rec walk i j f =
+             match j, f with
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 2158d21..631314c 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1207,7 +1207,11 @@ module FogellSide =
+                 // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
+                 // the log as `****`, and unsets it after the block. It also prints
+                 // "Masking supported pattern matches of $VAR", which is engine narration.
+-                // Receipt: `credentials-string`.
++                // Receipts: `credentials-string` for the BINDING (env membership, value
++                // length, unset after the block), and `credentials-userpass-masking` for
++                // the MASKING — that is the only case printing a secret to stdout (`****`).
++                // `credentials-string` emits no output lines at all, so it could never have
++                // supported the console half of this sentence.
+                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
+                     let typeName =
+                         function
+diff --git a/src/Fogell.Execution/Secrets.fs b/src/Fogell.Execution/Secrets.fs
+index b4a9351..a555276 100644
+--- a/src/Fogell.Execution/Secrets.fs
++++ b/src/Fogell.Execution/Secrets.fs
+@@ -30,7 +30,8 @@ type SecretBinding =
+       /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
+       /// hardening property that was in any case already proven weaker than claimed
+       /// (a same-UID reader follows the path and opens the file it owns).
+-      /// Receipt: `credentials-string`.
++      /// Receipts: `credentials-string` (binding) and `credentials-userpass-masking`
++      /// (masking on stdout). The first emits no output, so it cannot back a masking claim.
+       ValueVariable: string
+       /// Companion variable carrying a path to a 0600 file with the same value. Kept
+       /// as an ADDITION, not a replacement: scripts that prefer a file can use it.

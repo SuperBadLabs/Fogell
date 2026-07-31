@@ -74,7 +74,10 @@ module Compare =
     /// provide. It also means the relaxation genuinely loses information — with
     /// no prefix, a line cannot be attributed to a branch at all — which is why
     /// the parallel receipts lean on the WORKSPACE hash for their real claim.
-    /// Receipt: `parallel-siblings-finish`.
+    /// Receipt: `parallel-always-failfast` — it is the case whose branches actually WRITE
+    /// TO STDOUT (`from-quick`, `from-slow`, both unprefixed). `parallel-siblings-finish`
+    /// was cited first and cannot support this claim: its branches write FILES, so it emits
+    /// no ordinary branch output at all.
     let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
         let rec walk i j f =
             match j, f with

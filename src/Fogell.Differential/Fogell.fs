@@ -1207,7 +1207,11 @@ module FogellSide =
                 // MEASURED: Jenkins binds the VALUE into the named variable, masks it in
                 // the log as `****`, and unsets it after the block. It also prints
                 // "Masking supported pattern matches of $VAR", which is engine narration.
-                // Receipt: `credentials-string`.
+                // Receipts: `credentials-string` for the BINDING (env membership, value
+                // length, unset after the block), and `credentials-userpass-masking` for
+                // the MASKING — that is the only case printing a secret to stdout (`****`).
+                // `credentials-string` emits no output lines at all, so it could never have
+                // supported the console half of this sentence.
                 | "withCredentials", _ when not (List.isEmpty step.Block) ->
                     let typeName =
                         function
