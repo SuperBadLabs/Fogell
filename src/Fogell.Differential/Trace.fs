@@ -313,6 +313,7 @@ module Trace =
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
         let mutable inStackTrace = false
+        let mutable pastFirstOutputStep = false
 
         // Banner suppression applies only to a trace that HAS the Jenkins graph
         // annotations giving it context. Fogell emits none — so its banner-shaped
@@ -346,23 +347,25 @@ module Trace =
                 (isWarnHead raw && isWarnBody next)
                 || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
 
-            // did the PREVIOUS raw line announce an output-producing step? A user
-            // line always follows one; a header banner never does.
-            let afterOutputStep =
-                prevRaw.StartsWith "[Pipeline] echo"
-                || prevRaw.StartsWith "[Pipeline] sh"
-                || prevRaw.StartsWith "[Pipeline] bat"
-                // `input` prints its user-controlled prompt right after its
-                // annotation — a prompt shaped like a banner is still the prompt
-                || prevRaw.StartsWith "[Pipeline] input"
-                || (prevRaw <> "" && not (prevRaw.StartsWith "[Pipeline]") && not (isPreambleBanner prevRaw))
+            // Header banners exist only BEFORE the first output-producing step of
+            // the whole build — once any `echo`/`sh`/`bat`/`input` annotation has
+            // appeared, every later line is build territory and banner shapes are
+            // ordinary output (consecutive ones included: a per-line context made
+            // the second of two identical spoofed lines vanish).
+            if
+                raw.StartsWith "[Pipeline] echo"
+                || raw.StartsWith "[Pipeline] sh"
+                || raw.StartsWith "[Pipeline] bat"
+                || raw.StartsWith "[Pipeline] input"
+            then
+                pastFirstOutputStep <- true
 
             prevRaw <- raw
 
             if not suppress then
                 match normaliseLine all[i] with
                 | Some l ->
-                    if not hasAnnotations || afterOutputStep || not (isPreambleBanner l) then
+                    if not hasAnnotations || pastFirstOutputStep || not (isPreambleBanner l) then
                         yield l
                 | None -> () ]
 

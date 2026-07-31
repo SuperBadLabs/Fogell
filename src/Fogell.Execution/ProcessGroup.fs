@@ -260,6 +260,13 @@ module ProcessGroup =
         for k, v in request.Environment do
             psi.Environment[k] <- v
 
+        // The reserved launcher variables are assigned AFTER user environment, so a
+        // pipeline exporting FOGELL_SCRIPT / FOGELL_SHEBANG cannot redirect what
+        // this engine executes.
+        psi.Environment["FOGELL_SCRIPT"] <- request.Command
+
+        shebangFile |> Option.iter (fun f -> psi.Environment["FOGELL_SHEBANG"] <- f)
+
         use proc = new Process()
         proc.StartInfo <- psi
 
