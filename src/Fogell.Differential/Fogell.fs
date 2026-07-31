@@ -1046,11 +1046,26 @@ module FogellSide =
                     ctx.Sink BuildStatus.Aborted
                 else
 
+                // Rendered TEXT arguments for the wrapper branches below. Rendering
+                // is evaluation, and it happened only inside runStepInner — so
+                // `dir("${env.SUBDIR}")` created a directory literally named
+                // `${env.SUBDIR}`, and stash/unstash/timeout/retry read raw
+                // placeholder text where Jenkins reads values. Applied PER BRANCH,
+                // never at dispatch scope: a structural argument — withCredentials'
+                // binding list, withEnv's own list handling — is not step text, and
+                // rendering it would evaluate code the model must not run.
+                let renderStepArgs (st: Step) : Step =
+                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                    { st with
+                        Positional = st.Positional |> List.mapi (fun i v -> GString.renderInto scriptBinding adviseNewBinding env st $"#{i}" v)
+                        Named = st.Named |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding env st k v) }
+
                 match step.Name, step.Positional with
                 // JB-FAIL-001/002: timeout and abort share one interrupt path,
                 // and the interrupt is a trappable SIGTERM with a grace window.
                 | "timeout", _ when not (List.isEmpty step.Block) ->
-                    match timeoutMs step with
+                    match timeoutMs (renderStepArgs step) with
                     | Error why ->
                         emit $"ERROR: {why}; refusing to guess a deadline"
                         ctx.Failed.Value <- true
@@ -1073,7 +1088,7 @@ module FogellSide =
                 // the first, and there is no backoff. `retry(3)` around a step
                 // that always fails runs it exactly three times.
                 | "retry", _ when not (List.isEmpty step.Block) ->
-                    let attempts = max 1 (retryCount step)
+                    let attempts = max 1 (retryCount (renderStepArgs step))
                     let mutable attempt = 1
                     let mutable settled = false
 
@@ -1513,6 +1528,7 @@ module FogellSide =
                 // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
                 // would pass a naive test and fail the one that matters.
                 | "stash", _ ->
+                    let step = renderStepArgs step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1568,6 +1584,7 @@ module FogellSide =
                             emit $"Stashed {saved.Length} file(s)"
 
                 | "unstash", _ ->
+                    let step = renderStepArgs step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1607,6 +1624,8 @@ module FogellSide =
 
                 | "dir", (sub :: _) ->
                     // `dir('x') { … }` — nested cwd, auto-created
+                    let sub = GString.renderInto scriptBinding adviseNewBinding (envForWith ctx.EnvOverlay stage |> Map.ofList) step "#0" sub
+
                     match Workspace.resolveUnder cwd sub with
                     | Result.Error e ->
                         emit $"dir refused: {e.Describe}"

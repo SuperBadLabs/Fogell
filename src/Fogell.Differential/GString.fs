@@ -207,6 +207,22 @@ module GString =
                 | Some(Fault.Unsupported what), _ when strict ->
                     absorb outcome
                     raise (UnsupportedExpression what)
+                | Some fault, _ when strict ->
+                    // EVERY fault fails a strict render. `${1 / 0}` THROWS in Groovy
+                    // and Jenkins fails the build; falling through to None emitted the
+                    // unevaluated placeholder and SUCCEEDED — a swallowed exception
+                    // wearing an interpolation's clothes. Same for a sandbox denial
+                    // or an exhausted budget: named refusal, never silent raw text.
+                    absorb outcome
+
+                    let detail =
+                        match fault with
+                        | Thrown v -> $"expression threw: {Value.toDisplay v}"
+                        | BudgetExhausted what -> $"evaluation budget exhausted: {what}"
+                        | Denied d -> $"sandbox denied: {d}"
+                        | f -> string f
+
+                    raise (UnsupportedExpression detail)
                 | _ -> None
 
         // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at

@@ -267,7 +267,16 @@ module Interpreter =
                 trailing
                 |> Option.iter (fun c ->
                     st.Depth <- st.Depth + 1
-                    execBlock st env c.Body |> ignore
+                    let outerLocals = st.DeclaredLocals
+
+                    try
+                        execBlock st env c.Body |> ignore
+                    finally
+                        // a closure's `def`s are ITS locals — recording them at
+                        // placeholder scope made an unrelated same-named binding
+                        // update look like a shadow and blocked its merge
+                        st.DeclaredLocals <- outerLocals
+
                     st.Depth <- st.Depth - 1)
 
                 VNull
@@ -280,12 +289,17 @@ module Interpreter =
                         List.zip (List.truncate positional.Length ps) (List.truncate ps.Length positional)
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
 
+                    let outerLocals = st.DeclaredLocals
+
                     let result =
                         try
-                            execBlock st callEnv body |> ignore
-                            VNull
-                        with ReturnSignal v ->
-                            v
+                            try
+                                execBlock st callEnv body |> ignore
+                                VNull
+                            with ReturnSignal v ->
+                                v
+                        finally
+                            st.DeclaredLocals <- outerLocals
 
                     st.Depth <- st.Depth - 1
                     result
@@ -314,6 +328,7 @@ module Interpreter =
                     // clobbered the enclosing block's trailing value. try/finally, so
                     // both exits restore it.
                     let outer = st.LastValue
+                    let outerLocals = st.DeclaredLocals
 
                     try
                         st.LastValue <- None
@@ -321,6 +336,7 @@ module Interpreter =
                         defaultArg st.LastValue VNull
                     finally
                         st.LastValue <- outer
+                        st.DeclaredLocals <- outerLocals
                 with ReturnSignal v ->
                     v
 

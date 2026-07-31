@@ -342,6 +342,24 @@ let stringModel =
               Expect.equal (GString.renderWith b4 env shadow "m" "${def x = 'inner'; x}") "inner" "local shadows"
               Expect.equal (GString.renderWith b4 env readX "m" "read:$x") "read:outer" "the binding survives the shadow"
 
+              // ...but a closure's `def` does NOT undo an OUTER binding assignment
+              // that happens in the same placeholder — locals are scoped to their
+              // closure, not name-blacklisted for the whole expression.
+              let b5 = GString.ScriptBinding()
+              let seed = step [ "m", "${x = 'outer'; x}" ] [] [] [] [] []
+              let mixed = step [ "m", "${x = 'new'; [1].each { def x = 'local' }; x}" ] [] [] [] [] []
+              let readAfter = step [ "m", "got:$x" ] [] [] [] [] []
+
+              GString.renderWith b5 env seed "m" "${x = 'outer'; x}" |> ignore
+              Expect.equal (GString.renderWith b5 env mixed "m" "${x = 'new'; [1].each { def x = 'local' }; x}") "new" "outer assignment wins"
+              Expect.equal (GString.renderWith b5 env readAfter "m" "got:$x") "got:new" "the closure local did not block the merge"
+
+              // Every strict fault fails the render — a thrown Groovy exception must
+              // not degrade into raw placeholder text on a green build.
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "d=${1 / 0}" ] [] [] [] [] []) "m" "d=${1 / 0}" |> ignore)
+                  "an expression that throws fails the argument"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and
