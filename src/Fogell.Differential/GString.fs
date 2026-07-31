@@ -145,7 +145,20 @@ module GString =
                         let inner = value.Substring(i + 2, closeAt - i - 2)
 
                         let rendered =
-                            if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
+                            // `true`, `false` and `null` LOOK like identifiers to the fast
+                            // path, but they are Groovy literals — `${true}` is the
+                            // boolean, not an environment variable named "true". Resolving
+                            // them as names returned "" and broke every unquoted boolean
+                            // argument once named arguments started rendering:
+                            // `allowEmptyArchive: true` reached the executor as "" and an
+                            // empty archive Jenkins permits was failed. Literals go to the
+                            // interpreter, which evaluates them as themselves.
+                            let isGroovyLiteral = inner = "true" || inner = "false" || inner = "null"
+
+                            if
+                                not isGroovyLiteral
+                                && Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+                            then
                                 resolveName inner
                             else
                                 match evalExpression inner with

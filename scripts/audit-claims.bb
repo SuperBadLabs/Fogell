@@ -175,8 +175,19 @@
             ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
             ;; unbacked claim sitting next to a backed one — defeating the per-claim
             ;; guarantee the check exists to give.
-            :let [start (loop [k i] (if (and (pos? k) (full-comment? (v (dec k)))) (recur (dec k)) k))
-                  stop (loop [k i] (if (and (< (inc k) (count v)) (full-comment? (v (inc k)))) (recur (inc k)) k))
+            ;; A TRAILING claim — code on its own line — gets NO neighbours at all: its
+            ;; receipt must sit in its own span. The code separates it from the comment
+            ;; lines around it just as surely as it separates two spans on one line, and
+            ;; extending the block anyway let `// Receipt: foo` on the NEXT line satisfy
+            ;; `let x = 1 // MEASURED ...` — the adjacent-claim bypass yet again, entered
+            ;; this time from the claim's side rather than the citation's.
+            :let [expand? (not (:code? (v i)))
+                  start (if expand?
+                          (loop [k i] (if (and (pos? k) (full-comment? (v (dec k)))) (recur (dec k)) k))
+                          i)
+                  stop (if expand?
+                         (loop [k i] (if (and (< (inc k) (count v)) (full-comment? (v (inc k)))) (recur (inc k)) k))
+                         i)
                   ;; COMMENT TEXT only. Including whole lines let a receipt named in
                   ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
                   ;; window, one layer down.
