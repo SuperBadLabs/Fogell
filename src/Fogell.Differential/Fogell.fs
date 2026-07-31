@@ -437,6 +437,11 @@ module FogellSide =
                 elif days > 0L then $"{days} {dayWord days} {hours % 24L} hr"
                 elif hours > 0L then $"{hours} hr {minutes % 60L} min"
                 elif minutes > 0L then $"{minutes} min {sec % 60L} sec"
+                elif ms < 10_000L && ms % 1000L <> 0L then
+                    // measured: below ten seconds Jenkins shows one decimal —
+                    // "0.5 sec", "1.5 sec" — while exact seconds print plain ("3 sec")
+                    let s1 = float ms / 1000.0
+                    $"%.1f{s1} sec"
                 else $"{sec} sec"
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
@@ -906,22 +911,26 @@ module FogellSide =
                     |> List.fold
                         (fun (acc, err) o ->
                             match timeoutMs o with
-                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms), err)
+                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms, ms), err)
                             | Error e -> (acc, Some e))
                         (None, None)
 
                 // FG-102, measured: an `options { timeout }` announces its budget in
                 // the same words the step form uses, at the point it takes effect.
+                // Formatted from the PARSED duration — reconstructing it from the
+                // absolute deadline raced the stopwatch, and a 4-second timeout that
+                // lost 1 ms in flight announced "3 sec": a load-dependent divergence
+                // now that these sentences are compared.
                 declared
-                |> Option.iter (fun d -> emit ("Timeout set to expire in " + humanizeSpan (d - runClock.ElapsedMilliseconds)))
+                |> Option.iter (fun (_, ms) -> emit ("Timeout set to expire in " + humanizeSpan ms))
 
                 let effective =
                     match declared, inherited with
-                    | Some d, Some i -> Some(min d i)
-                    | Some d, None -> Some d
+                    | Some(d, _), Some i -> Some(min d i)
+                    | Some(d, _), None -> Some d
                     | None, i -> i
 
-                effective, optionError
+                effective, (declared |> Option.map fst), optionError
 
             let rec runPostWithDeadline
                 (ctx: BranchCtx)
@@ -968,7 +977,7 @@ module FogellSide =
 
             and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
                 // A stage's own `options { timeout(...) }` tightens whatever it inherited.
-                let deadline, optionError = deadlineFromOptions stage.Options inherited
+                let deadline, stageDeclaredDeadline, optionError = deadlineFromOptions stage.Options inherited
 
                 // A declared bound we cannot understand must stop the build, not vanish.
                 match optionError with
@@ -1020,10 +1029,13 @@ module FogellSide =
                     // FG-102, measured position: a stage-declared timeout announces its
                     // expiry right after the interrupted body, BEFORE the post arm the
                     // abort selects (`cancellation-selects-post-arm`).
+                    // The check is against the stage's OWN declared deadline — the
+                    // effective one can be an inherited outer bound, and announcing
+                    // the OUTER expiry here would double the sentence when the owner
+                    // announces it too.
                     if
                         body.Failed.Value
-                        && stage.Options |> List.exists (fun o -> o.Name = "timeout")
-                        && (match deadline with
+                        && (match stageDeclaredDeadline with
                             | Some d -> runClock.ElapsedMilliseconds >= d
                             | None -> false)
                     then
@@ -1125,7 +1137,10 @@ module FogellSide =
                             if not (halted ctx) then
                                 runStepDispatch ctx cwd stage inner (Some effective)
 
-                        if runClock.ElapsedMilliseconds >= effective && ctx.Failed.Value then
+                        // OWN deadline, not the effective one: under a shorter outer
+                        // bound this block's budget may be untouched when the outer
+                        // expiry aborts it, and the OWNER announces that.
+                        if runClock.ElapsedMilliseconds >= mine && ctx.Failed.Value then
                             emit "Timeout has been exceeded"
 
                 // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
@@ -1804,7 +1819,7 @@ module FogellSide =
                   SiblingFailedAt = ref -1L }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
 
             match pipelineOptionError with
             | Some e ->
@@ -1817,17 +1832,13 @@ module FogellSide =
             // point it is first observed to have aborted work — after the stages
             // when a stage died to it, or after the pipeline post when the post did
             // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
-            let pipelineDeclaredTimeout =
-                pipeline.Options |> List.exists (fun o -> o.Name = "timeout")
-
             let mutable exceededAnnounced = false
 
             let announcePipelineExceeded () =
                 if
                     not exceededAnnounced
-                    && pipelineDeclaredTimeout
                     && root.Failed.Value
-                    && (match pipelineDeadline with
+                    && (match pipelineDeclaredDeadline with
                         | Some d -> runClock.ElapsedMilliseconds >= d
                         | None -> false)
                 then
