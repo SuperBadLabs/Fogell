@@ -298,6 +298,23 @@ let stringModel =
                   "2"
                   "one evaluation, one increment"
 
+              // A fault in a LATER placeholder does not roll back an earlier
+              // placeholder's assignment — Groovy already performed it, and a post
+              // block reading it must succeed.
+              let b3 = GString.ScriptBinding()
+              let faulting = step [ "m", "${w = 'kept'; w}-${NOPE}" ] [] [] [] [] []
+
+              Expect.throws
+                  (fun () -> GString.renderWith b3 env faulting "m" "${w = 'kept'; w}-${NOPE}" |> ignore)
+                  "the missing name still fails the argument"
+
+              let readsW = step [ "m", "after:$w" ] [] [] [] [] []
+
+              Expect.equal
+                  (GString.renderWith b3 env readsW "m" "after:$w")
+                  "after:kept"
+                  "the assignment made before the fault survives it"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

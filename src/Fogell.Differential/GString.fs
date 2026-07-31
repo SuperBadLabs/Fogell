@@ -56,6 +56,7 @@ module GString =
         (strict: bool)
         (known: Map<string, string>)
         (carried0: Map<string, Value>)
+        (publish: Map<string, Value> -> unit)
         (value: string)
         : string * Map<string, Value> =
         // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
@@ -165,6 +166,12 @@ module GString =
                                     acc)
                             carried
 
+                    // Publish IMMEDIATELY: Groovy has already performed this
+                    // assignment even if a LATER placeholder faults, and a post block
+                    // reading it must succeed — `"${x = 'kept'; x}-${MISSING}"` fails
+                    // the build, but x stays 'kept' for `post { always { echo "$x" } }`.
+                    // Waiting for the transaction to return would roll x back.
+                    publish carried
                     Some(Value.toDisplay v)
                 | Some(UnknownProperty name), _ -> raise (MissingProperty name)
                 | _ -> None
@@ -322,7 +329,7 @@ module GString =
     /// failure semantics have not been measured yet (`environment`, `when`-equals);
     /// step ARGUMENTS go through [render], which is strict.
     let interpolate (known: Map<string, string>) (value: string) =
-        interpolateCore false known Map.empty value |> fst
+        interpolateCore false known Map.empty ignore value |> fst
 
     /// Groovy's SCRIPT BINDING, at run scope. An assignment made by a GString
     /// placeholder outlives its render call: `echo "${x = 'ok'; x}"` then
@@ -339,9 +346,12 @@ module GString =
         /// then each publish its own — last writer erasing the other branch's
         /// assignment, so a post-parallel read could raise MissingProperty on a
         /// variable that was genuinely assigned.
-        member _.Transact(f: Map<string, Value> -> 'a * Map<string, Value>) : 'a =
+        member _.Transact(f: Map<string, Value> -> (Map<string, Value> -> unit) -> 'a * Map<string, Value>) : 'a =
             lock gate (fun () ->
-                let result, updated = f vars
+                // `publish` commits progressively INSIDE the lock, so a fault after an
+                // earlier placeholder's assignment keeps that assignment — Groovy has
+                // already performed it — while two branches still cannot interleave.
+                let result, updated = f vars (fun m -> vars <- m)
                 vars <- updated
                 result)
 
@@ -379,7 +389,7 @@ module GString =
     /// placeholders become visible to every LATER rendered argument in the build.
     let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
         let go strict text =
-            binding.Transact(fun current -> interpolateCore strict env current text)
+            binding.Transact(fun current publish -> interpolateCore strict env current publish text)
 
         match kindOf step key with
         | Literal -> raw
@@ -395,5 +405,5 @@ module GString =
         // fails the build with Jenkins' own diagnosis (measured, see the exception).
         match kindOf step key with
         | Literal -> raw
-        | Expression -> interpolateCore true env Map.empty ("${" + raw + "}") |> fst
-        | Interpolating -> interpolateCore true env Map.empty (sourceOf step key raw) |> fst
+        | Expression -> interpolateCore true env Map.empty ignore ("${" + raw + "}") |> fst
+        | Interpolating -> interpolateCore true env Map.empty ignore (sourceOf step key raw) |> fst

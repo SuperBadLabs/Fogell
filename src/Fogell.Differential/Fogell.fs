@@ -429,7 +429,12 @@ module FogellSide =
                 let leaked =
                     ctx.Secrets
                     |> List.filter (fun b ->
-                        b.Value <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains b.Value))
+                        // What the variable EXPORTS is what interpolation embeds: a
+                        // file() credential binds its variable to the PATH, so scanning
+                        // for the file's CONTENT missed `sh "cat ${FILE}"` entirely and
+                        // the file-credential warning never fired.
+                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
+                        exported <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains exported))
                     |> List.map (fun b -> b.ValueVariable)
                     |> List.distinct
 
