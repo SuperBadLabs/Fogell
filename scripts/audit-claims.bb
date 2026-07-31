@@ -56,55 +56,86 @@
       ;; puts it. F# also writes generic type variables as `'T`, and skipping to the
       ;; next `'` there would swallow the rest of the line.
       ;;
-      ;; LIMITATION: this is line-based, so a triple-quoted or verbatim string spanning
-      ;; several lines leaves its continuation lines scanned as code. That direction is
-      ;; fail-CLOSED — it can only invent a claim, never hide one — which is the side to
-      ;; err on for a gate.
-      comment-text
-      (fn [l]
+      ;; `(* ... *)` counts as a comment too. Missing it was a REGRESSION: the original
+      ;; broad line scan saw such claims, and narrowing to `//` let one past `--strict`.
+      ;;
+      ;; State is carried ACROSS lines, not reset per line. It has to be: both F# block
+      ;; comments and F# string literals span lines, and this very repo has
+      ;; `"SELECT count(*) FILTER (...` opening a multi-line string in Store.fs. Scanning
+      ;; each line fresh would read that continuation line as code, see `(*`, and open a
+      ;; block comment that swallows the rest of the file — turning every later line into
+      ;; "comment text" where any receipt name could then satisfy any claim. That is
+      ;; fail-OPEN, so per-line scanning is not merely imprecise here, it is unsafe.
+      ;;
+      ;; Returns [comment-text-or-nil, mode-at-end-of-line, code-before-comment?].
+      scan-line
+      (fn [l mode0]
         (let [n (count l)
               at (fn [i] (get l i))]
-          (loop [k 0, mode :code]
+          (loop [k 0, mode mode0, acc [], code? false]
             (if (>= k n)
-              nil
+              [(when (seq acc) (str/join " " acc)) mode code?]
               (case mode
                 :code
                 (cond
-                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple)
-                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim)
-                  (= \" (at k)) (recur (inc k) :str)
+                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple acc true)
+                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim acc true)
+                  (= \" (at k)) (recur (inc k) :str acc true)
                   ;; '\n' — escaped char literal
-                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code)
+                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code acc true)
                   ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
-                  (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2)))) (recur (+ k 3) :code)
-                  ;; `///` must consume all three slashes, not two
-                  (and (= \/ (at k)) (= \/ (at (inc k)))) (str/replace (subs l k) #"^/+\s?" "")
-                  :else (recur (inc k) :code))
+                  (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2))))
+                  (recur (+ k 3) :code acc true)
+                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block acc code?)
+                  ;; `//` runs to end of line; `///` must consume all three slashes
+                  (and (= \/ (at k)) (= \/ (at (inc k))))
+                  [(str/join " " (conj acc (str/replace (subs l k) #"^/+\s?" ""))) :code code?]
+                  :else (recur (inc k) :code acc (or code? (not (Character/isWhitespace (at k))))))
+
+                :block
+                (if (and (= \* (at k)) (= \) (at (inc k))))
+                  (recur (+ k 2) :code acc code?)
+                  ;; collect the block's text one char at a time; cheap enough for a gate
+                  (recur (inc k) :block
+                         (conj (vec (butlast acc)) (str (or (last acc) "") (at k)))
+                         code?))
 
                 :str
                 (cond
-                  (= \\ (at k)) (recur (+ k 2) :str)
-                  (= \" (at k)) (recur (inc k) :code)
-                  :else (recur (inc k) :str))
+                  (= \\ (at k)) (recur (+ k 2) :str acc code?)
+                  (= \" (at k)) (recur (inc k) :code acc code?)
+                  :else (recur (inc k) :str acc code?))
 
                 ;; @"..." has no backslash escapes; "" is one literal quote
                 :verbatim
                 (cond
-                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim)
-                  (= \" (at k)) (recur (inc k) :code)
-                  :else (recur (inc k) :verbatim))
+                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim acc code?)
+                  (= \" (at k)) (recur (inc k) :code acc code?)
+                  :else (recur (inc k) :verbatim acc code?))
 
                 :triple
                 (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
-                  (recur (+ k 3) :code)
-                  (recur (inc k) :triple)))))))
+                  (recur (+ k 3) :code acc code?)
+                  (recur (inc k) :triple acc code?)))))))
+
+      ;; One fold per FILE, carrying the scanner's mode. Produces a vector parallel to
+      ;; `lines`: {:text comment-text-or-nil :code? code-appeared-before-the-comment}.
+      scan-file
+      (fn [lines]
+        (loop [ls lines, mode :code, out []]
+          (if (empty? ls)
+            out
+            (let [[txt mode' code?] (scan-line (first ls) mode)]
+              (recur (rest ls) mode' (conj out {:text txt :code? code?}))))))
 
       ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
       ;; claims (above) does not make them block members: two unrelated code lines that
       ;; each carry a trailing comment would otherwise merge, letting `let b = 2 // Receipt: foo`
       ;; satisfy a claim on `let a = 1 // MEASURED ...`. That is exactly the adjacent-claim
       ;; bypass the block logic exists to prevent, re-entering through the new door.
-      full-comment? (fn [l] (some? (re-find #"^\s*//" l)))
+      ;; Derived from the scan rather than a regex, so `(* ... *)` on its own line counts
+      ;; as a full comment exactly as `//` does.
+      full-comment? (fn [s] (and (:text s) (not (:code? s))))
 
       ;; One pass. These used to be two near-identical loops, and they had already
       ;; drifted — the unproven counter compared WHOLE LINES where the finder compared
@@ -113,9 +144,9 @@
       claims
       (for [f sources
             :let [lines (str/split-lines (slurp f))
-                  v (vec lines)]
+                  v (scan-file lines)]
             [i line] (map-indexed vector lines)
-            :let [own (comment-text line)]
+            :let [own (:text (v i))]
             :when (and own (str/includes? own "MEASURED"))
             ;; The receipt must be cited by THIS claim's own contiguous comment block, not
             ;; merely somewhere within twenty lines. A fixed window let a receipt named by a
@@ -127,7 +158,7 @@
                   ;; COMMENT TEXT only. Including whole lines let a receipt named in
                   ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
                   ;; window, one layer down.
-                  block (->> (subvec v start (inc stop)) (keep comment-text) (str/join " "))
+                  block (->> (subvec v start (inc stop)) (keep :text) (str/join " "))
                   named (filter #(str/includes? block %) receipts)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes

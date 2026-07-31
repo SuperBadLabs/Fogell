@@ -358,6 +358,21 @@ module FogellSide =
                             $"""WARNING: a secret was interpolated into `{step.Name}` via a Groovy string: {String.concat ", " leaked}"""
                 | _ -> ()
 
+                // Every named argument, through the same model. `rawScript` only ever
+                // picks up `script:`/`message:`, so the NAMED form of a publishing step
+                // kept its placeholder while the positional form was rendered:
+                // `archiveArtifacts "${DIR}/**"` resolved but
+                // `archiveArtifacts artifacts: "${DIR}/**"` did not — and it fails
+                // QUIETLY, as "no artifacts matched" rather than an error naming a
+                // literal `${DIR}`. Same for `junit testResults:`.
+                //
+                // Literal arguments still render to themselves, so a single-quoted glob
+                // is untouched. That matters here: globs are full of characters a naive
+                // pre-expansion would eat.
+                let renderedNamed =
+                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+                    step.Named |> List.map (fun (k, v) -> k, GString.render env step k v)
+
                 let result =
                     Executor.runStep
                         { Name = step.Name
@@ -377,7 +392,7 @@ module FogellSide =
                           DeadlineExpired =
                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
                           Secrets = ctx.Secrets
-                          Named = step.Named
+                          Named = renderedNamed
                           Artifacts = Some(ArtifactStore.under artifactRoot)
                           BuildKey = jobName }
 
