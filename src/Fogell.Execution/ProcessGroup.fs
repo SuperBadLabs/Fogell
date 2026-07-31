@@ -355,14 +355,14 @@ module ProcessGroup =
         // `interrupted()` afterwards raced a sibling failing just after a deadline
         // expiry, flipping both the narration and the reported outcome.
         let waitForProcessExit (budgetMs: int64 option) =
-            let deadline =
-                budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
-
             let mutable exited = proc.HasExited
 
             let expired () =
-                match deadline with
-                | Some(clock, ms) -> clock.ElapsedMilliseconds >= ms
+                // measured against `sw`, which started at the TOP of this run —
+                // a clock created here would exclude script creation, launch, and
+                // the up-to-two-second pgid wait, quietly extending every budget
+                match budgetMs with
+                | Some ms -> sw.ElapsedMilliseconds >= ms
                 | None -> false
 
             let mutable cause = if exited then WaitEnd.Exited else WaitEnd.Waiting
