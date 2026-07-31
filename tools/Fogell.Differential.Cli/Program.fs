@@ -27,17 +27,58 @@ let main argv =
             | null | "" -> None
             | v -> Some v
 
-        let envCollector =
+        // ONE coordinated canonicalisation set for BOTH traces: the union of each
+        // engine's inherited values for the curated names, so a literal equal to
+        // either engine's value rewrites identically on both sides.
+        let jenkinsEnv =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_ENV_CMD" with
-            | null | "" -> None
-            | v -> Some v
+            | null
+            | "" -> []
+            | cmd ->
+                try
+                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                    psi.ArgumentList.Add "-c"
+                    psi.ArgumentList.Add cmd
+                    psi.RedirectStandardOutput <- true
+                    psi.UseShellExecute <- false
+                    use p = Diagnostics.Process.Start psi
+                    // bounded: WAIT first, then read — ReadToEnd on a stalled ssh
+                    // held the pipe open forever and the 30 s timeout never applied
+                    let reader = p.StandardOutput.ReadToEndAsync()
+
+                    if not (p.WaitForExit 30_000) then
+                        try p.Kill(true) with _ -> ()
+
+                    let out = if reader.Wait 5_000 then reader.Result else ""
+
+                    out.Split '\n'
+                    |> Array.choose (fun line ->
+                        match line.IndexOf '=' with
+                        | i when i > 0 -> Some(line.Substring(0, i), line.Substring(i + 1).Trim())
+                        | _ -> None)
+                    |> Array.toList
+                with _ ->
+                    []
+
+        let envReplacements =
+            Fogell.Differential.Trace.canonicalisedEnvNames
+            |> List.collect (fun name ->
+                [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
+                  | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
+                  | _ -> ()
+
+                  match Environment.GetEnvironmentVariable name with
+                  | null
+                  | "" -> ()
+                  | v -> yield v, "${" + name + "}" ])
+            |> List.distinct
 
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
               WorkspaceCollector = collector
-              EnvCollector = envCollector }
+              EnvReplacements = envReplacements }
 
         let fogellRoot =
             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
@@ -81,7 +122,7 @@ let main argv =
                     p.WaitForExit 30_000 |> ignore
 
                 let jenkins = Jenkins.run cfg job script
-                let fogell = FogellSide.run fogellRoot job script
+                let fogell = FogellSide.run envReplacements fogellRoot job script
                 let r = Compare.receipt name core jenkins fogell
                 let path = Compare.seal receiptDir r
 

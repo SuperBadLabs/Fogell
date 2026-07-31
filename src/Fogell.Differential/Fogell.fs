@@ -124,7 +124,12 @@ module FogellSide =
 
                 Map.ofList entries
 
-    let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
+    let run
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (script: string)
+        : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
         | Result.Ok pipeline ->
@@ -1985,16 +1990,7 @@ module FogellSide =
             Result.Ok
                 { Result = BuildStatus.toWireString status
                   EngineNotes = List.ofSeq engineNotes
-                  Output =
-                    (let envReplacements =
-                        Trace.canonicalisedEnvNames
-                        |> List.choose (fun name ->
-                            match Environment.GetEnvironmentVariable name with
-                            | null
-                            | "" -> None
-                            | v -> Some(v, "${" + name + "}"))
-
-                     Trace.normaliseOutputWith ((workspace, "${WORKSPACE}") :: envReplacements) output)
+                  Output = Trace.normaliseOutputWith ((workspace, "${WORKSPACE}") :: envReplacements) output
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
