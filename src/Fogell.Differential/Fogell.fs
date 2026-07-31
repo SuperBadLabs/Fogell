@@ -354,39 +354,6 @@ module FogellSide =
                     |> Option.map (fun raw ->
                         GString.render (envForWith ctx.EnvOverlay stage |> Map.ofList) step scriptKey raw)
 
-                // Jenkins warns when a SECRET reaches a step argument through GString
-                // interpolation, and keeps the advice even though it then masks the value.
-                // Being quieter than Jenkins about a security matter is not an option.
-                //
-                // This was gated to `echo` while `echo` was the only step rendered. Now
-                // that `sh` renders too, that gate would have masked the command output
-                // while staying silent about the secret being embedded in the process
-                // command line — the more dangerous of the two, since a command line is
-                // readable from /proc by any process of the same user.
-                //
-                // MEASURED (receipt `sh-secret-interpolation-warning`, Jenkins 2.568.1):
-                // Jenkins names the step IN THE MESSAGE and warns for the interpolated
-                // form while staying silent for the single-quoted one, which is why the
-                // condition is "the render changed the text", not the step's name:
-                //   Warning: A secret was passed to "sh" using Groovy String interpolation, ...
-                //   [...] Affected argument(s) used the following variable(s): [TOKEN]
-                // That receipt proves what JENKINS does (read from the raw console) and
-                // that the two engines still agree end to end. It does NOT prove Fogell
-                // warns: normaliseOutput drops the warning on BOTH sides, so the case
-                // would stay PROVEN if this branch emitted nothing. The emission is
-                // asserted in Fogell.Differential.Tests instead.
-                match script, rawScript with
-                | Some rendered, Some raw when rendered <> raw ->
-                    let leaked =
-                        ctx.Secrets
-                        |> List.filter (fun b -> b.Value <> "" && rendered.Contains b.Value)
-                        |> List.map (fun b -> b.ValueVariable)
-
-                    if not (List.isEmpty leaked) then
-                        emit
-                            $"""WARNING: a secret was interpolated into `{step.Name}` via a Groovy string: {String.concat ", " leaked}"""
-                | _ -> ()
-
                 // Every named argument, through the same model. `rawScript` only ever
                 // picks up `script:`/`message:`, so the NAMED form of a publishing step
                 // kept its placeholder while the positional form was rendered:
@@ -401,6 +368,51 @@ module FogellSide =
                 let renderedNamed =
                     let env = envForWith ctx.EnvOverlay stage |> Map.ofList
                     step.Named |> List.map (fun (k, v) -> k, GString.render env step k v)
+
+                // Jenkins warns when a SECRET reaches a step argument through GString
+                // interpolation, and keeps the advice even though it then masks the value.
+                // Being quieter than Jenkins about a security matter is not an option.
+                //
+                // MEASURED (receipt `sh-secret-interpolation-warning`, Jenkins 2.568.1):
+                // Jenkins names the step IN THE MESSAGE and warns for the interpolated
+                // form while staying silent for the single-quoted one, which is why the
+                // condition is "the render changed the text", not the step's name:
+                //   Warning: A secret was passed to "sh" using Groovy String interpolation, ...
+                //   [...] Affected argument(s) used the following variable(s): [TOKEN]
+                // That receipt proves what JENKINS does (read from the raw console) and
+                // that the two engines still agree end to end. It does NOT prove Fogell
+                // warns: normaliseOutput drops the warning on BOTH sides, so the case
+                // would stay PROVEN if this branch emitted nothing. The emission is
+                // asserted in Fogell.Differential.Tests instead.
+                //
+                // The check covers EVERY argument the model rendered, not just the
+                // script. Each review round found the previous gate one consumer too
+                // narrow — `echo` only, then `script` only, while
+                // `archiveArtifacts artifacts: "${TOKEN}/out"` interpolates a secret
+                // through an argument that is neither. One rule now: any argument whose
+                // render CHANGED and whose result contains a bound secret warns. That is
+                // also Jenkins' own framing — "Affected argument(s)", plural, naming
+                // variables rather than one privileged parameter.
+                let interpolatedTexts =
+                    [ match script, rawScript with
+                      | Some rendered, Some raw when rendered <> raw -> rendered
+                      | _ -> ()
+
+                      for (k, rendered), (_, raw) in List.zip renderedNamed step.Named do
+                          // scriptKey is already covered by `script` above; a second
+                          // report for the same argument would warn twice per step.
+                          if k <> scriptKey && rendered <> raw then rendered ]
+
+                let leaked =
+                    ctx.Secrets
+                    |> List.filter (fun b ->
+                        b.Value <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains b.Value))
+                    |> List.map (fun b -> b.ValueVariable)
+                    |> List.distinct
+
+                if not (List.isEmpty leaked) then
+                    emit
+                        $"""WARNING: a secret was interpolated into `{step.Name}` via a Groovy string: {String.concat ", " leaked}"""
 
                 let result =
                     Executor.runStep
