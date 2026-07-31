@@ -1,5 +1,6 @@
 module Fogell.Differential.Tests
 
+open System
 open Expecto
 open Fogell.Differential
 open Fogell.Ir
@@ -209,6 +210,17 @@ let stringModel =
 
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
+
+              // An INHERITED process variable participates in expressions exactly as
+              // it does in the simple-name fallback — measured: declarative resolves a
+              // bare `${PATH}` from the agent environment and succeeds, so an
+              // expression on the same name must not raise.
+              Environment.SetEnvironmentVariable("FOGELL_OSVAR_PROBE", "osval")
+
+              Expect.equal
+                  (GString.render env (step [ "m", "${FOGELL_OSVAR_PROBE.toUpperCase()}" ] [] [] [] [] []) "m" "${FOGELL_OSVAR_PROBE.toUpperCase()}")
+                  "OSVAL"
+                  "inherited environment reaches expression evaluation"
 
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression

@@ -396,19 +396,25 @@ module FogellSide =
                 // script. Each review round found the previous gate one consumer too
                 // narrow — `echo` only, then `script` only, while
                 // `archiveArtifacts artifacts: "${TOKEN}/out"` interpolates a secret
-                // through an argument that is neither. One rule now: any argument whose
-                // render CHANGED and whose result contains a bound secret warns. That is
-                // also Jenkins' own framing — "Affected argument(s)", plural, naming
-                // variables rather than one privileged parameter.
+                // through an argument that is neither.
+                //
+                // The condition is the argument's KIND, not whether rendering changed
+                // the text: a render can be text-identical and still be a GString (a
+                // credential whose value is literally `$TOKEN`, echoed as "$TOKEN"),
+                // and "changed" would stay silent on it. Jenkins' own warning names
+                // the mechanism — "using Groovy String interpolation" — so quoting,
+                // which decides the mechanism, decides the warning. Single-quoted
+                // arguments never warn; that is measured, not assumed
+                // (`sh-secret-interpolation-warning`: the single-quoted row is silent).
                 let interpolatedTexts =
-                    [ match script, rawScript with
-                      | Some rendered, Some raw when rendered <> raw -> rendered
+                    [ match script with
+                      | Some rendered when GString.kindOf step scriptKey <> Literal -> rendered
                       | _ -> ()
 
-                      for (k, rendered), (_, raw) in List.zip renderedNamed step.Named do
+                      for k, rendered in renderedNamed do
                           // scriptKey is already covered by `script` above; a second
                           // report for the same argument would warn twice per step.
-                          if k <> scriptKey && rendered <> raw then rendered ]
+                          if k <> scriptKey && GString.kindOf step k <> Literal then rendered ]
 
                 let leaked =
                     ctx.Secrets

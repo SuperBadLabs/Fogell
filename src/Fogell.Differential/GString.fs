@@ -91,7 +91,22 @@ module GString =
             match Fogell.Groovy.Parser.Parser.parse source with
             | Result.Error _ -> None
             | Result.Ok script ->
-                let asValues = known |> Map.map (fun _ v -> VStr v)
+                // The INHERITED process environment participates, exactly as the
+                // simple-name fast path's fallback does. MEASURED (receipt `gstring-inherited-env-resolves`, 2.568.1):
+                // declarative resolves a bare `${PATH}` from the agent environment and
+                // SUCCEEDS — the MissingPropertyException fires only for a name bound
+                // NOWHERE. Seeding only `known` here made `${PATH.toUpperCase()}` fail
+                // while `${PATH}` resolved: two rules for one name, split by whether a
+                // method call follows. `known` wins over the OS on collision.
+                let allVars =
+                    Seq.append
+                        (Environment.GetEnvironmentVariables()
+                         |> Seq.cast<Collections.DictionaryEntry>
+                         |> Seq.map (fun e -> string e.Key, string e.Value))
+                        (Map.toSeq known)
+                    |> Map.ofSeq
+
+                let asValues = allVars |> Map.map (fun _ v -> VStr v)
                 let bindings = asValues |> Map.add "env" (VMap asValues)
 
                 // STRICT propagates into expressions, not just bare names. The
