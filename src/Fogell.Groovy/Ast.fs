@@ -40,6 +40,9 @@ and CallTarget =
     /// A bare call: a pipeline step, or a user function defined in this file.
     | FreeCall of name: string
     | MethodCall of target: Expr * name: string
+    /// `a?.b(...)` — the whole CALL short-circuits to null on a null receiver,
+    /// which neither a safe property read nor an unsafe call can express.
+    | SafeMethodCall of target: Expr * name: string
 
 and GStringPart =
     | GLit of string
@@ -108,7 +111,7 @@ module Ast =
                     match trailing with
                     | Some c -> freeCalls c.Body
                     | None -> Set.empty)
-            | ECall(MethodCall(t, _), args, trailing) ->
+            | ECall((MethodCall(t, _) | SafeMethodCall(t, _)), args, trailing) ->
                 ofExpr t
                 |> Set.union (args |> List.map ofArg |> Set.unionMany)
                 |> Set.union (

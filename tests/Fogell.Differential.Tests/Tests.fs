@@ -380,6 +380,35 @@ let stringModel =
                   "z:kept"
                   "the closure's binding assignment persists"
 
+              // ...and SUCCESSIVE closures accumulate — each derives from the outer
+              // environment, so a per-scope snapshot kept only the LAST closure's
+              // assignment. Updates merge individually.
+              let b7 = GString.ScriptBinding()
+
+              GString.renderWith
+                  b7 env
+                  (step [ "m", "${[1].each { p = 'p1' }; [1].each { q = 'q1' }; 'done'}" ] [] [] [] [] [])
+                  "m" "${[1].each { p = 'p1' }; [1].each { q = 'q1' }; 'done'}"
+              |> ignore
+
+              Expect.equal
+                  (GString.renderWith b7 env (step [ "m", "$p-$q" ] [] [] [] [] []) "m" "$p-$q")
+                  "p1-q1"
+                  "both closures' assignments survive"
+
+              // Safe navigation covers CALLS, not just properties: a null receiver
+              // short-circuits the whole call — arguments included — while a present
+              // receiver dispatches the method.
+              Expect.equal
+                  (GString.render env (step [ "m", "sc=${env.OPTIONAL?.toUpperCase()}" ] [] [] [] [] []) "m" "sc=${env.OPTIONAL?.toUpperCase()}")
+                  "sc=null"
+                  "safe call on null is null"
+
+              Expect.equal
+                  (GString.render env (step [ "m", "sp=${env.TARGET?.toUpperCase()}" ] [] [] [] [] []) "m" "sp=${env.TARGET?.toUpperCase()}")
+                  "sp=PRODUCTION"
+                  "safe call on a value dispatches"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

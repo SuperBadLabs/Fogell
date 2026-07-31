@@ -254,23 +254,32 @@ module Interpreter =
         if st.Depth >= st.Budget.MaxCallDepth then
             raise (Stop(BudgetExhausted $"call depth exceeded {st.Budget.MaxCallDepth}"))
 
-        let positional =
-            args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None)
+        // LAZY: a safe call on a null receiver short-circuits the WHOLE call, its
+        // arguments included — `a?.m(sideEffect())` runs nothing when a is null.
+        let positionalLazy =
+            lazy (args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None))
 
-        let named =
-            args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None)
+        let namedLazy =
+            lazy (args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None))
 
         match target with
+        | SafeMethodCall(recv, name) ->
+            // The whole call short-circuits: `env.OPTIONAL?.trim()` is null when the
+            // receiver is, with the method never dispatched — not a property read
+            // followed by a rejected `call`.
+            (match evalExpr st env recv with
+             | VNull -> VNull
+             | r -> evalBuiltin st env name r positionalLazy.Value trailing)
         | MethodCall(recv, name) ->
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
-            | Ok _ -> evalBuiltin st env name (evalExpr st env recv) positional trailing
+            | Ok _ -> evalBuiltin st env name (evalExpr st env recv) positionalLazy.Value trailing
         | FreeCall name ->
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
                 // a step is a request to the host, not something we perform
-                st.Effects <- StepCall(s, positional, named) :: st.Effects
+                st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
 
                 trailing
                 |> Option.iter (fun c ->
@@ -294,7 +303,7 @@ module Interpreter =
                     st.Depth <- st.Depth + 1
 
                     let callEnv =
-                        List.zip (List.truncate positional.Length ps) (List.truncate ps.Length positional)
+                        List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
 
                     let outerLocals = st.DeclaredLocals
@@ -311,7 +320,7 @@ module Interpreter =
 
                     st.Depth <- st.Depth - 1
                     result
-                | None -> evalBuiltin st env b VNull positional trailing
+                | None -> evalBuiltin st env b VNull positionalLazy.Value trailing
 
     and private evalBuiltin (st: State) (env: Env) (name: string) (recv: Value) (args: Value list) (trailing: Closure option) : Value =
         let applyClosure (c: Closure) (closureEnv: Env) (item: Value) =
@@ -456,7 +465,11 @@ module Interpreter =
                 st.NewBindings <- Set.add n st.NewBindings
 
             let updated = Env.withVar n value env
-            st.LatestVars <- updated.Vars
+            // MERGE the single update rather than snapshotting this scope's map:
+            // successive closures each derive from the OUTER environment, so a
+            // snapshot from the second closure omitted what the first assigned —
+            // `[1].each { x = 'x' }; [1].each { y = 'y' }` kept only y.
+            st.LatestVars <- Map.add n value st.LatestVars
             updated
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
