@@ -213,11 +213,13 @@ module Trace =
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
     /// the two engines, not a guess.
-    /// FG-102: the startup banners exist only in the console PREAMBLE — before any
-    /// build output has appeared. Matching them by shape alone let a build print
-    /// `Running on marker in $WORKSPACE` mid-run and vanish from both traces with
-    /// different paths inside; the CONTEXT (nothing kept yet) is what makes the
-    /// real banner a banner.
+    /// FG-102: the engine's startup/header banners. A banner is recognised by its
+    /// shape AND its context: on Jenkins every user-printed line follows an
+    /// output-producing `[Pipeline]` step annotation (`echo`, `sh`, …), while the
+    /// real header lines follow nothing or other header material. A spoofed
+    /// banner therefore keeps its annotation and COMPARES; if the two engines
+    /// disagree on such a line the receipt shows a divergence rather than a
+    /// silent double-drop.
     let isPreambleBanner (t: string) =
         Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /")
         || ([ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
@@ -310,7 +312,6 @@ module Trace =
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
         let mutable inStackTrace = false
-        let mutable anyKept = false
         let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
@@ -338,15 +339,20 @@ module Trace =
                 (isWarnHead raw && isWarnBody next)
                 || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
 
+            // did the PREVIOUS raw line announce an output-producing step? A user
+            // line always follows one; a header banner never does.
+            let afterOutputStep =
+                prevRaw.StartsWith "[Pipeline] echo"
+                || prevRaw.StartsWith "[Pipeline] sh"
+                || prevRaw.StartsWith "[Pipeline] bat"
+                || (prevRaw <> "" && not (prevRaw.StartsWith "[Pipeline]") && not (isPreambleBanner prevRaw))
+
             prevRaw <- raw
 
             if not suppress then
                 match normaliseLine all[i] with
                 | Some l ->
-                    // preamble banners are banners only BEFORE any kept output
-                    if anyKept || not (isPreambleBanner l) then
-                        anyKept <- true
-                        yield l
+                    if afterOutputStep || not (isPreambleBanner l) then yield l
                 | None -> () ]
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;

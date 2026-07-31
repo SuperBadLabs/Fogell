@@ -316,11 +316,12 @@ module ProcessGroup =
                 else
                     match expired (), interrupted () with
                     | false, false -> Thread.Sleep 10
-                    | true, false -> cause <- WaitEnd.Expired
                     | false, true -> cause <- WaitEnd.Interrupted
-                    | true, true ->
-                        // both surfaced in one poll: the caller's timestamps say
-                        // which event was actually first
+                    | true, _ ->
+                        // EVERY observed expiry consults the caller's timestamps, not
+                        // only a both-at-once tie: the sibling STAMP is written before
+                        // its cancel signal fires, so the interrupt predicate can lag
+                        // an event that was genuinely earlier.
                         let interruptFirst =
                             match request.InterruptBeatsDeadline with
                             | Some beats -> (try beats () with _ -> false)
