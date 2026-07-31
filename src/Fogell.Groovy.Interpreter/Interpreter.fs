@@ -149,6 +149,8 @@ module Interpreter =
             | "-" ->
                 match v with
                 | VInt i -> VInt(-i)
+                | _ when st.StrictVars ->
+                    raise (Stop(Unsupported "unary '-' is not modelled for this operand type"))
                 | _ -> VNull
             | _ -> raise (Stop(Unsupported $"unary operator {op}"))
         | EBinary(op, l, r) -> evalBinary st env op l r
@@ -238,6 +240,12 @@ module Interpreter =
         | "..", VInt x, VInt y when y - x <= int64 st.Budget.MaxLoopIterations ->
             VList [ for i in x..y -> VInt i ]
         | "..", VInt _, VInt _ -> raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+        | _ when st.StrictVars ->
+            // An operator on operand types this interpreter does not model. Groovy
+            // THROWS for `1 - 'x'`; inventing null instead ran `deploy null` on a
+            // green build — the same silent-wrong-command shape as the erased name
+            // and the unmodelled method. Refuse by name.
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for these operand types"))
         | _ -> VNull
 
     and private evalCall (st: State) (env: Env) (target: CallTarget) (args: Arg list) (trailing: Closure option) : Value =
@@ -571,9 +579,25 @@ module Interpreter =
         try
             let final = execBlock st hoisted script
 
+            // A CLOSURE's binding assignment lives in the closure's functional
+            // environment, which is discarded — but Groovy's script Binding is
+            // SHARED, so `[1].each { x = 'kept' }` must leave x visible. LatestVars
+            // recorded it; overlay entries that are binding assignments (NewBindings)
+            // or updates to names the script level already holds. Closure PARAMS
+            // (`it`, declared names) match neither test and never leak.
+            let mergedVars =
+                st.LatestVars
+                |> Map.fold
+                    (fun acc k v ->
+                        if Set.contains k st.NewBindings || Map.containsKey k final.Vars then
+                            Map.add k v acc
+                        else
+                            acc)
+                    final.Vars
+
             { Effects = List.rev st.Effects
               Fault = None
-              Env = final
+              Env = { final with Vars = mergedVars }
               NewBindings = st.NewBindings
               DeclaredLocals = st.DeclaredLocals
               // Groovy's last-expression-is-the-value, for any statement block.

@@ -360,6 +360,26 @@ let stringModel =
                   (fun () -> GString.render env (step [ "m", "d=${1 / 0}" ] [] [] [] [] []) "m" "d=${1 / 0}" |> ignore)
                   "an expression that throws fails the argument"
 
+              // ...including an operator on operand types the interpreter does not
+              // model: Groovy throws for `1 - 'x'`; null is an invented value.
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "e=${1 - 'x'}" ] [] [] [] [] []) "m" "e=${1 - 'x'}" |> ignore)
+                  "an unmodelled operator combination fails the argument"
+
+              // A closure ASSIGNMENT hits the shared script Binding, even though the
+              // closure environment itself is discarded.
+              let b6 = GString.ScriptBinding()
+
+              Expect.equal
+                  (GString.renderWith b6 env (step [ "m", "${[1].each { z = 'kept' }; 'done'}" ] [] [] [] [] []) "m" "${[1].each { z = 'kept' }; 'done'}")
+                  "done"
+                  "the closure runs"
+
+              Expect.equal
+                  (GString.renderWith b6 env (step [ "m", "z:$z" ] [] [] [] [] []) "m" "z:$z")
+                  "z:kept"
+                  "the closure's binding assignment persists"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and
