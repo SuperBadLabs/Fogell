@@ -238,6 +238,33 @@ let stringModel =
                       |> ignore)
                   "the TAKEN arm reading a missing name raises"
 
+              // Dotted chains are EXPRESSIONS, not flattened lookups. The sandbox
+              // rejects the property form on a String and accepts the method form;
+              // receipts gstring-string-property-fails, gstring-shared-binding.
+              Expect.throws
+                  (fun () ->
+                      GString.render env (step [ "m", "p=${env.TARGET.length}" ] [] [] [] [] []) "m" "p=${env.TARGET.length}"
+                      |> ignore)
+                  "property access on a String raises"
+
+              Expect.equal
+                  (GString.render env (step [ "m", "m=${env.TARGET.length()}" ] [] [] [] [] []) "m" "m=${env.TARGET.length()}")
+                  "m=10"
+                  "the method form returns the count"
+
+              // Placeholders in one GString share the script Binding, as VALUES —
+              // `n` must reach the second placeholder as the number 2, or the
+              // arithmetic silently becomes string concatenation.
+              Expect.equal
+                  (GString.render env (step [ "m", "${x = 'ok'; x}-${x}" ] [] [] [] [] []) "m" "${x = 'ok'; x}-${x}")
+                  "ok-ok"
+                  "an assignment is visible to the next placeholder"
+
+              Expect.equal
+                  (GString.render env (step [ "m", "${n = 2; n}+${n * 3}" ] [] [] [] [] []) "m" "${n = 2; n}+${n * 3}")
+                  "2+6"
+                  "carried bindings keep their TYPE across placeholders"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

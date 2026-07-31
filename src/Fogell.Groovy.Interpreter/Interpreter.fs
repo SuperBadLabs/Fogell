@@ -113,8 +113,14 @@ module Interpreter =
         | EProp(target, name) ->
             match evalExpr st env target with
             | VMap m -> defaultArg (Map.tryFind name m) VNull
-            | VList xs when name = "size" || name = "length" -> VInt(int64 xs.Length)
-            | VStr s when name = "size" || name = "length" -> VInt(int64 s.Length)
+            // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
+            // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
+            // "No such field found: field java.lang.String length" and the build
+            // FAILS; only the METHOD form `.length()` returns the count. The lenient
+            // convenience below is therefore confined to non-strict consumers.
+            | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Length)
+            | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
+            | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
             | _ -> VNull
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with

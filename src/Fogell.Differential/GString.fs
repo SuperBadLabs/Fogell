@@ -61,12 +61,24 @@ module GString =
         //    Jenkins spellings. The old pattern matched only a bare identifier,
         //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
         //    while the braced dotted form was not matched at all.
+        // Bindings CREATED by one placeholder and read by a later one, in the SAME
+        // GString. Placeholders share Groovy's script Binding — measured (receipt
+        // `gstring-shared-binding`): echo "${x = 'ok'; x}-${x}" prints `ok-ok` —
+        // so each placeholder must see what its predecessors assigned. Values, not
+        // display strings: `${n = 2; n}+${n * 3}` must reach the second placeholder
+        // as the NUMBER 2, or arithmetic silently becomes concatenation.
+        let mutable carried: Map<string, Value> = Map.empty
+
         let resolveName (name: string) =
             // `env.X` is the same variable as a bare `X`. The bracketed
             // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
             // rejects it outright (measured — see the pattern below).
             let isEnvPath = name.StartsWith "env."
             let bare = if isEnvPath then name.Substring 4 else name
+
+            match (if isEnvPath then None else Map.tryFind bare carried) with
+            | Some v -> Value.toDisplay v
+            | None ->
 
             match Map.tryFind bare known with
             | Some v -> v
@@ -107,7 +119,12 @@ module GString =
                     |> Map.ofSeq
 
                 let asValues = allVars |> Map.map (fun _ v -> VStr v)
-                let bindings = asValues |> Map.add "env" (VMap asValues)
+
+                // Carried script-binding values overlay the environment seeds — a
+                // reassignment wins, exactly as Groovy's Binding does — but they do
+                // NOT enter the `env` map: `${x = 'ok'}` does not create env.x.
+                let seeded = Map.fold (fun m k v -> Map.add k v m) asValues carried
+                let bindings = seeded |> Map.add "env" (VMap asValues)
 
                 // STRICT propagates into expressions, not just bare names — and it is
                 // enforced at READ time, in the interpreter, not by a static scan.
@@ -127,7 +144,23 @@ module GString =
                     runInterpreter Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
 
                 match outcome.Fault, outcome.Returned with
-                | None, Some v -> Some(Value.toDisplay v)
+                | None, Some v ->
+                    // Keep what the placeholder ASSIGNED for its successors: any
+                    // binding that is new, or whose value moved, relative to the seeds.
+                    carried <-
+                        outcome.Env.Vars
+                        |> Map.fold
+                            (fun acc k v ->
+                                if k = "env" then acc
+                                elif (match Map.tryFind k bindings with
+                                      | Some old -> old <> v
+                                      | None -> true) then
+                                    Map.add k v acc
+                                else
+                                    acc)
+                            carried
+
+                    Some(Value.toDisplay v)
                 | Some(UnknownProperty name), _ -> raise (MissingProperty name)
                 | _ -> None
 
@@ -205,9 +238,16 @@ module GString =
                             // interpreter, which evaluates them as themselves.
                             let isGroovyLiteral = inner = "true" || inner = "false" || inner = "null"
 
+                            // The fast path is a NAME LOOKUP: a bare identifier, or
+                            // `env.NAME`. A longer chain is an expression — flattening
+                            // `env.TARGET.length` into one lookup asked the environment
+                            // for a variable literally named "TARGET.length", rendered
+                            // `null`, and ran a step the sandbox REJECTS (measured:
+                            // "No such field found: field java.lang.String length",
+                            // receipt `gstring-string-property-fails`).
                             if
                                 not isGroovyLiteral
-                                && Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+                                && Text.RegularExpressions.Regex.IsMatch(inner, @"^(env\.)?[A-Za-z_][A-Za-z0-9_]*$")
                             then
                                 resolveName inner
                             else
