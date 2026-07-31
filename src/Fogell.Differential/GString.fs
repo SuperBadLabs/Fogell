@@ -316,8 +316,16 @@ module GString =
         let gate = obj ()
         let mutable vars: Map<string, Value> = Map.empty
 
-        member _.Read() = lock gate (fun () -> vars)
-        member _.Merge(updated: Map<string, Value>) = lock gate (fun () -> vars <- updated)
+        /// One lock across the whole read-evaluate-write transaction. A separate
+        /// Read/Merge pair let two parallel branches read the same snapshot and
+        /// then each publish its own — last writer erasing the other branch's
+        /// assignment, so a post-parallel read could raise MissingProperty on a
+        /// variable that was genuinely assigned.
+        member _.Transact(f: Map<string, Value> -> 'a * Map<string, Value>) : 'a =
+            lock gate (fun () ->
+                let result, updated = f vars
+                vars <- updated
+                result)
 
     /// What KIND is this argument? `key` is a named argument's name, or `#0`, `#1`… for a
     /// positional. Every consumer asked this question differently before FG-100; there is
@@ -353,9 +361,7 @@ module GString =
     /// placeholders become visible to every LATER rendered argument in the build.
     let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
         let go strict text =
-            let rendered, carried = interpolateCore strict env (binding.Read()) text
-            binding.Merge carried
-            rendered
+            binding.Transact(fun current -> interpolateCore strict env current text)
 
         match kindOf step key with
         | Literal -> raw

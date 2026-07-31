@@ -279,6 +279,21 @@ let stringModel =
                   (fun () -> GString.render env readStep "m" "later:$y" |> ignore)
                   "a fresh build does not inherit the previous Binding"
 
+              // A placeholder's side effects run ONCE per evaluation — the walker
+              // must not render the same named script argument twice. The
+              // increment-twice defect is observable right here: two renders of the
+              // assignment leave n at 3 where Jenkins leaves 2.
+              let b2 = GString.ScriptBinding()
+              let inc = step [ "m", "${q = 1; q}" ] [] [] [] [] []
+              GString.renderWith b2 env inc "m" "${q = 1; q}" |> ignore
+
+              let incAgain = step [ "m", "${q = q + 1; q}" ] [] [] [] [] []
+
+              Expect.equal
+                  (GString.renderWith b2 env incAgain "m" "${q = q + 1; q}")
+                  "2"
+                  "one evaluation, one increment"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

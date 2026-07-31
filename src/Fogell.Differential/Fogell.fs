@@ -379,7 +379,15 @@ module FogellSide =
                 // pre-expansion would eat.
                 let renderedNamed =
                     let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-                    step.Named |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding env step k v)
+
+                    step.Named
+                    |> List.map (fun (k, v) ->
+                        // The script argument was ALREADY rendered above — rendering it
+                        // again would run a placeholder's side effects twice, so
+                        // `sh script: "echo ${x = x + 1; x}"` would leave x advanced by
+                        // TWO for later steps where Jenkins evaluates the argument once.
+                        if k = scriptKey then k, defaultArg script v
+                        else k, GString.renderWith scriptBinding env step k v)
 
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.

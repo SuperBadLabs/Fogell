@@ -140,7 +140,11 @@
                     (and (= \} (at k)) (seq holes))
                     (let [[m d] (peek holes)]
                       (if (>= (run-of \} k) d)
-                        (recur (+ k d) m depth dollars (pop holes) spans cur true true)
+                        ;; d is ALSO the enclosing string's dollar count — restore it.
+                        ;; A nested $\"\"\" inside a $$\"\"\" hole set dollars to 1, and
+                        ;; without the restore the outer string's next {{...}} hole was
+                        ;; read as escaped text, hiding any claim inside it.
+                        (recur (+ k d) m depth d (pop holes) spans cur true true)
                         (recur (inc k) :code depth dollars holes spans cur true true)))
                     :else (let [c? (not (Character/isWhitespace (at k)))]
                             (recur (inc k) :code depth dollars holes spans cur (or gap? c?) (or code? c?))))
