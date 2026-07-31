@@ -372,6 +372,14 @@ module Interpreter =
             match trailing with
             | Some c -> VBool(xs |> List.forall (fun x -> Value.isTruthy (applyClosure c env x)))
             | None -> VBool true
+        | _ when st.StrictVars ->
+            // Fail CLOSED on a method this interpreter does not model. Groovy would
+            // evaluate `${env.TARGET.substring(3)}`; stringifying the old wildcard's
+            // null instead ran `deploy null` with the build green — the same
+            // silently-wrong-command shape as the erased unknown name. The bounded
+            // vocabulary is a MODELLING limit, so the honest outcome is a refusal
+            // that names the method, not an invented value.
+            raise (Stop(Unsupported $"method '{name}' is not modelled by the bounded interpreter"))
         | _ -> VNull
 
     and private execStmt (st: State) (env: Env) (s: Stmt) : Env =

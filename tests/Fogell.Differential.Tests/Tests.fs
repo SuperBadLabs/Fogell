@@ -256,6 +256,14 @@ let stringModel =
                   "m=10"
                   "the method form returns the count"
 
+              // A method the bounded interpreter does NOT model refuses by name —
+              // stringifying an invented null ran `deploy null` with the build green.
+              Expect.throws
+                  (fun () ->
+                      GString.render env (step [ "m", "s=${env.TARGET.substring(3)}" ] [] [] [] [] []) "m" "s=${env.TARGET.substring(3)}"
+                      |> ignore)
+                  "an unmodelled method fails closed"
+
               // Placeholders in one GString share the script Binding, as VALUES —
               // `n` must reach the second placeholder as the number 2, or the
               // arithmetic silently becomes string concatenation.

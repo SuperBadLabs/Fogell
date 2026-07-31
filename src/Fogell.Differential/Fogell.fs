@@ -1017,8 +1017,14 @@ module FogellSide =
             and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
                 try
                     runStepDispatchBody ctx cwd stage step deadline
-                with GString.MissingProperty name ->
+                with
+                | GString.MissingProperty name ->
                     emit $"ERROR: No such property: {name} for class: groovy.lang.Binding"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | GString.UnsupportedExpression what ->
+                    // A modelling limit, refused by name — never an invented value.
+                    emit $"ERROR: cannot evaluate expression: {what}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
 

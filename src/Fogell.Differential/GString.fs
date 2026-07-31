@@ -52,6 +52,12 @@ module GString =
     /// gets deployed to.
     exception MissingProperty of name: string
 
+    /// A strict render met Groovy this interpreter does not model (an unmodelled
+    /// method, an unsupported construct). Refusing BY NAME is the fail-closed
+    /// choice: the alternative — stringifying an invented null — ran
+    /// `deploy null` with the build green.
+    exception UnsupportedExpression of detail: string
+
     let internal interpolateCore
         (strict: bool)
         (known: Map<string, string>)
@@ -194,6 +200,9 @@ module GString =
                 | Some(UnknownProperty name), _ ->
                     absorb outcome
                     raise (MissingProperty name)
+                | Some(Fault.Unsupported what), _ when strict ->
+                    absorb outcome
+                    raise (UnsupportedExpression what)
                 | _ -> None
 
         // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
