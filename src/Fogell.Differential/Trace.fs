@@ -422,7 +422,7 @@ module Trace =
             // stated mimicry residual; a script that CHANGES PS4 forfeits env
             // canonicalisation on its custom-prefixed rows and any inherited-value
             // difference there diverges VISIBLY — declared, fail-closed.)
-            if g.TrimStart().StartsWith "+ " then
+            if Text.RegularExpressions.Regex.IsMatch(g.TrimStart(), @"^\++ ") then
                 orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
             else
                 g
