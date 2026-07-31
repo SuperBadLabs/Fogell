@@ -15,6 +15,14 @@ type Cancellation =
     | DeadlineExpired
     | SiblingFailed
 
+/// A live deadline: WHEN it fires, and WHICH declaration it is. The token exists
+/// because expiry ownership is announced per declaring scope, and two scopes can
+/// declare the same absolute millisecond — while nudging the VALUE to
+/// disambiguate (the previous attempt) shifted real execution. The min-chain
+/// keeps the winning record whole, so the token that arrives at a cancellation
+/// site is by construction the scope whose bound actually fired.
+type Deadline = { AtMs: int64; Token: int }
+
 type BranchCtx =
     { /// Polled while a shell step runs; true means a failFast sibling failed.
       Interrupt: (unit -> bool) option
@@ -116,13 +124,41 @@ module FogellSide =
 
                 Map.ofList entries
 
-    let run (workspaceRoot: string) (jobName: string) (script: string) : Result<Trace, string> =
+    let run
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (script: string)
+        : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
         | Result.Ok pipeline ->
             let output = System.Collections.Generic.List<string>()
             // Parallel branches append from several threads at once.
             let outputLock = obj ()
+
+            // FG-102: WHICH deadlines actually fired a cancellation, by absolute
+            // value. The exceeded announcer for a scope speaks only when ITS OWN
+            // declared bound is in this set — a shared boolean let branch B's
+            // normal failure ride branch A's expiry, and clock arithmetic alone
+            // announced timeouts that never caused anything. The firing deadline is
+            // the EFFECTIVE one at the cancelled step, which by construction is the
+            // owning scope's declared bound (the min of the chain is what fires).
+            let firedDeadlines = System.Collections.Generic.HashSet<int>()
+            let mutable nextDeadlineToken = 0
+
+            let mkDeadline (absMs: int64) : Deadline =
+                let token = System.Threading.Interlocked.Increment &nextDeadlineToken
+                { AtMs = absMs; Token = token }
+
+            let recordFired (deadline: Deadline option) =
+                deadline
+                |> Option.iter (fun d -> lock outputLock (fun () -> firedDeadlines.Add d.Token |> ignore))
+
+            let deadlineDidFire (declared: Deadline option) =
+                match declared with
+                | Some d -> lock outputLock (fun () -> firedDeadlines.Contains d.Token)
+                | None -> false
 
             /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
             /// with NO `[branchName]` prefix — that belongs to the scripted
@@ -152,6 +188,13 @@ module FogellSide =
             /// refuse a valid trace. Masking needs no such index because it naturally
             /// starts at registration; the retroactive scan is what had to be told.
             let boundSecrets = ResizeArray<SecretBinding * int>()
+
+            // FG-103: engine-health notes for the RECEIPT — never build output.
+            let engineNotes = ResizeArray<string>()
+
+            // the EXACT durable-script ids this run minted, canonicalised by value —
+            // a spoofed id in output stays literal and diverges visibly
+            let durableIds = ResizeArray<string>()
 
             // Groovy's script Binding for THIS build: a placeholder's assignment
             // outlives its step (receipt `gstring-binding-across-steps`). One per run
@@ -277,10 +320,10 @@ module FogellSide =
             ///                       input-failfast-is-failure)
             /// When both hold, the earlier event wins: a deadline already past preceded a
             /// sibling seen on this poll.
-            let cancellationOf (ctx: BranchCtx) (deadline: int64 option) : Cancellation =
+            let cancellationOf (ctx: BranchCtx) (deadline: Deadline option) : Cancellation =
                 let expiredNow =
                     match deadline with
-                    | Some d -> runClock.ElapsedMilliseconds >= d
+                    | Some d -> runClock.ElapsedMilliseconds >= d.AtMs
                     | None -> false
 
                 let siblingNow =
@@ -297,7 +340,7 @@ module FogellSide =
                 //
                 // So once EITHER event is observed, classify by the recorded TIMES.
                 let siblingAt = ctx.SiblingFailedAt.Value
-                let deadlineAt = defaultArg deadline Int64.MaxValue
+                let deadlineAt = deadline |> Option.map (fun d -> d.AtMs) |> Option.defaultValue Int64.MaxValue
                 let siblingObserved = siblingNow || siblingAt >= 0L
 
                 if not (expiredNow || siblingObserved) then Running
@@ -308,13 +351,19 @@ module FogellSide =
             /// Emit the reason, mark the branch failed, and sink the status the CAUSE
             /// dictates. Every cancellable step routes through this so the classification
             /// cannot drift per-step again.
-            let applyCancellation (ctx: BranchCtx) (what: string) (c: Cancellation) =
+            let applyCancellation (ctx: BranchCtx) (what: string) (deadline: Deadline option) (c: Cancellation) =
                 match c with
                 | Running -> ()
                 | SiblingFailed ->
                     emit $"ERROR: {what} interrupted: a failFast sibling failed"
                     ctx.Failed.Value <- true
                 | DeadlineExpired ->
+                    recordFired deadline
+                    // Jenkins narrates the cancellation BEFORE the step's own abort
+                    // line. Shell steps get this line from ProcessGroup at SIGTERM
+                    // time; this is the path for steps with no process — input,
+                    // stash, deleteDir waits (FG-102, measured wording).
+                    emit "Cancelling nested steps due to timeout"
                     emit $"ERROR: {what} aborted: the step's deadline expired"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Aborted
@@ -335,8 +384,8 @@ module FogellSide =
             /// a 30-day budget became 24.8 days, aborting work Jenkins still allows.
             /// The executor's budget is int64 now, so the deadline is represented
             /// exactly and nothing is silently rewritten.
-            let remainingMs (deadline: int64 option) =
-                deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
+            let remainingMs (deadline: Deadline option) =
+                deadline |> Option.map (fun d -> max 1L (d.AtMs - runClock.ElapsedMilliseconds))
 
             /// ONE render pass for a step's arguments — source order, side effects
             /// once — plus the insecure-interpolation warning, computed HERE so every
@@ -411,7 +460,39 @@ module FogellSide =
                     Positional = renderedPositional |> List.map (fun (_, _, r) -> r)
                     Named = renderedNamed |> List.map (fun (k, _, r) -> k, r) }
 
-            let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
+            /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
+            /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,
+            /// `5 min 0 sec`, and `1 mo 0 days` for thirty DAYS (months are 30 days).
+            /// `sec` alone when seconds are the top unit; `day`/`days` pluralise.
+            let humanizeSpan (ms: int64) : string =
+                let sec = ms / 1000L
+                let minutes = sec / 60L
+                let hours = minutes / 60L
+                let days = hours / 24L
+                let months = days / 30L
+                // Jenkins' year is 365 DAYS, then 30-day months — 360 days is
+                // "12 mo 0 days", not "1 yr 0 mo"
+                let years = days / 365L
+                let dayWord (d: int64) = if d = 1L then "day" else "days"
+
+                if years > 0L then $"{years} yr {(days % 365L) / 30L} mo"
+                elif months > 0L then $"{months} mo {days % 30L} {dayWord (days % 30L)}"
+                elif days > 0L then $"{days} {dayWord days} {hours % 24L} hr"
+                elif hours > 0L then $"{hours} hr {minutes % 60L} min"
+                elif minutes > 0L then $"{minutes} min {sec % 60L} sec"
+                elif ms >= 1000L && ms < 10_000L && ms % 1000L <> 0L then
+                    // measured: tenths, TRUNCATED, from one second — 1999 ms is
+                    // "1.9 sec"; exact seconds print plain ("3 sec")
+                    $"{ms / 1000L}.{(ms % 1000L) / 100L} sec"
+                elif ms >= 100L && ms < 1000L then
+                    // measured: HUNDREDTHS below one second, trailing zero dropped —
+                    // 150 ms is "0.15 sec", 500 ms "0.5 sec"
+                    let h = ms / 10L
+                    if h % 10L = 0L then $"0.{h / 10L} sec" else $"0.{h} sec"
+                elif ms < 100L then $"{ms} ms"
+                else $"{sec} sec"
+
+            let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: Deadline option) =
                 // The argument and the KEY it arrived under travel together. `render`
                 // needs the key to ask what quoting the source used, and deriving the
                 // two separately is what let `sh` drift onto the wrong rule below.
@@ -468,6 +549,7 @@ module FogellSide =
                         { Name = step.Name
                           Script = script
                           Workspace = cwd
+                          WorkspaceRoot = Some workspace
                           Environment = envForWith ctx.EnvOverlay stage
                           TimeoutMs =
                             match remainingMs deadline with
@@ -479,8 +561,18 @@ module FogellSide =
                           // self-working steps through DeadlineExpired, so an expired
                           // timeout is still reported as a timeout.
                           Interrupt = ctx.Interrupt
+                          // ties inside one poll break on the WALKER's timestamps:
+                          // the sibling stamp against this step's effective deadline
+                          InterruptBeatsDeadline =
+                            Some(fun () ->
+                                let s = ctx.SiblingFailedAt.Value
+
+                                s >= 0L
+                                && (match deadline with
+                                    | Some d -> s < d.AtMs
+                                    | None -> true))
                           DeadlineExpired =
-                            deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
+                            deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d.AtMs)
                           Secrets = ctx.Secrets
                           Named = renderedNamed
                           Artifacts = Some(ArtifactStore.under artifactRoot)
@@ -490,9 +582,19 @@ module FogellSide =
                 // appended result.Stdout, so every shell line was emitted twice and
                 // the differential reported a phantom divergence at line 1.
                 //
-                // stderr is not streamed by OnLine, so it is added here.
-                for line in result.Stderr.Replace("\r\n", "\n").Split '\n' do
-                    if line <> "" then emit line
+                // stderr STREAMS through OnLine exactly as stdout does — the
+                // comment here claimed otherwise and the loop it justified emitted
+                // every stderr line a SECOND time. Comment-as-specification drift,
+                // FG-104's own class, found when xtrace moved to stderr and doubled.
+
+                // Engine-health findings reach the receipt WHATEVER the step's
+                // status: on success nothing else would print them, and on failure
+                // the composed ERROR line is normalised away — either way the
+                // receipt stayed silent until this carried them separately (FG-103).
+                result.EngineNote
+                |> Option.iter (fun n -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {n}"))
+
+                result.DurableId |> Option.iter (fun i -> lock outputLock (fun () -> durableIds.Add i))
 
                 // Jenkins prints its failure reason INTO the build log. Parity
                 // requires the same: a diagnostic the user cannot see is not a
@@ -508,9 +610,27 @@ module FogellSide =
                     // Routed through the ONE model so the shell path cannot drift from
                     // the wrapper steps again.
                     // Receipt: `parallel-failfast`.
+                    // ONE snapshot: ProcessGroup decided the cause when the wait
+                    // ended, and both its narration and this classification read that
+                    // decision — deriving it again from timestamps let the two
+                    // disagree within a poll interval (Cancelling emitted, sibling
+                    // classified). Non-shell steps carry no snapshot and keep the
+                    // timestamp model.
                     let interruptedBySibling =
                         result.Status = BuildStatus.Aborted
-                        && cancellationOf ctx deadline = SiblingFailed
+                        && (match result.AbortedBySibling with
+                            | Some bySibling -> bySibling
+                            | None -> cancellationOf ctx deadline = SiblingFailed)
+
+                    if result.Status = BuildStatus.Aborted && not interruptedBySibling then
+                        recordFired deadline
+
+                        // A SELF-WORKING step (archiveArtifacts, junit) never enters
+                        // ProcessGroup, so nobody has narrated the cancellation for
+                        // it — shell steps got the line at SIGTERM time, and emitting
+                        // it here for them too would double it.
+                        if step.Name = "archiveArtifacts" || step.Name = "junit" then
+                            emit "Cancelling nested steps due to timeout"
 
                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
                     // an unstable one — `junit` marks the build unstable without
@@ -860,7 +980,7 @@ module FogellSide =
             /// Receipts: `options-timeout-pipeline` AND `options-timeout-stage` — the claim
             /// covers BOTH levels, so citing only the pipeline one left the stage half of
             /// the sentence unbacked.
-            let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+            let deadlineFromOptions (options: Step list) (inherited: Deadline option) =
                 // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
                 // turned into None here, so the declared SAFETY BOUND silently vanished and
                 // the job ran unbounded — while the step form fails closed on the very same
@@ -871,17 +991,26 @@ module FogellSide =
                     |> List.fold
                         (fun (acc, err) o ->
                             match timeoutMs o with
-                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms), err)
+                            | Ok ms -> (Some(mkDeadline (runClock.ElapsedMilliseconds + ms), ms), err)
                             | Error e -> (acc, Some e))
                         (None, None)
 
+                // FG-102, measured: an `options { timeout }` announces its budget in
+                // the same words the step form uses, at the point it takes effect.
+                // Formatted from the PARSED duration — reconstructing it from the
+                // absolute deadline raced the stopwatch, and a 4-second timeout that
+                // lost 1 ms in flight announced "3 sec": a load-dependent divergence
+                // now that these sentences are compared.
+                declared
+                |> Option.iter (fun (_, ms) -> emit ("Timeout set to expire in " + humanizeSpan ms))
+
                 let effective =
                     match declared, inherited with
-                    | Some d, Some i -> Some(min d i)
-                    | Some d, None -> Some d
+                    | Some(d, _), Some i -> Some(min d i)
+                    | Some(d, _), None -> Some d
                     | None, i -> i
 
-                effective, optionError
+                effective, (declared |> Option.map fst), optionError
 
             let rec runPostWithDeadline
                 (ctx: BranchCtx)
@@ -889,7 +1018,7 @@ module FogellSide =
                 (stage: Stage)
                 (result: BuildStatus)
                 (previous: BuildStatus option)
-                (deadline: int64 option)
+                (deadline: Deadline option)
                 =
                 if not (List.isEmpty stage.Post) then
                     // REVIEW FIX (Codex, PR #13 round 3): arms were selected up front
@@ -926,9 +1055,9 @@ module FogellSide =
 
                             if postCtx.Failed.Value then ctx.Failed.Value <- true
 
-            and runStage (ctx: BranchCtx) (cwd: string) (inherited: int64 option) (stage: Stage) =
+            and runStage (ctx: BranchCtx) (cwd: string) (inherited: Deadline option) (stage: Stage) =
                 // A stage's own `options { timeout(...) }` tightens whatever it inherited.
-                let deadline, optionError = deadlineFromOptions stage.Options inherited
+                let deadline, stageDeclaredDeadline, optionError = deadlineFromOptions stage.Options inherited
 
                 // A declared bound we cannot understand must stop the build, not vanish.
                 match optionError with
@@ -977,6 +1106,10 @@ module FogellSide =
 
                     if body.Failed.Value then ctx.Failed.Value <- true
 
+                    // FG-102, measured position: a stage-declared timeout announces its
+                    // expiry right after the interrupted body, BEFORE the post arm the
+                    // abort selects (`cancellation-selects-post-arm`).
+
                     // Stage post is selected against the STAGE's result, and
                     // `previous` is None because this harness runs one build per
                     // job (it deletes the job around every run). `fixed` and
@@ -1000,6 +1133,14 @@ module FogellSide =
                     runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
                     if postCtx.Failed.Value then ctx.Failed.Value <- true
 
+                    // MEASURED position (`cancellation-selects-post-arm`): the
+                    // stage-declared expiry announces AFTER the post arm the abort
+                    // selected — Jenkins prints `+ echo right` first, then the
+                    // sentence. Own declared deadline only: the effective bound can
+                    // be an inherited outer one, whose OWNER announces it.
+                    if body.Failed.Value && deadlineDidFire stageDeclaredDeadline then
+                        emit "Timeout has been exceeded"
+
             /// REVIEW FIX (Codex P1, PR #12): control-flow steps nested inside
             /// another wrapper used to be routed straight at `Executor.runStep`,
             /// which does not know them — so `retry(2) { timeout(10) { sh '…' } }`
@@ -1013,7 +1154,7 @@ module FogellSide =
             /// The strict renderer raises; this converts the raise into that failure.
             /// Erasing the name to "" instead would RUN a command the author never
             /// wrote (`deploy ${TARGET}` → `deploy `), with the build green.
-            and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+            and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: Deadline option) =
                 try
                     runStepDispatchBody ctx cwd stage step deadline
                 with
@@ -1027,7 +1168,7 @@ module FogellSide =
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
 
-            and runStepDispatchBody (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+            and runStepDispatchBody (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: Deadline option) =
                 // REVIEW FIX (Codex, PR #13 round 4): a deadline only ever became a
                 // `TimeoutMs` for the shell runner. `echo`, `junit`,
                 // `archiveArtifacts` and wrapper dispatch enforce nothing, so a
@@ -1036,13 +1177,20 @@ module FogellSide =
                 // dispatch, whatever the step is.
                 let expired =
                     match deadline with
-                    | Some d -> runClock.ElapsedMilliseconds >= d
+                    | Some d -> runClock.ElapsedMilliseconds >= d.AtMs
                     | None -> false
 
                 if expired then
-                    emit $"ERROR: timeout expired before step '{step.Name}'; block aborted"
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Aborted
+                    // FG-102, through the ONE cancellation model: an expiry observed
+                    // between steps still races a failFast sibling, and classifying it
+                    // here by clock alone called a sibling's failure a timeout —
+                    // cancellationOf owns that ordering decision.
+                    match cancellationOf ctx deadline with
+                    | Running ->
+                        // the deadline passed between the check and classification's
+                        // reread — treat as expired, the plain reading
+                        applyCancellation ctx $"step '{step.Name}'" deadline DeadlineExpired
+                    | c -> applyCancellation ctx $"step '{step.Name}'" deadline c
                 else
 
                 match step.Name, step.Positional with
@@ -1057,16 +1205,27 @@ module FogellSide =
                     | Ok ms ->
                         // ONE deadline for the whole block. A nested timeout can
                         // only tighten it, never extend past its parent.
-                        let mine = runClock.ElapsedMilliseconds + ms
+                        let mine = mkDeadline (runClock.ElapsedMilliseconds + ms)
 
                         let effective =
                             match deadline with
-                            | Some outer -> min outer mine
+                            | Some outer -> if outer.AtMs <= mine.AtMs then outer else mine
                             | None -> mine
+
+                        // FG-102, measured wording: the block announces its budget on
+                        // entry and its expiry after the interrupt narration, so the
+                        // logs COMPARE where these sentences were suppressed before.
+                        emit ("Timeout set to expire in " + humanizeSpan ms)
 
                         for inner in step.Block do
                             if not (halted ctx) then
                                 runStepDispatch ctx cwd stage inner (Some effective)
+
+                        // OWN deadline, not the effective one: under a shorter outer
+                        // bound this block's budget may be untouched when the outer
+                        // expiry aborts it, and the OWNER announces that.
+                        if ctx.Failed.Value && deadlineDidFire (Some mine) then
+                            emit "Timeout has been exceeded"
 
                 // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
                 // the first, and there is no backoff. `retry(3)` around a step
@@ -1408,7 +1567,7 @@ module FogellSide =
                                         ctx.Sink BuildStatus.Failure
                                 | c -> outcome <- c
 
-                        applyCancellation ctx "deleteDir" outcome
+                        applyCancellation ctx "deleteDir" deadline outcome
 
                 | "input", _ ->
                     let message =
@@ -1499,10 +1658,14 @@ module FogellSide =
                                 // bounded by 250 anyway. A 30-day deadline once wrapped
                                 // negative here and aborted the prompt instantly.
                                 let left = defaultArg (remainingMs deadline) 0L
-                                System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+                                // TimeSpan, not `int` — the last remaining narrowing
+                                // on a duration path, retired by FG-103 even though its
+                                // 250 ms clamp made it arithmetically safe: the CLASS
+                                // is banned, not the instance (it wrapped twice before).
+                                System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
                             | c -> outcome <- c
 
-                        applyCancellation ctx "input" outcome
+                        applyCancellation ctx "input" deadline outcome
 
                 // FG-047. `stash` / `unstash`. Storage is controller-side — under the
                 // artifact root, NOT the workspace — which is what makes a stash survive
@@ -1550,7 +1713,7 @@ module FogellSide =
                         let saved, aborted = Stash.save store jobName cwd n includes excludes abort
 
                         if aborted then
-                            applyCancellation ctx "stash" (cancellationOf ctx deadline)
+                            applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
                         elif List.isEmpty saved && not allowEmpty then
                             // MEASURED: Jenkins FAILS the build here (default
                             // allowEmpty: false) — the pipeline stops and later steps do
@@ -1594,7 +1757,7 @@ module FogellSide =
                             // selected post { failure } where every other timed-out step
                             // selects post { aborted }.
                             if e.StartsWith "aborted:" then
-                                applyCancellation ctx "unstash" (cancellationOf ctx deadline)
+                                applyCancellation ctx "unstash" deadline (cancellationOf ctx deadline)
                             else
                                 // A MISSING stash is a genuine failure, not a
                                 // cancellation, and must not be classified by this model.
@@ -1627,7 +1790,7 @@ module FogellSide =
 
                 | _ -> runStepInner ctx stage cwd step deadline
 
-            and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: int64 option) (stage: Stage) =
+            and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: Deadline option) (stage: Stage) =
                     for step in stage.Steps do
                         if not (halted ctx) then
                             runStepDispatch ctx cwd stage step deadline
@@ -1740,7 +1903,7 @@ module FogellSide =
                   SiblingFailedAt = ref -1L }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            let pipelineDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
 
             match pipelineOptionError with
             | Some e ->
@@ -1748,6 +1911,24 @@ module FogellSide =
                 root.Failed.Value <- true
                 bump BuildStatus.Failure
             | None -> ()
+
+            // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
+            // point it is first observed to have aborted work — after the stages
+            // when a stage died to it, or after the pipeline post when the post did
+            // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+            let mutable exceededAnnounced = false
+
+            // ONE announcement, after the pipeline post: the post runs under the
+            // already-expired deadline and narrates its own cancellations first —
+            // announcing before it reversed Jenkins' cluster order.
+            let announcePipelineExceeded () =
+                if
+                    not exceededAnnounced
+                    && root.Failed.Value
+                    && deadlineDidFire pipelineDeclaredDeadline
+                then
+                    exceededAnnounced <- true
+                    emit "Timeout has been exceeded"
 
             for stage in pipeline.Stages do
                 if root.Failed.Value then
@@ -1781,7 +1962,11 @@ module FogellSide =
                 // runStage but NOT the pipeline-level post, so a slow `post { always }`
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
-                runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
+                let postRoot = { root with Failed = ref false }
+                runPostWithDeadline postRoot workspace synthetic status None pipelineDeadline
+                if postRoot.Failed.Value then root.Failed.Value <- true
+
+            announcePipelineExceeded ()
 
             let workspaceHash, files = Trace.hashWorkspace workspace
 
@@ -1815,7 +2000,18 @@ module FogellSide =
 
             Result.Ok
                 { Result = BuildStatus.toWireString status
-                  Output = Trace.normaliseOutput output
+                  EngineNotes = List.ofSeq engineNotes
+                  Output =
+                    (let idReplacements =
+                        durableIds
+                        |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                        |> List.ofSeq
+
+                     Trace.normaliseOutputShaped
+                         false
+                         ((workspace, "${WORKSPACE}") :: idReplacements)
+                         envReplacements
+                         output)
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)

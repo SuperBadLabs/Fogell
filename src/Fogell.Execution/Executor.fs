@@ -19,6 +19,10 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int64 option
+      /// The WORKSPACE root (not the step's cwd): durable-task roots its script
+      /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
+      /// executed script's $0 is observable.
+      WorkspaceRoot: string option
       OnLine: (string -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
@@ -27,6 +31,9 @@ type StepRequest =
       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
       ///
+      /// Breaks the both-in-one-poll tie between [TimeoutMs] and [Interrupt]; see
+      /// [RunRequest.InterruptBeatsDeadline].
+      InterruptBeatsDeadline: (unit -> bool) option
       /// EXTERNAL cancellation only. A `timeout` deadline travels in [TimeoutMs]
       /// and, for steps that do their own work, in [DeadlineExpired].
       ///
@@ -64,7 +71,21 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
-      Diagnostic: string option }
+      Diagnostic: string option
+      /// FG-103: the engine reporting on its OWN checks — a leak scan that could
+      /// not run, survivors it found — separate from the step's failure reason so
+      /// it can reach the receipt whatever the step's status. Folding it into
+      /// Diagnostic hid it: on success nothing printed, on failure the composed
+      /// ERROR line was normalised away, and the receipt stayed silent either way.
+      EngineNote: string option
+      /// For an Aborted shell step: WHICH event ended it, from ProcessGroup's one
+      /// wait-end snapshot. Some true = external interrupt (a failFast sibling),
+      /// Some false = the deadline. The walker classifies AND narrates from this
+      /// single source — deriving the cause a second time from timestamps let the
+      /// two disagree inside one poll interval.
+      AbortedBySibling: bool option
+      /// See [RunResult.DurableId].
+      DurableId: string option }
 
 module Executor =
 
@@ -78,7 +99,10 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
-          Diagnostic = None }
+          Diagnostic = None
+          EngineNote = None
+          AbortedBySibling = None
+          DurableId = None }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
@@ -122,6 +146,8 @@ module Executor =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
                         Interrupt = request.Interrupt
+                        InterruptBeatsDeadline = request.InterruptBeatsDeadline
+                        WorkspaceRoot = request.WorkspaceRoot
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = onLine }
@@ -199,18 +225,30 @@ module Executor =
                         $"step exceeded its {budget} ms timeout; {how}")
                 | Cancelled -> Aborted, None, Some "step was cancelled"
 
-            // FG-032: a leak is a defect, and it is reported rather than ignored.
-            let diagnostic =
+            // FG-032/FG-103: a leak is a defect and an unavailable check is an
+            // unknown — both are ENGINE findings, carried beside the step's own
+            // failure reason so they reach the receipt whatever the status is.
+            let baseEngineNote =
                 match run.Termination with
+                | Some t when t.LeakedProcesses < 0 ->
+                    Some "leak check unavailable: the /proc scan failed, group state unknown"
                 | Some t when t.LeakedProcesses > 0 ->
-                    let leak = $"{t.LeakedProcesses} process(es) survived group reaping"
+                    Some $"{t.LeakedProcesses} process(es) survived group reaping"
+                | Some _ -> None
+                | None ->
+                    // No termination record AND no group id means the containment
+                    // check never ran at all — the pgid marker was not captured, so
+                    // nothing could be reaped or scanned. FG-103: that is an unknown,
+                    // not a clean bill.
+                    match run.ProcessGroupId with
+                    | None -> Some "containment check unavailable: the process-group id was never captured"
+                    | Some _ -> None
 
-                    Some(
-                        match diagnostic with
-                        | Some d -> $"{d}; {leak}"
-                        | None -> leak)
-                | Some _
-                | None -> diagnostic
+            let engineNote =
+                match baseEngineNote, run.CleanupFailure with
+                | Some a, Some b -> Some $"{a}; {b}"
+                | Some a, None -> Some a
+                | None, b -> b
 
             { Status = status
               ExitCode = exitCode
@@ -229,7 +267,14 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
-              Diagnostic = diagnostic }
+              Diagnostic = diagnostic
+              EngineNote = engineNote
+              AbortedBySibling =
+                match run.Outcome with
+                | Cancelled -> Some true
+                | TimedOut -> Some false
+                | _ -> None
+              DurableId = run.DurableId }
 
     /// Read a step argument that may be positional or named, matching Jenkins'
     /// tolerance for `archiveArtifacts '*.jar'` and
@@ -292,21 +337,71 @@ module Executor =
                     Diagnostic =
                         Some
                             $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
-            elif List.isEmpty published && not allowEmpty then
-                // Jenkins fails the build here rather than passing quietly, and
-                // a silent empty archive is the worst outcome for a user.
-                { ok Failure with
-                    Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
             elif List.isEmpty published then
-                // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
-                // `allowEmptyArchive: true` PERMITS the empty archive but still says so —
-                // `No artifacts found that match the file pattern "...". Configuration
-                // error?` — and the build runs on. Passing silently would hide a broken
-                // glob from the very person who opted into tolerating it.
-                request.OnLine
-                |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
+                // Jenkins' archive advisory, measured on 2.568.1 in its three
+                // variants (typographic quotes and all) — printed whether or not the
+                // empty archive is allowed, BEFORE the outcome line. A substring
+                // suppression used to hide the Jenkins side of this; both engines
+                // speak it now and the sentences compare (FG-102).
+                let advisory =
+                    let q (x: string) = "\u2018" + x + "\u2019"
 
-                { ok Success with Archived = published }
+                    // MEASURED (receipt `archive-multi-pattern-advisory`): for a
+                    // comma-separated list Jenkins validates the
+                    // individual Ant masks, advising on the FIRST unmatched one —
+                    // `missing/**,other-*.zip` advises on `missing/**` alone (the
+                    // Configuration-error line keeps the full list).
+                    let raw =
+                        raw.Split(',')
+                        |> Array.map (fun m -> m.Trim())
+                        |> Array.tryFind (fun m -> m <> "")
+                        |> Option.defaultValue raw
+
+                    if raw.EndsWith "/**" then
+                        let starstar = q "**"
+                        $"{q raw} doesn\u2019t match anything, but {starstar} does. Perhaps that\u2019s what you mean?"
+                    elif raw.Contains "/" then
+                        // the deepest EXISTING literal prefix decides the clause —
+                        // measured: `existing/missing/*.zip` with `existing` present
+                        // says "\u2018existing\u2019 exists but not \u2018existing/missing/*.zip\u2019",
+                        // while a missing FIRST segment says "even \u2018base\u2019 doesn\u2019t exist"
+                        let literalSegs =
+                            raw.Split('/')
+                            |> Array.takeWhile (fun seg -> not (seg.Contains "*" || seg.Contains "?"))
+
+                        let deepestExisting =
+                            literalSegs
+                            |> Array.scan (fun acc seg -> if acc = "" then seg else acc + "/" + seg) ""
+                            |> Array.skip 1
+                            |> Array.takeWhile (fun prefix ->
+                                System.IO.Directory.Exists(System.IO.Path.Combine(request.Workspace, prefix))
+                                || System.IO.File.Exists(System.IO.Path.Combine(request.Workspace, prefix)))
+                            |> Array.tryLast
+
+                        match deepestExisting with
+                        | Some prefix -> $"{q raw} doesn\u2019t match anything: {q prefix} exists but not {q raw}"
+                        | None when literalSegs.Length > 0 ->
+                            $"{q raw} doesn\u2019t match anything: even {q literalSegs.[0]} doesn\u2019t exist"
+                        | None -> $"{q raw} doesn\u2019t match anything"
+                    else
+                        $"{q raw} doesn\u2019t match anything"
+
+                request.OnLine |> Option.iter (fun f -> f advisory)
+
+                if not allowEmpty then
+                    // Jenkins fails the build here rather than passing quietly, and
+                    // a silent empty archive is the worst outcome for a user.
+                    { ok Failure with
+                        Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
+                else
+                    // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
+                    // `allowEmptyArchive: true` PERMITS the empty archive but still says
+                    // so — and the build runs on. Passing silently would hide a broken
+                    // glob from the very person who opted into tolerating it.
+                    request.OnLine
+                    |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
+
+                    { ok Success with Archived = published }
             else
                 { ok Success with Archived = published }
 

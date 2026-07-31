@@ -61,7 +61,12 @@ module Jenkins =
         + "<triggers/><disabled>false</disabled></flow-definition>"
 
     /// Run one Jenkinsfile under a disposable job name and return its trace.
-    let run (cfg: JenkinsConfig) (jobName: string) (script: string) : Result<Trace, string> =
+    let run
+        (cfg: JenkinsConfig)
+        (envReplacements: (string * string) list)
+        (jobName: string)
+        (script: string)
+        : Result<Trace, string> =
         try
             let field, value = crumb cfg
 
@@ -116,7 +121,21 @@ module Jenkins =
 
                     let trace =
                         { Result = terminal
-                          Output = Trace.normaliseOutput rawLines
+                          EngineNotes = []
+                          // the workspace root is READ from the run's own banner —
+                          // `Running on <node> in <path>` — so a non-default
+                          // JENKINS_HOME or a remote agent canonicalises correctly;
+                          // the pinned controller path is only the fallback
+                          Output =
+                            (let fromBanner =
+                                rawLines
+                                |> Array.tryPick (fun l ->
+                                    let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
+                                    if m.Success then Some m.Groups[1].Value else None)
+
+                             let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
+
+                             Trace.normaliseOutputShaped true [ ws, "${WORKSPACE}" ] envReplacements rawLines)
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a

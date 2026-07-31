@@ -28,6 +28,8 @@ let private request root script =
       Environment = []
       TimeoutMs = None
       Interrupt = None
+      InterruptBeatsDeadline = None
+      WorkspaceRoot = None
       DeadlineExpired = None
       Secrets = []
       OnLine = None
@@ -137,10 +139,21 @@ let shellExecution =
               | None -> failtest "a failure must carry a diagnostic"
           }
 
-          test "stderr is captured separately" {
+          test "a shebang script runs as ITS interpreter, untraced" {
+              // durable-task executes a shebang script directly, injecting no -xe:
+              // a bash script runs under bash, and no `+` trace appears.
+              let r = Executor.runStep (request (tempRoot ()) "#!/bin/bash\necho ran-as:$0")
+              Expect.stringContains r.Stdout "ran-as:" "the script executed"
+              Expect.isFalse (r.Stdout.Contains "+ echo") "no injected trace"
+          }
+
+          test "stderr merges into the ordered stream, exactly as Jenkins' console does" {
+              // FG-102: the shell runs `2>&1`, because the xtrace lives on stderr and
+              // two async pipe readers deliver cross-stream events in racy order —
+              // output lines overtook their own `+` trace. One pipe is kernel-ordered,
+              // and Jenkins' console is the same merged stream.
               let r = Executor.runStep (request (tempRoot ()) "echo oops >&2")
-              Expect.stringContains r.Stderr "oops" "stderr"
-              Expect.isFalse (r.Stdout.Contains "oops") "not mixed into stdout"
+              Expect.stringContains r.Stdout "oops" "stderr content arrives in the ordered stream"
           }
 
           test "output streams while the step runs, not only at the end" {
@@ -194,6 +207,20 @@ let containment =
         [ test "the step leads its own process group" {
               let r = Executor.runStep (request (tempRoot ()) "echo x")
               Expect.isSome r.ProcessGroupId "a group id was observed"
+          }
+
+          test "a 30-day budget is represented exactly, not wrapped" {
+              // FG-103 acceptance. `timeout(time: 30, unit: 'DAYS')` is
+              // 2,592,000,000 ms — past Int32.MaxValue. This narrowing wrapped
+              // negative TWICE in this project's history, both times aborting a
+              // valid step instantly; the budget travels int64 to the executor and
+              // this run must complete, not time out at t=0.
+              let r =
+                  ProcessGroup.run
+                      { RunRequest.create ("echo wide", tempRoot ()) with
+                          TimeoutMs = Some 2_592_000_000L }
+
+              Expect.equal r.Outcome (Completed 0) "a huge budget is a budget, not an instant abort"
           }
 
           test "a timeout sends a trappable SIGTERM before killing" {
@@ -666,6 +693,8 @@ let externalInterrupt =
                         Environment = []
                         TimeoutMs = None
                         Interrupt = None
+                        InterruptBeatsDeadline = None
+                        WorkspaceRoot = None
                         DeadlineExpired = Some(fun () -> true)
                         Secrets = []
                         OnLine = None
@@ -690,6 +719,8 @@ let externalInterrupt =
                         Environment = []
                         TimeoutMs = None
                         Interrupt = None
+                        InterruptBeatsDeadline = None
+                        WorkspaceRoot = None
                         DeadlineExpired = Some(fun () -> true)
                         Secrets = []
                         OnLine = None

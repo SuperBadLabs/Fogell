@@ -27,6 +27,94 @@ let main argv =
             | null | "" -> None
             | v -> Some v
 
+        // ONE coordinated canonicalisation set for BOTH traces: the union of each
+        // engine's inherited values for the curated names, so a literal equal to
+        // either engine's value rewrites identically on both sides.
+        // No collector → NO inherited-env canonicalisation at all: rewriting only
+        // Fogell's values while Jenkins' stayed literal manufactured divergences
+        // whenever the optional variable was simply not set. Both sides or neither.
+        let mutable envCanonicalisationEnabled = true
+
+        let jenkinsEnv =
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_ENV_CMD" with
+            | null
+            | "" ->
+                envCanonicalisationEnabled <- false
+                []
+            | cmd ->
+                // FAIL CLOSED (FG-103): a CONFIGURED collector that cannot deliver
+                // is a broken harness, and continuing with a partial replacement set
+                // would manufacture divergences with no indication why. Refuse the
+                // whole run instead.
+                let refuse (why: string) =
+                    eprintfn $"env collector failed: {why}; refusing to run with a partial canonicalisation set"
+                    exit 2
+
+                try
+                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                    psi.ArgumentList.Add "-c"
+                    psi.ArgumentList.Add cmd
+                    psi.RedirectStandardOutput <- true
+                    psi.UseShellExecute <- false
+                    use p = Diagnostics.Process.Start psi
+                    // bounded: WAIT first, then read — ReadToEnd on a stalled ssh
+                    // held the pipe open forever and the 30 s timeout never applied
+                    let reader = p.StandardOutput.ReadToEndAsync()
+
+                    if not (p.WaitForExit 30_000) then
+                        (try p.Kill(true) with _ -> ())
+                        refuse "timed out after 30 s"
+
+                    if p.ExitCode <> 0 then refuse $"exit code {p.ExitCode}"
+
+                    let out = if reader.Wait 5_000 then reader.Result else refuse "output never arrived"; ""
+
+                    let parsed =
+                        out.Split '\n'
+                        |> Array.choose (fun line ->
+                            match line.IndexOf '=' with
+                            | i when i > 0 -> Some(line.Substring(0, i), line.Substring(i + 1).Trim())
+                            | _ -> None)
+                        |> Array.toList
+
+                    if List.isEmpty parsed then refuse "no NAME=VALUE lines in output"
+                    parsed
+                with
+                | :? System.ComponentModel.Win32Exception as e -> refuse e.Message; []
+                | :? AggregateException as e -> refuse e.InnerException.Message; []
+
+        // Canonicalisation stays INJECTIVE by canonicalising only names the CASE
+        // actually references: both engines share the script text, so `$PATH` in it
+        // means every occurrence of either engine's PATH value is an expansion —
+        // while a case that merely PRINTS a path literal gets no rewriting and a
+        // cross-engine literal collision diverges visibly. (The residual — a script
+        // that both references $NAME and prints the other engine's literal value —
+        // requires deliberate construction and is accepted, stated here.)
+        // The env set applies only to XTRACE rows (see Trace), which is what made
+        // three rounds of reference-gate lexing unnecessary: expansions live on
+        // engine-generated lines, literals live in output, and neither needs the
+        // script parsed. The union set stays injective via the ambiguity dropper.
+        let envReplacements =
+            if not envCanonicalisationEnabled then
+                []
+            else
+                Fogell.Differential.Trace.canonicalisedEnvNames
+                |> List.collect (fun name ->
+                    [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
+                      | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
+                      | _ -> ()
+
+                      match Environment.GetEnvironmentVariable name with
+                      | null
+                      | "" -> ()
+                      | v -> yield v, "${" + name + "}" ])
+                |> List.distinct
+                |> List.groupBy fst
+                |> List.choose (fun (_, pairs) ->
+                    match pairs |> List.map snd |> List.distinct with
+                    | [ _ ] -> Some pairs.Head
+                    | _ -> None)
+
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
@@ -74,9 +162,9 @@ let main argv =
                     use p = Diagnostics.Process.Start psi
                     p.WaitForExit 30_000 |> ignore
 
-                let jenkins = Jenkins.run cfg job script
-                let fogell = FogellSide.run fogellRoot job script
-                let r = Compare.receipt name core jenkins fogell
+                let jenkins = Jenkins.run cfg envReplacements job script
+                let fogell = FogellSide.run envReplacements fogellRoot job script
+                let r = Compare.receipt name core envReplacements jenkins fogell
                 let path = Compare.seal receiptDir r
 
                 let workspaceCompared =

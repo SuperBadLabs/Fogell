@@ -44,6 +44,10 @@ type Receipt =
       Jenkins: Trace option
       Fogell: Trace option
       ComparisonContract: string list
+      /// Output pairs that compared CANONICALLY (inherited-env fold) rather than
+      /// byte-equal, listed per case so the relaxation is visible in the receipt
+      /// that used it, never only in the rule's statement.
+      FoldedOutputPairs: string list
       /// Hash over the receipt's own comparable content, so a receipt cannot be
       /// edited after the fact without detection.
       Seal: string }
@@ -78,20 +82,69 @@ module Compare =
     /// TO STDOUT (`from-quick`, `from-slow`, both unprefixed). `parallel-siblings-finish`
     /// was cited first and cannot support this claim: its branches write FILES, so it emits
     /// no ordinary branch output at all.
-    let private compareOutput (concurrent: bool) (jenkins: string list) (fogell: string list) =
-        let rec walk i j f =
+    /// FG-102 round 48. dash's xtrace prints only the FIRST physical line of a
+    /// multiline word with the `+ ` prefix; continuation lines are bare, and dash
+    /// neither re-quotes nor marks the record's end (measured — /bin/sh is dash
+    /// on both engines), so one-sided normalisation cannot attribute them.
+    /// Resolution happens HERE, where both lines are visible: a mismatching pair
+    /// that becomes equal under the SAME inherited-env replacement list applied
+    /// to BOTH sides is the same expansion. Literals appear identically on both
+    /// sides and cancel, so the rule collapses only genuine inherited-value
+    /// differences — it can turn a divergence into an equality, never the
+    /// reverse, and stored receipt lines keep each engine's literal text. The
+    /// pair it cannot adjudicate — each side printing the OTHER's inherited
+    /// value as a literal — requires intent and joins the stated mimicry
+    /// residual.
+    let private compareOutput
+        (concurrent: bool)
+        (envReplacements: (string * string) list)
+        (jenkins: string list)
+        (fogell: string list)
+        =
+        let ordered =
+            envReplacements
+            |> List.filter (fun ((v: string), _) -> v <> "" && v.Length >= 4)
+            |> List.sortByDescending (fun ((v: string), _) -> v.Length)
+
+        let canon (l: string) =
+            ordered |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+
+        // Every fold is REPORTED, not just applied: the receipt lists each pair
+        // that compared canonically rather than byte-equal, so the relaxation is
+        // visible per case instead of buried in the rule (round 48 P1 — the
+        // trace-record evidence a gate would need does not exist on this channel,
+        // so the answer to "this could hide a difference" is to print it).
+        let rec walk i (folds: string list) j f =
             match j, f with
-            | [], [] -> None
+            | [], [] -> None, List.rev folds
             | jh :: jt, fh :: ft ->
-                if jh = fh then walk (i + 1) jt ft
-                else Some(OutputDiffers(i, Some jh, Some fh))
-            | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
-            | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
+                if jh = fh then
+                    walk (i + 1) folds jt ft
+                elif canon jh = canon fh then
+                    walk (i + 1) ($"line {i} compared canonically: {canon jh}" :: folds) jt ft
+                else
+                    Some(OutputDiffers(i, Some jh, Some fh)), List.rev folds
+            | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None)), List.rev folds
+            | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh)), List.rev folds
 
         if concurrent then
-            walk 0 (List.sort jenkins) (List.sort fogell)
+            // Canonicalise BEFORE sorting so resolved-equal lines sort together;
+            // a multiset mismatch therefore reports canonical text, and the
+            // receipt's stored per-engine output remains literal. Indices are
+            // meaningless after sorting, so folding is reported as per-side counts.
+            let touched side = side |> List.filter (fun l -> canon l <> l) |> List.length
+            let jt, ft = touched jenkins, touched fogell
+
+            let d, _ =
+                walk 0 [] (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
+
+            d,
+            (if jt + ft > 0 then
+                 [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
+             else
+                 [])
         else
-            walk 0 jenkins fogell
+            walk 0 [] jenkins fogell
 
     /// Compare two traces. Workspace hashes are only compared when BOTH sides
     /// collected one — claiming a match against "not-collected" would be exactly
@@ -100,12 +153,15 @@ module Compare =
     let workspaceWasCompared (jenkins: Trace) (fogell: Trace) =
         jenkins.WorkspaceHash <> "not-collected" && fogell.WorkspaceHash <> "not-collected"
 
-    let traces (jenkins: Trace) (fogell: Trace) : Verdict =
+    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict * string list =
+        let outputDivergence, folds =
+            compareOutput (jenkins.Concurrent || fogell.Concurrent) envReplacements jenkins.Output fogell.Output
+
         let divergences =
             [ if jenkins.Result <> fogell.Result then
                   ResultDiffers(jenkins.Result, fogell.Result)
 
-              match compareOutput (jenkins.Concurrent || fogell.Concurrent) jenkins.Output fogell.Output with
+              match outputDivergence with
               | Some d -> d
               | None -> ()
 
@@ -126,14 +182,20 @@ module Compare =
               then
                   WorkspaceDiffers(jenkins.WorkspaceHash, fogell.WorkspaceHash) ]
 
-        if List.isEmpty divergences then Proven else Diverged divergences
+        (if List.isEmpty divergences then Proven else Diverged divergences), folds
 
-    let receipt (file: string) (core: string) (jenkins: Result<Trace, string>) (fogell: Result<Trace, string>) : Receipt =
-        let verdict, j, f =
+    let receipt
+        (file: string)
+        (core: string)
+        (envReplacements: (string * string) list)
+        (jenkins: Result<Trace, string>)
+        (fogell: Result<Trace, string>)
+        : Receipt =
+        let (verdict, folds), j, f =
             match jenkins, fogell with
-            | Result.Error e, _ -> NotComparable(JenkinsFailed e), None, None
-            | _, Result.Error e -> NotComparable(FogellFailed e), None, None
-            | Result.Ok jt, Result.Ok ft -> traces jt ft, Some jt, Some ft
+            | Result.Error e, _ -> (NotComparable(JenkinsFailed e), []), None, None
+            | _, Result.Error e -> (NotComparable(FogellFailed e), []), None, None
+            | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
 
         let comparable =
             let render (t: Trace option) =
@@ -143,7 +205,10 @@ module Compare =
                     $"{x.Result}|{x.WorkspaceHash}|{joined}"
                 | None -> "<none>"
 
-            $"{file}\n{core}\n{render j}\n{render f}"
+            // Folds join the sealed content: a fold section edited after the
+            // fact must be as detectable as an edited output line.
+            let joinedFolds = String.concat "\n" folds
+            $"{file}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict
@@ -160,6 +225,7 @@ module Compare =
                      "  a line by. The load-bearing claim for these cases is the workspace hash." ]
                else
                    [])
+          FoldedOutputPairs = folds
           Seal = sha256Text comparable }
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
@@ -195,6 +261,16 @@ module Compare =
             line "VERDICT: NOT COMPARABLE"
             line $"  - {d.Describe}"
 
+        // Every fold this case USED, printed in the case that used it. A reader
+        // of this receipt alone sees exactly which output pairs were accepted
+        // canonically instead of byte-equal — the relaxation is never invisible.
+        if not (List.isEmpty r.FoldedOutputPairs) then
+            line ""
+            line $"## Output pairs compared canonically — inherited env ({r.FoldedOutputPairs.Length})"
+
+            for n in r.FoldedOutputPairs do
+                line $"  {n}"
+
         line ""
         line "## Comparison contract"
 
@@ -220,6 +296,14 @@ module Compare =
 
                     for path, hash in x.WorkspaceFiles do
                         line $"    {hash.Substring(0, 12)}  {path}"
+
+                // FG-103: the engine reporting on its own checks. Printed, never
+                // compared — see the comparison contract.
+                if not (List.isEmpty x.EngineNotes) then
+                    line "  engine notes (not compared):"
+
+                    for note in x.EngineNotes do
+                        line $"    ! {note}"
 
         renderSide "Jenkins" r.Jenkins
         renderSide "Fogell" r.Fogell

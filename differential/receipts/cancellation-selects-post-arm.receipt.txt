@@ -1,7 +1,7 @@
 # Differential receipt — cancellation-selects-post-arm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7e39a6ead828efcc3d08dea6605b47e431fae549fb6edf02d1f7af9000efd666
+seal:         fba78e7da274ccbe8b2c078471022823ab66f8f78ba654565948184bfdadedd0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,31 +11,53 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps, ANSI escapes, blank lines
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
-  excluded: shell xtrace ('+ cmd') lines — provenance, not output
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
     (applies to failure/aborted only — an unstable build is explained by its test report)
     (Jenkins' wording comes from whichever plugin implements the step;
      matching it verbatim would over-fit to a plugin string. Silence is the defect.)
-  KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as
-    provenance — but when the traced command contains a literal newline the trace spans
-    several lines and only the FIRST begins with '+ '. A continuation line is not
-    distinguishable from real output (the line after a trace is USUALLY real output), so
-    it is compared as output. Cases whose commands embed a newline must therefore carry
-    their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
+  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
+    context-gated, emitted identically by both engines, or an exact measured
+    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
+    text is COMPARED, and tests carry look-alike rows proving it.
   excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
     pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
     the same workspace, and comparing a compiler's error layout is over-fitting
-  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
-    counted as a reported reason instead, since it explains the engine, not the step
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (0 lines):
+  output (8 lines):
+    | Timeout set to expire in 4 sec
+    | + echo started
+    | + sleep 60
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | + echo right
+    | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt
     eff64b343dcb  started.txt
@@ -43,7 +65,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (0 lines):
+  output (8 lines):
+    | Timeout set to expire in 4 sec
+    | + echo started
+    | + sleep 60
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | + echo right
+    | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt
     eff64b343dcb  started.txt

@@ -136,12 +136,39 @@ let userOutputSurvives =
                   "the retired wording is user output now"
           }
 
-          test "`Terminated` survives unless an interrupt was just narrated" {
-              Expect.contains (Trace.normaliseOutput [ "Terminated" ]) "Terminated" "on its own it is output"
+          test "FG-102: the timeout narration COMPARES — both engines emit it" {
+              // The standing rule''s preferred form: Fogell speaks Jenkins'' wording
+              // (measured), the suppression is deleted, and the lines are ordinary
+              // compared output. A build printing them, or anything near them, is
+              // compared too — including the real prefixes the old suppression
+              // dropped on wording alone.
+              for line in
+                  [ "Timeout set to expire in my dreams"
+                    "Timeout set to expire in 3 sec"
+                    "Timeout has been exceeded"
+                    "Cancelling nested steps due to timeout"
+                    "Sending interrupt signal to process"
+                    "Terminated"
+                    "Timeout reached for my own watchdog"
+                    "Masking tape applied to the fixture"
+                    "Cancelling my own retry loop"
+                    "Running on my kite"
+                    "Started by my alarm clock"
+                    "Finished: painting the fence"
+                    "Resuming build of the shed" ] do
+                  Expect.contains (Trace.normaliseOutput [ line ]) line $"''{line}'' is compared"
 
-              Expect.isEmpty
+              // `Sending interrupt` followed by `Terminated` is compared as a PAIR
+              // now — the old context gate dropped the second line.
+              Expect.equal
                   (Trace.normaliseOutput [ "Sending interrupt signal to process"; "Terminated" ])
-                  "after an interrupt it is narration"
+                  [ "Sending interrupt signal to process"; "Terminated" ]
+                  "the interrupt pair compares on both engines"
+
+              // ...and the cluster still counts as the ABORT REASON for both sides.
+              Expect.isTrue
+                  (Trace.reportedFailureReason [ "Timeout has been exceeded" ])
+                  "the exceeded line explains an aborted build"
           } ]
 
 /// FG-100 acceptance. ONE table for the string model, so adding a consumer means adding a
@@ -489,6 +516,81 @@ let stringModel =
                       why
           } ]
 
+/// FG-102 round 48. dash prefixes only the FIRST physical line of a multiline
+/// traced word; continuation rows are bare, so inherited-env differences there
+/// are resolved two-sidedly at COMPARE time. These rows pin the rule's shape:
+/// it collapses a pair differing only by same-name inherited values, and it
+/// never manufactures a divergence from lines that were already equal.
+let continuationResolution =
+    let mkTrace output =
+        { Result = "success"
+          Output = output
+          WorkspaceHash = "not-collected"
+          WorkspaceFiles = []
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let repl =
+        [ "/var/jenkins_home", "${HOME}"; "/root", "${HOME}" ]
+
+    testList
+        "FG-102 xtrace continuation rows resolve two-sidedly"
+        [ test "a bare continuation row differing only by inherited HOME compares equal" {
+              let jenkins = mkTrace [ "+ printf %s head"; "/var/jenkins_home/tail" ]
+              let fogell = mkTrace [ "+ printf %s head"; "/root/tail" ]
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "continuation resolves"
+              Expect.equal folds [ "line 1 compared canonically: ${HOME}/tail" ] "the fold is reported"
+          }
+
+          test "a multi-line continuation chain resolves on every row" {
+              let jenkins = mkTrace [ "+ printf %s top"; "middle"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "+ printf %s top"; "middle"; "/root" ]
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "chain resolves"
+              Expect.equal (List.length folds) 1 "one folded pair reported"
+          }
+
+          test "a pair that differs beyond the inherited value still diverges" {
+              let jenkins = mkTrace [ "+ printf %s head"; "/var/jenkins_home/tail-a" ]
+              let fogell = mkTrace [ "+ printf %s head"; "/root/tail-b" ]
+
+              match Compare.traces repl jenkins fogell with
+              | Diverged [ OutputDiffers(1, Some "/var/jenkins_home/tail-a", Some "/root/tail-b") ], [] -> ()
+              | v -> failtest $"expected the literal pair reported, got {v}"
+          }
+
+          test "identical literal lines never diverge from the rule (literals cancel)" {
+              let jenkins = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
+              let fogell = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "equal lines stay equal"
+              Expect.isEmpty folds "byte-equal lines are never reported as folds"
+          }
+
+          test "an empty replacement list leaves the comparison byte-exact" {
+              let jenkins = mkTrace [ "/var/jenkins_home" ]
+              let fogell = mkTrace [ "/root" ]
+
+              match Compare.traces [] jenkins fogell with
+              | Diverged [ OutputDiffers(0, _, _) ], [] -> ()
+              | v -> failtest $"expected divergence without replacements, got {v}"
+          }
+
+          test "ordinary output printing an inherited value folds VISIBLY (round 48 P1)" {
+              // The reviewer's own example: `sh 'printenv HOME'`. The trace rows are
+              // byte-equal; the stdout pair differs only by the engines' inherited
+              // HOMEs — the environment-of-necessity class ${WORKSPACE} already
+              // occupies. The verdict is Proven AND the receipt says which pair the
+              // rule decided: the relaxation is declared per case, never silent.
+              let jenkins = mkTrace [ "+ printenv HOME"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "+ printenv HOME"; "/root" ]
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "inherited-value output folds"
+              Expect.equal folds [ "line 1 compared canonically: ${HOME}" ] "and the receipt names the pair"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel; continuationResolution ])

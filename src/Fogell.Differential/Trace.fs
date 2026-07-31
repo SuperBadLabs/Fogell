@@ -31,6 +31,12 @@ type Trace =
       /// the side that parses (Fogell) can set it; Compare takes the disjunction.
       /// It exists to trigger the documented output-ordering relaxation.
       Concurrent: bool
+      /// Engine-health observations that are PRINTED in the receipt but never
+      /// compared: they describe the ENGINE's ability to check something (a /proc
+      /// scan that failed), not the build. FG-103: an unavailable check must be
+      /// said somewhere — and the receipt is where an engine talks about itself
+      /// without inventing build output Jenkins does not print.
+      EngineNotes: string list
       /// Whether the engine reported a reason for a non-success.
       ///
       /// The exact wording is NOT compared: Jenkins' text comes from whichever
@@ -143,23 +149,20 @@ module Trace =
 
     /// Lines in which an engine explains a failure. Their presence is compared;
     /// their wording is not.
-    let isDiagnosticLine (t: string) =
-        t.StartsWith "ERROR:"
-        // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
-        // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
-        // nested steps due to timeout / Sending interrupt signal to process /
-        // Terminated / Timeout has been exceeded", and a failFast parallel prints
-        // "Failed in branch <name>". None of it is step output — it is the engine
-        // explaining what it did to the step, which is exactly the category this
-        // predicate exists for. Comparing the sentences verbatim would over-fit
-        // to timeout-plugin wording; what must agree is that SOMETHING was said.
-        // Receipts: `timeout-seconds` for the timeout/abort lines, and `parallel-failfast`
-        // for `Failed in branch` — one sentence covering two kinds of narration needs a
-        // receipt for each, and citing only the timeout left the branch half unbacked.
-        || t.StartsWith "Timeout set to expire"
+    /// The timeout narration family. FG-102: these are EMITTED by Fogell in
+    /// Jenkins' own wording (measured on 2.568.1 — `Timeout set to expire in 3
+    /// sec`, `1 mo 0 days`, the Cancelling/Sending/Terminated/exceeded cluster)
+    /// and therefore COMPARED as output, not suppressed. They remain
+    /// reason-qualifying below: an aborted build whose only explanation is this
+    /// cluster HAS explained itself.
+    let isTimeoutNarration (t: string) =
+        t.StartsWith "Timeout set to expire"
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
+
+    let isDiagnosticLine (t: string) =
+        t.StartsWith "ERROR:"
         // FG-044. Jenkins narrates credential masking as one line naming every bound
         // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
         // that join word character for character would over-fit to plugin wording, the
@@ -203,13 +206,44 @@ module Trace =
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
-        || t.Contains "workflow.actions.ErrorAction$ErrorId"
-        || t.Contains "doesn\u2019t match anything"
-        || t.Contains "doesn't match anything"
+        || Text.RegularExpressions.Regex.IsMatch(
+            t,
+            @"^(Also:\s+)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        )
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
     /// the two engines, not a guess.
+    /// FG-102: the engine's startup/header banners. A banner is recognised by its
+    /// shape AND its context: on Jenkins every user-printed line follows an
+    /// output-producing `[Pipeline]` step annotation (`echo`, `sh`, …), while the
+    /// real header lines follow nothing or other header material. A spoofed
+    /// banner therefore keeps its annotation and COMPARES; if the two engines
+    /// disagree on such a line the receipt shows a divergence rather than a
+    /// silent double-drop.
+    let isPreambleBanner (t: string) =
+        Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in (/|\$\{WORKSPACE\})")
+        || ([ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
+            |> List.exists (fun lvl -> t = $"Running in Durability level: {lvl}"))
+        || t.StartsWith "Started by user "
+        || t.StartsWith "Started by timer"
+        || t.StartsWith "Started by upstream "
+        || t = "Started by remote host"
+        || t.StartsWith "Started by an SCM change"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d")
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d")
+
+    /// The pipeline-graph annotation GRAMMAR: `[Pipeline] word`, braces with an
+    /// optional stage label, `// word` closes, and the exact multiword boundary
+    /// sentences. Applied only to a trace bearing REAL structure (see
+    /// [normaliseOutputInner]): Fogell emits no annotations, so an
+    /// annotation-shaped user line there stays visible and a Jenkins-side drop
+    /// becomes a VISIBLE divergence, never a silent double-drop.
+    let isGraphAnnotation (t: string) =
+        t = "[Pipeline] Start of Pipeline"
+        || t = "[Pipeline] End of Pipeline"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$")
+
     let normaliseLine (line: string) : string option =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
@@ -218,8 +252,7 @@ module Trace =
 
         if t = "" then
             None
-        // Jenkins pipeline-graph annotations: pure structure, no output
-        elif t.StartsWith "[Pipeline]" then None
+
         // FG-049. `Post stage` is the declarative graph's label for the synthetic
         // stage that wraps a post section — the same category as [Pipeline]
         // annotations: structure, not output. Excluded rather than imitated,
@@ -227,21 +260,21 @@ module Trace =
         // the `[branch]` prefix in FG-036.
         elif t = "Post stage" then None
         // Jenkins node/workspace banners
-        elif t.StartsWith "Running on " || t.StartsWith "Running in " then None
-        elif t.StartsWith "Started by " then None
-        elif t.StartsWith "Resuming build" || t.StartsWith "Ready to run" then None
-        elif t.StartsWith "Finished:" then None
-        elif t.StartsWith "GitHub has been notified" then None
-        // `sh` xtrace echo: Jenkins prints `+ cmd`, and so does a shell with -x.
-        // The command text is not output, it is provenance.
-        elif t.StartsWith "+ " then None
+
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
+        elif
+            t = "GitHub has been notified of this commit\u2019s build result"
+            || t = "GitHub has been notified of this commit's build result"
+        then
+            None
+
         // Jenkins prefixes workspace paths that differ by construction
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
         // Plugin banners: an artifact of which plugins this Jenkins has installed,
         // not of Jenkins' behaviour. `[Checks API] No suitable checks publisher
         // found.` appears purely because the checks plugin is present and
         // unconfigured.
-        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[[A-Za-z][A-Za-z ]*(API|Plugin)\]") then None
+        elif t = "[Checks API] No suitable checks publisher found." then None
         // Engine diagnostic wording — captured as ReportedFailureReason instead.
         elif isDiagnosticLine t then None
         else Some t
@@ -253,7 +286,12 @@ module Trace =
     /// "Sending interrupt signal to process" / "Terminated", so it is excluded
     /// ONLY when such an interrupt was actually narrated earlier in the run.
     /// Everywhere else it is ordinary user output and is compared.
-    let normaliseOutput (lines: string seq) : string list =
+    /// Canonicalise the engine's own ABSOLUTE workspace path to `${'$'}{WORKSPACE}` —
+    /// the newly compared xtrace expands engine-provided paths, and
+    /// `+ test -d /each/engine's/root` is one command with two spellings, not two
+    /// commands. Applied to every line: the same substitution an author's
+    /// `$WORKSPACE` reference would produce on either side.
+    let internal normaliseOutputInner (lines: string seq) : string list =
         // Two engine-narration shapes are recognised by CONTEXT, never by their text
         // alone, because a build can legitimately print either:
         //
@@ -289,8 +327,19 @@ module Trace =
         let isWarnBody (l: string) = l.StartsWith "Affected argument(s) used the following variable(s)"
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
-        let mutable interruptJustNarrated = false
         let mutable inStackTrace = false
+        let mutable pastFirstOutputStep = false
+
+        // Banner suppression applies only to a trace that HAS the Jenkins graph
+        // annotations giving it context. Fogell emits none — so its banner-shaped
+        // first line is ordinary output, and dropping it made identical runs
+        // falsely diverge on same-text spoofs.
+        // REAL structure is discriminated by the boundary sentence Jenkins always
+        // prints, not by any bracketed shape — a lone spoofed `[Pipeline] echo` on
+        // the Fogell side must not switch suppression on for its own trace.
+        let hasAnnotations =
+            all |> Array.exists (fun l -> clean l = "[Pipeline] Start of Pipeline")
+        let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
         [ for i in 0 .. all.Length - 1 do
@@ -302,8 +351,14 @@ module Trace =
             elif not (isFrame raw) then inStackTrace <- false
 
             let suppress =
-                (raw = "Terminated" && interruptJustNarrated)
-                || (isFrame raw && inStackTrace)
+                (isFrame raw && inStackTrace)
+                || (hasAnnotations && isGraphAnnotation raw)
+                // `dir()`'s banner, by CONTEXT: `Running in <abs path>` counts as the
+                // banner only immediately after the `[Pipeline] dir` annotation — a
+                // build echoing the same shape mid-run is compared, differing
+                // workspace paths and all.
+                || (Text.RegularExpressions.Regex.IsMatch(raw, @"^Running in (/|\$\{WORKSPACE\})")
+                    && prevRaw.StartsWith "[Pipeline] dir")
                 || (looksLikeExceptionHead raw && isFrame next)
                 || (isWarnHead raw && isWarnBody next)
                 || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
@@ -312,14 +367,94 @@ module Trace =
                 (isWarnHead raw && isWarnBody next)
                 || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
 
-            interruptJustNarrated <-
-                raw.StartsWith "Sending interrupt signal to process"
-                || raw.StartsWith "Cancelling nested steps"
+            // Header banners exist only BEFORE the first output-producing step of
+            // the whole build — once any `echo`/`sh`/`bat`/`input` annotation has
+            // appeared, every later line is build territory and banner shapes are
+            // ordinary output (consecutive ones included: a per-line context made
+            // the second of two identical spoofed lines vanish).
+            if
+                raw.StartsWith "[Pipeline] echo"
+                || raw.StartsWith "[Pipeline] sh"
+                || raw.StartsWith "[Pipeline] bat"
+                || raw.StartsWith "[Pipeline] input"
+            then
+                pastFirstOutputStep <- true
+
+            prevRaw <- raw
 
             if not suppress then
                 match normaliseLine all[i] with
-                | Some l -> yield l
+                | Some l ->
+                    if not hasAnnotations || pastFirstOutputStep || not (isPreambleBanner l) then
+                        yield l
                 | None -> () ]
+
+    /// The environment names whose ENGINE-INHERITED values are canonicalised to
+    /// `${'$'}{NAME}` in each engine's own trace. The compared xtrace expands what a
+    /// script references, and these differ between agents BY CONSTRUCTION — the
+    /// same reason the workspace path does. Curated, not blanket: replacing every
+    /// short env value would mangle unrelated output.
+    let canonicalisedEnvNames =
+        [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
+
+    let internal normaliseOutputWithInner2
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
+        (lines: string seq)
+        : string list =
+        let order rs =
+            rs
+            |> List.filter (fun ((v: string), _) -> v <> "" && v.Length >= 4)
+            |> List.sortByDescending (fun ((v: string), _) -> v.Length)
+
+        let orderedGlobal = order globalReplacements
+        let orderedTrace = order traceOnlyReplacements
+
+        let canonical (l: string) =
+            let g =
+                orderedGlobal |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+
+            // ENV values rewrite only on xtrace rows — engine-generated lines where
+            // expansions actually appear. Ordinary output keeps its literals, which
+            // is what makes the replacement injective without parsing the script:
+            // `echo /root` compares as text, `+ test -n /root` compares as the
+            // expansion it is. (A build printing its own `+ `-shaped line joins the
+            // stated mimicry residual; a script that CHANGES PS4 forfeits env
+            // canonicalisation on its custom-prefixed rows and any inherited-value
+            // difference there diverges VISIBLY — declared, fail-closed.)
+            if Text.RegularExpressions.Regex.IsMatch(g.TrimStart(), @"^\++ ") then
+                orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
+            else
+                g
+
+        normaliseOutputInner (lines |> Seq.map canonical)
+
+    let normaliseOutput (lines: string seq) : string list = normaliseOutputInner lines
+
+    /// `applyDurableShape` — the JENKINS side cannot know its own generated
+    /// durable-script ids (they exist only inside its container), so its trace
+    /// stabilises the full measured shape `@tmp/durable-<8hex>/script.sh` to
+    /// `<id>`. The FOGELL side knows its EXACT generated ids and passes them as
+    /// ordinary replacements instead, so a fogell-side spoof with a different id
+    /// stays literal — a cross-engine spoof pair therefore DIVERGES visibly
+    /// rather than collapsing to one token.
+    let normaliseOutputShaped
+        (applyDurableShape: bool)
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
+        (lines: string seq)
+        : string list =
+        let shaped (l: string) =
+            if applyDurableShape then
+                Text.RegularExpressions.Regex.Replace(l, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
+            else
+                l
+
+        normaliseOutputWithInner2 globalReplacements traceOnlyReplacements (lines |> Seq.map shaped)
+
+    let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
+        normaliseOutputWithInner2 replacements [] lines
+
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
     /// see [normaliseOutput].
@@ -348,7 +483,10 @@ module Trace =
                 looksLikeExceptionHead raw && isFrame next)
             |> Array.exists id
 
-        hasStackTrace || (all |> Array.map clean |> Array.exists isDiagnosticLine)
+        hasStackTrace
+        || (all
+            |> Array.map clean
+            |> Array.exists (fun l -> isDiagnosticLine l || isTimeoutNarration l))
 
     /// The exclusions above are part of the contract, so they are published with
     /// every receipt rather than buried in code.
@@ -358,23 +496,37 @@ module Trace =
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps, ANSI escapes, blank lines"
           "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"
-          "excluded: shell xtrace ('+ cmd') lines — provenance, not output"
+          "compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the"
+          "  trace is identical emitted output, continuations included (retires FG-002c)"
+          "compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on"
+          "  its first physical line only (measured; no re-quoting, no record terminator),"
+          "  so a mismatching line pair that becomes equal under the SAME inherited-env"
+          "  replacement list applied to BOTH sides compares as that canonical form."
+          "  Literals cancel; receipt lines stay literal; the rule can only turn a"
+          "  divergence into an equality, never hide one direction only. EVERY pair the"
+          "  rule folds is LISTED in the receipt that used it (sealed), so a canonical"
+          "  comparison is always visible in the case it decided — ordinary output that"
+          "  prints an inherited value (e.g. `printenv HOME`) folds the same way, the"
+          "  declared environment-of-necessity class the ${WORKSPACE} fold already is"
           "excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid"
           "excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed"
           "compared as a BOOLEAN, not text: whether a failure reason was reported"
           "  (applies to failure/aborted only — an unstable build is explained by its test report)"
           "  (Jenkins' wording comes from whichever plugin implements the step;"
           "   matching it verbatim would over-fit to a plugin string. Silence is the defect.)"
-          "KNOWN GAP (FG-002c): Jenkins runs `sh` under `set -x` and the trace is excluded as"
-          "  provenance — but when the traced command contains a literal newline the trace spans"
-          "  several lines and only the FIRST begins with '+ '. A continuation line is not"
-          "  distinguishable from real output (the line after a trace is USUALLY real output), so"
-          "  it is compared as output. Cases whose commands embed a newline must therefore carry"
-          "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: credential-masking narration — both engines announce it, wording differs"
+          "engine notes: printed in the receipt, never compared — the engine reporting"
+          "  on its own checks (e.g. an unavailable /proc scan), not on the build"
+          "RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is"
+          "  context-gated, emitted identically by both engines, or an exact measured"
+          "  sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like"
+          "  text is COMPARED, and tests carry look-alike rows proving it."
           "excluded: compile/evaluation rejection narration — Jenkins refuses an invalid"
           "  pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with"
           "  the same workspace, and comparing a compiler's error layout is over-fitting"
-          "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
-          "  counted as a reported reason instead, since it explains the engine, not the step"
+          "compared: timeout narration — both engines emit Jenkins' wording (set-to-expire"
+          "  banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the"
+          "  sentences ALSO count as the abort's reported reason"
+          "excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as"
+          "  the reported reason; the wording comes from whichever plugin implements the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

@@ -158,7 +158,14 @@ module Secrets =
     /// Replace every registered form with `****`.
     let mask (bindings: SecretBinding list) (text: string) =
         bindings
-        |> List.collect (fun b -> registeredForms b.Value |> List.map snd)
+        |> List.collect (fun b ->
+            // A file() credential's BOUND VALUE is the path — Jenkins masks it
+            // (`+ test -r ****` on the trace), so the path is a maskable form here
+            // too, alongside the content and its encodings.
+            let pathForms =
+                if b.ValueVariableCarriesPath && b.FilePath <> "" then [ b.FilePath ] else []
+
+            (registeredForms b.Value |> List.map snd) @ pathForms)
         |> List.sortByDescending String.length
         |> List.fold (fun (acc: string) form -> acc.Replace(form, "****")) text
 

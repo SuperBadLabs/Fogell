@@ -17,7 +17,10 @@ pipeline {
             }
             steps {
                 withEnv(['PATH+TOOLS=/opt/tools/bin']) {
-                    sh 'echo "$PATH" | tr ":" "\\n" | head -3 > head.txt'
+                    // `printenv` keeps the machine-specific tail OUT of the xtrace:
+                    // `+ echo $EXPANDED` would put each agent's base PATH into the
+                    // compared trace, which no engine controls.
+                    sh 'printenv PATH | tr ":" "\\n" | head -3 > head.txt'
                 }
             }
         }

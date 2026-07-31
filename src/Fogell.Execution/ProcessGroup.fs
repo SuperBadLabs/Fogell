@@ -34,7 +34,16 @@ type Termination =
       Escalated: bool
       /// Descendants still alive after the group was reaped. Should be zero:
       /// Jenkins leaves `nohup`ed children running and we promised to beat that.
+      /// -1 means the check itself was UNAVAILABLE (the /proc read failed) — an
+      /// unknown is reported as unknown, never as a clean zero.
       LeakedProcesses: int }
+
+/// Why [waitForProcessExit] returned — decided ONCE, when the wait ends.
+type internal WaitEnd =
+    | Waiting
+    | Exited
+    | Expired
+    | Interrupted
 
 type RunResult =
     { Outcome: Outcome
@@ -42,7 +51,15 @@ type RunResult =
       Stderr: string
       DurationMs: int64
       ProcessGroupId: int option
-      Termination: Termination option }
+      Termination: Termination option
+      /// A cleanup step that FAILED — e.g. the secret-bearing shebang script that
+      /// could not be deleted. Silence here would leave the file on disk while the
+      /// security contract claims cleanup is guaranteed; the caller surfaces this
+      /// as an engine note.
+      CleanupFailure: string option
+      /// The generated durable-script id for THIS run, when a shebang script was
+      /// materialised — the caller canonicalises exactly this id, never a shape.
+      DurableId: string option }
 
 type RunRequest =
     { Command: string
@@ -68,7 +85,14 @@ type RunRequest =
       /// mechanism for both, and a script's trap handler cannot tell them apart.
       /// The outcome is [Cancelled], not [TimedOut]: the step did not run out of
       /// time, so reporting a timeout would misattribute the cause.
-      Interrupt: (unit -> bool) option }
+      Interrupt: (unit -> bool) option
+      /// When BOTH the deadline and an interrupt are observable in the same poll,
+      /// this decides which event was actually EARLIER — the caller owns the
+      /// timestamps (its clock stamps the sibling failure and its deadline), so the
+      /// tie cannot be broken here. None means deadline-first, the plain reading.
+      InterruptBeatsDeadline: (unit -> bool) option
+      /// See [StepRequest.WorkspaceRoot] — where the @tmp scaffolding roots.
+      WorkspaceRoot: string option }
 
     static member create(command, workingDirectory) =
         { Command = command
@@ -78,12 +102,21 @@ type RunRequest =
           GraceMs = 2_000
           OnLine = None
           ReapGroup = true
-          Interrupt = None }
+          Interrupt = None
+          InterruptBeatsDeadline = None
+          WorkspaceRoot = None }
 
 module ProcessGroup =
 
     /// Count processes still in the group. Reads /proc directly rather than
     /// shelling out, so the check cannot itself spawn something.
+    /// -1 means UNKNOWN: the /proc read itself failed. FG-103 — returning 0 there
+    /// made the leak check a gate that could not fail: a broken /proc reported
+    /// "nothing survived" while FG-032's headline claim rested on this number, and
+    /// both unit tests asserting 0 passed against a completely dead reader.
+    /// Unknown fails CLOSED everywhere downstream: the group is treated as still
+    /// populated, and the diagnostic says the check was unavailable rather than
+    /// inventing a clean bill.
     let private survivorsIn (pgid: int) : int =
         try
             IO.Directory.GetDirectories "/proc"
@@ -97,7 +130,7 @@ module ProcessGroup =
                 | None -> false)
             |> Array.length
         with _ ->
-            0
+            -1
 
     /// Wait until the group is EMPTY, up to `budgetMs`.
     ///
@@ -161,8 +194,104 @@ module ProcessGroup =
         psi.ArgumentList.Add "--wait"
         psi.ArgumentList.Add "/bin/sh"
         psi.ArgumentList.Add "-c"
-        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -c \"$FOGELL_SCRIPT\""
-        psi.Environment["FOGELL_SCRIPT"] <- request.Command
+        // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
+        // trace an EMITTED, COMPARED artifact on both engines (retiring the last
+        // wording-only suppression and FG-002c's continuation gap with it), and
+        // `-e` is the errexit semantics the receipts were already measured against.
+        // `2>&1` merges the streams IN THE SHELL: the trace goes to stderr, and
+        // .NET's two async pipe readers deliver cross-stream events in racy order —
+        // output lines overtook their own trace. One pipe is kernel-ordered, and it
+        // is also exactly what Jenkins' console is. The pgid marker stays on the
+        // OUTER stderr, printed before anything is redirected.
+        //
+        // A SHEBANG script is the exception, as it is on Jenkins: durable-task
+        // executes the named interpreter directly and injects no flags, so a
+        // `#!/bin/bash` script runs under bash untraced. The script goes to a file
+        // (its interpreter line only works from one) and is executed as itself.
+        // Owner-only from the first byte — the script text can carry a rendered
+        // credential, and a 0644 window in shared /tmp is a disclosure. Deletion is
+        // guaranteed by the disposable below, exception paths included.
+        let mutable mintedDurableId: string option = None
+
+        let shebangFile =
+            if true then // EVERY script materialises — see the wrapper comment
+                // In the workspace's `@tmp` SIBLING — Jenkins' own durable-script
+                // location: executable where builds execute (hardened hosts mount
+                // /tmp noexec) and already excluded from the workspace hash as
+                // scaffolding, so no user-creatable basename is ever excluded.
+                // `script.sh` inside a per-step directory under `@tmp` — the same
+                // OBSERVABLE identity durable-task gives a script (`$0` basename
+                // `script.sh`), so basename-dependent scripts take the same path on
+                // both engines; the random parent keeps parallel steps apart and
+                // `@tmp` keeps it out of the workspace hash.
+                // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh,
+                // rooted at the WORKSPACE even inside dir() — the full $0 is observable
+                let root =
+                    let r = defaultArg request.WorkspaceRoot request.WorkingDirectory
+                    // trim only REDUNDANT separators: "/" must stay the filesystem
+                    // root, not become "" and turn the whole path relative
+                    if r.Length > 1 then r.TrimEnd '/' else r
+                let hex = Guid.NewGuid().ToString("N").Substring(0, 8)
+                mintedDurableId <- Some hex
+                let tmpDir = IO.Path.Combine(root + "@tmp", $"durable-{hex}")
+
+                IO.Directory.CreateDirectory tmpDir |> ignore
+                let f = IO.Path.Combine(tmpDir, "script.sh")
+
+                // the EXECUTE bit follows durable-task: only a shebang script gets
+                // it (only a shebang script is exec'd) — an ordinary script runs
+                // under `sh -xe` and a `[ -x \"$0\" ]` probe must say what Jenkins says
+                let mode =
+                    if request.Command.StartsWith "#!" then
+                        IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                    else
+                        IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite
+
+                try
+                    use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
+                    use writer = new IO.StreamWriter(stream)
+                    writer.Write request.Command
+                    Some f
+                with e ->
+                    // a partial secret-bearing file must not outlive a failed write —
+                    // the cleanup disposable is registered only after creation succeeds
+                    (try IO.File.Delete f with _ -> ())
+                    raise e
+            else
+                None
+
+        // Deletion is attempted on the normal path with the failure CAPTURED (it
+        // becomes an engine note); the disposable is the exception-path backstop,
+        // where the run is already failing loudly.
+        let mutable cleanupFailure: string option = None
+
+        let deleteShebang (f: string) =
+            try
+                if IO.File.Exists f then IO.File.Delete f
+                let d = IO.Path.GetDirectoryName f
+                if IO.Directory.Exists d then IO.Directory.Delete(d, false)
+            with e ->
+                cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}"
+
+        use _cleanupShebang =
+            { new IDisposable with
+                member _.Dispose() = shebangFile |> Option.iter deleteShebang }
+
+        // The payload travels as a POSITIONAL argument (`$1`), not an environment
+        // variable: reserving any env name collided with a pipeline exporting it —
+        // Jenkins passes such a variable through to the script untouched, and so
+        // does this now.
+        // EVERY script materialises to the durable path and runs as durable-task
+        // runs it: a shebang script executes itself, everything else runs under
+        // `sh -xe <path>` — so `$0` is the script path on both engines, not
+        // `/bin/sh` here and `script.sh` there. The path travels positionally.
+        (match request.Command.StartsWith "#!" with
+         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
+         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\" 2>&1")
+
+        psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
+        psi.ArgumentList.Add(defaultArg shebangFile request.Command)
+
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true
@@ -170,6 +299,8 @@ module ProcessGroup =
 
         for k, v in request.Environment do
             psi.Environment[k] <- v
+
+
 
         use proc = new Process()
         proc.StartInfo <- psi
@@ -226,22 +357,56 @@ module ProcessGroup =
             | Some p -> (try p () with _ -> false)
             | None -> false
 
+        // The CAUSE is decided once, at the moment the wait ends — re-sampling
+        // `interrupted()` afterwards raced a sibling failing just after a deadline
+        // expiry, flipping both the narration and the reported outcome.
         let waitForProcessExit (budgetMs: int64 option) =
-            let deadline =
-                budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
-
             let mutable exited = proc.HasExited
 
             let expired () =
-                match deadline with
-                | Some(clock, ms) -> clock.ElapsedMilliseconds >= ms
+                // measured against `sw`, which started at the TOP of this run —
+                // a clock created here would exclude script creation, launch, and
+                // the up-to-two-second pgid wait, quietly extending every budget
+                match budgetMs with
+                | Some ms -> sw.ElapsedMilliseconds >= ms
                 | None -> false
 
-            while not exited && not (expired ()) && not (interrupted ()) do
-                Thread.Sleep 10
-                exited <- proc.HasExited
+            let mutable cause = if exited then WaitEnd.Exited else WaitEnd.Waiting
 
-            exited
+            while cause = WaitEnd.Waiting do
+                if proc.HasExited then
+                    cause <- WaitEnd.Exited
+                else
+                    match expired (), interrupted () with
+                    | false, false -> Thread.Sleep 10
+                    | false, true ->
+                        // the LOCAL budget clock starts after launch overhead, so it
+                        // can lag the walker's absolute deadline — an interrupt seen
+                        // first here may still be the LATER event. The caller's
+                        // ordering is authoritative in both directions.
+                        let interruptFirst =
+                            match request.InterruptBeatsDeadline with
+                            | Some beats -> (try beats () with _ -> true)
+                            | None -> true
+
+                        cause <-
+                            if interruptFirst || request.TimeoutMs.IsNone then
+                                WaitEnd.Interrupted
+                            else
+                                WaitEnd.Expired
+                    | true, _ ->
+                        // EVERY observed expiry consults the caller's timestamps, not
+                        // only a both-at-once tie: the sibling STAMP is written before
+                        // its cancel signal fires, so the interrupt predicate can lag
+                        // an event that was genuinely earlier.
+                        let interruptFirst =
+                            match request.InterruptBeatsDeadline with
+                            | Some beats -> (try beats () with _ -> false)
+                            | None -> false
+
+                        cause <- if interruptFirst then WaitEnd.Interrupted else WaitEnd.Expired
+
+            cause
 
         let flushReaders (budgetMs: int) =
             // Best-effort: if a daemon holds the pipe this returns on the budget
@@ -254,7 +419,8 @@ module ProcessGroup =
                 Thread.Sleep 40
                 settled <- (stdout.Length + stderr.Length) = before
 
-        let finished = waitForProcessExit request.TimeoutMs
+        let waitEnd = waitForProcessExit request.TimeoutMs
+        let finished = waitEnd = WaitEnd.Exited
 
         let outcome, termination =
             if finished then
@@ -285,17 +451,52 @@ module ProcessGroup =
 
                 outcome, t
             else
+                // Jenkins' interrupt narration, in its words and its order — measured
+                // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
+                // engine's version being suppressed. `Terminated` then arrives from
+                // the shell itself on both engines. The cause is the SNAPSHOT taken
+                // when the wait ended, never a fresh sample.
+                if waitEnd = WaitEnd.Expired then
+                    request.OnLine |> Option.iter (fun f -> f "Cancelling nested steps due to timeout")
+
+                request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
+
+                // Drain already-queued reader callbacks BEFORE the snapshot: the
+                // async readers can lag the script, and a user-printed `Terminated`
+                // still in flight would land after the snapshot, read as post-signal
+                // shell narration, and wrongly suppress the synthetic line below.
+                flushReaders 300
+                let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
+
+                // On Jenkins the wrapper shell survives to print `Terminated` for its
+                // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
+                // usually left alive to say it — the engine says it, in the same
+                // position. UNLESS the script trapped the signal and said it itself:
+                // synthesising unconditionally doubled the line for a trapping shell.
+                let shellSaidIt =
+                    let afterSignal =
+                        (lock stdout (fun () -> stdout.ToString())).Substring outputBeforeSignal.Length
+
+                    afterSignal.Replace("\r\n", "\n").Split '\n'
+                    |> Array.exists (fun l -> l.Trim() = "Terminated")
+
+                if not shellSaidIt then
+                    request.OnLine |> Option.iter (fun f -> f "Terminated")
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
-                (if interrupted () then Cancelled else TimedOut), t
+                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
 
         sw.Stop()
+
+        shebangFile |> Option.iter deleteShebang
 
         { Outcome = outcome
           Stdout = stdout.ToString()
           Stderr = stderr.ToString()
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid
-          Termination = termination }
+          Termination = termination
+          CleanupFailure = cleanupFailure
+          DurableId = mintedDurableId }
