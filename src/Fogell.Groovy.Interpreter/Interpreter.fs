@@ -234,6 +234,12 @@ module Interpreter =
         | "-", VInt x, VInt y -> VInt(x - y)
         | "*", VInt x, VInt y -> VInt(x * y)
         | "/", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
+        | "/", VInt x, VInt y when x % y = 0L -> VInt(x / y)
+        | "/", VInt _, VInt _ when st.StrictVars ->
+            // Groovy's `/` is DECIMAL: `1 / 2` renders `0.5`. This interpreter has no
+            // decimal value, so a non-integral quotient must refuse — truncating to
+            // VInt 0 sent `test 0 = 0.5` to a shell where Jenkins sends the truth.
+            raise (Stop(Unsupported "non-integral division; Groovy decimals are not modelled"))
         | "/", VInt x, VInt y -> VInt(x / y)
         | "%", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
         | "%", VInt x, VInt y -> VInt(x % y)
@@ -313,9 +319,14 @@ module Interpreter =
                  | Error d -> raise (Stop(Denied d))
                  | Ok _ -> evalBuiltin st env name r args trailing)
         | MethodCall(recv, name) ->
+            // Same order as the safe-call arm: receiver, then arguments — their side
+            // effects performed and kept — then the sandbox, then dispatch.
+            let r = evalExpr st env recv
+            let args = positionalLazy.Value
+
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
-            | Ok _ -> evalBuiltin st env name (evalExpr st env recv) positionalLazy.Value trailing
+            | Ok _ -> evalBuiltin st env name r args trailing
         | FreeCall name ->
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
@@ -401,6 +412,10 @@ module Interpreter =
         | "toInteger", VStr s, _ ->
             match System.Int64.TryParse s with
             | true, i -> VInt i
+            | _ when st.StrictVars ->
+                // Groovy throws NumberFormatException here — a failed conversion is
+                // a FAULT, not the value null.
+                raise (Stop(Thrown(VStr $"NumberFormatException: For input string: \"{s}\"")))
             | _ -> VNull
         | "trim", VStr s, _ -> VStr(s.Trim())
         | "toUpperCase", VStr s, _ -> VStr(s.ToUpperInvariant())

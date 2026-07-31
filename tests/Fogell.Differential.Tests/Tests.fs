@@ -432,6 +432,16 @@ let stringModel =
                   "t=it's } fine"
                   "triple-quoted content survives the boundary scan"
 
+              // Division stays exact or refuses: Groovy's `/` is decimal, and this
+              // interpreter has no decimal value — truncation is a wrong answer.
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "f=${1 / 2}" ] [] [] [] [] []) "m" "f=${1 / 2}" |> ignore)
+                  "a non-integral quotient refuses"
+
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "n=${'nope'.toInteger()}" ] [] [] [] [] []) "m" "n=${'nope'.toInteger()}" |> ignore)
+                  "a failed conversion is a fault, not null"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and
