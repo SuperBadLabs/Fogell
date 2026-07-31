@@ -161,11 +161,18 @@ module Ast =
             | SFunc(_, _, b) -> freeCalls b)
         |> Set.unionMany
 
-    /// Variable names READ but bound nowhere in the script — the names Groovy's
-    /// property lookup would fail on. `bound` seeds the environment (a GString
-    /// evaluation passes its known variables plus `env`). Scoping is sequential:
-    /// a `def` binds for the statements after it, loop variables and closure
-    /// parameters bind their bodies, and a closure without parameters binds `it`.
+    /// Variable names Groovy MUST read on every evaluation path — the names its
+    /// property lookup is guaranteed to fail on when unbound. `bound` seeds the
+    /// environment (a GString evaluation passes its known variables plus `env`).
+    /// Scoping is sequential: a `def` binds for the statements after it, loop
+    /// variables and closure parameters bind their bodies, and a closure without
+    /// parameters binds `it`.
+    ///
+    /// LAZY positions contribute only what EVERY branch reads. Groovy evaluates
+    /// `?:`/`&&`/`||`/`if` lazily, so `${true ? 'ok' : MISSING}` never looks
+    /// MISSING up and runs — flagging it would fail a build Jenkins accepts. The
+    /// price of the under-approximation is stated where the caller raises: a
+    /// missing name on the branch actually TAKEN at runtime is not caught here.
     let freeVars (bound: Set<string>) (stmts: Stmt list) : Set<string> =
         let rec ofExpr (b: Set<string>) e =
             match e with
@@ -173,9 +180,13 @@ module Ast =
             | EProp(t, _) -> ofExpr b t
             | EIndex(t, i) -> Set.union (ofExpr b t) (ofExpr b i)
             | EUnary(_, x) -> ofExpr b x
+            // `&&` and `||` evaluate their right side conditionally
+            | EBinary(("&&" | "||"), l, _) -> ofExpr b l
             | EBinary(_, l, r) -> Set.union (ofExpr b l) (ofExpr b r)
-            | ETernary(c, x, y) -> Set.unionMany [ ofExpr b c; ofExpr b x; ofExpr b y ]
-            | EElvis(x, y) -> Set.union (ofExpr b x) (ofExpr b y)
+            // condition always; arms only where BOTH would read the name
+            | ETernary(c, x, y) -> Set.union (ofExpr b c) (Set.intersect (ofExpr b x) (ofExpr b y))
+            // `a ?: b` always evaluates a, only conditionally b
+            | EElvis(x, _) -> ofExpr b x
             | EGString parts ->
                 parts
                 |> List.map (function
@@ -235,10 +246,13 @@ module Ast =
                         // already exist, so it stays a read.
                         | SAssign(EVar n, v) -> Set.union acc (ofExpr b v), Set.add n b
                         | SAssign(t, v) -> Set.unionMany [ acc; ofExpr b t; ofExpr b v ], b
-                        | SIf(c, x, y) -> Set.unionMany [ acc; ofExpr b c; ofStmts b x; ofStmts b y ], b
-                        | SForIn(var, src, body) ->
-                            Set.unionMany [ acc; ofExpr b src; ofStmts (Set.add var b) body ], b
-                        | SWhile(c, body) -> Set.unionMany [ acc; ofExpr b c; ofStmts b body ], b
+                        // branches, loop bodies: lazily reached, so only what BOTH
+                        // arms must read counts, and a body that may run zero times
+                        // contributes nothing
+                        | SIf(c, x, y) ->
+                            Set.unionMany [ acc; ofExpr b c; Set.intersect (ofStmts b x) (ofStmts b y) ], b
+                        | SForIn(_, src, _) -> Set.union acc (ofExpr b src), b
+                        | SWhile(c, _) -> Set.union acc (ofExpr b c), b
                         | SReturn(Some e) -> Set.union acc (ofExpr b e), b
                         | SReturn None -> acc, b
                         | SBreak

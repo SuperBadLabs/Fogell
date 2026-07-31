@@ -222,6 +222,15 @@ let stringModel =
                   "OSVAL"
                   "inherited environment reaches expression evaluation"
 
+              // LAZY branches do not raise: Groovy never evaluates the untaken arm,
+              // so a missing name there must not fail a build Jenkins accepts. The
+              // residual is stated in Ast.freeVars — a missing name on the arm TAKEN
+              // at runtime is not statically caught.
+              for why, raw, expected in
+                  [ "untaken ternary arm may be missing", "${true ? 'ok' : NOPE}", "ok"
+                    "short-circuited operand may be missing", "${false && NOPE}", "false" ] do
+                  Expect.equal (GString.render env (step [ "m", raw ] [] [] [] [] []) "m" raw) expected why
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

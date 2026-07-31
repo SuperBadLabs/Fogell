@@ -213,7 +213,13 @@
           (if (empty? ls)
             out
             (let [[spans mode' depth' dollars' holes' code?] (scan-line (first ls) mode depth dollars holes)]
-              (recur (rest ls) mode' depth' dollars' holes' (conj out {:spans spans :code? code?}))))))
+              ;; :continues? — the line STARTED inside a block comment, so even a blank
+              ;; line there is comment interior. Without it, a blank line inside one
+              ;; multiline (* ... *) produced no spans, read as "not a comment", and
+              ;; broke the claim's block in half — rejecting a receipt cited in the
+              ;; same syntactic comment as its claim.
+              (recur (rest ls) mode' depth' dollars' holes'
+                     (conj out {:spans spans :code? code? :continues? (= mode :block)}))))))
 
       ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
       ;; claims (above) does not make them block members: two unrelated code lines that
@@ -222,7 +228,7 @@
       ;; bypass the block logic exists to prevent, re-entering through the new door.
       ;; Derived from the scan rather than a regex, so `(* ... *)` on its own line counts
       ;; as a full comment exactly as `//` does.
-      full-comment? (fn [s] (and (seq (:spans s)) (not (:code? s))))
+      full-comment? (fn [s] (and (or (seq (:spans s)) (:continues? s)) (not (:code? s))))
 
       ;; One pass. These used to be two near-identical loops, and they had already
       ;; drifted — the unproven counter compared WHOLE LINES where the finder compared

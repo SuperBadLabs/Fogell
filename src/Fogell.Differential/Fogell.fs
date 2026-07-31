@@ -398,23 +398,25 @@ module FogellSide =
                 // `archiveArtifacts artifacts: "${TOKEN}/out"` interpolates a secret
                 // through an argument that is neither.
                 //
-                // The condition is the argument's KIND, not whether rendering changed
-                // the text: a render can be text-identical and still be a GString (a
-                // credential whose value is literally `$TOKEN`, echoed as "$TOKEN"),
-                // and "changed" would stay silent on it. Jenkins' own warning names
-                // the mechanism — "using Groovy String interpolation" — so quoting,
-                // which decides the mechanism, decides the warning. Single-quoted
-                // arguments never warn; that is measured, not assumed
+                // The condition is the argument being INTERPOLATING — Jenkins' own
+                // warning names the mechanism, "using Groovy String interpolation",
+                // and only that mechanism triggers it. Not "the render changed": a
+                // render can be text-identical and still be a GString (a credential
+                // whose value is literally `$TOKEN`, echoed as "$TOKEN"). Not
+                // "anything non-literal" either: `sh script: TOKEN` is ordinary
+                // Groovy CODE yielding a string — no interpolation happened, and
+                // warning there would flag the pattern the advice tells authors to
+                // use instead. Single-quoted never warns; measured
                 // (`sh-secret-interpolation-warning`: the single-quoted row is silent).
                 let interpolatedTexts =
                     [ match script with
-                      | Some rendered when GString.kindOf step scriptKey <> Literal -> rendered
+                      | Some rendered when GString.kindOf step scriptKey = Interpolating -> rendered
                       | _ -> ()
 
                       for k, rendered in renderedNamed do
                           // scriptKey is already covered by `script` above; a second
                           // report for the same argument would warn twice per step.
-                          if k <> scriptKey && GString.kindOf step k <> Literal then rendered ]
+                          if k <> scriptKey && GString.kindOf step k = Interpolating then rendered ]
 
                 let leaked =
                     ctx.Secrets
