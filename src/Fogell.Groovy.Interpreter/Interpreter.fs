@@ -101,6 +101,28 @@ module Interpreter =
         if st.Steps > st.Budget.MaxSteps then
             raise (Stop(BudgetExhausted $"evaluation exceeded {st.Budget.MaxSteps} steps"))
 
+    /// Method names the table dispatches WITHOUT reading `args` — zero-argument in
+    /// Groovy too. Strict mode rejects a call that passes any: `'abc'.length(1)` has
+    /// no such signature and Groovy throws, while a table that ignores args returned
+    /// 3 and let a wrong expression reach a command line.
+    let private zeroArgBuiltins =
+        set
+            [ "length"
+              "size"
+              "trim"
+              "toUpperCase"
+              "toLowerCase"
+              "toString"
+              "toInteger"
+              "reverse"
+              "first"
+              "last"
+              "isEmpty"
+              "keySet"
+              "values"
+              "readLines" ]
+
+
     let rec private evalExpr (st: State) (env: Env) (e: Expr) : Value =
         tick st
 
@@ -329,6 +351,9 @@ module Interpreter =
                 | None -> evalBuiltin st env b VNull positionalLazy.Value trailing
 
     and private evalBuiltin (st: State) (env: Env) (name: string) (recv: Value) (args: Value list) (trailing: Closure option) : Value =
+        if st.StrictVars && Set.contains name zeroArgBuiltins && not (List.isEmpty args) then
+            raise (Stop(Unsupported $"method '{name}' does not accept {List.length args} argument(s)"))
+
         let applyClosure (c: Closure) (closureEnv: Env) (item: Value) =
             st.Depth <- st.Depth + 1
 

@@ -114,7 +114,15 @@ module GString =
         // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
         let evalExpression (source: string) =
             match Fogell.Groovy.Parser.Parser.parse source with
-            | Result.Error _ -> None
+            | Result.Error why ->
+                if strict then
+                    // Valid Groovy this parser cannot parse must REFUSE, not fall back
+                    // to the raw placeholder: `"${'out.txt' as String}"` searched for a
+                    // file literally named ${...} and stayed green while Jenkins
+                    // archives out.txt. A modelling limit, named — never silent text.
+                    raise (UnsupportedExpression $"unparsable expression '{source}': {why}")
+
+                None
             | Result.Ok script ->
                 // The INHERITED process environment participates, exactly as the
                 // simple-name fast path's fallback does. MEASURED (receipt `gstring-inherited-env-resolves`, 2.568.1):
@@ -253,6 +261,17 @@ module GString =
                 if quote <> '\000' then
                     if c = '\\' then i <- i + 1
                     elif c = quote then quote <- '\000'
+                elif
+                    (c = '\'' || c = '"')
+                    && i + 2 < text.Length
+                    && text[i + 1] = c
+                    && text[i + 2] = c
+                then
+                    // A TRIPLE-quoted Groovy literal: an interior quote is content, so
+                    // toggling per character left the scanner outside its string at
+                    // `it's` and a content brace terminated the placeholder early.
+                    let close = text.IndexOf(System.String(c, 3), i + 3)
+                    i <- if close < 0 then text.Length else close + 2
                 elif c = '\'' || c = '"' then
                     quote <- c
                 elif c = '/' && i + 1 < text.Length && text[i + 1] = '*' then
@@ -473,7 +492,10 @@ module GString =
         (known: Map<string, string>)
         (value: string)
         : string =
-        binding.Transact(fun current publish -> interpolateCore false known current publish advise value)
+        // STRICT: a withEnv entry is a GString evaluated BEFORE the step is invoked,
+        // so `withEnv(["T=$MISSING"])` fails on Jenkins exactly as a step argument
+        // does — erasing the name to "" would run a body Jenkins refuses.
+        binding.Transact(fun current publish -> interpolateCore true known current publish advise value)
 
     /// Stateless render — each call gets a fresh, discarded binding. For contexts
     /// where no build-scoped Binding exists (and for the acceptance matrix's

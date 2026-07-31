@@ -409,6 +409,29 @@ let stringModel =
                   "sp=PRODUCTION"
                   "safe call on a value dispatches"
 
+              // Strict rendering refuses, by name, everything it cannot faithfully
+              // evaluate: an argument to a zero-argument method, valid Groovy the
+              // bounded parser cannot parse, and a withEnv entry naming nothing.
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "a=${'abc'?.length(1)}" ] [] [] [] [] []) "m" "a=${'abc'?.length(1)}" |> ignore)
+                  "an argument to a zero-arg method refuses"
+
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "c=${'out.txt' as String}" ] [] [] [] [] []) "m" "c=${'out.txt' as String}" |> ignore)
+                  "unparsable-but-valid Groovy refuses rather than emitting raw text"
+
+              Expect.throws
+                  (fun () -> GString.interpolateInto (GString.ScriptBinding()) ignore env "T=$NOPE" |> ignore)
+                  "a withEnv entry naming nothing fails like any GString"
+
+              // A triple-quoted literal's interior apostrophe and brace are CONTENT.
+              let tripleRaw = "t=${'''it's } fine'''}"
+
+              Expect.equal
+                  (GString.render env (step [ "m", tripleRaw ] [] [] [] [] []) "m" tripleRaw)
+                  "t=it's } fine"
+                  "triple-quoted content survives the boundary scan"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and
