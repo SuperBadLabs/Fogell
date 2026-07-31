@@ -90,10 +90,48 @@ let main argv =
         // cross-engine literal collision diverges visibly. (The residual — a script
         // that both references $NAME and prints the other engine's literal value —
         // requires deliberate construction and is accepted, stated here.)
-        let replacementsFor (script: string) =
+        // Comments cannot gate canonicalisation: `// available as $HOME` above a
+        // `printenv HOME` step enabled a rewrite of genuinely observed values.
+        // Only executable text counts, so comments are stripped first — a small
+        // scanner honouring single/double quotes, not a regex.
+        let stripComments (text: string) =
+            let sb = System.Text.StringBuilder()
+            let mutable i = 0
+            let mutable quote = '\000'
+
+            while i < text.Length do
+                let c = text[i]
+
+                if quote <> '\000' then
+                    if c = '\\' && i + 1 < text.Length then
+                        sb.Append(c).Append(text[i + 1]) |> ignore
+                        i <- i + 2
+                    else
+                        if c = quote then quote <- '\000'
+                        sb.Append c |> ignore
+                        i <- i + 1
+                elif c = '\'' || c = '"' then
+                    quote <- c
+                    sb.Append c |> ignore
+                    i <- i + 1
+                elif c = '/' && i + 1 < text.Length && text[i + 1] = '/' then
+                    while i < text.Length && text[i] <> '\n' do
+                        i <- i + 1
+                elif c = '/' && i + 1 < text.Length && text[i + 1] = '*' then
+                    let close = text.IndexOf("*/", i + 2)
+                    i <- if close < 0 then text.Length else close + 2
+                else
+                    sb.Append c |> ignore
+                    i <- i + 1
+
+            sb.ToString()
+
+        let replacementsFor (rawScript: string) =
             if not envCanonicalisationEnabled then
                 []
             else
+
+            let script = stripComments rawScript
 
             Fogell.Differential.Trace.canonicalisedEnvNames
             |> List.filter (fun name ->
