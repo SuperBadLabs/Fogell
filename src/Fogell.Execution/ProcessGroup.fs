@@ -461,6 +461,11 @@ module ProcessGroup =
 
                 request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
 
+                // Drain already-queued reader callbacks BEFORE the snapshot: the
+                // async readers can lag the script, and a user-printed `Terminated`
+                // still in flight would land after the snapshot, read as post-signal
+                // shell narration, and wrongly suppress the synthetic line below.
+                flushReaders 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
