@@ -331,16 +331,13 @@ module FogellSide =
                 // The argument and the KEY it arrived under travel together. `render`
                 // needs the key to ask what quoting the source used, and deriving the
                 // two separately is what let `sh` drift onto the wrong rule below.
-                let rawScript, scriptKey =
+                let scriptKey =
                     match step.Positional with
-                    | s :: _ -> Some s, "#0"
+                    | _ :: _ -> "#0"
                     | [] ->
-                        match
-                            step.Named
-                            |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some(v, k) else None)
-                        with
-                        | Some(v, k) -> Some v, k
-                        | None -> None, "#0"
+                        step.Named
+                        |> List.tryPick (fun (k, _) -> if k = "script" || k = "message" then Some k else None)
+                        |> Option.defaultValue "#0"
 
                 // FG-100. Groovy expands a GString BEFORE the step is invoked — `sh`
                 // included. This code previously exempted shell steps, reasoning that
@@ -361,33 +358,31 @@ module FogellSide =
                 //
                 // Escaping is not lost: a Literal argument renders to itself, and an
                 // escaped dollar emits a bare `$` for the shell — rows 3 and 4.
-                let script =
-                    rawScript
-                    |> Option.map (fun raw ->
-                        GString.renderWith scriptBinding (envForWith ctx.EnvOverlay stage |> Map.ofList) step scriptKey raw)
-
-                // Every named argument, through the same model. `rawScript` only ever
-                // picks up `script:`/`message:`, so the NAMED form of a publishing step
-                // kept its placeholder while the positional form was rendered:
-                // `archiveArtifacts "${DIR}/**"` resolved but
-                // `archiveArtifacts artifacts: "${DIR}/**"` did not — and it fails
-                // QUIETLY, as "no artifacts matched" rather than an error naming a
-                // literal `${DIR}`. Same for `junit testResults:`.
                 //
-                // Literal arguments still render to themselves, so a single-quoted glob
-                // is untouched. That matters here: globs are full of characters a naive
-                // pre-expansion would eat.
-                let renderedNamed =
-                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+                // Arguments render in SOURCE order — positional first, then the named
+                // list as written — because rendering is now EVALUATION and Groovy
+                // evaluates call arguments left to right. Rendering the script first
+                // regardless of position broke
+                // `sh label: "${x = 'ok'; x}", script: "echo $x"`: Jenkins binds x
+                // from `label` before `script` reads it; Fogell raised
+                // MissingProperty. The script value derives from the one rendering
+                // pass rather than a second call — a placeholder's side effects run
+                // once (see the increment test).
+                let renderEnv = envForWith ctx.EnvOverlay stage |> Map.ofList
 
+                let renderedPositional =
+                    match step.Positional with
+                    | s :: _ -> Some(GString.renderWith scriptBinding renderEnv step "#0" s)
+                    | [] -> None
+
+                let renderedNamed =
                     step.Named
-                    |> List.map (fun (k, v) ->
-                        // The script argument was ALREADY rendered above — rendering it
-                        // again would run a placeholder's side effects twice, so
-                        // `sh script: "echo ${x = x + 1; x}"` would leave x advanced by
-                        // TWO for later steps where Jenkins evaluates the argument once.
-                        if k = scriptKey then k, defaultArg script v
-                        else k, GString.renderWith scriptBinding env step k v)
+                    |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding renderEnv step k v)
+
+                let script =
+                    match renderedPositional with
+                    | Some r -> Some r
+                    | None -> renderedNamed |> List.tryPick (fun (k, v) -> if k = scriptKey then Some v else None)
 
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.

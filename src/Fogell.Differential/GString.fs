@@ -202,6 +202,21 @@ module GString =
                     elif c = quote then quote <- '\000'
                 elif c = '\'' || c = '"' then
                     quote <- c
+                elif c = '/' && i + 1 < text.Length && text[i + 1] = '*' then
+                    // A Groovy BLOCK COMMENT inside the placeholder. Its braces are
+                    // text: `${1 /* } */ + 1}` closes at the FINAL brace and Jenkins
+                    // evaluates the whole expression to 2 (receipt
+                    // `gstring-comment-in-placeholder`). Before this branch, the
+                    // comment's `}` closed the placeholder, `1 /*` went to the parser,
+                    // and the malformed text was passed through to the shell. Checked
+                    // before the slashy rule: the lexer gives comments precedence.
+                    let close = text.IndexOf("*/", i + 2)
+                    i <- if close < 0 then text.Length else close + 1
+                elif c = '/' && i + 1 < text.Length && text[i + 1] = '/' then
+                    // A line comment runs to the end of the line; in a single-line
+                    // GString that is the end of the TEXT, so the placeholder cannot
+                    // close and the caller's -1 path emits it raw.
+                    i <- text.Length
                 elif c = '/' && slashOpensLiteral text i then
                     // `/` opens a SLASHY string — `${/}/}` holds a literal whose
                     // `}` is content — but it is also DIVISION. Groovy disambiguates

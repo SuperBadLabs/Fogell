@@ -206,7 +206,9 @@ let stringModel =
                     "an assignment BINDS for the statements after it",
                       step [ "m", "${x = 'ok'; x}" ] [] [] [] [] [], "m", "${x = 'ok'; x}", "ok"
                     "a missing env path is the four letters null, not empty",
-                      step [ "m", "v=${env.NOPE}" ] [] [] [] [] [], "m", "v=${env.NOPE}", "v=null" ]
+                      step [ "m", "v=${env.NOPE}" ] [] [] [] [] [], "m", "v=${env.NOPE}", "v=null"
+                    "a comment's brace is text, not the placeholder close",
+                      step [ "m", "c=${1 /* } */ + 1}" ] [] [] [] [] [], "m", "c=${1 /* } */ + 1}", "c=2" ]
 
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
