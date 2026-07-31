@@ -39,7 +39,20 @@ module GString =
     [<Literal>]
     let EscapedDollar = "\u0000"
 
-    let interpolate (known: Map<string, string>) (value: string) =
+    /// A bare `${NAME}` whose name is bound NOWHERE. Groovy does not render these as
+    /// empty text — it throws, and the build FAILS.
+    /// MEASURED (receipt `gstring-unresolved-property`, Jenkins 2.568.1):
+    ///   groovy.lang.MissingPropertyException: No such property: MISSING_BARE_VAR
+    ///   for class: groovy.lang.Binding — result FAILURE.
+    /// The `env.X` path is DIFFERENT: `${env.MISSING}` renders the text `null` and the
+    /// build passes (receipt `gstring-env-missing-null`). One is a Groovy property
+    /// lookup on the script binding; the other is a map read that comes back null and
+    /// is then stringified. Erasing either to "" silently runs a command the author
+    /// never wrote — `deploy ${TARGET}` becoming `deploy ` is how a wrong environment
+    /// gets deployed to.
+    exception MissingProperty of name: string
+
+    let internal interpolateCore (strict: bool) (known: Map<string, string>) (value: string) =
         // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
         //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
         //    The parser keeps the backslash so this pass can honour it and then
@@ -52,14 +65,21 @@ module GString =
             // `env.X` is the same variable as a bare `X`. The bracketed
             // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
             // rejects it outright (measured — see the pattern below).
-            let bare =
-                if name.StartsWith "env." then name.Substring 4
-                else name
+            let isEnvPath = name.StartsWith "env."
+            let bare = if isEnvPath then name.Substring 4 else name
 
             match Map.tryFind bare known with
             | Some v -> v
             | None ->
                 match Environment.GetEnvironmentVariable bare with
+                | null when strict && isEnvPath ->
+                    // MEASURED (`gstring-env-missing-null`): `${env.MISSING}` is a
+                    // null map read, stringified — the build sees the text `null`.
+                    "null"
+                | null when strict ->
+                    // MEASURED (`gstring-unresolved-property`): a bare unknown name
+                    // is a failed Groovy property lookup, and the build FAILS.
+                    raise (MissingProperty name)
                 | null -> ""
                 | v -> v
 
@@ -189,6 +209,11 @@ module GString =
         // cannot themselves be expanded.
         expanded.Replace("\u0000", "$")
 
+    /// Lenient: an unknown name erases to "". Kept for consumers whose Jenkins-side
+    /// failure semantics have not been measured yet (`environment`, `when`-equals);
+    /// step ARGUMENTS go through [render], which is strict.
+    let interpolate (known: Map<string, string>) (value: string) = interpolateCore false known value
+
     /// What KIND is this argument? `key` is a named argument's name, or `#0`, `#1`… for a
     /// positional. Every consumer asked this question differently before FG-100; there is
     /// now one answer.
@@ -220,7 +245,10 @@ module GString =
     /// this cannot get the literal/GString/expression distinction wrong, because it no
     /// longer makes the distinction.
     let render (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
+        // STRICT: this is the step-argument path, where erasing an unknown name to ""
+        // runs a command the author never wrote. Raises [MissingProperty]; the walker
+        // fails the build with Jenkins' own diagnosis (measured, see the exception).
         match kindOf step key with
         | Literal -> raw
-        | Expression -> interpolate env ("${" + raw + "}")
-        | Interpolating -> interpolate env (sourceOf step key raw)
+        | Expression -> interpolateCore true env ("${" + raw + "}")
+        | Interpolating -> interpolateCore true env (sourceOf step key raw)

@@ -974,7 +974,23 @@ module FogellSide =
             /// which does not know them — so `retry(2) { timeout(10) { sh '…' } }`
             /// failed as an unsupported step every time. Every body now re-enters
             /// this dispatcher, so wrappers compose to any depth.
+            /// Guard around every step. A GString referencing a name bound NOWHERE is a
+            /// failed Groovy property lookup, and Jenkins FAILS the build on it —
+            /// MEASURED (receipt `gstring-unresolved-property`):
+            ///   groovy.lang.MissingPropertyException: No such property: X
+            ///   for class: groovy.lang.Binding
+            /// The strict renderer raises; this converts the raise into that failure.
+            /// Erasing the name to "" instead would RUN a command the author never
+            /// wrote (`deploy ${TARGET}` → `deploy `), with the build green.
             and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+                try
+                    runStepDispatchBody ctx cwd stage step deadline
+                with GString.MissingProperty name ->
+                    emit $"ERROR: No such property: {name} for class: groovy.lang.Binding"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+
+            and runStepDispatchBody (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
                 // REVIEW FIX (Codex, PR #13 round 4): a deadline only ever became a
                 // `TimeoutMs` for the shell runner. `echo`, `junit`,
                 // `archiveArtifacts` and wrapper dispatch enforce nothing, so a
