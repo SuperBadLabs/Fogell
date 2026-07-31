@@ -92,7 +92,9 @@ let main argv =
                     Text.RegularExpressions.Regex.IsMatch(script, pat + "([^A-Za-z0-9_]|$)")
 
                 bounded ("\\$" + name)
-                || script.Contains("${" + name + "}")
+                // braced forms, operator suffixes included: ${HOME}, ${HOME:-x},
+                // ${HOME%/}, … — the boundary is the operator or the brace
+                || Text.RegularExpressions.Regex.IsMatch(script, "\\$\\{" + name + "([^A-Za-z0-9_]|\\})")
                 // Groovy's spelling of the same reference
                 || bounded ("env\\." + name))
             |> List.collect (fun name ->
