@@ -151,7 +151,11 @@ let userOutputSurvives =
                     "Terminated"
                     "Timeout reached for my own watchdog"
                     "Masking tape applied to the fixture"
-                    "Cancelling my own retry loop" ] do
+                    "Cancelling my own retry loop"
+                    "Running on my kite"
+                    "Started by my alarm clock"
+                    "Finished: painting the fence"
+                    "Resuming build of the shed" ] do
                   Expect.contains (Trace.normaliseOutput [ line ]) line $"''{line}'' is compared"
 
               // `Sending interrupt` followed by `Terminated` is compared as a PAIR

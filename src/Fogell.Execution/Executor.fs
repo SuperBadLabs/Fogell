@@ -215,8 +215,15 @@ module Executor =
                     Some "leak check unavailable: the /proc scan failed, group state unknown"
                 | Some t when t.LeakedProcesses > 0 ->
                     Some $"{t.LeakedProcesses} process(es) survived group reaping"
-                | Some _
-                | None -> None
+                | Some _ -> None
+                | None ->
+                    // No termination record AND no group id means the containment
+                    // check never ran at all — the pgid marker was not captured, so
+                    // nothing could be reaped or scanned. FG-103: that is an unknown,
+                    // not a clean bill.
+                    match run.ProcessGroupId with
+                    | None -> Some "containment check unavailable: the process-group id was never captured"
+                    | Some _ -> None
 
             { Status = status
               ExitCode = exitCode

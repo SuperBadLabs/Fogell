@@ -230,11 +230,27 @@ module Trace =
         // the `[branch]` prefix in FG-036.
         elif t = "Post stage" then None
         // Jenkins node/workspace banners
-        elif t.StartsWith "Running on " || t.StartsWith "Running in " then None
-        elif t.StartsWith "Started by " then None
-        elif t.StartsWith "Resuming build" || t.StartsWith "Ready to run" then None
-        elif t.StartsWith "Finished:" then None
-        elif t.StartsWith "GitHub has been notified" then None
+        // FG-102: the banner shapes are NARROWED to what Jenkins actually prints —
+        // `Running on <node> in <abs path>`, `Started by user/timer/upstream …`,
+        // a Finished line naming a real result. A bare prefix dropped any build
+        // line that happened to open with the words; `Running on my kite` now
+        // compares while the structural banner still does not.
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /") then None
+        elif t.StartsWith "Running in Durability level: " then None
+        // `dir()` announces its working directory as an absolute path
+        elif Text.RegularExpressions.Regex.IsMatch(t, "^Running in /") then None
+        elif
+            t.StartsWith "Started by user "
+            || t.StartsWith "Started by timer"
+            || t.StartsWith "Started by upstream "
+            || t = "Started by remote host"
+            || t.StartsWith "Started by an SCM change"
+        then
+            None
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d") then None
+        elif t = "Ready to run at" || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d") then None
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
+        elif t.StartsWith "GitHub has been notified of this commit" then None
         // `sh` xtrace echo: Jenkins prints `+ cmd`, and so does a shell with -x.
         // The command text is not output, it is provenance.
         elif t.StartsWith "+ " then None
@@ -381,6 +397,9 @@ module Trace =
           "excluded: compile/evaluation rejection narration — Jenkins refuses an invalid"
           "  pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with"
           "  the same workspace, and comparing a compiler's error layout is over-fitting"
-          "excluded: engine interrupt narration (timeout/abort/branch-failure lines) —"
-          "  counted as a reported reason instead, since it explains the engine, not the step"
+          "compared: timeout narration — both engines emit Jenkins' wording (set-to-expire"
+          "  banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the"
+          "  sentences ALSO count as the abort's reported reason"
+          "excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as"
+          "  the reported reason; the wording comes from whichever plugin implements the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]

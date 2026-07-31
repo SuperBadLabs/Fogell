@@ -34,8 +34,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
     pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
     the same workspace, and comparing a compiler's error layout is over-fitting
-  excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
-    counted as a reported reason instead, since it explains the engine, not the step
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
