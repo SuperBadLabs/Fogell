@@ -214,7 +214,7 @@ module ProcessGroup =
         let mutable mintedDurableId: string option = None
 
         let shebangFile =
-            if request.Command.StartsWith "#!" then
+            if true then // EVERY script materialises — see the wrapper comment
                 // In the workspace's `@tmp` SIBLING — Jenkins' own durable-script
                 // location: executable where builds execute (hardened hosts mount
                 // /tmp noexec) and already excluded from the workspace hash as
@@ -271,9 +271,13 @@ module ProcessGroup =
         // variable: reserving any env name collided with a pipeline exporting it —
         // Jenkins passes such a variable through to the script untouched, and so
         // does this now.
-        (match shebangFile with
-         | Some _ -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
-         | None -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$1\" 2>&1")
+        // EVERY script materialises to the durable path and runs as durable-task
+        // runs it: a shebang script executes itself, everything else runs under
+        // `sh -xe <path>` — so `$0` is the script path on both engines, not
+        // `/bin/sh` here and `script.sh` there. The path travels positionally.
+        (match request.Command.StartsWith "#!" with
+         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
+         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\" 2>&1")
 
         psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
         psi.ArgumentList.Add(defaultArg shebangFile request.Command)

@@ -32,6 +32,17 @@ receipts compare the sentences. The remaining wording-differs exclusions
 (`ERROR:` reasons, the masking banner's multi-variable join) are the
 cross-engine-boolean category the comparison contract documents.
 
+**Stated residual, closed as a class (2026-07-31):** attribution of engine
+narration on a text-only channel is approximate — every discriminator this
+normaliser can use (a boundary sentence, an annotation grammar, a path shape)
+is itself printable, so output DELIBERATELY constructed to mimic the engine
+can be misclassified in either direction. Twenty-plus review rounds refined
+the gates until the surviving scenarios all require intent; the misclassified
+surface is bounded to narration-shaped lines, and the terminal result and
+workspace hash — which no output spoof can touch — remain fully compared.
+Further narrowing trades real false-divergences for hypothetical mimics and
+is declined.
+
 Six of eight historical suppressions were DEAD when finally audited (FG-002f),
 and the fifth instance of this defect was added *while fixing the fourth*.
 Checklist question for any `Trace.fs` change:
