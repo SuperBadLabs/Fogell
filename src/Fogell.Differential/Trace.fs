@@ -233,6 +233,17 @@ module Trace =
         || Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d")
         || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d")
 
+    /// The pipeline-graph annotation GRAMMAR: `[Pipeline] word`, braces with an
+    /// optional stage label, `// word` closes, and the exact multiword boundary
+    /// sentences. Applied only to a trace bearing REAL structure (see
+    /// [normaliseOutputInner]): Fogell emits no annotations, so an
+    /// annotation-shaped user line there stays visible and a Jenkins-side drop
+    /// becomes a VISIBLE divergence, never a silent double-drop.
+    let isGraphAnnotation (t: string) =
+        t = "[Pipeline] Start of Pipeline"
+        || t = "[Pipeline] End of Pipeline"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$")
+
     let normaliseLine (line: string) : string option =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
@@ -241,17 +252,7 @@ module Trace =
 
         if t = "" then
             None
-        // Jenkins pipeline-graph annotations: pure structure, no output. Matched by
-        // their GRAMMAR — `[Pipeline] word`, `[Pipeline] {` / `}` (optionally with a
-        // stage label), `[Pipeline] // word` — because a build can echo text that
-        // merely starts with the bracket; `[Pipeline] $WORKSPACE` carries a path and
-        // must compare.
-        elif
-            t = "[Pipeline] Start of Pipeline"
-            || t = "[Pipeline] End of Pipeline"
-            || Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$")
-        then
-            None
+
         // FG-049. `Post stage` is the declarative graph's label for the synthetic
         // stage that wraps a post section — the same category as [Pipeline]
         // annotations: structure, not output. Excluded rather than imitated,
@@ -333,7 +334,11 @@ module Trace =
         // annotations giving it context. Fogell emits none — so its banner-shaped
         // first line is ordinary output, and dropping it made identical runs
         // falsely diverge on same-text spoofs.
-        let hasAnnotations = all |> Array.exists (fun l -> (clean l).StartsWith "[Pipeline]")
+        // REAL structure is discriminated by the boundary sentence Jenkins always
+        // prints, not by any bracketed shape — a lone spoofed `[Pipeline] echo` on
+        // the Fogell side must not switch suppression on for its own trace.
+        let hasAnnotations =
+            all |> Array.exists (fun l -> clean l = "[Pipeline] Start of Pipeline")
         let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
@@ -347,6 +352,7 @@ module Trace =
 
             let suppress =
                 (isFrame raw && inStackTrace)
+                || (hasAnnotations && isGraphAnnotation raw)
                 // `dir()`'s banner, by CONTEXT: `Running in <abs path>` counts as the
                 // banner only immediately after the `[Pipeline] dir` annotation — a
                 // build echoing the same shape mid-run is compared, differing

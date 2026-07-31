@@ -117,9 +117,20 @@ module Jenkins =
                     let trace =
                         { Result = terminal
                           EngineNotes = []
-                          // the CONTROLLER-side workspace path, canonicalised so an
-                          // xtrace expanding $WORKSPACE compares across engines
-                          Output = Trace.normaliseOutputWith [ $"/var/jenkins_home/workspace/{jobName}" ] rawLines
+                          // the workspace root is READ from the run's own banner —
+                          // `Running on <node> in <path>` — so a non-default
+                          // JENKINS_HOME or a remote agent canonicalises correctly;
+                          // the pinned controller path is only the fallback
+                          Output =
+                            (let fromBanner =
+                                rawLines
+                                |> Array.tryPick (fun l ->
+                                    let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
+                                    if m.Success then Some m.Groups[1].Value else None)
+
+                             Trace.normaliseOutputWith
+                                 [ defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}" ]
+                                 rawLines)
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a
