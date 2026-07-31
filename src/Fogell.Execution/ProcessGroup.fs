@@ -56,7 +56,10 @@ type RunResult =
       /// could not be deleted. Silence here would leave the file on disk while the
       /// security contract claims cleanup is guaranteed; the caller surfaces this
       /// as an engine note.
-      CleanupFailure: string option }
+      CleanupFailure: string option
+      /// The generated durable-script id for THIS run, when a shebang script was
+      /// materialised — the caller canonicalises exactly this id, never a shape.
+      DurableId: string option }
 
 type RunRequest =
     { Command: string
@@ -208,6 +211,8 @@ module ProcessGroup =
         // Owner-only from the first byte — the script text can carry a rendered
         // credential, and a 0644 window in shared /tmp is a disclosure. Deletion is
         // guaranteed by the disposable below, exception paths included.
+        let mutable mintedDurableId: string option = None
+
         let shebangFile =
             if request.Command.StartsWith "#!" then
                 // In the workspace's `@tmp` SIBLING — Jenkins' own durable-script
@@ -223,6 +228,7 @@ module ProcessGroup =
                 // rooted at the WORKSPACE even inside dir() — the full $0 is observable
                 let root = (defaultArg request.WorkspaceRoot request.WorkingDirectory).TrimEnd '/'
                 let hex = Guid.NewGuid().ToString("N").Substring(0, 8)
+                mintedDurableId <- Some hex
                 let tmpDir = IO.Path.Combine(root + "@tmp", $"durable-{hex}")
 
                 IO.Directory.CreateDirectory tmpDir |> ignore
@@ -459,4 +465,5 @@ module ProcessGroup =
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid
           Termination = termination
-          CleanupFailure = cleanupFailure }
+          CleanupFailure = cleanupFailure
+          DurableId = mintedDurableId }

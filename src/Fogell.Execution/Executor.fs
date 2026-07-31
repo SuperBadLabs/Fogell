@@ -83,7 +83,9 @@ type StepResult =
       /// Some false = the deadline. The walker classifies AND narrates from this
       /// single source — deriving the cause a second time from timestamps let the
       /// two disagree inside one poll interval.
-      AbortedBySibling: bool option }
+      AbortedBySibling: bool option
+      /// See [RunResult.DurableId].
+      DurableId: string option }
 
 module Executor =
 
@@ -99,7 +101,8 @@ module Executor =
           TestTotals = None
           Diagnostic = None
           EngineNote = None
-          AbortedBySibling = None }
+          AbortedBySibling = None
+          DurableId = None }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
@@ -270,7 +273,8 @@ module Executor =
                 match run.Outcome with
                 | Cancelled -> Some true
                 | TimedOut -> Some false
-                | _ -> None }
+                | _ -> None
+              DurableId = run.DurableId }
 
     /// Read a step argument that may be positional or named, matching Jenkins'
     /// tolerance for `archiveArtifacts '*.jar'` and

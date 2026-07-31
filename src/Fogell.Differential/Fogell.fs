@@ -192,6 +192,10 @@ module FogellSide =
             // FG-103: engine-health notes for the RECEIPT — never build output.
             let engineNotes = ResizeArray<string>()
 
+            // the EXACT durable-script ids this run minted, canonicalised by value —
+            // a spoofed id in output stays literal and diverges visibly
+            let durableIds = ResizeArray<string>()
+
             // Groovy's script Binding for THIS build: a placeholder's assignment
             // outlives its step (receipt `gstring-binding-across-steps`). One per run
             // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
@@ -585,6 +589,8 @@ module FogellSide =
                 // receipt stayed silent until this carried them separately (FG-103).
                 result.EngineNote
                 |> Option.iter (fun n -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {n}"))
+
+                result.DurableId |> Option.iter (fun i -> lock outputLock (fun () -> durableIds.Add i))
 
                 // Jenkins prints its failure reason INTO the build log. Parity
                 // requires the same: a diagnostic the user cannot see is not a
@@ -1991,7 +1997,15 @@ module FogellSide =
             Result.Ok
                 { Result = BuildStatus.toWireString status
                   EngineNotes = List.ofSeq engineNotes
-                  Output = Trace.normaliseOutputWith ((workspace, "${WORKSPACE}") :: envReplacements) output
+                  Output =
+                    (let idReplacements =
+                        durableIds
+                        |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                        |> List.ofSeq
+
+                     Trace.normaliseOutputWith
+                         (((workspace, "${WORKSPACE}") :: envReplacements) @ idReplacements)
+                         output)
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)

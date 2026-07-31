@@ -248,15 +248,6 @@ module Trace =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
 
-        // the durable-script directory carries a fresh random id per step on BOTH
-        // engines — one printed $0 would never compare otherwise; the id is
-        // structural, the layout around it is what must match
-        let stripped =
-            // only the full generated-script shape: 8 hex digits AND the script.sh
-            // tail — a bare `@tmp/durable-deadbeef` in user output keeps its value,
-            // so differing spoofs diverge instead of collapsing
-            Text.RegularExpressions.Regex.Replace(stripped, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
-
         let t = stripped.Trim()
 
         if t = "" then
@@ -406,7 +397,7 @@ module Trace =
     let canonicalisedEnvNames =
         [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
 
-    let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
+    let internal normaliseOutputWithInner (replacements: (string * string) list) (lines: string seq) : string list =
         let ordered =
             replacements
             |> List.filter (fun (v, _) -> v <> "" && v.Length >= 4)
@@ -418,6 +409,30 @@ module Trace =
         normaliseOutputInner (lines |> Seq.map canonical)
 
     let normaliseOutput (lines: string seq) : string list = normaliseOutputInner lines
+
+    /// `applyDurableShape` — the JENKINS side cannot know its own generated
+    /// durable-script ids (they exist only inside its container), so its trace
+    /// stabilises the full measured shape `@tmp/durable-<8hex>/script.sh` to
+    /// `<id>`. The FOGELL side knows its EXACT generated ids and passes them as
+    /// ordinary replacements instead, so a fogell-side spoof with a different id
+    /// stays literal — a cross-engine spoof pair therefore DIVERGES visibly
+    /// rather than collapsing to one token.
+    let normaliseOutputShaped
+        (applyDurableShape: bool)
+        (replacements: (string * string) list)
+        (lines: string seq)
+        : string list =
+        let shaped (l: string) =
+            if applyDurableShape then
+                Text.RegularExpressions.Regex.Replace(l, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
+            else
+                l
+
+        normaliseOutputWithInner replacements (lines |> Seq.map shaped)
+
+    let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
+        normaliseOutputWithInner replacements lines
+
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
     /// see [normaliseOutput].
