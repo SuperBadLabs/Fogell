@@ -265,6 +265,20 @@ let stringModel =
                   "2+6"
                   "carried bindings keep their TYPE across placeholders"
 
+              // ...and across STEPS, through the build-scoped ScriptBinding — while
+              // plain `render` stays stateless, so a fresh build starts clean.
+              // Receipt `gstring-binding-across-steps`.
+              let binding = GString.ScriptBinding()
+              let assignStep = step [ "m", "${y = 'kept'; y}" ] [] [] [] [] []
+              let readStep = step [ "m", "later:$y" ] [] [] [] [] []
+
+              Expect.equal (GString.renderWith binding env assignStep "m" "${y = 'kept'; y}") "kept" "assignment renders"
+              Expect.equal (GString.renderWith binding env readStep "m" "later:$y") "later:kept" "a later step reads it"
+
+              Expect.throws
+                  (fun () -> GString.render env readStep "m" "later:$y" |> ignore)
+                  "a fresh build does not inherit the previous Binding"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

@@ -52,7 +52,12 @@ module GString =
     /// gets deployed to.
     exception MissingProperty of name: string
 
-    let internal interpolateCore (strict: bool) (known: Map<string, string>) (value: string) =
+    let internal interpolateCore
+        (strict: bool)
+        (known: Map<string, string>)
+        (carried0: Map<string, Value>)
+        (value: string)
+        : string * Map<string, Value> =
         // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
         //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
         //    The parser keeps the backslash so this pass can honour it and then
@@ -67,7 +72,7 @@ module GString =
         // so each placeholder must see what its predecessors assigned. Values, not
         // display strings: `${n = 2; n}+${n * 3}` must reach the second placeholder
         // as the NUMBER 2, or arithmetic silently becomes concatenation.
-        let mutable carried: Map<string, Value> = Map.empty
+        let mutable carried: Map<string, Value> = carried0
 
         let resolveName (name: string) =
             // `env.X` is the same variable as a bare `X`. The bracketed
@@ -258,13 +263,29 @@ module GString =
                         sb.Append rendered |> ignore
                         i <- closeAt + 1
                 elif value[i] = '$' then
-                    // Bare `$name` stays identifier-only, as Groovy does.
+                    // Bare `$a.b.c` is a PROPERTY CHAIN in Groovy (no parens allowed in
+                    // this form). A simple name or `env.NAME` is a lookup; anything
+                    // longer is an expression — flattening it into one lookup asked the
+                    // environment for "TARGET.length" and rendered `null` where the
+                    // sandbox REJECTS the property (the braced form's measurement,
+                    // receipt `gstring-string-property-fails`, and the same evaluator
+                    // decides both spellings).
                     let m =
                         Text.RegularExpressions.Regex.Match(
                             value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
 
                     if m.Success then
-                        sb.Append(resolveName m.Groups[1].Value) |> ignore
+                        let chain = m.Groups[1].Value
+
+                        let rendered =
+                            if Text.RegularExpressions.Regex.IsMatch(chain, @"^(env\.)?[A-Za-z_][A-Za-z0-9_]*$") then
+                                resolveName chain
+                            else
+                                match evalExpression chain with
+                                | Some v -> v
+                                | None -> "$" + chain
+
+                        sb.Append rendered |> ignore
                         i <- i + m.Length
                     else
                         sb.Append value[i] |> ignore
@@ -277,12 +298,26 @@ module GString =
 
         // Restore escaped dollars as literal text, after expansion so they
         // cannot themselves be expanded.
-        expanded.Replace("\u0000", "$")
+        expanded.Replace("\u0000", "$"), carried
 
     /// Lenient: an unknown name erases to "". Kept for consumers whose Jenkins-side
     /// failure semantics have not been measured yet (`environment`, `when`-equals);
     /// step ARGUMENTS go through [render], which is strict.
-    let interpolate (known: Map<string, string>) (value: string) = interpolateCore false known value
+    let interpolate (known: Map<string, string>) (value: string) =
+        interpolateCore false known Map.empty value |> fst
+
+    /// Groovy's SCRIPT BINDING, at run scope. An assignment made by a GString
+    /// placeholder outlives its render call: `echo "${x = 'ok'; x}"` then
+    /// `echo "$x"` prints `ok` twice on Jenkins, because both read one Binding
+    /// (receipt `gstring-binding-across-steps`). One instance per BUILD; parallel
+    /// branches share it, exactly as Jenkins' one Binding is shared, and access is
+    /// serialised here so a concurrent render cannot lose an update.
+    type ScriptBinding() =
+        let gate = obj ()
+        let mutable vars: Map<string, Value> = Map.empty
+
+        member _.Read() = lock gate (fun () -> vars)
+        member _.Merge(updated: Map<string, Value>) = lock gate (fun () -> vars <- updated)
 
     /// What KIND is this argument? `key` is a named argument's name, or `#0`, `#1`… for a
     /// positional. Every consumer asked this question differently before FG-100; there is
@@ -314,11 +349,27 @@ module GString =
     /// Render one argument according to its kind. THE entry point: a consumer that calls
     /// this cannot get the literal/GString/expression distinction wrong, because it no
     /// longer makes the distinction.
+    /// Render with a run-scoped script binding: assignments made by this argument's
+    /// placeholders become visible to every LATER rendered argument in the build.
+    let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
+        let go strict text =
+            let rendered, carried = interpolateCore strict env (binding.Read()) text
+            binding.Merge carried
+            rendered
+
+        match kindOf step key with
+        | Literal -> raw
+        | Expression -> go true ("${" + raw + "}")
+        | Interpolating -> go true (sourceOf step key raw)
+
+    /// Stateless render — each call gets a fresh, discarded binding. For contexts
+    /// where no build-scoped Binding exists (and for the acceptance matrix's
+    /// stateless rows).
     let render (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
         // STRICT: this is the step-argument path, where erasing an unknown name to ""
         // runs a command the author never wrote. Raises [MissingProperty]; the walker
         // fails the build with Jenkins' own diagnosis (measured, see the exception).
         match kindOf step key with
         | Literal -> raw
-        | Expression -> interpolateCore true env ("${" + raw + "}")
-        | Interpolating -> interpolateCore true env (sourceOf step key raw)
+        | Expression -> interpolateCore true env Map.empty ("${" + raw + "}") |> fst
+        | Interpolating -> interpolateCore true env Map.empty (sourceOf step key raw) |> fst

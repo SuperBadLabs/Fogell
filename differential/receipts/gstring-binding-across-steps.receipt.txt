@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — gstring-binding-across-steps.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8fc38766a04ac4ec02727515cec433380259e76e0e93669e45b5b1f9ef67192a
+seal:         256807d88f8f96ecd6209b26bd9d25649471c22c060d76b755c63d20e3b369eb
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -31,26 +31,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: engine interrupt narration (timeout/abort/branch-failure lines) —
     counted as a reported reason instead, since it explains the engine, not the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
+  result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | from-quick
-    | from-slow
-    | Failed in branch quick-fail
-    | Failed in branch interrupted
+  output (2 lines):
+    | first:ok
+    | second:ok
 
 ## Fogell
-  result:         failure
+  result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
-    | from-quick
-    | from-slow
-    | Failed in branch quick-fail
-    | Failed in branch interrupted
+  output (2 lines):
+    | first:ok
+    | second:ok

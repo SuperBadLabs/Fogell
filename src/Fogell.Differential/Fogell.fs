@@ -153,6 +153,11 @@ module FogellSide =
             /// starts at registration; the retroactive scan is what had to be told.
             let boundSecrets = ResizeArray<SecretBinding * int>()
 
+            // Groovy's script Binding for THIS build: a placeholder's assignment
+            // outlives its step (receipt `gstring-binding-across-steps`). One per run
+            // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
+            let scriptBinding = GString.ScriptBinding()
+
             /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
             /// with NO `[branchName]` prefix — that belongs to the scripted
             /// `parallel` map form. Fogell emitted one until the receipt said
@@ -359,7 +364,7 @@ module FogellSide =
                 let script =
                     rawScript
                     |> Option.map (fun raw ->
-                        GString.render (envForWith ctx.EnvOverlay stage |> Map.ofList) step scriptKey raw)
+                        GString.renderWith scriptBinding (envForWith ctx.EnvOverlay stage |> Map.ofList) step scriptKey raw)
 
                 // Every named argument, through the same model. `rawScript` only ever
                 // picks up `script:`/`message:`, so the NAMED form of a publishing step
@@ -374,7 +379,7 @@ module FogellSide =
                 // pre-expansion would eat.
                 let renderedNamed =
                     let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-                    step.Named |> List.map (fun (k, v) -> k, GString.render env step k v)
+                    step.Named |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding env step k v)
 
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.
@@ -1424,8 +1429,8 @@ module FogellSide =
                     // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
                     // evaluates and which was being displayed as its own source text.
                     let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-                    emit (GString.render env step messageKeyName message)
-                    emit $"""{GString.render env step "ok" okLabel} or Abort"""
+                    emit (GString.renderWith scriptBinding env step messageKeyName message)
+                    emit $"""{GString.renderWith scriptBinding env step "ok" okLabel} or Abort"""
 
                     match deadline with
                     | None ->
