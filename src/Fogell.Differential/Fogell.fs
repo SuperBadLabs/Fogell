@@ -133,6 +133,22 @@ module FogellSide =
             // owning scope's declared bound (the min of the chain is what fires).
             let firedDeadlines = System.Collections.Generic.HashSet<int64>()
 
+            // Declared deadlines are made UNIQUE by value (a 1 ms nudge on
+            // collision), so the fired-set's value keys ARE scope identities — two
+            // equal-duration branch timeouts declared in the same stopwatch tick
+            // would otherwise share a key, and one branch's expiry would put the
+            // sentence in the other's mouth.
+            let declaredDeadlineIds = System.Collections.Generic.HashSet<int64>()
+
+            let uniqueDeadline (abs: int64) : int64 =
+                lock outputLock (fun () ->
+                    let mutable d = abs
+
+                    while not (declaredDeadlineIds.Add d) do
+                        d <- d + 1L
+
+                    d)
+
             let recordFired (deadline: int64 option) =
                 deadline |> Option.iter (fun d -> lock outputLock (fun () -> firedDeadlines.Add d |> ignore))
 
@@ -578,6 +594,13 @@ module FogellSide =
                     if result.Status = BuildStatus.Aborted && not interruptedBySibling then
                         recordFired deadline
 
+                        // A SELF-WORKING step (archiveArtifacts, junit) never enters
+                        // ProcessGroup, so nobody has narrated the cancellation for
+                        // it — shell steps got the line at SIGTERM time, and emitting
+                        // it here for them too would double it.
+                        if step.Name = "archiveArtifacts" || step.Name = "junit" then
+                            emit "Cancelling nested steps due to timeout"
+
                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
                     // an unstable one — `junit` marks the build unstable without
                     // an ERROR line, so emitting one there is a false divergence.
@@ -937,7 +960,7 @@ module FogellSide =
                     |> List.fold
                         (fun (acc, err) o ->
                             match timeoutMs o with
-                            | Ok ms -> (Some(runClock.ElapsedMilliseconds + ms, ms), err)
+                            | Ok ms -> (Some(uniqueDeadline (runClock.ElapsedMilliseconds + ms), ms), err)
                             | Error e -> (acc, Some e))
                         (None, None)
 
@@ -1142,7 +1165,7 @@ module FogellSide =
                     | Ok ms ->
                         // ONE deadline for the whole block. A nested timeout can
                         // only tighten it, never extend past its parent.
-                        let mine = runClock.ElapsedMilliseconds + ms
+                        let mine = uniqueDeadline (runClock.ElapsedMilliseconds + ms)
 
                         let effective =
                             match deadline with

@@ -38,6 +38,13 @@ type Termination =
       /// unknown is reported as unknown, never as a clean zero.
       LeakedProcesses: int }
 
+/// Why [waitForProcessExit] returned — decided ONCE, when the wait ends.
+type internal WaitEnd =
+    | Waiting
+    | Exited
+    | Expired
+    | Interrupted
+
 type RunResult =
     { Outcome: Outcome
       Stdout: string
@@ -235,6 +242,9 @@ module ProcessGroup =
             | Some p -> (try p () with _ -> false)
             | None -> false
 
+        // The CAUSE is decided once, at the moment the wait ends — re-sampling
+        // `interrupted()` afterwards raced a sibling failing just after a deadline
+        // expiry, flipping both the narration and the reported outcome.
         let waitForProcessExit (budgetMs: int64 option) =
             let deadline =
                 budgetMs |> Option.map (fun ms -> Stopwatch.StartNew(), ms)
@@ -246,11 +256,15 @@ module ProcessGroup =
                 | Some(clock, ms) -> clock.ElapsedMilliseconds >= ms
                 | None -> false
 
-            while not exited && not (expired ()) && not (interrupted ()) do
-                Thread.Sleep 10
-                exited <- proc.HasExited
+            let mutable cause = if exited then WaitEnd.Exited else WaitEnd.Waiting
 
-            exited
+            while cause = WaitEnd.Waiting do
+                if proc.HasExited then cause <- WaitEnd.Exited
+                elif expired () then cause <- WaitEnd.Expired
+                elif interrupted () then cause <- WaitEnd.Interrupted
+                else Thread.Sleep 10
+
+            cause
 
         let flushReaders (budgetMs: int) =
             // Best-effort: if a daemon holds the pipe this returns on the budget
@@ -263,7 +277,8 @@ module ProcessGroup =
                 Thread.Sleep 40
                 settled <- (stdout.Length + stderr.Length) = before
 
-        let finished = waitForProcessExit request.TimeoutMs
+        let waitEnd = waitForProcessExit request.TimeoutMs
+        let finished = waitEnd = WaitEnd.Exited
 
         let outcome, termination =
             if finished then
@@ -297,8 +312,9 @@ module ProcessGroup =
                 // Jenkins' interrupt narration, in its words and its order — measured
                 // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
                 // engine's version being suppressed. `Terminated` then arrives from
-                // the shell itself on both engines.
-                if not (interrupted ()) then
+                // the shell itself on both engines. The cause is the SNAPSHOT taken
+                // when the wait ended, never a fresh sample.
+                if waitEnd = WaitEnd.Expired then
                     request.OnLine |> Option.iter (fun f -> f "Cancelling nested steps due to timeout")
 
                 request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
@@ -312,7 +328,7 @@ module ProcessGroup =
                 request.OnLine |> Option.iter (fun f -> f "Terminated")
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
-                (if interrupted () then Cancelled else TimedOut), t
+                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
 
         sw.Stop()
 
