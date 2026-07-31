@@ -196,6 +196,20 @@ let containment =
               Expect.isSome r.ProcessGroupId "a group id was observed"
           }
 
+          test "a 30-day budget is represented exactly, not wrapped" {
+              // FG-103 acceptance. `timeout(time: 30, unit: 'DAYS')` is
+              // 2,592,000,000 ms — past Int32.MaxValue. This narrowing wrapped
+              // negative TWICE in this project's history, both times aborting a
+              // valid step instantly; the budget travels int64 to the executor and
+              // this run must complete, not time out at t=0.
+              let r =
+                  ProcessGroup.run
+                      { RunRequest.create ("echo wide", tempRoot ()) with
+                          TimeoutMs = Some 2_592_000_000L }
+
+              Expect.equal r.Outcome (Completed 0) "a huge budget is a budget, not an instant abort"
+          }
+
           test "a timeout sends a trappable SIGTERM before killing" {
               // The script traps TERM and reports it, proving the interrupt is
               // the contract Jenkins offers (JB-FAIL-003) rather than SIGKILL.

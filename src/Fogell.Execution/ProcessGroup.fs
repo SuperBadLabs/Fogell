@@ -34,6 +34,8 @@ type Termination =
       Escalated: bool
       /// Descendants still alive after the group was reaped. Should be zero:
       /// Jenkins leaves `nohup`ed children running and we promised to beat that.
+      /// -1 means the check itself was UNAVAILABLE (the /proc read failed) — an
+      /// unknown is reported as unknown, never as a clean zero.
       LeakedProcesses: int }
 
 type RunResult =
@@ -84,6 +86,13 @@ module ProcessGroup =
 
     /// Count processes still in the group. Reads /proc directly rather than
     /// shelling out, so the check cannot itself spawn something.
+    /// -1 means UNKNOWN: the /proc read itself failed. FG-103 — returning 0 there
+    /// made the leak check a gate that could not fail: a broken /proc reported
+    /// "nothing survived" while FG-032's headline claim rested on this number, and
+    /// both unit tests asserting 0 passed against a completely dead reader.
+    /// Unknown fails CLOSED everywhere downstream: the group is treated as still
+    /// populated, and the diagnostic says the check was unavailable rather than
+    /// inventing a clean bill.
     let private survivorsIn (pgid: int) : int =
         try
             IO.Directory.GetDirectories "/proc"
@@ -97,7 +106,7 @@ module ProcessGroup =
                 | None -> false)
             |> Array.length
         with _ ->
-            0
+            -1
 
     /// Wait until the group is EMPTY, up to `budgetMs`.
     ///

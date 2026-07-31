@@ -1499,7 +1499,11 @@ module FogellSide =
                                 // bounded by 250 anyway. A 30-day deadline once wrapped
                                 // negative here and aborted the prompt instantly.
                                 let left = defaultArg (remainingMs deadline) 0L
-                                System.Threading.Thread.Sleep(int (min 250L (max 10L left)))
+                                // TimeSpan, not `int` — the last remaining narrowing
+                                // on a duration path, retired by FG-103 even though its
+                                // 250 ms clamp made it arithmetically safe: the CLASS
+                                // is banned, not the instance (it wrapped twice before).
+                                System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
                             | c -> outcome <- c
 
                         applyCancellation ctx "input" outcome

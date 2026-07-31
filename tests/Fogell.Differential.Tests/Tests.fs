@@ -142,6 +142,19 @@ let userOutputSurvives =
               Expect.isEmpty
                   (Trace.normaliseOutput [ "Sending interrupt signal to process"; "Terminated" ])
                   "after an interrupt it is narration"
+          }
+
+          test "FG-102: the permitted narration prefixes are TIGHT" {
+              // The standing rule (docs/REVIEW_CHECKLIST.md): nothing is dropped on
+              // wording alone. The prefix-suppressed narration that remains is the
+              // permitted third category — exact plugin sentences, receipt-cited —
+              // and these rows prove a build printing NEARBY wording still compares.
+              for line in
+                  [ "Timeout reached for my own watchdog"
+                    "Masking tape applied to the fixture"
+                    "Cancelling my own retry loop"
+                    "ERROR-adjacent text without the colon prefix" ] do
+                  Expect.contains (Trace.normaliseOutput [ line ]) line $"'{line}' is user output"
           } ]
 
 /// FG-100 acceptance. ONE table for the string model, so adding a consumer means adding a

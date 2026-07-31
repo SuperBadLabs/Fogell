@@ -202,6 +202,16 @@ module Executor =
             // FG-032: a leak is a defect, and it is reported rather than ignored.
             let diagnostic =
                 match run.Termination with
+                | Some t when t.LeakedProcesses < 0 ->
+                    // FG-103: an unavailable check is SAID to be unavailable — the
+                    // alternative was a broken /proc reading as "no leaks".
+                    let leak = "leak check unavailable: the /proc scan failed, group state unknown"
+
+                    Some(
+                        match diagnostic with
+                        | Some d -> $"{d}; {leak}"
+                        | None -> leak
+                    )
                 | Some t when t.LeakedProcesses > 0 ->
                     let leak = $"{t.LeakedProcesses} process(es) survived group reaping"
 
