@@ -1,0 +1,20 @@
+  Fogell.Execution -> /home/srikanth/projects/fogell/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Corpus.Score -> /home/srikanth/projects/fogell/tools/Fogell.Corpus.Score/bin/Release/net10.0/fogell-score.dll
+  Fogell.Groovy.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Groovy.Tests/bin/Release/net10.0/Fogell.Groovy.Tests.dll
+  Fogell.Pipeline.Parser.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+  Fogell.Execution.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+  Fogell.Controller.Api -> /home/srikanth/projects/fogell/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Differential -> /home/srikanth/projects/fogell/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Differential.Cli -> /home/srikanth/projects/fogell/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+  Fogell.Differential.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+  Fogell.Controller.Api.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+
+Build succeeded.
+
+/home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/Parser.fs(345,121): warning FS0040: This and other recursive references to the object(s) being defined will be checked for initialization-soundness at runtime through the use of a delayed reference. This is because you are defining one or more recursive objects, rather than recursive functions. This warning may be suppressed by using '#nowarn "40"' or '--nowarn:40'. [/home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:07.18
