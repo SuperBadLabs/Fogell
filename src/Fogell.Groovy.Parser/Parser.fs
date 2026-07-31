@@ -160,7 +160,7 @@ let private postfixChain (start: Expr) : P<Expr> =
     let step (e: Expr) =
         choice
             [ attempt (symbol "*." >>. plainIdent |>> fun n -> EProp(e, n)) // spread-dot
-              attempt (symbol "?." >>. plainIdent |>> fun n -> EProp(e, n)) // safe navigation
+              attempt (symbol "?." >>. plainIdent |>> fun n -> ESafeProp(e, n))
               attempt (
                   symbol "." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
                   |>> fun ((n, args), trailing) ->

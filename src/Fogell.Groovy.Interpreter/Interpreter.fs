@@ -28,6 +28,11 @@ type Outcome =
       /// the shape its "Did you forget the `def` keyword?" advisory fires on. A
       /// `def` declaration is a local and is NOT recorded here.
       NewBindings: Set<string>
+      /// Names DECLARED with `def` — locals of this script. A local can SHADOW an
+      /// existing binding, and its value must never be merged back: after
+      /// `x = 'outer'`, evaluating `${def x = 'inner'; x}` leaves the binding at
+      /// 'outer'.
+      DeclaredLocals: Set<string>
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -80,6 +85,7 @@ module Interpreter =
           /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
           /// assignments made before it — Groovy performed them.
           mutable NewBindings: Set<string>
+          mutable DeclaredLocals: Set<string>
           /// The variable map as of the LAST binding-extending statement, so a fault
           /// does not erase assignments Groovy already performed. Threading env
           /// functionally is right for evaluation; this is the recovery channel.
@@ -121,18 +127,14 @@ module Interpreter =
                         raise (Stop(UnknownProperty n))
                     else
                         VNull // Groovy resolves unknown bindings late; treat as null
-        | EProp(target, name) ->
-            match evalExpr st env target with
-            | VMap m -> defaultArg (Map.tryFind name m) VNull
-            // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
-            // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
-            // "No such field found: field java.lang.String length" and the build
-            // FAILS; only the METHOD form `.length()` returns the count. The lenient
-            // convenience below is therefore confined to non-strict consumers.
-            | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Length)
-            | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
-            | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
-            | _ -> VNull
+        | ESafeProp(target, name) ->
+            // Safe navigation: a NULL receiver short-circuits to null — no lookup,
+            // no strict fault. A non-null receiver behaves exactly like [EProp],
+            // strictness included.
+            (match evalExpr st env target with
+             | VNull -> VNull
+             | recv -> evalProp st recv name)
+        | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
             | VList xs, VInt i when i >= 0L && int i < xs.Length -> xs.[int i]
@@ -160,6 +162,19 @@ module Interpreter =
             if Value.isTruthy v then v else evalExpr st env b
         | EClosure c -> VClosure(c, env)
         | ECall(target, args, trailing) -> evalCall st env target args trailing
+
+    and private evalProp (st: State) (recv: Value) (name: string) : Value =
+        match recv with
+        | VMap m -> defaultArg (Map.tryFind name m) VNull
+        // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
+        // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
+        // "No such field found: field java.lang.String length" and the build
+        // FAILS; only the METHOD form `.length()` returns the count. The lenient
+        // convenience below is therefore confined to non-strict consumers.
+        | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Length)
+        | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
+        | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
+        | _ -> VNull
 
     and private evalBinary (st: State) (env: Env) op l r : Value =
         // short-circuit before evaluating the right side
@@ -394,6 +409,7 @@ module Interpreter =
         // deploy = false` — produced no value and FAILED the build as unevaluable,
         // where Groovy assignments are value-producing and Jenkins reads it as false.
         | SDef(n, Some e) ->
+            st.DeclaredLocals <- Set.add n st.DeclaredLocals
             let v = evalExpr st env e
             st.LastValue <- Some v
             Env.withVar n v env
@@ -402,6 +418,7 @@ module Interpreter =
         // LastValue and the closure returned true. An uninitialised declaration
         // evaluates to null.
         | SDef(n, None) ->
+            st.DeclaredLocals <- Set.add n st.DeclaredLocals
             st.LastValue <- Some VNull
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
@@ -522,6 +539,7 @@ module Interpreter =
               LastValue = None
               StrictVars = strictVars
               NewBindings = Set.empty
+              DeclaredLocals = Set.empty
               LatestVars = env.Vars }
 
         // hoist declared functions so a call before its definition resolves
@@ -541,6 +559,7 @@ module Interpreter =
               Fault = None
               Env = final
               NewBindings = st.NewBindings
+              DeclaredLocals = st.DeclaredLocals
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
@@ -552,12 +571,14 @@ module Interpreter =
               // still reads x. Erasing them here erased them everywhere downstream.
               Env = { hoisted with Vars = st.LatestVars }
               NewBindings = st.NewBindings
+              DeclaredLocals = st.DeclaredLocals
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
               Env = { hoisted with Vars = st.LatestVars }
               NewBindings = st.NewBindings
+              DeclaredLocals = st.DeclaredLocals
               Returned = Some v }
 
     /// Groovy's late-binding default: an unknown name reads as null.

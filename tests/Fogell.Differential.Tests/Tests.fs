@@ -323,6 +323,25 @@ let stringModel =
                   "after:kept"
                   "the assignment made before the fault survives it"
 
+              // Safe navigation: a null receiver short-circuits to null with no
+              // lookup — `${env.OPTIONAL?.value}` renders the text null and the
+              // build runs, where the unsafe dot would fault.
+              Expect.equal
+                  (GString.render env (step [ "m", "s=${env.OPTIONAL?.value}" ] [] [] [] [] []) "m" "s=${env.OPTIONAL?.value}")
+                  "s=null"
+                  "safe navigation on an absent value is null, not a failure"
+
+              // A `def` local SHADOWS a binding inside its own placeholder and never
+              // merges back: the binding still reads 'outer' afterwards.
+              let b4 = GString.ScriptBinding()
+              let bindOuter = step [ "m", "${x = 'outer'; x}" ] [] [] [] [] []
+              let shadow = step [ "m", "${def x = 'inner'; x}" ] [] [] [] [] []
+              let readX = step [ "m", "read:$x" ] [] [] [] [] []
+
+              Expect.equal (GString.renderWith b4 env bindOuter "m" "${x = 'outer'; x}") "outer" "binding set"
+              Expect.equal (GString.renderWith b4 env shadow "m" "${def x = 'inner'; x}") "inner" "local shadows"
+              Expect.equal (GString.renderWith b4 env readX "m" "read:$x") "read:outer" "the binding survives the shadow"
+
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression
               // alike. Receipts `gstring-unresolved-property` and

@@ -23,6 +23,11 @@ type Expr =
     | EMap of (string * Expr) list
     | EVar of string
     | EProp of target: Expr * name: string
+    /// `a?.b` — Groovy's safe navigation. Distinct from [EProp] because the
+    /// difference IS the semantics: a null receiver yields null instead of a
+    /// property lookup, so collapsing the two made `${env.OPTIONAL?.value}`
+    /// fail a build Jenkins runs.
+    | ESafeProp of target: Expr * name: string
     | EIndex of target: Expr * index: Expr
     | EUnary of op: string * operand: Expr
     | EBinary of op: string * left: Expr * right: Expr
@@ -118,7 +123,8 @@ module Ast =
                 |> Set.unionMany
             | EList xs -> xs |> List.map ofExpr |> Set.unionMany
             | EMap kvs -> kvs |> List.map (snd >> ofExpr) |> Set.unionMany
-            | EProp(t, _) -> ofExpr t
+            | EProp(t, _)
+            | ESafeProp(t, _) -> ofExpr t
             | EIndex(t, i) -> Set.union (ofExpr t) (ofExpr i)
             | EUnary(_, x) -> ofExpr x
             | EBinary(_, l, r) -> Set.union (ofExpr l) (ofExpr r)

@@ -178,6 +178,10 @@ module GString =
                         |> Map.fold
                             (fun acc k v ->
                                 if k = "env" then acc
+                                // a `def` local never merges back — it SHADOWS a
+                                // binding inside its own placeholder, and carrying its
+                                // value would overwrite what `$x` must still read
+                                elif Set.contains k outcome.DeclaredLocals then acc
                                 elif (match Map.tryFind k bindings with
                                       | Some old -> old <> v
                                       | None -> Set.contains k outcome.NewBindings) then
