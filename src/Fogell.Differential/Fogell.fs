@@ -480,11 +480,15 @@ module FogellSide =
                 elif days > 0L then $"{days} {dayWord days} {hours % 24L} hr"
                 elif hours > 0L then $"{hours} hr {minutes % 60L} min"
                 elif minutes > 0L then $"{minutes} min {sec % 60L} sec"
-                elif ms >= 100L && ms < 10_000L && ms % 1000L <> 0L then
-                    // measured ladder below ten seconds: tenths, TRUNCATED — 1999 ms
-                    // is "1.9 sec", 500 ms "0.5 sec" — while exact seconds print
-                    // plain ("3 sec") and sub-100 ms speaks milliseconds ("50 ms")
+                elif ms >= 1000L && ms < 10_000L && ms % 1000L <> 0L then
+                    // measured: tenths, TRUNCATED, from one second — 1999 ms is
+                    // "1.9 sec"; exact seconds print plain ("3 sec")
                     $"{ms / 1000L}.{(ms % 1000L) / 100L} sec"
+                elif ms >= 100L && ms < 1000L then
+                    // measured: HUNDREDTHS below one second, trailing zero dropped —
+                    // 150 ms is "0.15 sec", 500 ms "0.5 sec"
+                    let h = ms / 10L
+                    if h % 10L = 0L then $"0.{h / 10L} sec" else $"0.{h} sec"
                 elif ms < 100L then $"{ms} ms"
                 else $"{sec} sec"
 

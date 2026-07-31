@@ -1,7 +1,7 @@
 # Differential receipt — parallel-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         184f655c79de8c015c48f05e20ed00f456e2836899029aadef46a764e932044b
+seal:         c5b51048ec003899b4a00cbbe05b733e69b8109aff978a04c0dea01fe28040a7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -62,9 +62,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
   output (9 lines):
-    | + sleep 1
     | + echo started
     | + sleep 45
+    | + sleep 1
     | + echo failing
     | + exit 3
     | Failed in branch quick-fail

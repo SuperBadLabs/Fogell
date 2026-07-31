@@ -419,7 +419,9 @@ module Trace =
             // is what makes the replacement injective without parsing the script:
             // `echo /root` compares as text, `+ test -n /root` compares as the
             // expansion it is. (A build printing its own `+ `-shaped line joins the
-            // stated mimicry residual.)
+            // stated mimicry residual; a script that CHANGES PS4 forfeits env
+            // canonicalisation on its custom-prefixed rows and any inherited-value
+            // difference there diverges VISIBLY — declared, fail-closed.)
             if g.TrimStart().StartsWith "+ " then
                 orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
             else
