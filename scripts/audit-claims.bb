@@ -67,9 +67,9 @@
       ;; "comment text" where any receipt name could then satisfy any claim. That is
       ;; fail-OPEN, so per-line scanning is not merely imprecise here, it is unsafe.
       ;;
-      ;; Returns [comment-text-or-nil, mode-at-end-of-line, code-before-comment?].
+      ;; Returns [spans, mode-at-end-of-line, depth, holes, code-before-comment?].
       scan-line
-      (fn [l mode0 depth0]
+      (fn [l mode0 depth0 holes0]
         (let [n (count l)
               at (fn [i] (get l i))]
           ;; `depth` is block-comment NESTING. F# nests `(* ... (* ... *) ... *)`, so
@@ -82,72 +82,120 @@
           ;; joining them let the first comment's receipt satisfy the second's claim.
           ;; A span closes when code intervenes (`gap?`); adjacent comments separated
           ;; only by whitespace still merge, since nothing separates them semantically.
-          (loop [k 0, mode mode0, depth depth0, spans [], cur [], gap? false, code? false]
+          ;;
+          ;; `holes` is the INTERPOLATED-STRING stack. The `{...}` of `$"..."` is CODE
+          ;; — comments are legal inside it, so `$"{1 (* MEASURED *) + 1}"` carries a
+          ;; genuine claim — and treating the whole literal as a string hid it from
+          ;; `--strict`. A `{` in an interpolated string pushes the string's mode and
+          ;; drops to :code; the matching `}` pops back. `{{`/`}}` are escapes.
+          (loop [k 0, mode mode0, depth depth0, holes holes0, spans [], cur [], gap? false, code? false]
             (let [flush (fn [] (if (seq cur) (conj spans (str/join " " cur)) spans))
                   ;; entering a comment: close the current span first if code intervened
                   enter (fn [] (if (and gap? (seq cur)) [(flush) []] [spans cur]))]
               (if (>= k n)
-                [(flush) mode depth code?]
+                [(flush) mode depth holes code?]
                 (case mode
                   :code
                   (cond
-                    (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple depth spans cur true true)
-                    (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth spans cur true true)
-                    (= \" (at k)) (recur (inc k) :str depth spans cur true true)
+                    ;; interpolated forms first — `$"` must not read as code + plain `"`
+                    (and (= \$ (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))) (= \" (at (+ k 3))))
+                    (recur (+ k 4) :interp-triple depth holes spans cur true true)
+                    (and (= \$ (at k)) (= \@ (at (inc k))) (= \" (at (+ k 2))))
+                    (recur (+ k 3) :interp-verbatim depth holes spans cur true true)
+                    (and (= \@ (at k)) (= \$ (at (inc k))) (= \" (at (+ k 2))))
+                    (recur (+ k 3) :interp-verbatim depth holes spans cur true true)
+                    (and (= \$ (at k)) (= \" (at (inc k))))
+                    (recur (+ k 2) :interp depth holes spans cur true true)
+                    (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple depth holes spans cur true true)
+                    (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth holes spans cur true true)
+                    (= \" (at k)) (recur (inc k) :str depth holes spans cur true true)
                     ;; '\n' — escaped char literal
-                    (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code depth spans cur true true)
+                    (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code depth holes spans cur true true)
                     ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
                     (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2))))
-                    (recur (+ k 3) :code depth spans cur true true)
+                    (recur (+ k 3) :code depth holes spans cur true true)
                     (and (= \( (at k)) (= \* (at (inc k))))
-                    (let [[spans' cur'] (enter)] (recur (+ k 2) :block 1 spans' cur' false code?))
-                    ;; `//` runs to end of line; `///` must consume all three slashes
+                    (let [[spans' cur'] (enter)] (recur (+ k 2) :block 1 holes spans' cur' false code?))
+                    ;; `//` runs to end of line; `///` must consume all three slashes.
+                    ;; INSIDE a hole it still runs to end of line — F# says so — and the
+                    ;; string resumes on the next line, which the carried mode handles.
                     (and (= \/ (at k)) (= \/ (at (inc k))))
                     (let [[spans' cur'] (enter)
                           final (conj cur' (str/replace (subs l k) #"^/+\s?" ""))]
-                      [(conj spans' (str/join " " final)) :code depth code?])
+                      [(conj spans' (str/join " " final)) mode depth holes code?])
+                    ;; hole bookkeeping: a nested `{` re-enters :code so its `}` cannot
+                    ;; close the hole early; the hole's own `}` pops the string back
+                    (and (= \{ (at k)) (seq holes)) (recur (inc k) :code depth (conj holes :code) spans cur true true)
+                    (and (= \} (at k)) (seq holes)) (recur (inc k) (peek holes) depth (pop holes) spans cur true true)
                     :else (let [c? (not (Character/isWhitespace (at k)))]
-                            (recur (inc k) :code depth spans cur (or gap? c?) (or code? c?))))
+                            (recur (inc k) :code depth holes spans cur (or gap? c?) (or code? c?))))
 
                   :block
                   (cond
-                    (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block (inc depth) spans cur gap? code?)
+                    (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block (inc depth) holes spans cur gap? code?)
                     (and (= \* (at k)) (= \) (at (inc k))))
                     (if (<= depth 1)
-                      (recur (+ k 2) :code 0 spans cur gap? code?)
-                      (recur (+ k 2) :block (dec depth) spans cur gap? code?))
+                      (recur (+ k 2) :code 0 holes spans cur gap? code?)
+                      (recur (+ k 2) :block (dec depth) holes spans cur gap? code?))
                     ;; collect the block's text one char at a time; cheap enough for a gate
-                    :else (recur (inc k) :block depth spans
+                    :else (recur (inc k) :block depth holes spans
                                  (conj (vec (butlast cur)) (str (or (last cur) "") (at k)))
                                  gap? code?))
 
                   :str
                   (cond
-                    (= \\ (at k)) (recur (+ k 2) :str depth spans cur gap? code?)
-                    (= \" (at k)) (recur (inc k) :code depth spans cur gap? code?)
-                    :else (recur (inc k) :str depth spans cur gap? code?))
+                    (= \\ (at k)) (recur (+ k 2) :str depth holes spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth holes spans cur gap? code?)
+                    :else (recur (inc k) :str depth holes spans cur gap? code?))
 
                   ;; @"..." has no backslash escapes; "" is one literal quote
                   :verbatim
                   (cond
-                    (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth spans cur gap? code?)
-                    (= \" (at k)) (recur (inc k) :code depth spans cur gap? code?)
-                    :else (recur (inc k) :verbatim depth spans cur gap? code?))
+                    (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth holes spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth holes spans cur gap? code?)
+                    :else (recur (inc k) :verbatim depth holes spans cur gap? code?))
 
                   :triple
                   (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
-                    (recur (+ k 3) :code depth spans cur gap? code?)
-                    (recur (inc k) :triple depth spans cur gap? code?))))))))
+                    (recur (+ k 3) :code depth holes spans cur gap? code?)
+                    (recur (inc k) :triple depth holes spans cur gap? code?))
+
+                  :interp
+                  (cond
+                    (= \\ (at k)) (recur (+ k 2) :interp depth holes spans cur gap? code?)
+                    (and (= \{ (at k)) (= \{ (at (inc k)))) (recur (+ k 2) :interp depth holes spans cur gap? code?)
+                    (and (= \} (at k)) (= \} (at (inc k)))) (recur (+ k 2) :interp depth holes spans cur gap? code?)
+                    (= \{ (at k)) (recur (inc k) :code depth (conj holes :interp) spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth holes spans cur gap? code?)
+                    :else (recur (inc k) :interp depth holes spans cur gap? code?))
+
+                  :interp-verbatim
+                  (cond
+                    (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :interp-verbatim depth holes spans cur gap? code?)
+                    (and (= \{ (at k)) (= \{ (at (inc k)))) (recur (+ k 2) :interp-verbatim depth holes spans cur gap? code?)
+                    (and (= \} (at k)) (= \} (at (inc k)))) (recur (+ k 2) :interp-verbatim depth holes spans cur gap? code?)
+                    (= \{ (at k)) (recur (inc k) :code depth (conj holes :interp-verbatim) spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth holes spans cur gap? code?)
+                    :else (recur (inc k) :interp-verbatim depth holes spans cur gap? code?))
+
+                  :interp-triple
+                  (cond
+                    (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
+                    (recur (+ k 3) :code depth holes spans cur gap? code?)
+                    (and (= \{ (at k)) (= \{ (at (inc k)))) (recur (+ k 2) :interp-triple depth holes spans cur gap? code?)
+                    (and (= \} (at k)) (= \} (at (inc k)))) (recur (+ k 2) :interp-triple depth holes spans cur gap? code?)
+                    (= \{ (at k)) (recur (inc k) :code depth (conj holes :interp-triple) spans cur gap? code?)
+                    :else (recur (inc k) :interp-triple depth holes spans cur gap? code?))))))))
 
       ;; One fold per FILE, carrying the scanner's mode AND block-comment depth. Produces
       ;; a vector parallel to `lines`: {:spans [comment spans] :code? code-on-the-line}.
       scan-file
       (fn [lines]
-        (loop [ls lines, mode :code, depth 0, out []]
+        (loop [ls lines, mode :code, depth 0, holes [], out []]
           (if (empty? ls)
             out
-            (let [[spans mode' depth' code?] (scan-line (first ls) mode depth)]
-              (recur (rest ls) mode' depth' (conj out {:spans spans :code? code?}))))))
+            (let [[spans mode' depth' holes' code?] (scan-line (first ls) mode depth holes)]
+              (recur (rest ls) mode' depth' holes' (conj out {:spans spans :code? code?}))))))
 
       ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
       ;; claims (above) does not make them block members: two unrelated code lines that

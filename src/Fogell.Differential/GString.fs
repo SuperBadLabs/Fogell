@@ -94,6 +94,20 @@ module GString =
                 let asValues = known |> Map.map (fun _ v -> VStr v)
                 let bindings = asValues |> Map.add "env" (VMap asValues)
 
+                // STRICT propagates into expressions, not just bare names. The
+                // interpreter reads an unknown variable as null, so
+                // `${MISSING + '-suffix'}` evaluated to `null-suffix` and RAN —
+                // while Groovy's property lookup fails before the `+` is ever
+                // reached and Jenkins fails the build (same measurement as the
+                // bare form, receipt `gstring-unresolved-property`). The AST is
+                // scanned for names bound nowhere and the first one raises.
+                if strict then
+                    let free = Fogell.Groovy.Ast.freeVars (bindings |> Map.toSeq |> Seq.map fst |> Set.ofSeq) script
+
+                    match Set.toList free |> List.sort with
+                    | name :: _ -> raise (MissingProperty name)
+                    | [] -> ()
+
                 let outcome =
                     Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
 

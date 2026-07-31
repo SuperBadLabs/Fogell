@@ -161,6 +161,104 @@ module Ast =
             | SFunc(_, _, b) -> freeCalls b)
         |> Set.unionMany
 
+    /// Variable names READ but bound nowhere in the script — the names Groovy's
+    /// property lookup would fail on. `bound` seeds the environment (a GString
+    /// evaluation passes its known variables plus `env`). Scoping is sequential:
+    /// a `def` binds for the statements after it, loop variables and closure
+    /// parameters bind their bodies, and a closure without parameters binds `it`.
+    let freeVars (bound: Set<string>) (stmts: Stmt list) : Set<string> =
+        let rec ofExpr (b: Set<string>) e =
+            match e with
+            | EVar n -> if Set.contains n b then Set.empty else Set.singleton n
+            | EProp(t, _) -> ofExpr b t
+            | EIndex(t, i) -> Set.union (ofExpr b t) (ofExpr b i)
+            | EUnary(_, x) -> ofExpr b x
+            | EBinary(_, l, r) -> Set.union (ofExpr b l) (ofExpr b r)
+            | ETernary(c, x, y) -> Set.unionMany [ ofExpr b c; ofExpr b x; ofExpr b y ]
+            | EElvis(x, y) -> Set.union (ofExpr b x) (ofExpr b y)
+            | EGString parts ->
+                parts
+                |> List.map (function
+                    | GLit _ -> Set.empty
+                    | GExpr x -> ofExpr b x)
+                |> Set.unionMany
+            | EList xs -> xs |> List.map (ofExpr b) |> Set.unionMany
+            | EMap kvs -> kvs |> List.map (snd >> ofExpr b) |> Set.unionMany
+            | ECall(target, args, trailing) ->
+                let t =
+                    match target with
+                    | FreeCall _ -> Set.empty
+                    | MethodCall(x, _) -> ofExpr b x
+
+                let a =
+                    args
+                    |> List.map (function
+                        | APos x -> ofExpr b x
+                        | ANamed(_, x) -> ofExpr b x)
+                    |> Set.unionMany
+
+                let c =
+                    match trailing with
+                    | Some cl -> ofClosure b cl
+                    | None -> Set.empty
+
+                Set.unionMany [ t; a; c ]
+            | EClosure c -> ofClosure b c
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _ -> Set.empty
+
+        and ofClosure b (c: Closure) =
+            let ps = if List.isEmpty c.Params then [ "it" ] else c.Params
+            ofStmts (Set.union b (Set.ofList ps)) c.Body
+
+        and ofStmts (b: Set<string>) (ss: Stmt list) : Set<string> =
+            let free, _ =
+                ss
+                |> List.fold
+                    (fun (acc: Set<string>, b: Set<string>) s ->
+                        match s with
+                        | SExpr e -> Set.union acc (ofExpr b e), b
+                        | SDef(n, v) ->
+                            let f =
+                                match v with
+                                | Some e -> ofExpr b e
+                                | None -> Set.empty
+
+                            Set.union acc f, Set.add n b
+                        | SAssign(t, v) -> Set.unionMany [ acc; ofExpr b t; ofExpr b v ], b
+                        | SIf(c, x, y) -> Set.unionMany [ acc; ofExpr b c; ofStmts b x; ofStmts b y ], b
+                        | SForIn(var, src, body) ->
+                            Set.unionMany [ acc; ofExpr b src; ofStmts (Set.add var b) body ], b
+                        | SWhile(c, body) -> Set.unionMany [ acc; ofExpr b c; ofStmts b body ], b
+                        | SReturn(Some e) -> Set.union acc (ofExpr b e), b
+                        | SReturn None -> acc, b
+                        | SBreak
+                        | SContinue -> acc, b
+                        | SThrow e -> Set.union acc (ofExpr b e), b
+                        | STry(body, catch, fin) ->
+                            let c =
+                                match catch with
+                                | Some(v, cb) ->
+                                    let cb' =
+                                        match v with
+                                        | Some n -> ofStmts (Set.add n b) cb
+                                        | None -> ofStmts b cb
+
+                                    cb'
+                                | None -> Set.empty
+
+                            Set.unionMany [ acc; ofStmts b body; c; ofStmts b fin ], b
+                        | SFunc(n, ps, body) ->
+                            let b' = Set.add n b
+                            Set.union acc (ofStmts (Set.union b' (Set.ofList ps)) body), b')
+                    (Set.empty, bound)
+
+            free
+
+        ofStmts bound stmts
+
     /// Functions the script defines itself — these are NOT missing steps.
     let rec definedFunctions (stmts: Stmt list) : Set<string> =
         stmts
