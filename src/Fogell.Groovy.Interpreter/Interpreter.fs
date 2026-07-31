@@ -314,19 +314,21 @@ module Interpreter =
                  // side effects are performed and survive a denial), THEN the
                  // sandbox rules, then dispatch.
                  let args = positionalLazy.Value
+                 let named = namedLazy.Value
 
                  match Sandbox.admitMethod name with
                  | Error d -> raise (Stop(Denied d))
-                 | Ok _ -> evalBuiltin st env name r args trailing)
+                 | Ok _ -> evalBuiltin st env name r args named trailing)
         | MethodCall(recv, name) ->
             // Same order as the safe-call arm: receiver, then arguments — their side
             // effects performed and kept — then the sandbox, then dispatch.
             let r = evalExpr st env recv
             let args = positionalLazy.Value
+            let named = namedLazy.Value
 
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
-            | Ok _ -> evalBuiltin st env name r args trailing
+            | Ok _ -> evalBuiltin st env name r args named trailing
         | FreeCall name ->
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
@@ -359,11 +361,25 @@ module Interpreter =
 
                     st.Depth <- st.Depth - 1
                     result
-                | None -> evalBuiltin st env b VNull positionalLazy.Value trailing
+                | None -> evalBuiltin st env b VNull positionalLazy.Value namedLazy.Value trailing
 
-    and private evalBuiltin (st: State) (env: Env) (name: string) (recv: Value) (args: Value list) (trailing: Closure option) : Value =
-        if st.StrictVars && Set.contains name zeroArgBuiltins && not (List.isEmpty args) then
-            raise (Stop(Unsupported $"method '{name}' does not accept {List.length args} argument(s)"))
+    and private evalBuiltin
+        (st: State)
+        (env: Env)
+        (name: string)
+        (recv: Value)
+        (args: Value list)
+        (namedArgs: (string * Value) list)
+        (trailing: Closure option)
+        : Value =
+        // NAMED arguments count too: Groovy folds them into a Map argument, so
+        // `'abc'.length(foo: 1)` is `String.length(Map)` — no such signature, throw.
+        if
+            st.StrictVars
+            && Set.contains name zeroArgBuiltins
+            && not (List.isEmpty args && List.isEmpty namedArgs)
+        then
+            raise (Stop(Unsupported $"method '{name}' does not accept {List.length args + List.length namedArgs} argument(s)"))
 
         let applyClosure (c: Closure) (closureEnv: Env) (item: Value) =
             st.Depth <- st.Depth + 1
