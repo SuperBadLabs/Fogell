@@ -51,7 +51,12 @@ type RunResult =
       Stderr: string
       DurationMs: int64
       ProcessGroupId: int option
-      Termination: Termination option }
+      Termination: Termination option
+      /// A cleanup step that FAILED — e.g. the secret-bearing shebang script that
+      /// could not be deleted. Silence here would leave the file on disk while the
+      /// security contract claims cleanup is guaranteed; the caller surfaces this
+      /// as an engine note.
+      CleanupFailure: string option }
 
 type RunRequest =
     { Command: string
@@ -202,7 +207,10 @@ module ProcessGroup =
         // guaranteed by the disposable below, exception paths included.
         let shebangFile =
             if request.Command.StartsWith "#!" then
-                let f = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-shebang-{Guid.NewGuid():N}.sh")
+                // In the WORKSPACE, not the system temp dir: hardened hosts mount
+                // /tmp noexec, and a script that cannot exec is a broken step. The
+                // dotted prefix is scaffolding the workspace hash excludes.
+                let f = IO.Path.Combine(request.WorkingDirectory, $".fogell-shebang-{Guid.NewGuid():N}.sh")
 
                 let mode =
                     IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
@@ -214,15 +222,20 @@ module ProcessGroup =
             else
                 None
 
+        // Deletion is attempted on the normal path with the failure CAPTURED (it
+        // becomes an engine note); the disposable is the exception-path backstop,
+        // where the run is already failing loudly.
+        let mutable cleanupFailure: string option = None
+
         use _cleanupShebang =
             { new IDisposable with
                 member _.Dispose() =
                     shebangFile
                     |> Option.iter (fun f ->
                         try
-                            IO.File.Delete f
-                        with _ ->
-                            ()) }
+                            if IO.File.Exists f then IO.File.Delete f
+                        with e ->
+                            cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}") }
 
         match shebangFile with
         | Some f -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"{f}\" 2>&1"
@@ -397,9 +410,17 @@ module ProcessGroup =
 
         sw.Stop()
 
+        shebangFile
+        |> Option.iter (fun f ->
+            try
+                IO.File.Delete f
+            with e ->
+                cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}")
+
         { Outcome = outcome
           Stdout = stdout.ToString()
           Stderr = stderr.ToString()
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid
-          Termination = termination }
+          Termination = termination
+          CleanupFailure = cleanupFailure }

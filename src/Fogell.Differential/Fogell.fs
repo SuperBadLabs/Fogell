@@ -1165,14 +1165,16 @@ module FogellSide =
                     | None -> false
 
                 if expired then
-                    // FG-102: this expiry is as real as one caught mid-step — it fired
-                    // a deadline and Jenkins narrates it; staying silent here dropped
-                    // both the Cancelling line and the owner's exceeded announcement.
-                    recordFired deadline
-                    emit "Cancelling nested steps due to timeout"
-                    emit $"ERROR: timeout expired before step '{step.Name}'; block aborted"
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Aborted
+                    // FG-102, through the ONE cancellation model: an expiry observed
+                    // between steps still races a failFast sibling, and classifying it
+                    // here by clock alone called a sibling's failure a timeout —
+                    // cancellationOf owns that ordering decision.
+                    match cancellationOf ctx deadline with
+                    | Running ->
+                        // the deadline passed between the check and classification's
+                        // reread — treat as expired, the plain reading
+                        applyCancellation ctx $"step '{step.Name}'" deadline DeadlineExpired
+                    | c -> applyCancellation ctx $"step '{step.Name}'" deadline c
                 else
 
                 match step.Name, step.Positional with

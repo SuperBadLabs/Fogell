@@ -220,7 +220,7 @@ module Executor =
             // FG-032/FG-103: a leak is a defect and an unavailable check is an
             // unknown — both are ENGINE findings, carried beside the step's own
             // failure reason so they reach the receipt whatever the status is.
-            let engineNote =
+            let baseEngineNote =
                 match run.Termination with
                 | Some t when t.LeakedProcesses < 0 ->
                     Some "leak check unavailable: the /proc scan failed, group state unknown"
@@ -235,6 +235,12 @@ module Executor =
                     match run.ProcessGroupId with
                     | None -> Some "containment check unavailable: the process-group id was never captured"
                     | Some _ -> None
+
+            let engineNote =
+                match baseEngineNote, run.CleanupFailure with
+                | Some a, Some b -> Some $"{a}; {b}"
+                | Some a, None -> Some a
+                | None, b -> b
 
             { Status = status
               ExitCode = exitCode

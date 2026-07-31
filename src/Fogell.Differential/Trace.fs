@@ -70,6 +70,7 @@ module Trace =
         || Path.GetFileName p = "jenkins-log.txt"
         || Path.GetFileName p = "jenkins-result.txt"
         || Path.GetFileName p = "script.sh"
+        || (Path.GetFileName p).StartsWith ".fogell-shebang-"
         || Path.GetFileName p = "script.sh.copy"
 
     /// Hash a directory tree: sorted (relative path, content hash) pairs. Sorted
