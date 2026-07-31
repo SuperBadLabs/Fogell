@@ -341,12 +341,28 @@ module Executor =
                         let starstar = q "**"
                         $"{q raw} doesn\u2019t match anything, but {starstar} does. Perhaps that\u2019s what you mean?"
                     elif raw.Contains "/" then
-                        let baseSeg = raw.Split('/').[0]
+                        // the deepest EXISTING literal prefix decides the clause —
+                        // measured: `existing/missing/*.zip` with `existing` present
+                        // says "\u2018existing\u2019 exists but not \u2018existing/missing/*.zip\u2019",
+                        // while a missing FIRST segment says "even \u2018base\u2019 doesn\u2019t exist"
+                        let literalSegs =
+                            raw.Split('/')
+                            |> Array.takeWhile (fun seg -> not (seg.Contains "*" || seg.Contains "?"))
 
-                        if not (System.IO.Directory.Exists(System.IO.Path.Combine(request.Workspace, baseSeg))) then
-                            $"{q raw} doesn\u2019t match anything: even {q baseSeg} doesn\u2019t exist"
-                        else
-                            $"{q raw} doesn\u2019t match anything"
+                        let deepestExisting =
+                            literalSegs
+                            |> Array.scan (fun acc seg -> if acc = "" then seg else acc + "/" + seg) ""
+                            |> Array.skip 1
+                            |> Array.takeWhile (fun prefix ->
+                                System.IO.Directory.Exists(System.IO.Path.Combine(request.Workspace, prefix))
+                                || System.IO.File.Exists(System.IO.Path.Combine(request.Workspace, prefix)))
+                            |> Array.tryLast
+
+                        match deepestExisting with
+                        | Some prefix -> $"{q raw} doesn\u2019t match anything: {q prefix} exists but not {q raw}"
+                        | None when literalSegs.Length > 0 ->
+                            $"{q raw} doesn\u2019t match anything: even {q literalSegs.[0]} doesn\u2019t exist"
+                        | None -> $"{q raw} doesn\u2019t match anything"
                     else
                         $"{q raw} doesn\u2019t match anything"
 
