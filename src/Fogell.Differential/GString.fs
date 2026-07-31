@@ -109,25 +109,26 @@ module GString =
                 let asValues = allVars |> Map.map (fun _ v -> VStr v)
                 let bindings = asValues |> Map.add "env" (VMap asValues)
 
-                // STRICT propagates into expressions, not just bare names. The
-                // interpreter reads an unknown variable as null, so
-                // `${MISSING + '-suffix'}` evaluated to `null-suffix` and RAN —
-                // while Groovy's property lookup fails before the `+` is ever
-                // reached and Jenkins fails the build (same measurement as the
-                // bare form, receipt `gstring-unresolved-property`). The AST is
-                // scanned for names bound nowhere and the first one raises.
-                if strict then
-                    let free = Fogell.Groovy.Ast.freeVars (bindings |> Map.toSeq |> Seq.map fst |> Set.ofSeq) script
-
-                    match Set.toList free |> List.sort with
-                    | name :: _ -> raise (MissingProperty name)
-                    | [] -> ()
+                // STRICT propagates into expressions, not just bare names — and it is
+                // enforced at READ time, in the interpreter, not by a static scan.
+                // This landed in three review steps, each one wrong until measured:
+                // first the interpreter's null-for-unknown ran `${MISSING + '-sfx'}`
+                // as `null-sfx` where Groovy fails; then a static free-variable scan
+                // raised on `${true ? 'ok' : MISSING}` where Groovy — lazy — never
+                // reads MISSING; then the intersection refinement missed the arm
+                // actually TAKEN (`${true ? MISSING : 'ok'}`). No static answer
+                // exists: laziness makes the read set a runtime fact, so the check
+                // lives at the read (Interpreter.runStrictVars) and is exact by
+                // construction. Receipts `gstring-unresolved-property`,
+                // `gstring-unresolved-in-expression`.
+                let runInterpreter = if strict then Interpreter.runStrictVars else Interpreter.run
 
                 let outcome =
-                    Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
+                    runInterpreter Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
 
                 match outcome.Fault, outcome.Returned with
                 | None, Some v -> Some(Value.toDisplay v)
+                | Some(UnknownProperty name), _ -> raise (MissingProperty name)
                 | _ -> None
 
         // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at

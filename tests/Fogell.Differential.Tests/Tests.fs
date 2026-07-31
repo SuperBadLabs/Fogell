@@ -223,13 +223,20 @@ let stringModel =
                   "inherited environment reaches expression evaluation"
 
               // LAZY branches do not raise: Groovy never evaluates the untaken arm,
-              // so a missing name there must not fail a build Jenkins accepts. The
-              // residual is stated in Ast.freeVars — a missing name on the arm TAKEN
-              // at runtime is not statically caught.
+              // so a missing name there must not fail a build Jenkins accepts.
+              // Enforcement is at READ time in the interpreter — no static scan can
+              // know which arm runs — so the TAKEN arm raises while the untaken one
+              // never does.
               for why, raw, expected in
                   [ "untaken ternary arm may be missing", "${true ? 'ok' : NOPE}", "ok"
                     "short-circuited operand may be missing", "${false && NOPE}", "false" ] do
                   Expect.equal (GString.render env (step [ "m", raw ] [] [] [] [] []) "m" raw) expected why
+
+              Expect.throws
+                  (fun () ->
+                      GString.render env (step [ "m", "${true ? NOPE : 'ok'}" ] [] [] [] [] []) "m" "${true ? NOPE : 'ok'}"
+                      |> ignore)
+                  "the TAKEN arm reading a missing name raises"
 
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression

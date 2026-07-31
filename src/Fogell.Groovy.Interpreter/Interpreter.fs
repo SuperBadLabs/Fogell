@@ -15,6 +15,10 @@ type Fault =
     | Unsupported of construct: string
     | Thrown of Value
     | BudgetExhausted of what: string
+    /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
+    /// throws MissingPropertyException here; the default mode's late-binding null
+    /// is kept for consumers that model scripted Groovy's laxer contexts.
+    | UnknownProperty of name: string
 
 type Outcome =
     { Effects: Effect list
@@ -63,7 +67,12 @@ module Interpreter =
           /// `expression { def deploy = true; deploy }` returned None, which a
           /// `when` reads as unevaluable and fails the build on — where Jenkins
           /// simply runs the stage.
-          mutable LastValue: Value option }
+          mutable LastValue: Value option
+          /// When set, reading a name bound nowhere faults with [UnknownProperty]
+          /// instead of yielding null — Groovy's own behaviour for a GString in a
+          /// step argument. Runtime enforcement is the ONLY correct place for it:
+          /// laziness means no static scan can know which ternary arm is read.
+          StrictVars: bool }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
@@ -94,7 +103,13 @@ module Interpreter =
             | None ->
                 match Map.tryFind n env.Funcs with
                 | Some(ps, body) -> VFunc(n, ps, body)
-                | None -> VNull // Groovy resolves unknown bindings late; treat as null
+                | None ->
+                    if st.StrictVars then
+                        // MEASURED (receipt `gstring-unresolved-property`): Groovy's
+                        // property lookup FAILS the build for a name bound nowhere.
+                        raise (Stop(UnknownProperty n))
+                    else
+                        VNull // Groovy resolves unknown bindings late; treat as null
         | EProp(target, name) ->
             match evalExpr st env target with
             | VMap m -> defaultArg (Map.tryFind name m) VNull
@@ -460,7 +475,7 @@ module Interpreter =
     /// Evaluate a script. `registeredSteps` is the host's step vocabulary;
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
-    let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+    let private runWith (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
         let st =
@@ -470,7 +485,8 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Defined = defined
-              LastValue = None }
+              LastValue = None
+              StrictVars = strictVars }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -501,6 +517,16 @@ module Interpreter =
               Fault = None
               Env = hoisted
               Returned = Some v }
+
+    /// Groovy's late-binding default: an unknown name reads as null.
+    let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith false budget registeredSteps env script
+
+    /// Groovy's property-lookup contract for GStrings in step arguments: an unknown
+    /// name faults with [UnknownProperty]. Enforced at READ time because laziness
+    /// makes the read set undecidable statically — `${c ? A : B}` reads one arm.
+    let runStrictVars (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith true budget registeredSteps env script
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script
