@@ -76,8 +76,16 @@ let main argv =
                 | :? System.ComponentModel.Win32Exception as e -> refuse e.Message; []
                 | :? AggregateException as e -> refuse e.InnerException.Message; []
 
-        let envReplacements =
+        // Canonicalisation stays INJECTIVE by canonicalising only names the CASE
+        // actually references: both engines share the script text, so `$PATH` in it
+        // means every occurrence of either engine's PATH value is an expansion —
+        // while a case that merely PRINTS a path literal gets no rewriting and a
+        // cross-engine literal collision diverges visibly. (The residual — a script
+        // that both references $NAME and prints the other engine's literal value —
+        // requires deliberate construction and is accepted, stated here.)
+        let replacementsFor (script: string) =
             Fogell.Differential.Trace.canonicalisedEnvNames
+            |> List.filter (fun name -> script.Contains("$" + name) || script.Contains("${" + name))
             |> List.collect (fun name ->
                 [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
                   | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
@@ -93,8 +101,7 @@ let main argv =
             { BaseUrl = baseUrl
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
-              WorkspaceCollector = collector
-              EnvReplacements = envReplacements }
+              WorkspaceCollector = collector }
 
         let fogellRoot =
             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
@@ -137,8 +144,9 @@ let main argv =
                     use p = Diagnostics.Process.Start psi
                     p.WaitForExit 30_000 |> ignore
 
-                let jenkins = Jenkins.run cfg job script
-                let fogell = FogellSide.run envReplacements fogellRoot job script
+                let caseReplacements = replacementsFor script
+                let jenkins = Jenkins.run cfg caseReplacements job script
+                let fogell = FogellSide.run caseReplacements fogellRoot job script
                 let r = Compare.receipt name core jenkins fogell
                 let path = Compare.seal receiptDir r
 

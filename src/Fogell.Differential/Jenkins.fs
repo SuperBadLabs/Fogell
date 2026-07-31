@@ -28,13 +28,7 @@ type JenkinsConfig =
       ///
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
-      WorkspaceCollector: string option
-      /// COORDINATED canonicalisation set — the UNION of both engines'
-      /// inherited-env values mapped to `${'$'}{NAME}` tokens, computed once by the
-      /// harness and applied to BOTH traces. One-sided replacement rewrote a
-      /// literal `/root` on only the engine whose HOME it was, manufacturing a
-      /// divergence out of identical output.
-      EnvReplacements: (string * string) list }
+      WorkspaceCollector: string option }
 
 module Jenkins =
 
@@ -67,7 +61,12 @@ module Jenkins =
         + "<triggers/><disabled>false</disabled></flow-definition>"
 
     /// Run one Jenkinsfile under a disposable job name and return its trace.
-    let run (cfg: JenkinsConfig) (jobName: string) (script: string) : Result<Trace, string> =
+    let run
+        (cfg: JenkinsConfig)
+        (envReplacements: (string * string) list)
+        (jobName: string)
+        (script: string)
+        : Result<Trace, string> =
         try
             let field, value = crumb cfg
 
@@ -136,7 +135,7 @@ module Jenkins =
 
                              let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
 
-                             Trace.normaliseOutputWith ((ws, "${WORKSPACE}") :: cfg.EnvReplacements) rawLines)
+                             Trace.normaliseOutputWith ((ws, "${WORKSPACE}") :: envReplacements) rawLines)
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a
