@@ -406,13 +406,24 @@ module ProcessGroup =
 
                 request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
 
+                let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
 
                 // On Jenkins the wrapper shell survives to print `Terminated` for its
                 // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
-                // left alive to say it — the engine says it, in the same position.
-                request.OnLine |> Option.iter (fun f -> f "Terminated")
+                // usually left alive to say it — the engine says it, in the same
+                // position. UNLESS the script trapped the signal and said it itself:
+                // synthesising unconditionally doubled the line for a trapping shell.
+                let shellSaidIt =
+                    let afterSignal =
+                        (lock stdout (fun () -> stdout.ToString())).Substring outputBeforeSignal.Length
+
+                    afterSignal.Replace("\r\n", "\n").Split '\n'
+                    |> Array.exists (fun l -> l.Trim() = "Terminated")
+
+                if not shellSaidIt then
+                    request.OnLine |> Option.iter (fun f -> f "Terminated")
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
