@@ -351,7 +351,11 @@ module Executor =
                     // individual Ant masks, advising on the FIRST unmatched one —
                     // `missing/**,other-*.zip` advises on `missing/**` alone (the
                     // Configuration-error line keeps the full list).
-                    let raw = raw.Split(',').[0].Trim()
+                    let raw =
+                        raw.Split(',')
+                        |> Array.map (fun m -> m.Trim())
+                        |> Array.tryFind (fun m -> m <> "")
+                        |> Option.defaultValue raw
 
                     if raw.EndsWith "/**" then
                         let starstar = q "**"

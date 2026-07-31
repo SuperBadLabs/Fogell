@@ -365,7 +365,21 @@ module ProcessGroup =
                 else
                     match expired (), interrupted () with
                     | false, false -> Thread.Sleep 10
-                    | false, true -> cause <- WaitEnd.Interrupted
+                    | false, true ->
+                        // the LOCAL budget clock starts after launch overhead, so it
+                        // can lag the walker's absolute deadline — an interrupt seen
+                        // first here may still be the LATER event. The caller's
+                        // ordering is authoritative in both directions.
+                        let interruptFirst =
+                            match request.InterruptBeatsDeadline with
+                            | Some beats -> (try beats () with _ -> true)
+                            | None -> true
+
+                        cause <-
+                            if interruptFirst || request.TimeoutMs.IsNone then
+                                WaitEnd.Interrupted
+                            else
+                                WaitEnd.Expired
                     | true, _ ->
                         // EVERY observed expiry consults the caller's timestamps, not
                         // only a both-at-once tie: the sibling STAMP is written before
