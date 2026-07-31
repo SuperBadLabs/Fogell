@@ -218,10 +218,16 @@ module ProcessGroup =
                 let mode =
                     IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
 
-                use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
-                use writer = new IO.StreamWriter(stream)
-                writer.Write request.Command
-                Some f
+                try
+                    use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
+                    use writer = new IO.StreamWriter(stream)
+                    writer.Write request.Command
+                    Some f
+                with e ->
+                    // a partial secret-bearing file must not outlive a failed write —
+                    // the cleanup disposable is registered only after creation succeeds
+                    (try IO.File.Delete f with _ -> ())
+                    raise e
             else
                 None
 

@@ -85,7 +85,11 @@ let main argv =
         // requires deliberate construction and is accepted, stated here.)
         let replacementsFor (script: string) =
             Fogell.Differential.Trace.canonicalisedEnvNames
-            |> List.filter (fun name -> script.Contains("$" + name) || script.Contains("${" + name))
+            |> List.filter (fun name ->
+                script.Contains("$" + name)
+                || script.Contains("${" + name)
+                // Groovy's spelling of the same reference
+                || script.Contains("env." + name))
             |> List.collect (fun name ->
                 [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
                   | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
