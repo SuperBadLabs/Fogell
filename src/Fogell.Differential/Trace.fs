@@ -247,8 +247,7 @@ module Trace =
         // the `[branch]` prefix in FG-036.
         elif t = "Post stage" then None
         // Jenkins node/workspace banners
-        // `dir()` announces its working directory as an absolute path
-        elif Text.RegularExpressions.Regex.IsMatch(t, "^Running in /") then None
+
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
         elif
             t = "GitHub has been notified of this commit\u2019s build result"
@@ -312,6 +311,7 @@ module Trace =
 
         let mutable inStackTrace = false
         let mutable anyKept = false
+        let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
         [ for i in 0 .. all.Length - 1 do
@@ -324,6 +324,12 @@ module Trace =
 
             let suppress =
                 (isFrame raw && inStackTrace)
+                // `dir()`'s banner, by CONTEXT: `Running in <abs path>` counts as the
+                // banner only immediately after the `[Pipeline] dir` annotation — a
+                // build echoing the same shape mid-run is compared, differing
+                // workspace paths and all.
+                || (Text.RegularExpressions.Regex.IsMatch(raw, "^Running in /")
+                    && prevRaw.StartsWith "[Pipeline] dir")
                 || (looksLikeExceptionHead raw && isFrame next)
                 || (isWarnHead raw && isWarnBody next)
                 || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
@@ -331,6 +337,8 @@ module Trace =
             inSecretWarning <-
                 (isWarnHead raw && isWarnBody next)
                 || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
+
+            prevRaw <- raw
 
             if not suppress then
                 match normaliseLine all[i] with

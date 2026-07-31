@@ -77,7 +77,12 @@ type RunRequest =
       /// mechanism for both, and a script's trap handler cannot tell them apart.
       /// The outcome is [Cancelled], not [TimedOut]: the step did not run out of
       /// time, so reporting a timeout would misattribute the cause.
-      Interrupt: (unit -> bool) option }
+      Interrupt: (unit -> bool) option
+      /// When BOTH the deadline and an interrupt are observable in the same poll,
+      /// this decides which event was actually EARLIER — the caller owns the
+      /// timestamps (its clock stamps the sibling failure and its deadline), so the
+      /// tie cannot be broken here. None means deadline-first, the plain reading.
+      InterruptBeatsDeadline: (unit -> bool) option }
 
     static member create(command, workingDirectory) =
         { Command = command
@@ -87,7 +92,8 @@ type RunRequest =
           GraceMs = 2_000
           OnLine = None
           ReapGroup = true
-          Interrupt = None }
+          Interrupt = None
+          InterruptBeatsDeadline = None }
 
 module ProcessGroup =
 
@@ -305,10 +311,22 @@ module ProcessGroup =
             let mutable cause = if exited then WaitEnd.Exited else WaitEnd.Waiting
 
             while cause = WaitEnd.Waiting do
-                if proc.HasExited then cause <- WaitEnd.Exited
-                elif expired () then cause <- WaitEnd.Expired
-                elif interrupted () then cause <- WaitEnd.Interrupted
-                else Thread.Sleep 10
+                if proc.HasExited then
+                    cause <- WaitEnd.Exited
+                else
+                    match expired (), interrupted () with
+                    | false, false -> Thread.Sleep 10
+                    | true, false -> cause <- WaitEnd.Expired
+                    | false, true -> cause <- WaitEnd.Interrupted
+                    | true, true ->
+                        // both surfaced in one poll: the caller's timestamps say
+                        // which event was actually first
+                        let interruptFirst =
+                            match request.InterruptBeatsDeadline with
+                            | Some beats -> (try beats () with _ -> false)
+                            | None -> false
+
+                        cause <- if interruptFirst then WaitEnd.Interrupted else WaitEnd.Expired
 
             cause
 

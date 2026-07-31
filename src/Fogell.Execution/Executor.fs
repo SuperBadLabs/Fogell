@@ -27,6 +27,9 @@ type StepRequest =
       /// FG-036. Polled while a shell step runs; true interrupts it. Used by
       /// `parallel(failFast: true)` to stop siblings once one branch has failed.
       ///
+      /// Breaks the both-in-one-poll tie between [TimeoutMs] and [Interrupt]; see
+      /// [RunRequest.InterruptBeatsDeadline].
+      InterruptBeatsDeadline: (unit -> bool) option
       /// EXTERNAL cancellation only. A `timeout` deadline travels in [TimeoutMs]
       /// and, for steps that do their own work, in [DeadlineExpired].
       ///
@@ -136,6 +139,7 @@ module Executor =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
                         Interrupt = request.Interrupt
+                        InterruptBeatsDeadline = request.InterruptBeatsDeadline
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = onLine }

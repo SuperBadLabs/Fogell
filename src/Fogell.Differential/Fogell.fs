@@ -547,6 +547,16 @@ module FogellSide =
                           // self-working steps through DeadlineExpired, so an expired
                           // timeout is still reported as a timeout.
                           Interrupt = ctx.Interrupt
+                          // ties inside one poll break on the WALKER's timestamps:
+                          // the sibling stamp against this step's effective deadline
+                          InterruptBeatsDeadline =
+                            Some(fun () ->
+                                let s = ctx.SiblingFailedAt.Value
+
+                                s >= 0L
+                                && (match deadline with
+                                    | Some d -> s < d.AtMs
+                                    | None -> true))
                           DeadlineExpired =
                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d.AtMs)
                           Secrets = ctx.Secrets
