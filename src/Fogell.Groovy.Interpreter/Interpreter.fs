@@ -25,9 +25,12 @@ type Outcome =
       Fault: Fault option
       Env: Env
       /// Names ASSIGNED into being without `def` — Groovy's Binding-field creation,
-      /// the shape its "Did you forget the `def` keyword?" advisory fires on. A
-      /// `def` declaration is a local and is NOT recorded here.
-      NewBindings: Set<string>
+      /// the shape its "Did you forget the `def` keyword?" advisory fires on — in
+      /// EXECUTION ORDER, because the advisories print as the assignments run and
+      /// the lines are compared as output now: a set's name-sorted enumeration made
+      /// `${z = 1; a = 2}` announce a before z, a false divergence. A `def`
+      /// declaration is a local and is NOT recorded here.
+      NewBindings: string list
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -78,8 +81,8 @@ module Interpreter =
           /// laziness means no static scan can know which ternary arm is read.
           StrictVars: bool
           /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
-          /// assignments made before it — Groovy performed them.
-          mutable NewBindings: Set<string>
+          /// assignments made before it — Groovy performed them. REVERSED order.
+          mutable NewBindings: string list
           /// Groovy's script BINDING: one shared, MUTABLE map, exactly as the real
           /// thing behaves. `Env.Vars` holds LOCALS only — `def`s, closure and loop
           /// parameters, catch variables — threaded functionally for lexical scope.
@@ -269,10 +272,15 @@ module Interpreter =
         | SafeMethodCall(recv, name) ->
             // The whole call short-circuits: `env.OPTIONAL?.trim()` is null when the
             // receiver is, with the method never dispatched — not a property read
-            // followed by a rejected `call`.
-            (match evalExpr st env recv with
-             | VNull -> VNull
-             | r -> evalBuiltin st env name r positionalLazy.Value trailing)
+            // followed by a rejected `call`. Admission comes FIRST, before even the
+            // null test: `?.` must not be a doorway past the sandbox — an escape
+            // method is denied whether or not its receiver happens to be null.
+            (match Sandbox.admitMethod name with
+             | Error d -> raise (Stop(Denied d))
+             | Ok _ ->
+                 match evalExpr st env recv with
+                 | VNull -> VNull
+                 | r -> evalBuiltin st env name r positionalLazy.Value trailing)
         | MethodCall(recv, name) ->
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
@@ -452,7 +460,7 @@ module Interpreter =
                 // case), mutated in place — immediately visible everywhere,
                 // including after this closure returns and after a later fault
                 if not (Map.containsKey n st.Binding) then
-                    st.NewBindings <- Set.add n st.NewBindings
+                    st.NewBindings <- n :: st.NewBindings
 
                 st.Binding <- Map.add n value st.Binding
                 env
@@ -560,7 +568,7 @@ module Interpreter =
               Defined = defined
               LastValue = None
               StrictVars = strictVars
-              NewBindings = Set.empty
+              NewBindings = []
               Binding = env.Vars }
 
         // hoist declared functions so a call before its definition resolves
@@ -581,7 +589,7 @@ module Interpreter =
               // the BINDING is the outcome's variable view — locals died with
               // their scopes, exactly as Groovy's did
               Env = { final with Vars = st.Binding }
-              NewBindings = st.NewBindings
+              NewBindings = List.rev st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
@@ -592,13 +600,13 @@ module Interpreter =
               // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
               // still reads x. The mutable binding survives the raise by nature.
               Env = { hoisted with Vars = st.Binding }
-              NewBindings = st.NewBindings
+              NewBindings = List.rev st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
               Env = { hoisted with Vars = st.Binding }
-              NewBindings = st.NewBindings
+              NewBindings = List.rev st.NewBindings
               Returned = Some v }
 
     /// Groovy's late-binding default: an unknown name reads as null.
