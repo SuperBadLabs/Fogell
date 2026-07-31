@@ -30,10 +30,17 @@ let main argv =
         // ONE coordinated canonicalisation set for BOTH traces: the union of each
         // engine's inherited values for the curated names, so a literal equal to
         // either engine's value rewrites identically on both sides.
+        // No collector → NO inherited-env canonicalisation at all: rewriting only
+        // Fogell's values while Jenkins' stayed literal manufactured divergences
+        // whenever the optional variable was simply not set. Both sides or neither.
+        let mutable envCanonicalisationEnabled = true
+
         let jenkinsEnv =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_ENV_CMD" with
             | null
-            | "" -> []
+            | "" ->
+                envCanonicalisationEnabled <- false
+                []
             | cmd ->
                 // FAIL CLOSED (FG-103): a CONFIGURED collector that cannot deliver
                 // is a broken harness, and continuing with a partial replacement set
@@ -84,6 +91,10 @@ let main argv =
         // that both references $NAME and prints the other engine's literal value —
         // requires deliberate construction and is accepted, stated here.)
         let replacementsFor (script: string) =
+            if not envCanonicalisationEnabled then
+                []
+            else
+
             Fogell.Differential.Trace.canonicalisedEnvNames
             |> List.filter (fun name ->
                 // full identifiers only: `$USERNAME` must not enable USER — a
