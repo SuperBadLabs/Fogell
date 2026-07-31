@@ -1126,7 +1126,10 @@ module FogellSide =
                                     let value =
                                         if interpolates then
                                             raw.Replace("\\$", "\u0000")
-                                            |> interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList)
+                                            |> GString.interpolateInto
+                                                scriptBinding
+                                                adviseNewBinding
+                                                (envForWith ctx.EnvOverlay stage |> Map.ofList)
                                         else
                                             raw
 

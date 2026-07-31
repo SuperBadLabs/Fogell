@@ -189,10 +189,8 @@ module GString =
                                     acc)
                             carried
 
-                    for n in outcome.NewBindings do
-                        match Map.tryFind n outcome.Env.Vars with
-                        | Some v -> advise (n, v)
-                        | None -> ()
+                    for n, createdAs in outcome.NewBindings do
+                        advise (n, createdAs)
 
                     publish carried
 
@@ -464,6 +462,18 @@ module GString =
 
     let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
         renderInto binding ignore env step key raw
+
+    /// Interpolate RAW text against the run-scoped binding — for consumers whose
+    /// argument is not a step argument (withEnv's `NAME=value` entries). An
+    /// assignment made by a placeholder here enters the same Binding every other
+    /// render reads; the stateless [interpolate] silently discarded it.
+    let interpolateInto
+        (binding: ScriptBinding)
+        (advise: string * Value -> unit)
+        (known: Map<string, string>)
+        (value: string)
+        : string =
+        binding.Transact(fun current publish -> interpolateCore false known current publish advise value)
 
     /// Stateless render — each call gets a fresh, discarded binding. For contexts
     /// where no build-scoped Binding exists (and for the acceptance matrix's

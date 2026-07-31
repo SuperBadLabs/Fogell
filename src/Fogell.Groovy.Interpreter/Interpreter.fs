@@ -28,9 +28,11 @@ type Outcome =
       /// the shape its "Did you forget the `def` keyword?" advisory fires on — in
       /// EXECUTION ORDER, because the advisories print as the assignments run and
       /// the lines are compared as output now: a set's name-sorted enumeration made
-      /// `${z = 1; a = 2}` announce a before z, a false divergence. A `def`
-      /// declaration is a local and is NOT recorded here.
-      NewBindings: string list
+      /// `${z = 1; a = 2}` announce a before z, a false divergence. Each event
+      /// carries the value AT CREATION: the advisory names that value's type, and
+      /// `${x = 1; x = 'later'}` announces an Integer even though the binding ends
+      /// as a String. A `def` declaration is a local and is NOT recorded here.
+      NewBindings: (string * Value) list
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -82,7 +84,7 @@ module Interpreter =
           StrictVars: bool
           /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
           /// assignments made before it — Groovy performed them. REVERSED order.
-          mutable NewBindings: string list
+          mutable NewBindings: (string * Value) list
           /// Groovy's script BINDING: one shared, MUTABLE map, exactly as the real
           /// thing behaves. `Env.Vars` holds LOCALS only — `def`s, closure and loop
           /// parameters, catch variables — threaded functionally for lexical scope.
@@ -277,14 +279,17 @@ module Interpreter =
             // THEN the sandbox rules on the method — before the null test, so `?.`
             // is no doorway past it — and only then does a non-null receiver
             // dispatch.
-            (let r = evalExpr st env recv
+            (match evalExpr st env recv with
+             | VNull -> VNull // short-circuit: arguments never evaluate either
+             | r ->
+                 // Groovy's order on a non-null receiver: ARGUMENTS evaluate (their
+                 // side effects are performed and survive a denial), THEN the
+                 // sandbox rules, then dispatch.
+                 let args = positionalLazy.Value
 
-             match Sandbox.admitMethod name with
-             | Error d -> raise (Stop(Denied d))
-             | Ok _ ->
-                 match r with
-                 | VNull -> VNull
-                 | r -> evalBuiltin st env name r positionalLazy.Value trailing)
+                 match Sandbox.admitMethod name with
+                 | Error d -> raise (Stop(Denied d))
+                 | Ok _ -> evalBuiltin st env name r args trailing)
         | MethodCall(recv, name) ->
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
@@ -464,7 +469,7 @@ module Interpreter =
                 // case), mutated in place — immediately visible everywhere,
                 // including after this closure returns and after a later fault
                 if not (Map.containsKey n st.Binding) then
-                    st.NewBindings <- n :: st.NewBindings
+                    st.NewBindings <- (n, value) :: st.NewBindings
 
                 st.Binding <- Map.add n value st.Binding
                 env
