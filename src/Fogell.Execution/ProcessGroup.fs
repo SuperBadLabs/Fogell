@@ -185,8 +185,31 @@ module ProcessGroup =
         // .NET's two async pipe readers deliver cross-stream events in racy order —
         // output lines overtook their own trace. One pipe is kernel-ordered, and it
         // is also exactly what Jenkins' console is. The pgid marker stays on the
-        // OUTER stderr, printed before the exec redirects anything.
-        psi.ArgumentList.Add $"printf '%%s%%s\\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$FOGELL_SCRIPT\" 2>&1"
+        // OUTER stderr, printed before anything is redirected.
+        //
+        // A SHEBANG script is the exception, as it is on Jenkins: durable-task
+        // executes the named interpreter directly and injects no flags, so a
+        // `#!/bin/bash` script runs under bash untraced. The script goes to a file
+        // (its interpreter line only works from one) and is executed as itself.
+        let shebangFile =
+            if request.Command.StartsWith "#!" then
+                let f = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-shebang-{Guid.NewGuid():N}.sh")
+                IO.File.WriteAllText(f, request.Command)
+
+                let psi0 = ProcessStartInfo("/bin/chmod", $"+x {f}")
+                psi0.UseShellExecute <- false
+                use p0 = Process.Start psi0
+                p0.WaitForExit()
+                Some f
+            else
+                None
+
+        match shebangFile with
+        | Some f -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"{f}\" 2>&1"
+        | None ->
+            psi.ArgumentList.Add
+                $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$FOGELL_SCRIPT\" 2>&1"
+
         psi.Environment["FOGELL_SCRIPT"] <- request.Command
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true
@@ -340,6 +363,7 @@ module ProcessGroup =
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
 
         sw.Stop()
+        shebangFile |> Option.iter (fun f -> try IO.File.Delete f with _ -> ())
 
         { Outcome = outcome
           Stdout = stdout.ToString()

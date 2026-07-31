@@ -1882,6 +1882,9 @@ module FogellSide =
             // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
             let mutable exceededAnnounced = false
 
+            // ONE announcement, after the pipeline post: the post runs under the
+            // already-expired deadline and narrates its own cancellations first —
+            // announcing before it reversed Jenkins' cluster order.
             let announcePipelineExceeded () =
                 if
                     not exceededAnnounced
@@ -1899,8 +1902,6 @@ module FogellSide =
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
                     runStage root workspace pipelineDeadline stage
-
-            announcePipelineExceeded ()
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only

@@ -137,6 +137,14 @@ let shellExecution =
               | None -> failtest "a failure must carry a diagnostic"
           }
 
+          test "a shebang script runs as ITS interpreter, untraced" {
+              // durable-task executes a shebang script directly, injecting no -xe:
+              // a bash script runs under bash, and no `+` trace appears.
+              let r = Executor.runStep (request (tempRoot ()) "#!/bin/bash\necho ran-as:$0")
+              Expect.stringContains r.Stdout "ran-as:" "the script executed"
+              Expect.isFalse (r.Stdout.Contains "+ echo") "no injected trace"
+          }
+
           test "stderr merges into the ordered stream, exactly as Jenkins' console does" {
               // FG-102: the shell runs `2>&1`, because the xtrace lives on stderr and
               // two async pipe readers deliver cross-stream events in racy order —

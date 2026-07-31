@@ -250,7 +250,11 @@ module Trace =
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d") then None
         elif t = "Ready to run at" || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d") then None
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
-        elif t.StartsWith "GitHub has been notified of this commit" then None
+        elif
+            t = "GitHub has been notified of this commit\u2019s build result"
+            || t = "GitHub has been notified of this commit's build result"
+        then
+            None
 
         // Jenkins prefixes workspace paths that differ by construction
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[.*\] Running shell script$") then None
