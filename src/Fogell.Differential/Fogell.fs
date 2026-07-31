@@ -338,6 +338,56 @@ module FogellSide =
             let remainingMs (deadline: int64 option) =
                 deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
+            /// ONE render pass for a step's arguments — source order, side effects
+            /// once — plus the insecure-interpolation warning, computed HERE so every
+            /// consumer gets it: ordinary steps, wrapper branches, `dir`, `input`.
+            /// Rendering only in runStepInner left wrappers expanding secrets with no
+            /// warning where Jenkins warns on the step invocation.
+            ///
+            /// The warning wants a REAL GString: Interpolating kind AND a live `$` in
+            /// the source. Every double-quoted argument is Interpolating by kind, but
+            /// `echo "abc"` with no placeholder is an ordinary constant — warning on
+            /// a coincidental secret value there flags interpolation that never
+            /// happened. (An escaped dollar is a sentinel at this point, so any `$`
+            /// in the source is live.)
+            let renderStepArgs (ctx: BranchCtx) (stage: Stage) (step: Step) : Step =
+                let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                let renderedPositional =
+                    step.Positional
+                    |> List.mapi (fun i v -> $"#{i}", v, GString.renderInto scriptBinding adviseNewBinding env step $"#{i}" v)
+
+                let renderedNamed =
+                    step.Named
+                    |> List.map (fun (k, v) -> k, v, GString.renderInto scriptBinding adviseNewBinding env step k v)
+
+                let interpolatedTexts =
+                    renderedPositional @ renderedNamed
+                    |> List.filter (fun (k, raw, _) ->
+                        GString.kindOf step k = Interpolating && (GString.sourceOf step k raw).Contains "$")
+                    |> List.map (fun (_, _, r) -> r)
+
+                let leaked =
+                    ctx.Secrets
+                    |> List.filter (fun b ->
+                        // What the variable EXPORTS is what interpolation embeds: a
+                        // file() credential binds its variable to the PATH, so scanning
+                        // for the file's CONTENT missed `sh "cat ${FILE}"` entirely.
+                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
+                        exported <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains exported))
+                    |> List.map (fun b -> b.ValueVariable)
+                    |> List.distinct
+
+                if not (List.isEmpty leaked) then
+                    emit
+                        $"Warning: A secret was passed to \"{step.Name}\" using Groovy String interpolation, which is insecure."
+
+                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
+
+                { step with
+                    Positional = renderedPositional |> List.map (fun (_, _, r) -> r)
+                    Named = renderedNamed |> List.map (fun (k, _, r) -> k, r) }
+
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
                 // The argument and the KEY it arrived under travel together. `render`
                 // needs the key to ask what quoting the source used, and deriving the
@@ -379,90 +429,16 @@ module FogellSide =
                 // MissingProperty. The script value derives from the one rendering
                 // pass rather than a second call — a placeholder's side effects run
                 // once (see the increment test).
-                let renderEnv = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                let renderedPositional =
-                    match step.Positional with
-                    | s :: _ -> Some(GString.renderInto scriptBinding adviseNewBinding renderEnv step "#0" s)
-                    | [] -> None
-
-                let renderedNamed =
-                    step.Named
-                    |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding renderEnv step k v)
+                // ONE render pass — source order, side effects once, warning included —
+                // shared with the wrapper branches through renderStepArgs.
+                let rendered = renderStepArgs ctx stage step
 
                 let script =
-                    match renderedPositional with
-                    | Some r -> Some r
-                    | None -> renderedNamed |> List.tryPick (fun (k, v) -> if k = scriptKey then Some v else None)
+                    match rendered.Positional with
+                    | r :: _ -> Some r
+                    | [] -> rendered.Named |> List.tryPick (fun (k, v) -> if k = scriptKey then Some v else None)
 
-                // Jenkins warns when a SECRET reaches a step argument through GString
-                // interpolation, and keeps the advice even though it then masks the value.
-                // Being quieter than Jenkins about a security matter is not an option.
-                //
-                // MEASURED (receipt `sh-secret-interpolation-warning`, Jenkins 2.568.1):
-                // Jenkins names the step IN THE MESSAGE and warns for the interpolated
-                // form while staying silent for the single-quoted one, which is why the
-                // condition is "the render changed the text", not the step's name:
-                //   Warning: A secret was passed to "sh" using Groovy String interpolation, ...
-                //   [...] Affected argument(s) used the following variable(s): [TOKEN]
-                // That receipt proves what JENKINS does (read from the raw console) and
-                // that the two engines still agree end to end. It does NOT prove Fogell
-                // warns: normaliseOutput drops the warning on BOTH sides, so the case
-                // would stay PROVEN if this branch emitted nothing. The emission is
-                // asserted in Fogell.Differential.Tests instead.
-                //
-                // The check covers EVERY argument the model rendered, not just the
-                // script. Each review round found the previous gate one consumer too
-                // narrow — `echo` only, then `script` only, while
-                // `archiveArtifacts artifacts: "${TOKEN}/out"` interpolates a secret
-                // through an argument that is neither.
-                //
-                // The condition is the argument being INTERPOLATING — Jenkins' own
-                // warning names the mechanism, "using Groovy String interpolation",
-                // and only that mechanism triggers it. Not "the render changed": a
-                // render can be text-identical and still be a GString (a credential
-                // whose value is literally `$TOKEN`, echoed as "$TOKEN"). Not
-                // "anything non-literal" either: `sh script: TOKEN` is ordinary
-                // Groovy CODE yielding a string — no interpolation happened, and
-                // warning there would flag the pattern the advice tells authors to
-                // use instead. Single-quoted never warns; measured
-                // (`sh-secret-interpolation-warning`: the single-quoted row is silent).
-                let interpolatedTexts =
-                    [ match script with
-                      | Some rendered when GString.kindOf step scriptKey = Interpolating -> rendered
-                      | _ -> ()
-
-                      for k, rendered in renderedNamed do
-                          // scriptKey is already covered by `script` above; a second
-                          // report for the same argument would warn twice per step.
-                          if k <> scriptKey && GString.kindOf step k = Interpolating then rendered ]
-
-                let leaked =
-                    ctx.Secrets
-                    |> List.filter (fun b ->
-                        // What the variable EXPORTS is what interpolation embeds: a
-                        // file() credential binds its variable to the PATH, so scanning
-                        // for the file's CONTENT missed `sh "cat ${FILE}"` entirely and
-                        // the file-credential warning never fired.
-                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
-                        exported <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains exported))
-                    |> List.map (fun b -> b.ValueVariable)
-                    |> List.distinct
-
-                // Emitted in Jenkins' OWN two-line shape, deliberately. Fogell used a
-                // one-line wording of its own here, and normalisation had to recognise
-                // it by shape alone — so a BUILD printing that same shape was silently
-                // dropped from the comparison, and a case whose evidence was that line
-                // could go falsely PROVEN. Jenkins' warning is a head+body SEQUENCE,
-                // which normalisation already gates contextually: the head only counts
-                // as narration when the body follows. Emitting the same sequence puts
-                // both engines under the same gate — and it is also what lift-and-shift
-                // log tooling expects to find.
-                if not (List.isEmpty leaked) then
-                    emit
-                        $"Warning: A secret was passed to \"{step.Name}\" using Groovy String interpolation, which is insecure."
-
-                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
+                let renderedNamed = rendered.Named
 
                 let result =
                     Executor.runStep
@@ -1046,26 +1022,11 @@ module FogellSide =
                     ctx.Sink BuildStatus.Aborted
                 else
 
-                // Rendered TEXT arguments for the wrapper branches below. Rendering
-                // is evaluation, and it happened only inside runStepInner — so
-                // `dir("${env.SUBDIR}")` created a directory literally named
-                // `${env.SUBDIR}`, and stash/unstash/timeout/retry read raw
-                // placeholder text where Jenkins reads values. Applied PER BRANCH,
-                // never at dispatch scope: a structural argument — withCredentials'
-                // binding list, withEnv's own list handling — is not step text, and
-                // rendering it would evaluate code the model must not run.
-                let renderStepArgs (st: Step) : Step =
-                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                    { st with
-                        Positional = st.Positional |> List.mapi (fun i v -> GString.renderInto scriptBinding adviseNewBinding env st $"#{i}" v)
-                        Named = st.Named |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding env st k v) }
-
                 match step.Name, step.Positional with
                 // JB-FAIL-001/002: timeout and abort share one interrupt path,
                 // and the interrupt is a trappable SIGTERM with a grace window.
                 | "timeout", _ when not (List.isEmpty step.Block) ->
-                    match timeoutMs (renderStepArgs step) with
+                    match timeoutMs (renderStepArgs ctx stage step) with
                     | Error why ->
                         emit $"ERROR: {why}; refusing to guess a deadline"
                         ctx.Failed.Value <- true
@@ -1088,7 +1049,7 @@ module FogellSide =
                 // the first, and there is no backoff. `retry(3)` around a step
                 // that always fails runs it exactly three times.
                 | "retry", _ when not (List.isEmpty step.Block) ->
-                    let attempts = max 1 (retryCount (renderStepArgs step))
+                    let attempts = max 1 (retryCount (renderStepArgs ctx stage step))
                     let mutable attempt = 1
                     let mutable settled = false
 
@@ -1461,27 +1422,18 @@ module FogellSide =
                     // message: "$x"` binds x from `ok` before `message` reads it, and
                     // rendering message-then-ok raised MissingProperty on it. One sweep
                     // in the recorded order; the prompt and label select from it.
-                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                    let renderedPositional =
-                        step.Positional
-                        |> List.tryHead
-                        |> Option.map (fun v -> GString.renderInto scriptBinding adviseNewBinding env step "#0" v)
-
-                    let renderedNamed =
-                        step.Named
-                        |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding env step k v)
+                    let rendered = renderStepArgs ctx stage step
 
                     let renderedMessage =
                         match messageKeyName with
-                        | "#0" -> defaultArg renderedPositional message
+                        | "#0" -> rendered.Positional |> List.tryHead |> Option.defaultValue message
                         | key ->
-                            renderedNamed
+                            rendered.Named
                             |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
                             |> Option.defaultValue message
 
                     let renderedOk =
-                        renderedNamed
+                        rendered.Named
                         |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
                         |> Option.defaultValue okLabel
 
@@ -1528,7 +1480,7 @@ module FogellSide =
                 // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
                 // would pass a naive test and fail the one that matters.
                 | "stash", _ ->
-                    let step = renderStepArgs step
+                    let step = renderStepArgs ctx stage step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1584,7 +1536,7 @@ module FogellSide =
                             emit $"Stashed {saved.Length} file(s)"
 
                 | "unstash", _ ->
-                    let step = renderStepArgs step
+                    let step = renderStepArgs ctx stage step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1624,7 +1576,7 @@ module FogellSide =
 
                 | "dir", (sub :: _) ->
                     // `dir('x') { … }` — nested cwd, auto-created
-                    let sub = GString.renderInto scriptBinding adviseNewBinding (envForWith ctx.EnvOverlay stage |> Map.ofList) step "#0" sub
+                    let sub = (renderStepArgs ctx stage step).Positional |> List.head
 
                     match Workspace.resolveUnder cwd sub with
                     | Result.Error e ->

@@ -177,14 +177,13 @@ module GString =
                         outcome.Env.Vars
                         |> Map.fold
                             (fun acc k v ->
+                                // outcome.Env.Vars IS the script Binding now — locals
+                                // died with their scopes inside the interpreter, so a
+                                // changed or new key here is a real binding update
                                 if k = "env" then acc
-                                // a `def` local never merges back — it SHADOWS a
-                                // binding inside its own placeholder, and carrying its
-                                // value would overwrite what `$x` must still read
-                                elif Set.contains k outcome.DeclaredLocals then acc
                                 elif (match Map.tryFind k bindings with
                                       | Some old -> old <> v
-                                      | None -> Set.contains k outcome.NewBindings) then
+                                      | None -> true) then
                                     Map.add k v acc
                                 else
                                     acc)

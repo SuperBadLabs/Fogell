@@ -28,11 +28,6 @@ type Outcome =
       /// the shape its "Did you forget the `def` keyword?" advisory fires on. A
       /// `def` declaration is a local and is NOT recorded here.
       NewBindings: Set<string>
-      /// Names DECLARED with `def` — locals of this script. A local can SHADOW an
-      /// existing binding, and its value must never be merged back: after
-      /// `x = 'outer'`, evaluating `${def x = 'inner'; x}` leaves the binding at
-      /// 'outer'.
-      DeclaredLocals: Set<string>
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -85,11 +80,15 @@ module Interpreter =
           /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
           /// assignments made before it — Groovy performed them.
           mutable NewBindings: Set<string>
-          mutable DeclaredLocals: Set<string>
-          /// The variable map as of the LAST binding-extending statement, so a fault
-          /// does not erase assignments Groovy already performed. Threading env
-          /// functionally is right for evaluation; this is the recovery channel.
-          mutable LatestVars: Map<string, Value> }
+          /// Groovy's script BINDING: one shared, MUTABLE map, exactly as the real
+          /// thing behaves. `Env.Vars` holds LOCALS only — `def`s, closure and loop
+          /// parameters, catch variables — threaded functionally for lexical scope.
+          /// The split is what earlier patch-on-patch state (a recovery snapshot, a
+          /// declared-locals name set) approximated and kept getting wrong one
+          /// closure at a time: an assignment to a non-local name mutates HERE and
+          /// is immediately visible to every later expression, survives a fault,
+          /// and never confuses a parameter for a binding.
+          mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
@@ -115,18 +114,22 @@ module Interpreter =
         | EList xs -> VList(xs |> List.map (evalExpr st env))
         | EMap kvs -> VMap(kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList)
         | EVar n ->
+            // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
             | Some v -> v
             | None ->
-                match Map.tryFind n env.Funcs with
-                | Some(ps, body) -> VFunc(n, ps, body)
+                match Map.tryFind n st.Binding with
+                | Some v -> v
                 | None ->
-                    if st.StrictVars then
-                        // MEASURED (receipt `gstring-unresolved-property`): Groovy's
-                        // property lookup FAILS the build for a name bound nowhere.
-                        raise (Stop(UnknownProperty n))
-                    else
-                        VNull // Groovy resolves unknown bindings late; treat as null
+                    match Map.tryFind n env.Funcs with
+                    | Some(ps, body) -> VFunc(n, ps, body)
+                    | None ->
+                        if st.StrictVars then
+                            // MEASURED (receipt `gstring-unresolved-property`): Groovy's
+                            // property lookup FAILS the build for a name bound nowhere.
+                            raise (Stop(UnknownProperty n))
+                        else
+                            VNull // Groovy resolves unknown bindings late; treat as null
         | ESafeProp(target, name) ->
             // Safe navigation: a NULL receiver short-circuits to null — no lookup,
             // no strict fault. A non-null receiver behaves exactly like [EProp],
@@ -284,16 +287,7 @@ module Interpreter =
                 trailing
                 |> Option.iter (fun c ->
                     st.Depth <- st.Depth + 1
-                    let outerLocals = st.DeclaredLocals
-
-                    try
-                        execBlock st env c.Body |> ignore
-                    finally
-                        // a closure's `def`s are ITS locals — recording them at
-                        // placeholder scope made an unrelated same-named binding
-                        // update look like a shadow and blocked its merge
-                        st.DeclaredLocals <- outerLocals
-
+                    execBlock st env c.Body |> ignore
                     st.Depth <- st.Depth - 1)
 
                 VNull
@@ -306,17 +300,12 @@ module Interpreter =
                         List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
 
-                    let outerLocals = st.DeclaredLocals
-
                     let result =
                         try
-                            try
-                                execBlock st callEnv body |> ignore
-                                VNull
-                            with ReturnSignal v ->
-                                v
-                        finally
-                            st.DeclaredLocals <- outerLocals
+                            execBlock st callEnv body |> ignore
+                            VNull
+                        with ReturnSignal v ->
+                            v
 
                     st.Depth <- st.Depth - 1
                     result
@@ -345,7 +334,6 @@ module Interpreter =
                     // clobbered the enclosing block's trailing value. try/finally, so
                     // both exits restore it.
                     let outer = st.LastValue
-                    let outerLocals = st.DeclaredLocals
 
                     try
                         st.LastValue <- None
@@ -353,7 +341,6 @@ module Interpreter =
                         defaultArg st.LastValue VNull
                     finally
                         st.LastValue <- outer
-                        st.DeclaredLocals <- outerLocals
                 with ReturnSignal v ->
                     v
 
@@ -442,7 +429,6 @@ module Interpreter =
         // deploy = false` — produced no value and FAILED the build as unevaluable,
         // where Groovy assignments are value-producing and Jenkins reads it as false.
         | SDef(n, Some e) ->
-            st.DeclaredLocals <- Set.add n st.DeclaredLocals
             let v = evalExpr st env e
             st.LastValue <- Some v
             Env.withVar n v env
@@ -451,26 +437,25 @@ module Interpreter =
         // LastValue and the closure returned true. An uninitialised declaration
         // evaluates to null.
         | SDef(n, None) ->
-            st.DeclaredLocals <- Set.add n st.DeclaredLocals
             st.LastValue <- Some VNull
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
 
-            // A bare-name assignment to a name with no prior binding CREATES a
-            // Binding field — the advisory case. Recorded even if a later statement
-            // faults, because Groovy has already performed it.
-            if not (Map.containsKey n env.Vars) then
-                st.NewBindings <- Set.add n st.NewBindings
+            if Map.containsKey n env.Vars then
+                // a LOCAL (def, parameter, loop/catch variable): lexical update,
+                // the shared binding never sees it
+                Env.withVar n value env
+            else
+                // the script BINDING: created on first assignment (the advisory
+                // case), mutated in place — immediately visible everywhere,
+                // including after this closure returns and after a later fault
+                if not (Map.containsKey n st.Binding) then
+                    st.NewBindings <- Set.add n st.NewBindings
 
-            let updated = Env.withVar n value env
-            // MERGE the single update rather than snapshotting this scope's map:
-            // successive closures each derive from the OUTER environment, so a
-            // snapshot from the second closure omitted what the first assigned —
-            // `[1].each { x = 'x' }; [1].each { y = 'y' }` kept only y.
-            st.LatestVars <- Map.add n value st.LatestVars
-            updated
+                st.Binding <- Map.add n value st.Binding
+                env
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse
@@ -576,8 +561,7 @@ module Interpreter =
               LastValue = None
               StrictVars = strictVars
               NewBindings = Set.empty
-              DeclaredLocals = Set.empty
-              LatestVars = env.Vars }
+              Binding = env.Vars }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -587,32 +571,17 @@ module Interpreter =
                     match s with
                     | SFunc(n, ps, b) -> Env.withFunc n ps b acc
                     | _ -> acc)
-                env
+                { env with Vars = Map.empty }
 
         try
             let final = execBlock st hoisted script
 
-            // A CLOSURE's binding assignment lives in the closure's functional
-            // environment, which is discarded — but Groovy's script Binding is
-            // SHARED, so `[1].each { x = 'kept' }` must leave x visible. LatestVars
-            // recorded it; overlay entries that are binding assignments (NewBindings)
-            // or updates to names the script level already holds. Closure PARAMS
-            // (`it`, declared names) match neither test and never leak.
-            let mergedVars =
-                st.LatestVars
-                |> Map.fold
-                    (fun acc k v ->
-                        if Set.contains k st.NewBindings || Map.containsKey k final.Vars then
-                            Map.add k v acc
-                        else
-                            acc)
-                    final.Vars
-
             { Effects = List.rev st.Effects
               Fault = None
-              Env = { final with Vars = mergedVars }
+              // the BINDING is the outcome's variable view — locals died with
+              // their scopes, exactly as Groovy's did
+              Env = { final with Vars = st.Binding }
               NewBindings = st.NewBindings
-              DeclaredLocals = st.DeclaredLocals
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
@@ -621,17 +590,15 @@ module Interpreter =
               Fault = Some f
               // NOT the pristine environment: assignments made BEFORE the fault were
               // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
-              // still reads x. Erasing them here erased them everywhere downstream.
-              Env = { hoisted with Vars = st.LatestVars }
+              // still reads x. The mutable binding survives the raise by nature.
+              Env = { hoisted with Vars = st.Binding }
               NewBindings = st.NewBindings
-              DeclaredLocals = st.DeclaredLocals
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = { hoisted with Vars = st.LatestVars }
+              Env = { hoisted with Vars = st.Binding }
               NewBindings = st.NewBindings
-              DeclaredLocals = st.DeclaredLocals
               Returned = Some v }
 
     /// Groovy's late-binding default: an unknown name reads as null.
