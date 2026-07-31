@@ -1,9 +1,10 @@
 # Differential receipt — archive-allow-empty-boolean.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2c40a0763f0c8ad001f197c19e21284ad42808013324b54c90410e874cd24cef
+seal:         09d0eec3f8b298dcfc83893b7fc032f26292d9597148c4a6129ab364b35666d5
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Archiving artifacts
 
 ## Comparison contract
   compared: terminal result
@@ -39,11 +40,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
+  output (7 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | Archiving artifacts
     | ‘no-such-dir/**’ doesn’t match anything, but ‘**’ does. Perhaps that’s what you mean?
     | No artifacts found that match the file pattern "no-such-dir/**". Configuration error?
     | still running after an empty archive
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

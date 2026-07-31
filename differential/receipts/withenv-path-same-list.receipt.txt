@@ -1,9 +1,10 @@
 # Differential receipt — withenv-path-same-list.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9c7e3fe53e7932375cac79716e8a376676a498e32fbfdad6214e7b746dee23e2
+seal:         76e619de7edcab393b70683bb31d7ec00706b5b804f2d6f00eb3d1a14aaeea4b
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo /opt/tools/bin:/custom-base:/usr/bin:/bin
 
 ## Comparison contract
   compared: terminal result
@@ -39,9 +40,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: b6ab57a0bba4ce83e48c150aeed28ddd092c91b27535f56b10da0b3819bfb2fb
-  output (2 lines):
+  output (5 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo /opt/tools/bin:/custom-base:/usr/bin:/bin
     | + cut -d: -f1,2
+    | [Pipeline] End of Pipeline
   workspace:
     c871225b184c  head.txt
 

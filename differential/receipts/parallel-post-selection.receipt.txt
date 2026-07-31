@@ -1,9 +1,10 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5fc79f972c79f54bdeb1194e2ea3c78828d58c984fd6eff2d8dfe516cf38b71a
+seal:         c2d283703cb893833eff3a34832580ce1be7a9ed6274252db88359cf5b682006
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 4: jenkins=Running on Jenkins in ${WORKSPACE} fogell=<absent>
 
 ## Comparison contract
   compared: terminal result
@@ -44,11 +45,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
+  output (7 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + exit 6
-    | + echo fine
     | Failed in branch fails
+    | + echo fine
     | + echo correct
+    | [Pipeline] End of Pipeline
   workspace:
     8ecc5f94c57b  fine.txt
     844cd17a64df  right-arm.txt

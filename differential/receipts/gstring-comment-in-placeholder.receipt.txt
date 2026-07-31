@@ -1,9 +1,10 @@
 # Differential receipt — gstring-comment-in-placeholder.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d9514045b2a8816c1ab577848508936de6624fc47f34a943d441b6930e11eecc
+seal:         bb2766aa1e2fbd547c25c5c4b22a5ea76a546c0705e73d89651d020aadfb4186
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo c:2
 
 ## Comparison contract
   compared: terminal result
@@ -39,12 +40,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
+  output (8 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo c:2
     | c:2
     | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | + echo order:ord
     | order:ord
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

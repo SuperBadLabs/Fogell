@@ -1,9 +1,10 @@
 # Differential receipt — env-scoping.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d8d3e835a1030611f2c6955c1fed6ad0e66e45f7b02d27166c0e080b2f40042e
+seal:         63a18db5d3da76c473f9954f9f5ffd6aef2d566d6cb57bd0415adf14968ebe59
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo scope=pipeline shared=both
 
 ## Comparison contract
   compared: terminal result
@@ -39,11 +40,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
+  output (7 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo scope=pipeline shared=both
     | scope=pipeline shared=both
     | + echo scope=stage shared=both
     | scope=stage shared=both
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

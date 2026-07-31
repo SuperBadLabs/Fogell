@@ -1,9 +1,10 @@
 # Differential receipt — stash-excludes.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8ff13987192a51c0e02a0ab4ee82ad207223807659f0760467d64c2abc1de619
+seal:         afaec10f33c56bc22b88deca775715846a2b5eb0bd144c1b4e3e673e68116d40
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ mkdir -p out
 
 ## Comparison contract
   compared: terminal result
@@ -39,12 +40,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e0fc50fba90fc1e587750d93b3bfaceb8e0d12bb62895dc1b4a8ae3a0afc3163
-  output (5 lines):
+  output (8 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + mkdir -p out
     | + echo keep
     | + echo drop
     | Stashed 1 file(s)
     | + ls out
+    | [Pipeline] End of Pipeline
   workspace:
     a2bdaac3d54d  listing.txt
     f660a7996dea  out/keep.txt

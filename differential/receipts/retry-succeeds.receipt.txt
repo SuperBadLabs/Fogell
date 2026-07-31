@@ -1,9 +1,10 @@
 # Differential receipt — retry-succeeds.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a2e471f175e8458144ec2e45f354bddf3af75f1fb5a811452af9755158d0ec04
+seal:         de7730287ab6e129d2cdf25472130c73e7ffb9314256aab8e75512ce10d05726
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo attempt
 
 ## Comparison contract
   compared: terminal result
@@ -39,7 +40,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: ac2b1965a3f9071a83a2deb8ea0925d13b20a6d987baa2468c0f01ee0705de1c
-  output (8 lines):
+  output (11 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo attempt
     | + [ -f ok.txt ]
     | + touch ok.txt
@@ -48,6 +51,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | + echo attempt
     | + [ -f ok.txt ]
     | + exit 0
+    | [Pipeline] End of Pipeline
   workspace:
     381aca7a98c6  attempts.txt
     e3b0c44298fc  ok.txt

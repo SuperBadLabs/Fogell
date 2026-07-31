@@ -1,9 +1,10 @@
 # Differential receipt — gstring-inherited-env-resolves.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9a6e3e553263a88f10f37586e3101057d843ba3d7df2f5ae06217227dec26550
+seal:         9880bbaec5d8d9f0cc0c53b057af2bbb0d90a1f75ce8e8e2ebf347e3bf400943
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo inherited:true
 
 ## Comparison contract
   compared: terminal result
@@ -39,11 +40,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (4 lines):
+  output (7 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo inherited:true
     | inherited:true
     | + echo viaexpr:true
     | viaexpr:true
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

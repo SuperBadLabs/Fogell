@@ -1,9 +1,10 @@
 # Differential receipt — input-timeout-aborts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e28f7caaed37a65d5e97019e41c00e68461f993d2ebc302c5ba5c99d91862588
+seal:         f49a649dff82ad5c8961b140c5c830cce74d47339b7a3fe0a8e5fdc8bb4bb1fe
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo before
 
 ## Comparison contract
   compared: terminal result
@@ -39,12 +40,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: e93272a8b6cce5ac9c08f861d78222b1a291c93e352ac08dca7564ad96c966dd
-  output (6 lines):
+  output (9 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo before
     | Timeout set to expire in 4 sec
     | Proceed?
     | Proceed or Abort
     | Cancelling nested steps due to timeout
+    | [Pipeline] End of Pipeline
     | Timeout has been exceeded
   workspace:
     9160d4be34c8  before.txt

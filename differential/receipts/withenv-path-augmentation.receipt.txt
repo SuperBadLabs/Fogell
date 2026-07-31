@@ -1,9 +1,10 @@
 # Differential receipt — withenv-path-augmentation.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         88cd4e520fb855ee1212493cd6bf73eb8f9262685b8bf2bda7b258e470288913
+seal:         c66a1c6f55eca6293fc632dbd37bb5f7cf8af48d96fef61300cdf9f62a7413c9
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ printenv PATH
 
 ## Comparison contract
   compared: terminal result
@@ -39,10 +40,13 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
+  output (6 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + printenv PATH
     | + tr : \n
     | + head -3
+    | [Pipeline] End of Pipeline
   workspace:
     229ff8957fd0  head.txt
 

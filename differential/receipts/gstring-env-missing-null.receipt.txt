@@ -1,9 +1,10 @@
 # Differential receipt — gstring-env-missing-null.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c589130c0db939cca12dd7dffe214aa1f29042384ba3a7d728e7088414689ebb
+seal:         099e8e6647f13a91be1c43310b6f37eda211d0da7dc407c21d96445c9c62f1ce
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo envpath:null
 
 ## Comparison contract
   compared: terminal result
@@ -39,9 +40,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (5 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo envpath:null
     | envpath:null
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

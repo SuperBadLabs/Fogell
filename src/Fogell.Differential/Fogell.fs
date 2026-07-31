@@ -1985,7 +1985,7 @@ module FogellSide =
             Result.Ok
                 { Result = BuildStatus.toWireString status
                   EngineNotes = List.ofSeq engineNotes
-                  Output = Trace.normaliseOutput output
+                  Output = Trace.normaliseOutputWith [ workspace ] output
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)

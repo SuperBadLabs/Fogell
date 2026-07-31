@@ -1,9 +1,10 @@
 # Differential receipt — gstring-wrapper-args.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         cbbd97991b826d548f21ee645dbd30c23ec4f6252c77d66d4fc196939901ed9c
+seal:         8795f98545a33a4fb0afd65503ac2de10564f690307f937b0ff0329d69a5643d
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo made
 
 ## Comparison contract
   compared: terminal result
@@ -39,12 +40,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: 7ca5d5b121d26e4244c165f98245a56ad82e44f16cfc97c9631ae94e28eca398
-  output (5 lines):
+  output (9 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
+    | Running in ${WORKSPACE}/built
     | + echo made
     | Stashed 1 file(s)
     | + rm -rf built
     | + cat built/here.txt
     | made
+    | [Pipeline] End of Pipeline
   workspace:
     9ccbd3f1b19a  built/here.txt
 

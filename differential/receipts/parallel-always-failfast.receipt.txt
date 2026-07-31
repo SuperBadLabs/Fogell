@@ -1,9 +1,10 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         539d1714c852afe68abad7c2ffff832eba14f05fecd4d4289f43f930f12940eb
+seal:         499e5b1c8cc78b78c09bcc603890f3eb5f585a90e54f40d1f025c2adffaaee02
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 7: jenkins=Running on Jenkins in ${WORKSPACE} fogell=Sending interrupt signal to process
 
 ## Comparison contract
   compared: terminal result
@@ -44,7 +45,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
+  output (14 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo from-quick
     | from-quick
     | + sleep 1
@@ -56,17 +59,18 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | Sending interrupt signal to process
     | Terminated
     | Failed in branch interrupted
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
     | + echo from-quick
     | from-quick
     | + sleep 1
+    | + echo from-slow
+    | from-slow
+    | + sleep 45
     | + exit 3
     | Failed in branch quick-fail
     | Sending interrupt signal to process

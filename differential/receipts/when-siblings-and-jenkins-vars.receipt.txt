@@ -1,9 +1,10 @@
 # Differential receipt — when-siblings-and-jenkins-vars.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6da7f1c36de17721da06845e4c1d3e12b47dd1a6fa1ac664d4211711486d2381
+seal:         94d2340e5c0ae3cefecfa30f14458b89eb8c3f7b8f93519962383baa5e8b934c
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo siblings-matched
 
 ## Comparison contract
   compared: terminal result
@@ -39,10 +40,13 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: 76de8d58814f6a2f103eb6d17d0274d5a5841eb1e7774861854e386808705f98
-  output (3 lines):
+  output (6 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo siblings-matched
     | Stage "One sibling fails" skipped due to when conditional
     | + echo build-number-visible
+    | [Pipeline] End of Pipeline
   workspace:
     bbb867ee7630  buildnum.txt
     5a868bff7417  siblings.txt

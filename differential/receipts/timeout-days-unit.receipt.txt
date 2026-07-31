@@ -1,9 +1,10 @@
 # Differential receipt — timeout-days-unit.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f48181c5bc7bb557646b9e11e986cea794c79c7bf8cbb4f4a9ccb614aa6d353a
+seal:         dda9c611462fcf321bef48fce4851859c252802a912dc89abfaaa2073f233ae0
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Timeout set to expire in 1 mo 0 days
 
 ## Comparison contract
   compared: terminal result
@@ -39,9 +40,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: ed8d369b28c0f1f6c6312da725c5bfd763ec558f17964c6b60d1620993f399ab
-  output (2 lines):
+  output (5 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | Timeout set to expire in 1 mo 0 days
     | + echo finished
+    | [Pipeline] End of Pipeline
   workspace:
     161069badc0c  done.txt
 

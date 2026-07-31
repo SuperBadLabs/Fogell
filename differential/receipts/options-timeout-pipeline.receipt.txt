@@ -1,9 +1,10 @@
 # Differential receipt — options-timeout-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e6a3fe063a81ec8cd88179699c58f77fec41f3956e38bd5635d3f0d55ae0466e
+seal:         1d694f1a079ea970cb04fd2a275531c7dd5e96b4b1c0499bb740fb6e1c92bb14
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Timeout set to expire in 4 sec
 
 ## Comparison contract
   compared: terminal result
@@ -39,7 +40,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
-  output (8 lines):
+  output (11 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | Timeout set to expire in 4 sec
     | + echo started
     | + sleep 60
@@ -47,6 +50,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | Sending interrupt signal to process
     | Terminated
     | Stage "after" skipped due to earlier failure(s)
+    | [Pipeline] End of Pipeline
     | Timeout has been exceeded
   workspace:
     eff64b343dcb  started.txt

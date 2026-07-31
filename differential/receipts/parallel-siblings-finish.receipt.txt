@@ -1,9 +1,10 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         eebacbe2d9e35d14cdd60e958aa34e535b15a498c91b5c144e67cad5225d482b
+seal:         a2b06de4afb6a3fcc412c98ca96fb2d4b0ea8fa8beed6fe9a0e042441f4e1a69
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 5: jenkins=Running on Jenkins in ${WORKSPACE} fogell=<absent>
 
 ## Comparison contract
   compared: terminal result
@@ -44,12 +45,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
+  output (8 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo failing
     | + exit 3
     | + sleep 6
     | Failed in branch quick-fail
     | + echo done
+    | [Pipeline] End of Pipeline
   workspace:
     bfbd1f4027c3  failed.txt
     d117fa006ba9  slow.txt

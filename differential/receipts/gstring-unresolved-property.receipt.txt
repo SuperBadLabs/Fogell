@@ -1,9 +1,10 @@
 # Differential receipt — gstring-unresolved-property.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c0091f440ba1afd31af56fa55b677d68706bebc160fdba1235894f925537235c
+seal:         37cca28f25c68c36c8445cfa201d50a8c0622e9fa875740c7fde3f77c144bbfe
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=<absent>
 
 ## Comparison contract
   compared: terminal result
@@ -39,7 +40,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  output (3 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         failure

@@ -1,9 +1,10 @@
 # Differential receipt — when-scm-and-equals.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a6a7a200d3b3788de2511b8a1b578f2fcaf7091552871838a22df351c96e03ae
+seal:         bf7083996d94abac938f05aeb648cc3ce4f10eadbae041ff1dfabb88ae2c2773
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Stage "Branch main" skipped due to when conditional
 
 ## Comparison contract
   compared: terminal result
@@ -39,7 +40,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (7 lines):
+  output (10 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | Stage "Branch main" skipped due to when conditional
     | Stage "Tag v-star" skipped due to when conditional
     | + echo equals-matched
@@ -47,6 +50,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | Stage "Equals mismatch" skipped due to when conditional
     | + echo always-ran
     | always-ran
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

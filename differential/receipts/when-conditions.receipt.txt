@@ -1,9 +1,10 @@
 # Differential receipt — when-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         1cca87530dfc9753a6b1712f0258a0cc4c8390e04c1ea022c940ca06d83a6731
+seal:         4f32239aedff05ab7b9e2825cbdc1cf33e92b28fca82cc565a6666478bb7bf77
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Stage "Skipped" skipped due to when conditional
 
 ## Comparison contract
   compared: terminal result
@@ -39,13 +40,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (6 lines):
+  output (9 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | Stage "Skipped" skipped due to when conditional
     | + echo env-matched
     | env-matched
     | Stage "Env mismatch" skipped due to when conditional
     | + echo allof-matched
     | allof-matched
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

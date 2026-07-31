@@ -1,9 +1,10 @@
 # Differential receipt — stash-unstash.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         cb2a7b472b368bf08ee3a527c4f7ca2e763b393ea1eeb94c968d2cb7e195fca5
+seal:         ac3a17e8f5040fa90beee393242c274679c19920c8a0051bd24e9a63b089cb66
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ mkdir -p out
 
 ## Comparison contract
   compared: terminal result
@@ -39,13 +40,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: 7dcbdd87c098043a6633c8dda9416ddda68cf1042e2d2986068e062b9de71094
-  output (6 lines):
+  output (9 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + mkdir -p out
     | + echo artifact-body
     | Stashed 1 file(s)
     | + ls out
     | + wc -l
     | + cat out/thing.txt
+    | [Pipeline] End of Pipeline
   workspace:
     9a271f2a916b  before.txt
     41c5785c28cf  out/thing.txt
@@ -58,8 +62,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | + mkdir -p out
     | + echo artifact-body
     | Stashed 1 file(s)
-    | + ls out
-    | + wc -l
+    | + + ls out
+    | wc -l
     | + cat out/thing.txt
   workspace:
     9a271f2a916b  before.txt

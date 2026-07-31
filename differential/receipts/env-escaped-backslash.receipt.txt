@@ -1,9 +1,10 @@
 # Differential receipt — env-escaped-backslash.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         506999922e81edfe096f04a1e3338548cdef9068cd32a1d2a33a8ce520e84a9c
+seal:         fed13d5bb22529abaacdb2a02538c26272f2877571aa6d617a73164540a12c67
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo keep-$SEED
 
 ## Comparison contract
   compared: terminal result
@@ -39,9 +40,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: ea3d2e5179fbf8662cf2e489cc26d7011d1e5b87fb834e0f6133a9775c426b44
-  output (2 lines):
+  output (5 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo keep-$SEED
     | + echo slash-\seed
+    | [Pipeline] End of Pipeline
   workspace:
     41356e82c1fb  backslash.txt
     ec491707c0ba  dollar.txt

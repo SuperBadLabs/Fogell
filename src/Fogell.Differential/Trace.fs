@@ -241,8 +241,13 @@ module Trace =
 
         if t = "" then
             None
-        // Jenkins pipeline-graph annotations: pure structure, no output
-        elif t.StartsWith "[Pipeline]" then None
+        // Jenkins pipeline-graph annotations: pure structure, no output. Matched by
+        // their GRAMMAR — `[Pipeline] word`, `[Pipeline] {` / `}` (optionally with a
+        // stage label), `[Pipeline] // word` — because a build can echo text that
+        // merely starts with the bracket; `[Pipeline] $WORKSPACE` carries a path and
+        // must compare.
+        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$") then
+            None
         // FG-049. `Post stage` is the declarative graph's label for the synthetic
         // stage that wraps a post section — the same category as [Pipeline]
         // annotations: structure, not output. Excluded rather than imitated,
@@ -276,7 +281,12 @@ module Trace =
     /// "Sending interrupt signal to process" / "Terminated", so it is excluded
     /// ONLY when such an interrupt was actually narrated earlier in the run.
     /// Everywhere else it is ordinary user output and is compared.
-    let normaliseOutput (lines: string seq) : string list =
+    /// Canonicalise the engine's own ABSOLUTE workspace path to `${'$'}{WORKSPACE}` —
+    /// the newly compared xtrace expands engine-provided paths, and
+    /// `+ test -d /each/engine's/root` is one command with two spellings, not two
+    /// commands. Applied to every line: the same substitution an author's
+    /// `$WORKSPACE` reference would produce on either side.
+    let internal normaliseOutputInner (lines: string seq) : string list =
         // Two engine-narration shapes are recognised by CONTEXT, never by their text
         // alone, because a build can legitimately print either:
         //
@@ -368,6 +378,16 @@ module Trace =
                     if not hasAnnotations || pastFirstOutputStep || not (isPreambleBanner l) then
                         yield l
                 | None -> () ]
+
+    let normaliseOutputWith (workspaceRoots: string list) (lines: string seq) : string list =
+        let canonical (l: string) =
+            workspaceRoots
+            |> List.filter (fun r -> r <> "")
+            |> List.fold (fun (acc: string) root -> acc.Replace(root, "${WORKSPACE}")) l
+
+        normaliseOutputInner (lines |> Seq.map canonical)
+
+    let normaliseOutput (lines: string seq) : string list = normaliseOutputInner lines
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
     /// see [normaliseOutput].

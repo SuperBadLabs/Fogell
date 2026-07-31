@@ -117,7 +117,9 @@ module Jenkins =
                     let trace =
                         { Result = terminal
                           EngineNotes = []
-                          Output = Trace.normaliseOutput rawLines
+                          // the CONTROLLER-side workspace path, canonicalised so an
+                          // xtrace expanding $WORKSPACE compares across engines
+                          Output = Trace.normaliseOutputWith [ $"/var/jenkins_home/workspace/{jobName}" ] rawLines
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a

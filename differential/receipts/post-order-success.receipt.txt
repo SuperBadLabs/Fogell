@@ -1,9 +1,10 @@
 # Differential receipt — post-order-success.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e0b862fd99ac3390043a958fc3db3bd2e848d874f7a906a5b99882c13b304713
+seal:         b0f4c965eb90e29e1d880395c2d90570cb2c57d7154273ed5276e3c35e3442d0
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo body
 
 ## Comparison contract
   compared: terminal result
@@ -39,7 +40,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (10 lines):
+  output (13 lines):
+    | [Pipeline] Start of Pipeline
+    | Running on Jenkins in ${WORKSPACE}
     | + echo body
     | body
     | + echo POST-always
@@ -50,6 +53,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | POST-success
     | + echo POST-cleanup
     | POST-cleanup
+    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success
