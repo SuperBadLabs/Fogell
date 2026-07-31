@@ -1,0 +1,11 @@
+ docs/EXECUTION_BOARD.md                     |  2 +-
+ scripts/audit-claims.bb                     | 31 ++++++++++++++++++++++++-----
+ scripts/build-and-test.sh                   | 15 +++++++-------
+ src/Fogell.Differential/Compare.fs          |  1 +
+ src/Fogell.Differential/Fogell.fs           | 19 ++++++++++++++++++
+ src/Fogell.Differential/Trace.fs            |  1 +
+ src/Fogell.Execution/Secrets.fs             |  1 +
+ src/Fogell.Ir/Pipeline.fs                   |  1 +
+ src/Fogell.Pipeline.Parser/Parser.fs        | 11 ++++++++++
+ tests/Fogell.Pipeline.Parser.Tests/Tests.fs |  5 +++++
+ 10 files changed, 73 insertions(+), 14 deletions(-)

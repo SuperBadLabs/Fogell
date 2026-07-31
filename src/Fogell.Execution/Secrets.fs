@@ -30,6 +30,8 @@ type SecretBinding =
       /// pipeline: every credential user reads `$TOKEN`. Lift-and-shift outranks a
       /// hardening property that was in any case already proven weaker than claimed
       /// (a same-UID reader follows the path and opens the file it owns).
+      /// Receipts: `credentials-string` (binding) and `credentials-userpass-masking`
+      /// (masking on stdout). The first emits no output, so it cannot back a masking claim.
       ValueVariable: string
       /// Companion variable carrying a path to a 0600 file with the same value. Kept
       /// as an ADDITION, not a replacement: scripts that prefer a file can use it.

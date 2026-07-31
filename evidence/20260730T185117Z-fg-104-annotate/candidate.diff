@@ -1,0 +1,96 @@
+diff --git a/differential/receipts/parallel-always-failfast.receipt.txt b/differential/receipts/parallel-always-failfast.receipt.txt
+index 7e03a23..e31a280 100644
+--- a/differential/receipts/parallel-always-failfast.receipt.txt
++++ b/differential/receipts/parallel-always-failfast.receipt.txt
+@@ -1,7 +1,7 @@
+ # Differential receipt — parallel-always-failfast.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         b0bc62bebe7b0d3e36da85c5fd8fc09f417fa1d71384bad7ac7599d63182ce1b
++seal:         8fc38766a04ac4ec02727515cec433380259e76e0e93669e45b5b1f9ef67192a
+ 
+ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+@@ -50,7 +50,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+   result:         failure
+   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+   output (4 lines):
+-    | from-slow
+     | from-quick
++    | from-slow
+     | Failed in branch quick-fail
+     | Failed in branch interrupted
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 5558d1a..339cdd5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -188,7 +188,7 @@ converts that recurring cost into a one-time cost.
+ | FG-101 | **P0** | **DONE** | **One cancellation model.** A single predicate combining interrupt and deadline, a single classification of the CAUSE, and a single place that decides `aborted` vs `failure` | **54 + 40 findings.** Supersedes FG-002e. Abort-cause was wrong six times (shell, stash, unstash, deleteDir, input, then input again as an ordering RACE); "every early return is a missed poll" recurred five times. My sweep asked *does every site check?* — the right question was *does every site check in the right ORDER, and record which event actually happened?* Acceptance: one helper, every step routed through it, plus a test that drives deadline-first and sibling-first against every wrapper step and asserts the terminal status AND the selected `post` arm |
+ | FG-102 | P1 | TODO | **Output-narration contract.** No suppression by text a build could emit; every rule is context-gated or deleted | **17 findings.** FG-002f discharged the audit (six of eight suppressions were dead) and `Fogell.Differential.Tests` now emits look-alikes; this ticket makes it a standing rule with a review checklist item, because the fifth instance was added *while fixing the fourth* |
+ | FG-103 | P1 | TODO | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step |
+-| FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. **Both halves done.** All 30 resolved: 23 now cite the receipt that proves them, and **6 admit UNPROVEN** — every one of the same kind, a Jenkins REJECTION, where a receipt would require both engines to fail and only their narration to differ, so forcing one to PROVEN would mean pattern-matching a compiler's error layout. The seventh is `post`'s `fixed`/`regression`, proven only for build #1 because the harness cannot produce build history (FG-110/FG-049b). The check is now **`--strict` and blocking**, verified both ways: a planted unbacked claim exits 1, a clean tree exits 0. An admission is a valid answer and is counted separately so it stays visible rather than quietly passing. Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
++| FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenkins does not mask usernames (a reviewer cited it and was wrong because I was), and `#0` provenance documented but never produced. **Half done: the rule is now MECHANICAL.** `scripts/audit-claims.bb` scans every F# file under `src/`, `tools/` and `tests/` for a comment asserting MEASURED behaviour and reports any that names no existing receipt — because a claim nobody can check is not evidence. It found **30**, none of which cites the receipt that proves it, so today a reader must hunt and drift cannot be detected. Wired into `build-and-test.sh` as ADVISORY: making it blocking now would fail every build on a pre-existing backlog. Its FIRST review found the script's own scope narrower than its description — it globbed only `src/`, hiding four more claims — which is the exact defect it exists to catch, in the script that catches it. **Both halves done.** All 30 resolved: 23 now cite the receipt that proves them, and **6 admit UNPROVEN** — every one of the same kind, a Jenkins REJECTION, where a receipt would require both engines to fail and only their narration to differ, so forcing one to PROVEN would mean pattern-matching a compiler's error layout. The seventh is `post`'s `fixed`/`regression`, proven only for build #1 because the harness cannot produce build history (FG-110/FG-049b). The check is now **`--strict` and blocking**, verified both ways: a planted unbacked claim exits 1, a clean tree exits 0. An admission is a valid answer and is counted separately so it stays visible rather than quietly passing. **Known limit, recorded in the script itself:** it verifies a receipt is NAMED, never that the named receipt EXERCISES the claim — its first review found three of my own citations pointing at receipts covering only part of their sentence. The check is a floor, not a ceiling Verified clean already: every `Proven:` claim in `adr/0005` names a receipt that exists |
+ 
+ ## Wave 3.6 — Harness capability (unlocks five blocked tickets at once)
+ 
+diff --git a/scripts/audit-claims.bb b/scripts/audit-claims.bb
+index cb75af5..05adbed 100755
+--- a/scripts/audit-claims.bb
++++ b/scripts/audit-claims.bb
+@@ -10,6 +10,14 @@
+ ;;
+ ;; This makes the rule mechanical: a MEASURED claim naming no existing receipt is a defect.
+ ;;
++;; WHAT IT CANNOT DO, stated so nobody mistakes a pass for proof: it checks that a receipt
++;; is NAMED, never that the named receipt EXERCISES the claim. Its first review found three
++;; citations of mine pointing at receipts that covered only part of the sentence — a
++;; post-order claim citing a build-#1 receipt for `fixed`/`regression` slots it never
++;; exercises, an options claim covering pipeline AND stage citing only the pipeline one, and
++;; a narration claim covering timeouts AND branch failures citing only the timeout. The
++;; check is a floor, not a ceiling; a human still has to open the receipt.
++;;
+ ;;   usage: scripts/audit-claims.bb [--strict]
+ ;;          --strict exits non-zero when any claim is unbacked
+ 
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 07ab2c2..2158d21 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -842,7 +842,10 @@ module FogellSide =
+             /// regression -> <result arm> -> cleanup. The result arms are mutually
+             /// exclusive, so their order relative to each other is unobservable
+             /// and is not claimed.
+-            /// Receipt: `post-order-failure`.
++            /// Receipts: `post-order-failure`, `post-order-success` — which exercise the
++            /// build-#1 arms only. The `fixed` and `regression` SLOTS in this ordering are
++            /// NOT exercised by any receipt; they come from the four-build probe and stay
++            /// UNPROVEN until FG-110 gives the harness build history.
+             let postRank (cond: PostCondition) =
+                 match cond with
+                 | PostCondition.Always -> 0
+@@ -862,7 +865,9 @@ module FogellSide =
+             /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
+             ///
+             /// A nested deadline can only tighten an inherited one, never extend it.
+-            /// Receipt: `options-timeout-pipeline`.
++            /// Receipts: `options-timeout-pipeline` AND `options-timeout-stage` — the claim
++            /// covers BOTH levels, so citing only the pipeline one left the stage half of
++            /// the sentence unbacked.
+             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
+                 // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
+                 // turned into None here, so the declared SAFETY BOUND silently vanished and
+diff --git a/src/Fogell.Differential/Trace.fs b/src/Fogell.Differential/Trace.fs
+index e67edb8..5aa70f7 100644
+--- a/src/Fogell.Differential/Trace.fs
++++ b/src/Fogell.Differential/Trace.fs
+@@ -153,7 +153,9 @@ module Trace =
+         // explaining what it did to the step, which is exactly the category this
+         // predicate exists for. Comparing the sentences verbatim would over-fit
+         // to timeout-plugin wording; what must agree is that SOMETHING was said.
+-        // Receipt: `timeout-seconds`.
++        // Receipts: `timeout-seconds` for the timeout/abort lines, and `parallel-failfast`
++        // for `Failed in branch` — one sentence covering two kinds of narration needs a
++        // receipt for each, and citing only the timeout left the branch half unbacked.
+         || t.StartsWith "Timeout set to expire"
+         || t.StartsWith "Timeout has been exceeded"
+         || t.StartsWith "Cancelling nested steps"

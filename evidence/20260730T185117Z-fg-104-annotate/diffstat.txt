@@ -1,0 +1,6 @@
+ differential/receipts/parallel-always-failfast.receipt.txt | 4 ++--
+ docs/EXECUTION_BOARD.md                                    | 2 +-
+ scripts/audit-claims.bb                                    | 8 ++++++++
+ src/Fogell.Differential/Fogell.fs                          | 9 +++++++--
+ src/Fogell.Differential/Trace.fs                           | 4 +++-
+ 5 files changed, 21 insertions(+), 6 deletions(-)

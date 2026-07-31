@@ -214,6 +214,7 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// Jenkins does not accept — so every real `environment` condition fell through
 /// to the unmodelled branch, and from there (see below) out of the `when`
 /// section entirely. Named arguments, in either order.
+/// Receipt: `when-conditions`.
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
     >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
@@ -281,6 +282,7 @@ let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
 /// was measured correct. Guessing a data-bound parameter name is not a small thing: it
 /// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
 /// it unmodelled rather than mistake it for the value.
+/// Receipt: `when-scm-pattern-keys`.
 let private namedOrBare (key: string) : P<Result<string, string>> =
     // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
     // same shadowing that bit this file once before.
@@ -359,6 +361,10 @@ let rec private whenCondition: P<WhenCondition> =
 /// 'never' }` unconditionally TRUE here, running a stage on a pipeline Jenkins refuses to
 /// COMPILE. That enumeration is also the authority for what a `when` may contain, and all
 /// fourteen of those conditionals are modelled.
+/// UNPROVEN BY RECEIPT: measured by probe, but the case was DROPPED from the suite —
+/// both engines fail and only the narration differs (Jenkins prints a Groovy compile
+/// report, Fogell a stage-gate error), so forcing it to PROVEN would have meant
+/// pattern-matching a compiler's error layout. Held by a parser test instead.
 let private whenDirective: P<unit> =
     (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
     >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
@@ -379,6 +385,9 @@ let private whenSection: P<WhenCondition> =
             //   content.
             // Treating it as "nothing to gate on, so run" executed a stage on a pipeline
             // Jenkins refuses to compile.
+            // UNPROVEN BY RECEIPT: measured by probe; no case in the suite, for the same reason
+            // as the nested-directive claim above — a rejection makes both engines fail and only
+            // the narration differ. Held by a parser test.
             | [] -> WhenUnmodelled("when", "empty when closure")
             | multiple -> WhenAllOf multiple
 
@@ -408,6 +417,8 @@ let private stagesBody: P<Stage list> =
 /// A differential receipt caught it. Accepting a form the reference engine
 /// refuses is not leniency — it means a pipeline that runs here fails there,
 /// which is the exact opposite of the lift-and-shift promise.
+/// UNPROVEN BY RECEIPT: measured on PR #12 from Jenkins' own rejection message; no case
+/// in the suite, same rejection-narration reason. Held by a parser test.
 let private failFastDirective: P<bool> =
     keyword "failFast" >>. ws >>. ((stringReturn "true" true) <|> (stringReturn "false" false))
     .>> ws

@@ -1,0 +1,5 @@
+ docs/EXECUTION_BOARD.md            | 2 +-
+ src/Fogell.Differential/Compare.fs | 5 ++++-
+ src/Fogell.Differential/Fogell.fs  | 6 +++++-
+ src/Fogell.Execution/Secrets.fs    | 3 ++-
+ 4 files changed, 12 insertions(+), 4 deletions(-)

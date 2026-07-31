@@ -153,6 +153,9 @@ module Trace =
         // explaining what it did to the step, which is exactly the category this
         // predicate exists for. Comparing the sentences verbatim would over-fit
         // to timeout-plugin wording; what must agree is that SOMETHING was said.
+        // Receipts: `timeout-seconds` for the timeout/abort lines, and `parallel-failfast`
+        // for `Failed in branch` — one sentence covering two kinds of narration needs a
+        // receipt for each, and citing only the timeout left the branch half unbacked.
         || t.StartsWith "Timeout set to expire"
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"

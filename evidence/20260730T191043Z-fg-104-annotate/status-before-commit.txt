@@ -1,0 +1,5 @@
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Differential/Compare.fs
+M  src/Fogell.Differential/Fogell.fs
+M  src/Fogell.Execution/Secrets.fs
+?? evidence/20260730T191043Z-fg-104-annotate/

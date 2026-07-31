@@ -1,0 +1,6 @@
+M  differential/receipts/parallel-always-failfast.receipt.txt
+M  docs/EXECUTION_BOARD.md
+M  scripts/audit-claims.bb
+M  src/Fogell.Differential/Fogell.fs
+M  src/Fogell.Differential/Trace.fs
+?? evidence/20260730T185117Z-fg-104-annotate/
