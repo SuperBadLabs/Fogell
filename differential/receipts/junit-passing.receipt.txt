@@ -1,7 +1,7 @@
 # Differential receipt — junit-passing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ea00a0953157e9756327bbd4755fb8a6677c01164d82900db838116b8b12963c
+seal:         1e10dcf944ace9b21c8a2182657f6bdeb96b2506d1ddb4be94b47b0c2edd0799
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -18,7 +18,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     so a mismatching line pair that becomes equal under the SAME inherited-env
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
-    divergence into an equality, never hide one direction only
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported

@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e32b0613ac7504bd48cc2846532c355ddae13f256ed921eb437fcfb01037482c
+seal:         ec8beeb229f0c11517096a671cec61adbb57b6fa21a125d840e0626e8a66b30b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -18,7 +18,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     so a mismatching line pair that becomes equal under the SAME inherited-env
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
-    divergence into an equality, never hide one direction only
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
   excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
   excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
   compared as a BOOLEAN, not text: whether a failure reason was reported
@@ -67,12 +71,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
     | + echo from-slow
     | from-slow
     | + sleep 45
+    | + echo from-quick
+    | from-quick
+    | + sleep 1
     | + exit 3
     | Failed in branch quick-fail
     | Sending interrupt signal to process

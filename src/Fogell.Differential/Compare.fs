@@ -44,6 +44,10 @@ type Receipt =
       Jenkins: Trace option
       Fogell: Trace option
       ComparisonContract: string list
+      /// Output pairs that compared CANONICALLY (inherited-env fold) rather than
+      /// byte-equal, listed per case so the relaxation is visible in the receipt
+      /// that used it, never only in the rule's statement.
+      FoldedOutputPairs: string list
       /// Hash over the receipt's own comparable content, so a receipt cannot be
       /// edited after the fact without detection.
       Seal: string }
@@ -105,22 +109,42 @@ module Compare =
         let canon (l: string) =
             ordered |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
 
-        let rec walk i j f =
+        // Every fold is REPORTED, not just applied: the receipt lists each pair
+        // that compared canonically rather than byte-equal, so the relaxation is
+        // visible per case instead of buried in the rule (round 48 P1 — the
+        // trace-record evidence a gate would need does not exist on this channel,
+        // so the answer to "this could hide a difference" is to print it).
+        let rec walk i (folds: string list) j f =
             match j, f with
-            | [], [] -> None
+            | [], [] -> None, List.rev folds
             | jh :: jt, fh :: ft ->
-                if jh = fh || canon jh = canon fh then walk (i + 1) jt ft
-                else Some(OutputDiffers(i, Some jh, Some fh))
-            | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None))
-            | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh))
+                if jh = fh then
+                    walk (i + 1) folds jt ft
+                elif canon jh = canon fh then
+                    walk (i + 1) ($"line {i} compared canonically: {canon jh}" :: folds) jt ft
+                else
+                    Some(OutputDiffers(i, Some jh, Some fh)), List.rev folds
+            | jh :: _, [] -> Some(OutputDiffers(i, Some jh, None)), List.rev folds
+            | [], fh :: _ -> Some(OutputDiffers(i, None, Some fh)), List.rev folds
 
         if concurrent then
             // Canonicalise BEFORE sorting so resolved-equal lines sort together;
             // a multiset mismatch therefore reports canonical text, and the
-            // receipt's stored per-engine output remains literal.
-            walk 0 (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
+            // receipt's stored per-engine output remains literal. Indices are
+            // meaningless after sorting, so folding is reported as per-side counts.
+            let touched side = side |> List.filter (fun l -> canon l <> l) |> List.length
+            let jt, ft = touched jenkins, touched fogell
+
+            let d, _ =
+                walk 0 [] (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
+
+            d,
+            (if jt + ft > 0 then
+                 [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
+             else
+                 [])
         else
-            walk 0 jenkins fogell
+            walk 0 [] jenkins fogell
 
     /// Compare two traces. Workspace hashes are only compared when BOTH sides
     /// collected one — claiming a match against "not-collected" would be exactly
@@ -129,14 +153,15 @@ module Compare =
     let workspaceWasCompared (jenkins: Trace) (fogell: Trace) =
         jenkins.WorkspaceHash <> "not-collected" && fogell.WorkspaceHash <> "not-collected"
 
-    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict =
+    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict * string list =
+        let outputDivergence, folds =
+            compareOutput (jenkins.Concurrent || fogell.Concurrent) envReplacements jenkins.Output fogell.Output
+
         let divergences =
             [ if jenkins.Result <> fogell.Result then
                   ResultDiffers(jenkins.Result, fogell.Result)
 
-              match
-                  compareOutput (jenkins.Concurrent || fogell.Concurrent) envReplacements jenkins.Output fogell.Output
-              with
+              match outputDivergence with
               | Some d -> d
               | None -> ()
 
@@ -157,7 +182,7 @@ module Compare =
               then
                   WorkspaceDiffers(jenkins.WorkspaceHash, fogell.WorkspaceHash) ]
 
-        if List.isEmpty divergences then Proven else Diverged divergences
+        (if List.isEmpty divergences then Proven else Diverged divergences), folds
 
     let receipt
         (file: string)
@@ -166,10 +191,10 @@ module Compare =
         (jenkins: Result<Trace, string>)
         (fogell: Result<Trace, string>)
         : Receipt =
-        let verdict, j, f =
+        let (verdict, folds), j, f =
             match jenkins, fogell with
-            | Result.Error e, _ -> NotComparable(JenkinsFailed e), None, None
-            | _, Result.Error e -> NotComparable(FogellFailed e), None, None
+            | Result.Error e, _ -> (NotComparable(JenkinsFailed e), []), None, None
+            | _, Result.Error e -> (NotComparable(FogellFailed e), []), None, None
             | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
 
         let comparable =
@@ -180,7 +205,10 @@ module Compare =
                     $"{x.Result}|{x.WorkspaceHash}|{joined}"
                 | None -> "<none>"
 
-            $"{file}\n{core}\n{render j}\n{render f}"
+            // Folds join the sealed content: a fold section edited after the
+            // fact must be as detectable as an edited output line.
+            let joinedFolds = String.concat "\n" folds
+            $"{file}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict
@@ -197,6 +225,7 @@ module Compare =
                      "  a line by. The load-bearing claim for these cases is the workspace hash." ]
                else
                    [])
+          FoldedOutputPairs = folds
           Seal = sha256Text comparable }
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
@@ -231,6 +260,16 @@ module Compare =
         | NotComparable d ->
             line "VERDICT: NOT COMPARABLE"
             line $"  - {d.Describe}"
+
+        // Every fold this case USED, printed in the case that used it. A reader
+        // of this receipt alone sees exactly which output pairs were accepted
+        // canonically instead of byte-equal — the relaxation is never invisible.
+        if not (List.isEmpty r.FoldedOutputPairs) then
+            line ""
+            line $"## Output pairs compared canonically — inherited env ({r.FoldedOutputPairs.Length})"
+
+            for n in r.FoldedOutputPairs do
+                line $"  {n}"
 
         line ""
         line "## Comparison contract"

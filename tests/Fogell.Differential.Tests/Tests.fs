@@ -539,13 +539,17 @@ let continuationResolution =
         [ test "a bare continuation row differing only by inherited HOME compares equal" {
               let jenkins = mkTrace [ "+ printf %s head"; "/var/jenkins_home/tail" ]
               let fogell = mkTrace [ "+ printf %s head"; "/root/tail" ]
-              Expect.equal (Compare.traces repl jenkins fogell) Proven "continuation resolves"
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "continuation resolves"
+              Expect.equal folds [ "line 1 compared canonically: ${HOME}/tail" ] "the fold is reported"
           }
 
           test "a multi-line continuation chain resolves on every row" {
               let jenkins = mkTrace [ "+ printf %s top"; "middle"; "/var/jenkins_home" ]
               let fogell = mkTrace [ "+ printf %s top"; "middle"; "/root" ]
-              Expect.equal (Compare.traces repl jenkins fogell) Proven "chain resolves"
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "chain resolves"
+              Expect.equal (List.length folds) 1 "one folded pair reported"
           }
 
           test "a pair that differs beyond the inherited value still diverges" {
@@ -553,14 +557,16 @@ let continuationResolution =
               let fogell = mkTrace [ "+ printf %s head"; "/root/tail-b" ]
 
               match Compare.traces repl jenkins fogell with
-              | Diverged [ OutputDiffers(1, Some "/var/jenkins_home/tail-a", Some "/root/tail-b") ] -> ()
+              | Diverged [ OutputDiffers(1, Some "/var/jenkins_home/tail-a", Some "/root/tail-b") ], [] -> ()
               | v -> failtest $"expected the literal pair reported, got {v}"
           }
 
           test "identical literal lines never diverge from the rule (literals cancel)" {
               let jenkins = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
               let fogell = mkTrace [ "+ echo x"; "/root is a literal both engines printed" ]
-              Expect.equal (Compare.traces repl jenkins fogell) Proven "equal lines stay equal"
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "equal lines stay equal"
+              Expect.isEmpty folds "byte-equal lines are never reported as folds"
           }
 
           test "an empty replacement list leaves the comparison byte-exact" {
@@ -568,8 +574,21 @@ let continuationResolution =
               let fogell = mkTrace [ "/root" ]
 
               match Compare.traces [] jenkins fogell with
-              | Diverged [ OutputDiffers(0, _, _) ] -> ()
+              | Diverged [ OutputDiffers(0, _, _) ], [] -> ()
               | v -> failtest $"expected divergence without replacements, got {v}"
+          }
+
+          test "ordinary output printing an inherited value folds VISIBLY (round 48 P1)" {
+              // The reviewer's own example: `sh 'printenv HOME'`. The trace rows are
+              // byte-equal; the stdout pair differs only by the engines' inherited
+              // HOMEs — the environment-of-necessity class ${WORKSPACE} already
+              // occupies. The verdict is Proven AND the receipt says which pair the
+              // rule decided: the relaxation is declared per case, never silent.
+              let jenkins = mkTrace [ "+ printenv HOME"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "+ printenv HOME"; "/root" ]
+              let verdict, folds = Compare.traces repl jenkins fogell
+              Expect.equal verdict Proven "inherited-value output folds"
+              Expect.equal folds [ "line 1 compared canonically: ${HOME}" ] "and the receipt names the pair"
           } ]
 
 [<EntryPoint>]

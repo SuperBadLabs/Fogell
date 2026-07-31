@@ -1,9 +1,12 @@
-# Differential receipt — archive-artifacts.Jenkinsfile
+# Differential receipt — env-inherited-output-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c2a41dc2811cdce09ca591d451687c889b1285d9fc937d617554ca746e65f7b6
+seal:         604991320dd519289c9b207169198391f4bab1c254db8f1114ba3a7a883e3b16
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Output pairs compared canonically — inherited env (1)
+  line 1 compared canonically: ${HOME}
 
 ## Comparison contract
   compared: terminal result
@@ -48,24 +51,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (4 lines):
-    | + echo payload
-    | + mkdir -p target
-    | + echo jar
-    | Archiving artifacts
-  workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (2 lines):
+    | + printenv HOME
+    | /var/jenkins_home
 
 ## Fogell
   result:         success
-  workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (4 lines):
-    | + echo payload
-    | + mkdir -p target
-    | + echo jar
-    | Archiving artifacts
-  workspace:
-    d4e4877bac97  out.txt
-    fb8ce0550299  target/app.jar
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (2 lines):
+    | + printenv HOME
+    | /home/srikanth
