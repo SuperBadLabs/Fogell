@@ -541,6 +541,7 @@ module FogellSide =
                         { Name = step.Name
                           Script = script
                           Workspace = cwd
+                          WorkspaceRoot = Some workspace
                           Environment = envForWith ctx.EnvOverlay stage
                           TimeoutMs =
                             match remainingMs deadline with

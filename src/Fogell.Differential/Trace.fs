@@ -248,6 +248,12 @@ module Trace =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
 
+        // the durable-script directory carries a fresh random id per step on BOTH
+        // engines — one printed $0 would never compare otherwise; the id is
+        // structural, the layout around it is what must match
+        let stripped =
+            Text.RegularExpressions.Regex.Replace(stripped, "(@tmp/durable-)[0-9a-f]+", "$1<id>")
+
         let t = stripped.Trim()
 
         if t = "" then

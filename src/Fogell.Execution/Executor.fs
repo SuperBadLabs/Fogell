@@ -19,6 +19,10 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int64 option
+      /// The WORKSPACE root (not the step's cwd): durable-task roots its script
+      /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
+      /// executed script's $0 is observable.
+      WorkspaceRoot: string option
       OnLine: (string -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
@@ -140,6 +144,7 @@ module Executor =
                     { RunRequest.create (script, request.Workspace) with
                         Interrupt = request.Interrupt
                         InterruptBeatsDeadline = request.InterruptBeatsDeadline
+                        WorkspaceRoot = request.WorkspaceRoot
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
                         OnLine = onLine }

@@ -87,7 +87,9 @@ type RunRequest =
       /// this decides which event was actually EARLIER — the caller owns the
       /// timestamps (its clock stamps the sibling failure and its deadline), so the
       /// tie cannot be broken here. None means deadline-first, the plain reading.
-      InterruptBeatsDeadline: (unit -> bool) option }
+      InterruptBeatsDeadline: (unit -> bool) option
+      /// See [StepRequest.WorkspaceRoot] — where the @tmp scaffolding roots.
+      WorkspaceRoot: string option }
 
     static member create(command, workingDirectory) =
         { Command = command
@@ -98,7 +100,8 @@ type RunRequest =
           OnLine = None
           ReapGroup = true
           Interrupt = None
-          InterruptBeatsDeadline = None }
+          InterruptBeatsDeadline = None
+          WorkspaceRoot = None }
 
 module ProcessGroup =
 
@@ -216,8 +219,11 @@ module ProcessGroup =
                 // `script.sh`), so basename-dependent scripts take the same path on
                 // both engines; the random parent keeps parallel steps apart and
                 // `@tmp` keeps it out of the workspace hash.
-                let tmpDir =
-                    IO.Path.Combine(request.WorkingDirectory.TrimEnd('/') + "@tmp", $"fogell-durable-{Guid.NewGuid():N}")
+                // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh,
+                // rooted at the WORKSPACE even inside dir() — the full $0 is observable
+                let root = (defaultArg request.WorkspaceRoot request.WorkingDirectory).TrimEnd '/'
+                let hex = Guid.NewGuid().ToString("N").Substring(0, 8)
+                let tmpDir = IO.Path.Combine(root + "@tmp", $"durable-{hex}")
 
                 IO.Directory.CreateDirectory tmpDir |> ignore
                 let f = IO.Path.Combine(tmpDir, "script.sh")
