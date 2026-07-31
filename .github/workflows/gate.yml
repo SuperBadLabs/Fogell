@@ -40,10 +40,15 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: install babashka and ripgrep
+        # Pinned release + checksum, never a mutable-branch installer piped to sudo:
+        # the gate must not execute whatever `master` holds today on every push.
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q ripgrep
-          curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
-          chmod +x install && sudo ./install
+          BB_VERSION=1.12.208
+          BB_SHA256=424c0be8be3932ecf16151e115c126e386931cd2ac8706afd99599f03cdb7129
+          curl -sL -o bb.tar.gz "https://github.com/babashka/babashka/releases/download/v${BB_VERSION}/babashka-${BB_VERSION}-linux-amd64-static.tar.gz"
+          echo "${BB_SHA256}  bb.tar.gz" | sha256sum -c -
+          tar -xzf bb.tar.gz && sudo mv bb /usr/local/bin/bb && bb --version
 
       - name: gate
         env:

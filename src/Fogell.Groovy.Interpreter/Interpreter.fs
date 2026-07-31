@@ -272,13 +272,17 @@ module Interpreter =
         | SafeMethodCall(recv, name) ->
             // The whole call short-circuits: `env.OPTIONAL?.trim()` is null when the
             // receiver is, with the method never dispatched — not a property read
-            // followed by a rejected `call`. Admission comes FIRST, before even the
-            // null test: `?.` must not be a doorway past the sandbox — an escape
-            // method is denied whether or not its receiver happens to be null.
-            (match Sandbox.admitMethod name with
+            // followed by a rejected `call`. Groovy's order: the RECEIVER evaluates
+            // first (its side effects are performed and survive a later denial),
+            // THEN the sandbox rules on the method — before the null test, so `?.`
+            // is no doorway past it — and only then does a non-null receiver
+            // dispatch.
+            (let r = evalExpr st env recv
+
+             match Sandbox.admitMethod name with
              | Error d -> raise (Stop(Denied d))
              | Ok _ ->
-                 match evalExpr st env recv with
+                 match r with
                  | VNull -> VNull
                  | r -> evalBuiltin st env name r positionalLazy.Value trailing)
         | MethodCall(recv, name) ->
