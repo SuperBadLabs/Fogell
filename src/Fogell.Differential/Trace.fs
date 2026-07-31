@@ -345,6 +345,9 @@ module Trace =
                 prevRaw.StartsWith "[Pipeline] echo"
                 || prevRaw.StartsWith "[Pipeline] sh"
                 || prevRaw.StartsWith "[Pipeline] bat"
+                // `input` prints its user-controlled prompt right after its
+                // annotation — a prompt shaped like a banner is still the prompt
+                || prevRaw.StartsWith "[Pipeline] input"
                 || (prevRaw <> "" && not (prevRaw.StartsWith "[Pipeline]") && not (isPreambleBanner prevRaw))
 
             prevRaw <- raw
