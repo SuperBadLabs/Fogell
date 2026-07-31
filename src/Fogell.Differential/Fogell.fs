@@ -153,6 +153,9 @@ module FogellSide =
             /// starts at registration; the retroactive scan is what had to be told.
             let boundSecrets = ResizeArray<SecretBinding * int>()
 
+            // FG-103: engine-health notes for the RECEIPT — never build output.
+            let engineNotes = ResizeArray<string>()
+
             // Groovy's script Binding for THIS build: a placeholder's assignment
             // outlives its step (receipt `gstring-binding-across-steps`). One per run
             // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
@@ -315,6 +318,11 @@ module FogellSide =
                     emit $"ERROR: {what} interrupted: a failFast sibling failed"
                     ctx.Failed.Value <- true
                 | DeadlineExpired ->
+                    // Jenkins narrates the cancellation BEFORE the step's own abort
+                    // line. Shell steps get this line from ProcessGroup at SIGTERM
+                    // time; this is the path for steps with no process — input,
+                    // stash, deleteDir waits (FG-102, measured wording).
+                    emit "Cancelling nested steps due to timeout"
                     emit $"ERROR: {what} aborted: the step's deadline expired"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Aborted
@@ -410,6 +418,26 @@ module FogellSide =
                 { step with
                     Positional = renderedPositional |> List.map (fun (_, _, r) -> r)
                     Named = renderedNamed |> List.map (fun (k, _, r) -> k, r) }
+
+            /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
+            /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,
+            /// `5 min 0 sec`, and `1 mo 0 days` for thirty DAYS (months are 30 days).
+            /// `sec` alone when seconds are the top unit; `day`/`days` pluralise.
+            let humanizeSpan (ms: int64) : string =
+                let sec = ms / 1000L
+                let minutes = sec / 60L
+                let hours = minutes / 60L
+                let days = hours / 24L
+                let months = days / 30L
+                let years = months / 12L
+                let dayWord (d: int64) = if d = 1L then "day" else "days"
+
+                if years > 0L then $"{years} yr {months % 12L} mo"
+                elif months > 0L then $"{months} mo {days % 30L} {dayWord (days % 30L)}"
+                elif days > 0L then $"{days} {dayWord days} {hours % 24L} hr"
+                elif hours > 0L then $"{hours} hr {minutes % 60L} min"
+                elif minutes > 0L then $"{minutes} min {sec % 60L} sec"
+                else $"{sec} sec"
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
                 // The argument and the KEY it arrived under travel together. `render`
@@ -520,6 +548,13 @@ module FogellSide =
                     // the JB-DUR-005 defect we promised to beat.
                     if result.Status = BuildStatus.Failure || result.Status = BuildStatus.Aborted then
                         result.Diagnostic |> Option.iter (fun d -> emit $"ERROR: {d}")
+                    else
+                        // A SUCCESSFUL step can still carry an engine-health finding —
+                        // the leak check reporting itself unavailable. FG-103: an
+                        // unknown is said somewhere; the receipt is where the engine
+                        // talks about itself without inventing output Jenkins lacks.
+                        result.Diagnostic
+                        |> Option.iter (fun d -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {d}"))
 
                     // Only a FAILED or ABORTED step halts the branch. An
                     // unstable one does not: `junit` marks the build unstable and
@@ -875,6 +910,11 @@ module FogellSide =
                             | Error e -> (acc, Some e))
                         (None, None)
 
+                // FG-102, measured: an `options { timeout }` announces its budget in
+                // the same words the step form uses, at the point it takes effect.
+                declared
+                |> Option.iter (fun d -> emit ("Timeout set to expire in " + humanizeSpan (d - runClock.ElapsedMilliseconds)))
+
                 let effective =
                     match declared, inherited with
                     | Some d, Some i -> Some(min d i)
@@ -977,6 +1017,18 @@ module FogellSide =
 
                     if body.Failed.Value then ctx.Failed.Value <- true
 
+                    // FG-102, measured position: a stage-declared timeout announces its
+                    // expiry right after the interrupted body, BEFORE the post arm the
+                    // abort selects (`cancellation-selects-post-arm`).
+                    if
+                        body.Failed.Value
+                        && stage.Options |> List.exists (fun o -> o.Name = "timeout")
+                        && (match deadline with
+                            | Some d -> runClock.ElapsedMilliseconds >= d
+                            | None -> false)
+                    then
+                        emit "Timeout has been exceeded"
+
                     // Stage post is selected against the STAGE's result, and
                     // `previous` is None because this harness runs one build per
                     // job (it deletes the job around every run). `fixed` and
@@ -1064,9 +1116,17 @@ module FogellSide =
                             | Some outer -> min outer mine
                             | None -> mine
 
+                        // FG-102, measured wording: the block announces its budget on
+                        // entry and its expiry after the interrupt narration, so the
+                        // logs COMPARE where these sentences were suppressed before.
+                        emit ("Timeout set to expire in " + humanizeSpan ms)
+
                         for inner in step.Block do
                             if not (halted ctx) then
                                 runStepDispatch ctx cwd stage inner (Some effective)
+
+                        if runClock.ElapsedMilliseconds >= effective && ctx.Failed.Value then
+                            emit "Timeout has been exceeded"
 
                 // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
                 // the first, and there is no backoff. `retry(3)` around a step
@@ -1753,6 +1813,27 @@ module FogellSide =
                 bump BuildStatus.Failure
             | None -> ()
 
+            // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
+            // point it is first observed to have aborted work — after the stages
+            // when a stage died to it, or after the pipeline post when the post did
+            // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+            let pipelineDeclaredTimeout =
+                pipeline.Options |> List.exists (fun o -> o.Name = "timeout")
+
+            let mutable exceededAnnounced = false
+
+            let announcePipelineExceeded () =
+                if
+                    not exceededAnnounced
+                    && pipelineDeclaredTimeout
+                    && root.Failed.Value
+                    && (match pipelineDeadline with
+                        | Some d -> runClock.ElapsedMilliseconds >= d
+                        | None -> false)
+                then
+                    exceededAnnounced <- true
+                    emit "Timeout has been exceeded"
+
             for stage in pipeline.Stages do
                 if root.Failed.Value then
                     // Jenkins names every stage it skips because of an earlier
@@ -1761,6 +1842,8 @@ module FogellSide =
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
                     runStage root workspace pipelineDeadline stage
+
+            announcePipelineExceeded ()
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only
@@ -1785,7 +1868,11 @@ module FogellSide =
                 // runStage but NOT the pipeline-level post, so a slow `post { always }`
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
-                runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
+                let postRoot = { root with Failed = ref false }
+                runPostWithDeadline postRoot workspace synthetic status None pipelineDeadline
+                if postRoot.Failed.Value then root.Failed.Value <- true
+
+            announcePipelineExceeded ()
 
             let workspaceHash, files = Trace.hashWorkspace workspace
 
@@ -1819,6 +1906,7 @@ module FogellSide =
 
             Result.Ok
                 { Result = BuildStatus.toWireString status
+                  EngineNotes = List.ofSeq engineNotes
                   Output = Trace.normaliseOutput output
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files

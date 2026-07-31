@@ -1,7 +1,7 @@
 # Differential receipt — timeout-days-unit.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         da3eba94e420c562b542a49bbc8821a381599042bc7d9379bbc4a017e17d7246
+seal:         655240b22b1b6092619b417c6a1ce2ac2be3b24780aab78459948f184ba0d286
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -39,13 +41,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: ed8d369b28c0f1f6c6312da725c5bfd763ec558f17964c6b60d1620993f399ab
-  output (0 lines):
+  output (1 lines):
+    | Timeout set to expire in 1 mo 0 days
   workspace:
     161069badc0c  done.txt
 
 ## Fogell
   result:         success
   workspace-hash: ed8d369b28c0f1f6c6312da725c5bfd763ec558f17964c6b60d1620993f399ab
-  output (0 lines):
+  output (1 lines):
+    | Timeout set to expire in 1 mo 0 days
   workspace:
     161069badc0c  done.txt

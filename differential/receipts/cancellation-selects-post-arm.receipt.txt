@@ -1,7 +1,7 @@
 # Differential receipt — cancellation-selects-post-arm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7e39a6ead828efcc3d08dea6605b47e431fae549fb6edf02d1f7af9000efd666
+seal:         e7aa763cfe81b1c87e19c2dfc7399ecc367eaa58f900da85cd28fe6e1549b6f7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -39,7 +41,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (0 lines):
+  output (5 lines):
+    | Timeout set to expire in 4 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt
     eff64b343dcb  started.txt
@@ -47,7 +54,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         aborted
   workspace-hash: 4768c2621e82b557919d2b8be8eb95f75686f0d67ea40bd66a682901fd4658d3
-  output (0 lines):
+  output (5 lines):
+    | Timeout set to expire in 4 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
   workspace:
     55c97802b397  aborted.txt
     eff64b343dcb  started.txt

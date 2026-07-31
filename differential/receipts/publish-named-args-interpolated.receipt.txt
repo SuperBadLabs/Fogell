@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -53,3 +55,5 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | Recording test results
   workspace:
     b2aa877b610b  reports/results.xml
+  engine notes (not compared):
+    ! step 'junit': 1 of 2 test(s) failed

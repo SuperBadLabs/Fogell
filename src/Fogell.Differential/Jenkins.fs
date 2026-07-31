@@ -116,6 +116,7 @@ module Jenkins =
 
                     let trace =
                         { Result = terminal
+                          EngineNotes = []
                           Output = Trace.normaliseOutput rawLines
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files

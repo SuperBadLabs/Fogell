@@ -31,6 +31,12 @@ type Trace =
       /// the side that parses (Fogell) can set it; Compare takes the disjunction.
       /// It exists to trigger the documented output-ordering relaxation.
       Concurrent: bool
+      /// Engine-health observations that are PRINTED in the receipt but never
+      /// compared: they describe the ENGINE's ability to check something (a /proc
+      /// scan that failed), not the build. FG-103: an unavailable check must be
+      /// said somewhere — and the receipt is where an engine talks about itself
+      /// without inventing build output Jenkins does not print.
+      EngineNotes: string list
       /// Whether the engine reported a reason for a non-success.
       ///
       /// The exact wording is NOT compared: Jenkins' text comes from whichever
@@ -143,23 +149,20 @@ module Trace =
 
     /// Lines in which an engine explains a failure. Their presence is compared;
     /// their wording is not.
-    let isDiagnosticLine (t: string) =
-        t.StartsWith "ERROR:"
-        // FG-034/036. Interrupt narration. MEASURED, not assumed: a `timeout`
-        // makes Jenkins print "Timeout set to expire in 3 sec / Cancelling
-        // nested steps due to timeout / Sending interrupt signal to process /
-        // Terminated / Timeout has been exceeded", and a failFast parallel prints
-        // "Failed in branch <name>". None of it is step output — it is the engine
-        // explaining what it did to the step, which is exactly the category this
-        // predicate exists for. Comparing the sentences verbatim would over-fit
-        // to timeout-plugin wording; what must agree is that SOMETHING was said.
-        // Receipts: `timeout-seconds` for the timeout/abort lines, and `parallel-failfast`
-        // for `Failed in branch` — one sentence covering two kinds of narration needs a
-        // receipt for each, and citing only the timeout left the branch half unbacked.
-        || t.StartsWith "Timeout set to expire"
+    /// The timeout narration family. FG-102: these are EMITTED by Fogell in
+    /// Jenkins' own wording (measured on 2.568.1 — `Timeout set to expire in 3
+    /// sec`, `1 mo 0 days`, the Cancelling/Sending/Terminated/exceeded cluster)
+    /// and therefore COMPARED as output, not suppressed. They remain
+    /// reason-qualifying below: an aborted build whose only explanation is this
+    /// cluster HAS explained itself.
+    let isTimeoutNarration (t: string) =
+        t.StartsWith "Timeout set to expire"
         || t.StartsWith "Timeout has been exceeded"
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
+
+    let isDiagnosticLine (t: string) =
+        t.StartsWith "ERROR:"
         // FG-044. Jenkins narrates credential masking as one line naming every bound
         // variable, joined with " or ". Emitting the same INFORMATION is parity; matching
         // that join word character for character would over-fit to plugin wording, the
@@ -289,7 +292,6 @@ module Trace =
         let isWarnBody (l: string) = l.StartsWith "Affected argument(s) used the following variable(s)"
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
-        let mutable interruptJustNarrated = false
         let mutable inStackTrace = false
         let mutable inSecretWarning = false
 
@@ -302,8 +304,7 @@ module Trace =
             elif not (isFrame raw) then inStackTrace <- false
 
             let suppress =
-                (raw = "Terminated" && interruptJustNarrated)
-                || (isFrame raw && inStackTrace)
+                (isFrame raw && inStackTrace)
                 || (looksLikeExceptionHead raw && isFrame next)
                 || (isWarnHead raw && isWarnBody next)
                 || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
@@ -311,10 +312,6 @@ module Trace =
             inSecretWarning <-
                 (isWarnHead raw && isWarnBody next)
                 || (inSecretWarning && (isWarnBody raw || isWarnTail raw))
-
-            interruptJustNarrated <-
-                raw.StartsWith "Sending interrupt signal to process"
-                || raw.StartsWith "Cancelling nested steps"
 
             if not suppress then
                 match normaliseLine all[i] with
@@ -348,7 +345,10 @@ module Trace =
                 looksLikeExceptionHead raw && isFrame next)
             |> Array.exists id
 
-        hasStackTrace || (all |> Array.map clean |> Array.exists isDiagnosticLine)
+        hasStackTrace
+        || (all
+            |> Array.map clean
+            |> Array.exists (fun l -> isDiagnosticLine l || isTimeoutNarration l))
 
     /// The exclusions above are part of the contract, so they are published with
     /// every receipt rather than buried in code.
@@ -372,6 +372,8 @@ module Trace =
           "  it is compared as output. Cases whose commands embed a newline must therefore carry"
           "  their claim in the workspace hash, not in stdout. Declared, not silently handled."
           "excluded: credential-masking narration — both engines announce it, wording differs"
+          "engine notes: printed in the receipt, never compared — the engine reporting"
+          "  on its own checks (e.g. an unavailable /proc scan), not on the build"
           "RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is"
           "  context-gated, emitted identically by both engines, or an exact measured"
           "  sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like"

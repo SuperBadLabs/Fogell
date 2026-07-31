@@ -1,7 +1,7 @@
 # Differential receipt — options-timeout-wraps-post.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5fd08eb87720d18ceb40ca6dbd6d19c67003fa5ab407d0dc22e1ba2311396bfb
+seal:         acca5582201789a838fa5bc9f730098d1f1840d70dccdcdb6fbe2b3d7a222448
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -39,7 +41,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: ce37a15fc44a9c1a6c93b2e187270ebbcb0742018497641494a4adc370f638df
-  output (0 lines):
+  output (5 lines):
+    | Timeout set to expire in 5 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
   workspace:
     be91f7644f03  entered.txt
     30b9e7a5353e  quick.txt
@@ -47,7 +54,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         aborted
   workspace-hash: ce37a15fc44a9c1a6c93b2e187270ebbcb0742018497641494a4adc370f638df
-  output (0 lines):
+  output (5 lines):
+    | Timeout set to expire in 5 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
   workspace:
     be91f7644f03  entered.txt
     30b9e7a5353e  quick.txt

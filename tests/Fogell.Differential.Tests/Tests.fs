@@ -136,25 +136,35 @@ let userOutputSurvives =
                   "the retired wording is user output now"
           }
 
-          test "`Terminated` survives unless an interrupt was just narrated" {
-              Expect.contains (Trace.normaliseOutput [ "Terminated" ]) "Terminated" "on its own it is output"
-
-              Expect.isEmpty
-                  (Trace.normaliseOutput [ "Sending interrupt signal to process"; "Terminated" ])
-                  "after an interrupt it is narration"
-          }
-
-          test "FG-102: the permitted narration prefixes are TIGHT" {
-              // The standing rule (docs/REVIEW_CHECKLIST.md): nothing is dropped on
-              // wording alone. The prefix-suppressed narration that remains is the
-              // permitted third category — exact plugin sentences, receipt-cited —
-              // and these rows prove a build printing NEARBY wording still compares.
+          test "FG-102: the timeout narration COMPARES — both engines emit it" {
+              // The standing rule''s preferred form: Fogell speaks Jenkins'' wording
+              // (measured), the suppression is deleted, and the lines are ordinary
+              // compared output. A build printing them, or anything near them, is
+              // compared too — including the real prefixes the old suppression
+              // dropped on wording alone.
               for line in
-                  [ "Timeout reached for my own watchdog"
+                  [ "Timeout set to expire in my dreams"
+                    "Timeout set to expire in 3 sec"
+                    "Timeout has been exceeded"
+                    "Cancelling nested steps due to timeout"
+                    "Sending interrupt signal to process"
+                    "Terminated"
+                    "Timeout reached for my own watchdog"
                     "Masking tape applied to the fixture"
-                    "Cancelling my own retry loop"
-                    "ERROR-adjacent text without the colon prefix" ] do
-                  Expect.contains (Trace.normaliseOutput [ line ]) line $"'{line}' is user output"
+                    "Cancelling my own retry loop" ] do
+                  Expect.contains (Trace.normaliseOutput [ line ]) line $"''{line}'' is compared"
+
+              // `Sending interrupt` followed by `Terminated` is compared as a PAIR
+              // now — the old context gate dropped the second line.
+              Expect.equal
+                  (Trace.normaliseOutput [ "Sending interrupt signal to process"; "Terminated" ])
+                  [ "Sending interrupt signal to process"; "Terminated" ]
+                  "the interrupt pair compares on both engines"
+
+              // ...and the cluster still counts as the ABORT REASON for both sides.
+              Expect.isTrue
+                  (Trace.reportedFailureReason [ "Timeout has been exceeded" ])
+                  "the exceeded line explains an aborted build"
           } ]
 
 /// FG-100 acceptance. ONE table for the string model, so adding a consumer means adding a

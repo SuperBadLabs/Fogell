@@ -1,7 +1,7 @@
 # Differential receipt — input-division-in-gstring.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         89a1ee3f9d2974a23548db783dcb66cadc9bcd50948fdd5ed3e85063e69ebd5f
+seal:         fd82dd29bec9660d7f27e922b58252d4dfee8b3eafd55c364735b646e1005689
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -39,13 +41,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (5 lines):
+    | Timeout set to expire in 4 sec
     | Half of ten is 5, and a brace is }
     | Proceed or Abort
+    | Cancelling nested steps due to timeout
+    | Timeout has been exceeded
 
 ## Fogell
   result:         aborted
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (5 lines):
+    | Timeout set to expire in 4 sec
     | Half of ten is 5, and a brace is }
     | Proceed or Abort
+    | Cancelling nested steps due to timeout
+    | Timeout has been exceeded

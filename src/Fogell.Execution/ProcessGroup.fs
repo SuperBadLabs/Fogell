@@ -294,8 +294,22 @@ module ProcessGroup =
 
                 outcome, t
             else
+                // Jenkins' interrupt narration, in its words and its order — measured
+                // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
+                // engine's version being suppressed. `Terminated` then arrives from
+                // the shell itself on both engines.
+                if not (interrupted ()) then
+                    request.OnLine |> Option.iter (fun f -> f "Cancelling nested steps due to timeout")
+
+                request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
+
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
+
+                // On Jenkins the wrapper shell survives to print `Terminated` for its
+                // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
+                // left alive to say it — the engine says it, in the same position.
+                request.OnLine |> Option.iter (fun f -> f "Terminated")
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if interrupted () then Cancelled else TimedOut), t

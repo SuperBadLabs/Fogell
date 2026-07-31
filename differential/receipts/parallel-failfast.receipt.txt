@@ -1,7 +1,7 @@
 # Differential receipt — parallel-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         15696b0ffbcc4a463d0c922c3d213289a7a1911d5a5e879a3e3db5dece357772
+seal:         ab234416678f9ae863e7fc3ca448afaad67bb943f7dc393fec6d42098ed8361d
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -44,8 +46,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (2 lines):
+  output (4 lines):
     | Failed in branch quick-fail
+    | Sending interrupt signal to process
+    | Terminated
     | Failed in branch interrupted
   workspace:
     bfbd1f4027c3  failed.txt
@@ -54,8 +58,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         failure
   workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (2 lines):
+  output (4 lines):
     | Failed in branch quick-fail
+    | Sending interrupt signal to process
+    | Terminated
     | Failed in branch interrupted
   workspace:
     bfbd1f4027c3  failed.txt

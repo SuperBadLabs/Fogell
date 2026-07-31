@@ -22,6 +22,16 @@ Every suppression in `Trace.fs` must be one of, in order of preference:
    Fogell cannot reproduce (plugin wording that varies), and the comment must
    name the receipt that measured it.
 
+The timeout narration family is the worked example of form 1: `Timeout set to
+expire in …` (Jenkins' 30-day-month duration wording), the
+Cancelling/Sending/Terminated cluster, and `Timeout has been exceeded` are all
+EMITTED by Fogell in measured wording and positions — including `Terminated`,
+which Fogell must say itself because its SIGTERM reaches the whole group and no
+wrapper shell survives to print it. All five suppressions are deleted; the
+receipts compare the sentences. The remaining wording-differs exclusions
+(`ERROR:` reasons, the masking banner's multi-variable join) are the
+cross-engine-boolean category the comparison contract documents.
+
 Six of eight historical suppressions were DEAD when finally audited (FG-002f),
 and the fifth instance of this defect was added *while fixing the fourth*.
 Checklist question for any `Trace.fs` change:

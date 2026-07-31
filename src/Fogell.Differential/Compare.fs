@@ -221,6 +221,14 @@ module Compare =
                     for path, hash in x.WorkspaceFiles do
                         line $"    {hash.Substring(0, 12)}  {path}"
 
+                // FG-103: the engine reporting on its own checks. Printed, never
+                // compared — see the comparison contract.
+                if not (List.isEmpty x.EngineNotes) then
+                    line "  engine notes (not compared):"
+
+                    for note in x.EngineNotes do
+                        line $"    ! {note}"
+
         renderSide "Jenkins" r.Jenkins
         renderSide "Fogell" r.Fogell
         sb.ToString()

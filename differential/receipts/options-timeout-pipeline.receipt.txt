@@ -1,7 +1,7 @@
 # Differential receipt — options-timeout-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ef765c9ea6572be0b176f9d18991639432bacce8af106560eeca1701bf26914d
+seal:         a0013b31c5b480028dd1e3ffc41fa55b9fd343390d2fe6a78dbcfe3138355992
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -25,6 +25,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     it is compared as output. Cases whose commands embed a newline must therefore carry
     their claim in the workspace hash, not in stdout. Declared, not silently handled.
   excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
   RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
     context-gated, emitted identically by both engines, or an exact measured
     sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
@@ -39,15 +41,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         aborted
   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
-  output (1 lines):
+  output (6 lines):
+    | Timeout set to expire in 4 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
     | Stage "after" skipped due to earlier failure(s)
+    | Timeout has been exceeded
   workspace:
     eff64b343dcb  started.txt
 
 ## Fogell
   result:         aborted
   workspace-hash: 666f55cb2ed754bca7847ca019cd1f254db495465f5eadbaffebf60fdd4c3b9e
-  output (1 lines):
+  output (6 lines):
+    | Timeout set to expire in 4 sec
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
     | Stage "after" skipped due to earlier failure(s)
+    | Timeout has been exceeded
   workspace:
     eff64b343dcb  started.txt
