@@ -1,10 +1,9 @@
 # Differential receipt — input-slashy-literal.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4b1a2522f500bce1e35d7e81f8a7ae5ca51c0134bcbc253a525b0e4d53d12739
+seal:         c4d2e5ec14455baac85a6ab103d0afa11f0d3dc0aeccc60c1043aec477f2cc53
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Timeout set to expire in 4 sec
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         aborted
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (8 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (5 lines):
     | Timeout set to expire in 4 sec
     | Result: }
     | Proceed or Abort
     | Cancelling nested steps due to timeout
-    | [Pipeline] End of Pipeline
     | Timeout has been exceeded
 
 ## Fogell

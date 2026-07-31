@@ -1,10 +1,9 @@
 # Differential receipt — junit-failing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         1b545f5522389f76b944f3820285e0bbdbaa75504b67032b5a2551018d131acc
+seal:         b7c9c2624595da0615d4a342042f23eda869260c30c9dc46250d3e9f0893cd17
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ mkdir -p reports
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         unstable
   workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + mkdir -p reports
     | + printf %s <testsuite name="s" tests="2" failures="1" errors="0" skipped="0"><testcase name="ok"/><testcase name="bad"><failure message="boom"/></testcase></testsuite>
     | Recording test results
-    | [Pipeline] End of Pipeline
   workspace:
     b2aa877b610b  reports/results.xml
 

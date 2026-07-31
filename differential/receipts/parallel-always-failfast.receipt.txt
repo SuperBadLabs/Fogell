@@ -1,10 +1,9 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         499e5b1c8cc78b78c09bcc603890f3eb5f585a90e54f40d1f025c2adffaaee02
+seal:         e32b0613ac7504bd48cc2846532c355ddae13f256ed921eb437fcfb01037482c
 
-VERDICT: DIVERGED (1)
-  - output line 7: jenkins=Running on Jenkins in ${WORKSPACE} fogell=Sending interrupt signal to process
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -45,9 +44,7 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (14 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (11 lines):
     | + echo from-quick
     | from-quick
     | + sleep 1
@@ -59,7 +56,6 @@ VERDICT: DIVERGED (1)
     | Sending interrupt signal to process
     | Terminated
     | Failed in branch interrupted
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         failure

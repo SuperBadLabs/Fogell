@@ -1,10 +1,9 @@
 # Differential receipt — env-quote-override.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         98c10cfb79bfd6c4df0d305ab32f1a8b97cbef88c6c7a01e10c52c093f6e90bf
+seal:         96315b682cbe7e40348322b39546aee6b5c06eb6e4f4c1d2d0d8f930438c3c6a
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo expanded-seed
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 634825f1aba1e75d3205ba278da500d05d10b3ecd5a2c69e80ab8e7896225b24
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | + echo expanded-seed
     | + echo slashy-seed
-    | [Pipeline] End of Pipeline
   workspace:
     6db8d365dcbd  slashy.txt
     923e90d91600  swapped.txt

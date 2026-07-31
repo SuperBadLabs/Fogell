@@ -1,10 +1,9 @@
 # Differential receipt — post-arm-reselected.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2e27292b7890b0d1941122c71a37554423b82d8484f682af46d1bbe1dce2ad2a
+seal:         487b18b46e9eebf5e85158da57ee255b05dacaedc4274d052773d8645b0f8556
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo body
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: 44323591937507613a2a9970912571c3963206a8ae883f38fdf1e2d7be157d82
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + echo body
     | + exit 9
     | + echo correct
-    | [Pipeline] End of Pipeline
   workspace:
     9e2ec912af5d  body.txt
     844cd17a64df  right-arm.txt

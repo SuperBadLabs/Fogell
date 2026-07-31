@@ -222,7 +222,7 @@ module Trace =
     /// disagree on such a line the receipt shows a divergence rather than a
     /// silent double-drop.
     let isPreambleBanner (t: string) =
-        Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /")
+        Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in (/|\$\{WORKSPACE\})")
         || ([ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
             |> List.exists (fun lvl -> t = $"Running in Durability level: {lvl}"))
         || t.StartsWith "Started by user "
@@ -246,7 +246,11 @@ module Trace =
         // stage label), `[Pipeline] // word` — because a build can echo text that
         // merely starts with the bracket; `[Pipeline] $WORKSPACE` carries a path and
         // must compare.
-        elif Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$") then
+        elif
+            t = "[Pipeline] Start of Pipeline"
+            || t = "[Pipeline] End of Pipeline"
+            || Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$")
+        then
             None
         // FG-049. `Post stage` is the declarative graph's label for the synthetic
         // stage that wraps a post section — the same category as [Pipeline]
@@ -347,7 +351,7 @@ module Trace =
                 // banner only immediately after the `[Pipeline] dir` annotation — a
                 // build echoing the same shape mid-run is compared, differing
                 // workspace paths and all.
-                || (Text.RegularExpressions.Regex.IsMatch(raw, "^Running in /")
+                || (Text.RegularExpressions.Regex.IsMatch(raw, @"^Running in (/|\$\{WORKSPACE\})")
                     && prevRaw.StartsWith "[Pipeline] dir")
                 || (looksLikeExceptionHead raw && isFrame next)
                 || (isWarnHead raw && isWarnBody next)

@@ -1,10 +1,9 @@
 # Differential receipt — stash-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         368b8fc8339162b150b7f667c1c80d81a1c907852ad0c1a598b3d27410d61983
+seal:         5225891f45565a68a5301607517ae51ba650cfda24c7b487722ae43216d1ec8d
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo hi
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,11 +39,8 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: 90840a6e1184165ba6a4d47a69eaab2d2f5222b85eb9eec1cc0867d1f10f4171
-  output (4 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (1 lines):
     | + echo hi
-    | [Pipeline] End of Pipeline
   workspace:
     98ea6e4f216f  present.txt
 

@@ -1,10 +1,9 @@
 # Differential receipt — env-escaped-and-dotted.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         26cd21bd316e888317d8f2c95c3bcdb676950d45c75abbb2cb73000cffc61679
+seal:         632008f2935852556ce3c4e872721e75fe25826377a33e2a4cec6a311b466730
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo keep-$SEED
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: defd29bb53b6ec09b5e270aa44f5d99494506acfed13009634e5cae5e1e53278
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + echo keep-$SEED
     | + echo got-seed
     | + echo got-seed
-    | [Pipeline] End of Pipeline
   workspace:
     8a0864782d64  dotted_bare.txt
     8a0864782d64  dotted_braced.txt

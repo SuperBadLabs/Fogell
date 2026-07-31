@@ -1,10 +1,9 @@
 # Differential receipt — input-failfast-is-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ee8b16690f308380623d1f7bf76cb79864dd0f8aa8a2f72bfe6fcdce262f1de7
+seal:         0116223b2db22fb5a7d2c65de54ad05b58d739799fa0951db29d2426b26e52dd
 
-VERDICT: DIVERGED (1)
-  - output line 6: jenkins=Running on Jenkins in ${WORKSPACE} fogell=Timeout set to expire in 1 min 0 sec
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -45,9 +44,7 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (10 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (7 lines):
     | Timeout set to expire in 1 min 0 sec
     | Proceed?
     | Proceed or Abort
@@ -55,7 +52,6 @@ VERDICT: DIVERGED (1)
     | + exit 3
     | Failed in branch fails fast
     | Failed in branch waiting at a gate
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         failure

@@ -1,10 +1,9 @@
 # Differential receipt — sh-escaped-dollar-named-arg.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9366e5b0d5eb0d524259b1fbd7a4f9951b41d70e1f69f79857a6f78017ca05cf
+seal:         79b3a7be321eb573cda9e366bbe428b22e5e708a0eae0539297e309cdd47657d
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: a296bb0469447212e0c2adb3cae79bc2e9c08e2c08b61a894543bb6468498adc
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | + echo
     | + grep -c . out.txt
-    | [Pipeline] End of Pipeline
   workspace:
     9a271f2a916b  count.txt
     01ba4719c80b  out.txt

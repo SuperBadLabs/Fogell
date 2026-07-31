@@ -1,10 +1,9 @@
 # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         71d783b86e1c7c11219a2166f6e1f066ea177bd636a3c52a709d2838f84a89ec
+seal:         f7d3b671ab70e68286c101bbaabcfde04ad3208d9f6221743305c4e76cb1ad8a
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo body
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: f384428cb85eb662a125a646a85364ab9fa82f16b1c4d4a8d5af431a805d63be
-  output (7 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (4 lines):
     | + echo body
     | + echo post-ran
     | + exit 4
     | Stage "Must not run" skipped due to earlier failure(s)
-    | [Pipeline] End of Pipeline
   workspace:
     9e2ec912af5d  body.txt
     d526687a0564  post.txt

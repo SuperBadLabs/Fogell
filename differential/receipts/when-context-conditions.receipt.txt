@@ -1,10 +1,9 @@
 # Differential receipt — when-context-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b307b3d6dfb2da36cfd95aabc3308130ce586394c9c5b9aa3e18c2ba4d6e67ca
+seal:         405bbc7b99712da0bfa2a195712b5d5b408506697974f0751f673a6fc7d173d6
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Stage "buildingTag" skipped due to when conditional
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,9 +39,7 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 69bf4e35c035a41905373669c2dbe18c8b069dc579621ffa3b4fdfc77888fe15
-  output (10 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (7 lines):
     | Stage "buildingTag" skipped due to when conditional
     | Stage "changeRequest" skipped due to when conditional
     | Stage "changeset" skipped due to when conditional
@@ -50,7 +47,6 @@ VERDICT: DIVERGED (1)
     | Stage "triggeredBy" skipped due to when conditional
     | Stage "isRestartedRun" skipped due to when conditional
     | + echo ran
-    | [Pipeline] End of Pipeline
   workspace:
     f4472a14b616  control.txt
 

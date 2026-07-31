@@ -1,10 +1,9 @@
 # Differential receipt — sh-gstring-interpolation.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9b4138af4bbdb0b32a7f11fac3d69ff41277c48db302e564c62756a3c5b22387
+seal:         69e6ffc08ac34bafaa4e82410f8bc47e7649956a07ca4d31d11c8bba60875bc8
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo double:prod
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,9 +39,7 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (8 lines):
     | + echo double:prod
     | double:prod
     | + echo upper:PROD
@@ -51,7 +48,6 @@ VERDICT: DIVERGED (1)
     | literal:.
     | + echo escaped:.
     | escaped:.
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

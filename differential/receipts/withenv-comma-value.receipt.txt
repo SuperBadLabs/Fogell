@@ -1,10 +1,9 @@
 # Differential receipt — withenv-comma-value.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         51a2dcf638cb20f75ec300e9d67ca034e01877a92cf7bfd99b72819261b42ec0
+seal:         d6b02b3f3bbc3d74442e3d0707b30303c8fddde3dcab8a392919886b7099365f
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo a,b,c
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 41af9d1c650ca43d433e25280868964cc45f2c3f9608a5c8c823ba3ba3db856c
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | + echo a,b,c
     | + echo x
-    | [Pipeline] End of Pipeline
   workspace:
     facf7c7ae315  csv.txt
     73cb3858a687  plain.txt

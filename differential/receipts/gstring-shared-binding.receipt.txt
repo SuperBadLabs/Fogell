@@ -1,10 +1,9 @@
 # Differential receipt — gstring-shared-binding.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3a8792de95b0bfa0747c11332dfb0c6e4d394644f28ff6180134e2514bb3fab4
+seal:         1957334cb09a3b406c5a905c6718ede07973a22fe57aecc4e7c15bc278fe5a73
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (7 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (4 lines):
     | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | shared:ok-ok
     | + echo meth:4
     | meth:4
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

@@ -1,10 +1,9 @@
 # Differential receipt — when-scm-pattern-keys.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         eea5516c321768a7c7138fb4248925e4092c64c9164bde3dea43739135e85e69
+seal:         565cb3984ba3e3d7efdb5853ce5c1c40a9b7891e611d2b06337a2fb614844860
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Stage "changeset pattern" skipped due to when conditional
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 91292c46d4bbd182cc190636917461d7f9b117da5555344b561f0fef94f6b12f
-  output (7 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (4 lines):
     | Stage "changeset pattern" skipped due to when conditional
     | Stage "changelog pattern" skipped due to when conditional
     | Stage "triggeredBy cause" skipped due to when conditional
     | + echo control
-    | [Pipeline] End of Pipeline
   workspace:
     2e7f1f7a9dd3  control.txt
 

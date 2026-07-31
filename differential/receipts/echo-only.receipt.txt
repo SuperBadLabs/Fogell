@@ -1,10 +1,9 @@
 # Differential receipt — echo-only.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a129337c513e78c472029d87b5b6d0204256a9cc3d4054ceea027ca6483c85bc
+seal:         e0ddf3ce5119c9728bb575a83e0f24b7a96a1063e87f0e072e17c720cee87358
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=hello from fogell
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | hello from fogell
     | second line
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

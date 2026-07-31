@@ -1,10 +1,9 @@
 # Differential receipt — withenv-escaped-dollar.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c44148f311116d05c52739a3ed415df469db029c5f1094444e40ae64698d425e
+seal:         844b4ef05eb1e14c66293d93dc2a368afb07b359db7b3a38268c5baddc9349ab
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo hold-$SEED
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: d95ddfed2e43af85c4b29a55ad7afea19e0d90835b5792939582c9895c378f07
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | + echo hold-$SEED
     | + echo live-seed
-    | [Pipeline] End of Pipeline
   workspace:
     14e0b6662f2a  kept.txt
     13111b0432d2  live.txt

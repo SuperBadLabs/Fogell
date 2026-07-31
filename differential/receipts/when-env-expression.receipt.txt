@@ -1,10 +1,9 @@
 # Differential receipt — when-env-expression.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         10650934ec4c5e1b53eaec06e3c4916b0f7877ad86828822aa79b53f7147a2da
+seal:         e009d143ddde4d2fc5f3b744d73cdb114946d9274ffa2e028246c4cfa908abc9
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo env-dot-matched
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 7d9e3d6f1e75f7dbc0cd667794386cb3a505bb7344a34f6d8fe4307e198d17f3
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + echo env-dot-matched
     | Stage "env.X mismatches" skipped due to when conditional
     | + echo multi-statement-matched
-    | [Pipeline] End of Pipeline
   workspace:
     c2f0157e667a  envdot.txt
     3cd79b0590bd  multi.txt

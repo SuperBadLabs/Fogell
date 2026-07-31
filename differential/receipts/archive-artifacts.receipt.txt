@@ -1,10 +1,9 @@
 # Differential receipt — archive-artifacts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0c2ea632f9b3fbd24f8e078e38cfdb98ade97bf8094f70a621495949c182acff
+seal:         c2e94a0852c3c38044103396adf2857810e7b459d713bf45cf0b752acbbbad76
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo payload
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: a30bdfea2dc721c7d08441a50ace5979b0a9225e417f5df63741df83dabbf8bf
-  output (7 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (4 lines):
     | + echo payload
     | + mkdir -p target
     | + echo jar
     | Archiving artifacts
-    | [Pipeline] End of Pipeline
   workspace:
     d4e4877bac97  out.txt
     fb8ce0550299  target/app.jar

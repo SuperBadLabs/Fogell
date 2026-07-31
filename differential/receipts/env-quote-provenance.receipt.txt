@@ -1,10 +1,9 @@
 # Differential receipt — env-quote-provenance.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         85737f1d795ecfc1dca812fcdc3e71eaf5cc836b6a6d9ba03731984742d6d062
+seal:         f4da6ee8e8bcdb92cd81527b185a4546e18547463872b3abe4e7cd1307ba1f62
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo prefix-seed-value
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: 439df767531a163696a2ec39a6fc06b5c755e3e33e8aa942122441ac23db915c
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + echo prefix-seed-value
     | + echo prefix-${SEED}
     | + echo plain-$SEED
-    | [Pipeline] End of Pipeline
   workspace:
     0abfd22444f5  interpolated.txt
     1c536c8e52c2  literal.txt

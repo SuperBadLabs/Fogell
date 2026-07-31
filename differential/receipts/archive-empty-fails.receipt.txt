@@ -1,10 +1,9 @@
 # Differential receipt — archive-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3897b4feb5c69532d9caf1f5e11188f1b7a3b842faa19e8a08b4d601b2087eb3
+seal:         0026d5c8890527f82977447f8a3252432ee30c35332482e8d392ccb4f9b2a78b
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=Archiving artifacts
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,12 +39,9 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (2 lines):
     | Archiving artifacts
     | ‘does-not-exist-*.zip’ doesn’t match anything
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         failure

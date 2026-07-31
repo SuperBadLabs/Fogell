@@ -1,10 +1,9 @@
 # Differential receipt — withenv-scoping.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         78bcc015e550eef968cd743671fee10d6ea97fa636a30c8270fadff9cdf3c93b
+seal:         16091c1eddb1e0ad30dbe911615989d58d3fcbabcb50cc5e66a8714b7be3281c
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ echo added=added-value shadowed=from-withenv outer=outer-value
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,14 +39,11 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (7 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (4 lines):
     | + echo added=added-value shadowed=from-withenv outer=outer-value
     | added=added-value shadowed=from-withenv outer=outer-value
     | + echo after-added=[] after-shadowed=from-pipeline
     | after-added=[] after-shadowed=from-pipeline
-    | [Pipeline] End of Pipeline
 
 ## Fogell
   result:         success

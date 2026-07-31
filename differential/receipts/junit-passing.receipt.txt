@@ -1,10 +1,9 @@
 # Differential receipt — junit-passing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         de9d72b06070d25275b10735286a018d2a76ff3633b3106287cbb6a33dfc17cb
+seal:         ea00a0953157e9756327bbd4755fb8a6677c01164d82900db838116b8b12963c
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=[Pipeline] Start of Pipeline fogell=+ mkdir -p reports
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -40,13 +39,10 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: d5ff1fd7beab6daeb0898c00a3ee4dc3d9cf5824d004aeb1ca28823831e86c7c
-  output (6 lines):
-    | [Pipeline] Start of Pipeline
-    | Running on Jenkins in ${WORKSPACE}
+  output (3 lines):
     | + mkdir -p reports
     | + printf %s <testsuite name="s" tests="3" failures="0" errors="0" skipped="1"><testcase name="a"/><testcase name="b"/><testcase name="c"/></testsuite>
     | Recording test results
-    | [Pipeline] End of Pipeline
   workspace:
     cc22dc9a9fe7  reports/results.xml
 
