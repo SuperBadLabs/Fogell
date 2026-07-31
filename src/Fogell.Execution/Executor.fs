@@ -342,6 +342,12 @@ module Executor =
                 let advisory =
                     let q (x: string) = "\u2018" + x + "\u2019"
 
+                    // MEASURED: for a comma-separated list Jenkins validates the
+                    // individual Ant masks and speaks about the FIRST unmatched one —
+                    // `missing/**,other-*.zip` advises on `missing/**` alone (the
+                    // Configuration-error line keeps the full list).
+                    let raw = raw.Split(',').[0].Trim()
+
                     if raw.EndsWith "/**" then
                         let starstar = q "**"
                         $"{q raw} doesn\u2019t match anything, but {starstar} does. Perhaps that\u2019s what you mean?"

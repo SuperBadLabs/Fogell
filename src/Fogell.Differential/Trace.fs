@@ -252,7 +252,10 @@ module Trace =
         // engines — one printed $0 would never compare otherwise; the id is
         // structural, the layout around it is what must match
         let stripped =
-            Text.RegularExpressions.Regex.Replace(stripped, "(@tmp/durable-)[0-9a-f]+", "$1<id>")
+            // only the full generated-script shape: 8 hex digits AND the script.sh
+            // tail — a bare `@tmp/durable-deadbeef` in user output keeps its value,
+            // so differing spoofs diverge instead of collapsing
+            Text.RegularExpressions.Regex.Replace(stripped, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
 
         let t = stripped.Trim()
 
