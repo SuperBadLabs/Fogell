@@ -1,0 +1,65 @@
+# The same gate scripts/build-and-test.sh runs locally, enforced by a machine.
+#
+# Discipline is not enforcement: FG-100's evidence was sealed at review round 1 and
+# five rounds of fixes were then pushed on top unsealed, because nothing but habit
+# checks a pushed commit. This workflow makes green a fact about the commit rather
+# than a claim by its author. It runs in ~2-3 minutes — under the PR-review latency,
+# so it adds nothing to cycle time.
+#
+# What it CANNOT check: the differential receipts (they need the pinned Jenkins on
+# luigi) and the corpus scores (the corpus lives outside the repo). Those remain
+# operator evidence; this enforces everything machine-checkable — build, 8 test
+# projects, and the FG-104 claim audit in --strict mode.
+name: gate
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fogell
+          POSTGRES_DB: fogell
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["55440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fogell"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: install babashka and ripgrep
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ripgrep
+          curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
+          chmod +x install && sudo ./install
+
+      - name: gate
+        env:
+          FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
+        run: ./scripts/build-and-test.sh
+
+      - name: store tests actually ran
+        # The Store suite self-skips (exit 0, "skipped:" on stderr) when no database
+        # answers, which would let this gate go green while silently testing 26 fewer
+        # things. A skipped suite must fail HERE, where the cause (the service
+        # container) is visible.
+        env:
+          FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
+        run: |
+          out=$(dotnet run --project tests/Fogell.Store.Tests -c Release --no-build 2>&1)
+          echo "$out" | tail -2
+          if echo "$out" | grep -q "^skipped:"; then
+            echo "Store tests were SKIPPED — postgres service not reachable"; exit 1
+          fi

@@ -201,10 +201,25 @@ let stringModel =
                     "an escaped dollar stays literal",
                       step [ "m", "keep $TARGET" ] [] [] [] [] [ "m", "keep \u0000TARGET" ], "m", "keep $TARGET", "keep $TARGET"
                     "escaped and live dollars in ONE string",
-                      step [ "m", "x" ] [] [] [] [] [ "m", "\u0000TARGET is ${TARGET}" ], "m", "x", "$TARGET is production" ]
+                      step [ "m", "x" ] [] [] [] [] [ "m", "\u0000TARGET is ${TARGET}" ], "m", "x", "$TARGET is production"
+                    "an assignment BINDS for the statements after it",
+                      step [ "m", "${x = 'ok'; x}" ] [] [] [] [] [], "m", "${x = 'ok'; x}", "ok"
+                    "a missing env path is the four letters null, not empty",
+                      step [ "m", "v=${env.NOPE}" ] [] [] [] [] [], "m", "v=${env.NOPE}", "v=null" ]
 
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
+
+              // Rows that RAISE rather than render: an unknown bare name is a failed
+              // Groovy property lookup — in the fast path and INSIDE an expression
+              // alike. Receipts `gstring-unresolved-property` and
+              // `gstring-unresolved-in-expression` carry the Jenkins side.
+              for why, raw in
+                  [ "bare unknown name raises", "${NOPE}"
+                    "unknown name inside an expression raises", "${NOPE + '-sfx'}" ] do
+                  Expect.throws
+                      (fun () -> GString.render env (step [ "m", raw ] [] [] [] [] []) "m" raw |> ignore)
+                      why
           } ]
 
 [<EntryPoint>]

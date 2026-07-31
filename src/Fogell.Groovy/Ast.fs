@@ -227,6 +227,13 @@ module Ast =
                                 | None -> Set.empty
 
                             Set.union acc f, Set.add n b
+                        // Assigning to a bare name CREATES it in Groovy's binding —
+                        // `${x = 'ok'; x}` is valid, so `x` must bind for the statements
+                        // after it (the right-hand side is still scanned first, with the
+                        // pre-assignment scope: `x = x` reads an unbound x). A dotted or
+                        // indexed target is a write into something that must itself
+                        // already exist, so it stays a read.
+                        | SAssign(EVar n, v) -> Set.union acc (ofExpr b v), Set.add n b
                         | SAssign(t, v) -> Set.unionMany [ acc; ofExpr b t; ofExpr b v ], b
                         | SIf(c, x, y) -> Set.unionMany [ acc; ofExpr b c; ofStmts b x; ofStmts b y ], b
                         | SForIn(var, src, body) ->
