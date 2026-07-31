@@ -86,10 +86,15 @@ let main argv =
         let replacementsFor (script: string) =
             Fogell.Differential.Trace.canonicalisedEnvNames
             |> List.filter (fun name ->
-                script.Contains("$" + name)
-                || script.Contains("${" + name)
+                // full identifiers only: `$USERNAME` must not enable USER — a
+                // substring gate rewrote a different variable's values to `${USER}`
+                let bounded pat =
+                    Text.RegularExpressions.Regex.IsMatch(script, pat + "([^A-Za-z0-9_]|$)")
+
+                bounded ("\\$" + name)
+                || script.Contains("${" + name + "}")
                 // Groovy's spelling of the same reference
-                || script.Contains("env." + name))
+                || bounded ("env\\." + name))
             |> List.collect (fun name ->
                 [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
                   | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
