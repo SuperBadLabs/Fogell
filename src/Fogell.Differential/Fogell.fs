@@ -2003,8 +2003,10 @@ module FogellSide =
                         |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
                         |> List.ofSeq
 
-                     Trace.normaliseOutputWith
-                         (((workspace, "${WORKSPACE}") :: envReplacements) @ idReplacements)
+                     Trace.normaliseOutputShaped
+                         false
+                         ((workspace, "${WORKSPACE}") :: idReplacements)
+                         envReplacements
                          output)
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files

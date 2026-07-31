@@ -135,7 +135,7 @@ module Jenkins =
 
                              let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
 
-                             Trace.normaliseOutputShaped true ((ws, "${WORKSPACE}") :: envReplacements) rawLines)
+                             Trace.normaliseOutputShaped true [ ws, "${WORKSPACE}" ] envReplacements rawLines)
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a

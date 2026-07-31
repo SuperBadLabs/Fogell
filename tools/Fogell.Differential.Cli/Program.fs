@@ -90,82 +90,30 @@ let main argv =
         // cross-engine literal collision diverges visibly. (The residual — a script
         // that both references $NAME and prints the other engine's literal value —
         // requires deliberate construction and is accepted, stated here.)
-        // Comments cannot gate canonicalisation: `// available as $HOME` above a
-        // `printenv HOME` step enabled a rewrite of genuinely observed values.
-        // Only executable text counts, so comments are stripped first — a small
-        // scanner honouring single/double quotes, not a regex.
-        let stripComments (text: string) =
-            let sb = System.Text.StringBuilder()
-            let mutable i = 0
-            let mutable quote = '\000'
-
-            while i < text.Length do
-                let c = text[i]
-
-                if quote <> '\000' then
-                    if c = '\\' && i + 1 < text.Length then
-                        sb.Append(c).Append(text[i + 1]) |> ignore
-                        i <- i + 2
-                    else
-                        if c = quote then quote <- '\000'
-                        sb.Append c |> ignore
-                        i <- i + 1
-                elif c = '\'' || c = '"' then
-                    quote <- c
-                    sb.Append c |> ignore
-                    i <- i + 1
-                elif c = '/' && i + 1 < text.Length && text[i + 1] = '/' then
-                    while i < text.Length && text[i] <> '\n' do
-                        i <- i + 1
-                elif c = '/' && i + 1 < text.Length && text[i + 1] = '*' then
-                    let close = text.IndexOf("*/", i + 2)
-                    i <- if close < 0 then text.Length else close + 2
-                else
-                    sb.Append c |> ignore
-                    i <- i + 1
-
-            sb.ToString()
-
-        let replacementsFor (rawScript: string) =
+        // The env set applies only to XTRACE rows (see Trace), which is what made
+        // three rounds of reference-gate lexing unnecessary: expansions live on
+        // engine-generated lines, literals live in output, and neither needs the
+        // script parsed. The union set stays injective via the ambiguity dropper.
+        let envReplacements =
             if not envCanonicalisationEnabled then
                 []
             else
+                Fogell.Differential.Trace.canonicalisedEnvNames
+                |> List.collect (fun name ->
+                    [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
+                      | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
+                      | _ -> ()
 
-            let script = stripComments rawScript
-
-            Fogell.Differential.Trace.canonicalisedEnvNames
-            |> List.filter (fun name ->
-                // full identifiers only: `$USERNAME` must not enable USER — a
-                // substring gate rewrote a different variable's values to `${USER}`
-                let bounded pat =
-                    Text.RegularExpressions.Regex.IsMatch(script, pat + "([^A-Za-z0-9_]|$)")
-
-                bounded ("\\$" + name)
-                // braced forms, operator suffixes included: ${HOME}, ${HOME:-x},
-                // ${HOME%/}, … — the boundary is the operator or the brace
-                || Text.RegularExpressions.Regex.IsMatch(script, "\\$\\{" + name + "([^A-Za-z0-9_]|\\})")
-                // Groovy's spelling of the same reference
-                || bounded ("env\\." + name))
-            |> List.collect (fun name ->
-                [ match jenkinsEnv |> List.tryFind (fun (n, _) -> n = name) with
-                  | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
-                  | _ -> ()
-
-                  match Environment.GetEnvironmentVariable name with
-                  | null
-                  | "" -> ()
-                  | v -> yield v, "${" + name + "}" ])
-            |> List.distinct
-            // INJECTIVITY: a raw value claimed by two different names (USER on one
-            // engine equals LOGNAME on the other) cannot be canonicalised without
-            // erasing which variable it was — swapped values would collapse to one
-            // token and falsely prove. Ambiguous values drop out entirely, so any
-            // real difference diverges visibly instead.
-            |> List.groupBy fst
-            |> List.choose (fun (_, pairs) ->
-                match pairs |> List.map snd |> List.distinct with
-                | [ _ ] -> Some pairs.Head
-                | _ -> None)
+                      match Environment.GetEnvironmentVariable name with
+                      | null
+                      | "" -> ()
+                      | v -> yield v, "${" + name + "}" ])
+                |> List.distinct
+                |> List.groupBy fst
+                |> List.choose (fun (_, pairs) ->
+                    match pairs |> List.map snd |> List.distinct with
+                    | [ _ ] -> Some pairs.Head
+                    | _ -> None)
 
         let cfg =
             { BaseUrl = baseUrl
@@ -214,9 +162,8 @@ let main argv =
                     use p = Diagnostics.Process.Start psi
                     p.WaitForExit 30_000 |> ignore
 
-                let caseReplacements = replacementsFor script
-                let jenkins = Jenkins.run cfg caseReplacements job script
-                let fogell = FogellSide.run caseReplacements fogellRoot job script
+                let jenkins = Jenkins.run cfg envReplacements job script
+                let fogell = FogellSide.run envReplacements fogellRoot job script
                 let r = Compare.receipt name core jenkins fogell
                 let path = Compare.seal receiptDir r
 

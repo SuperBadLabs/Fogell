@@ -397,14 +397,33 @@ module Trace =
     let canonicalisedEnvNames =
         [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
 
-    let internal normaliseOutputWithInner (replacements: (string * string) list) (lines: string seq) : string list =
-        let ordered =
-            replacements
-            |> List.filter (fun (v, _) -> v <> "" && v.Length >= 4)
-            |> List.sortByDescending (fun (v, _) -> v.Length)
+    let internal normaliseOutputWithInner2
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
+        (lines: string seq)
+        : string list =
+        let order rs =
+            rs
+            |> List.filter (fun ((v: string), _) -> v <> "" && v.Length >= 4)
+            |> List.sortByDescending (fun ((v: string), _) -> v.Length)
+
+        let orderedGlobal = order globalReplacements
+        let orderedTrace = order traceOnlyReplacements
 
         let canonical (l: string) =
-            ordered |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+            let g =
+                orderedGlobal |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+
+            // ENV values rewrite only on xtrace rows — engine-generated lines where
+            // expansions actually appear. Ordinary output keeps its literals, which
+            // is what makes the replacement injective without parsing the script:
+            // `echo /root` compares as text, `+ test -n /root` compares as the
+            // expansion it is. (A build printing its own `+ `-shaped line joins the
+            // stated mimicry residual.)
+            if g.TrimStart().StartsWith "+ " then
+                orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
+            else
+                g
 
         normaliseOutputInner (lines |> Seq.map canonical)
 
@@ -419,7 +438,8 @@ module Trace =
     /// rather than collapsing to one token.
     let normaliseOutputShaped
         (applyDurableShape: bool)
-        (replacements: (string * string) list)
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
         (lines: string seq)
         : string list =
         let shaped (l: string) =
@@ -428,10 +448,10 @@ module Trace =
             else
                 l
 
-        normaliseOutputWithInner replacements (lines |> Seq.map shaped)
+        normaliseOutputWithInner2 globalReplacements traceOnlyReplacements (lines |> Seq.map shaped)
 
     let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
-        normaliseOutputWithInner replacements lines
+        normaliseOutputWithInner2 replacements [] lines
 
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
