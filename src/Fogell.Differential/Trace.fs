@@ -313,6 +313,12 @@ module Trace =
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
         let mutable inStackTrace = false
+
+        // Banner suppression applies only to a trace that HAS the Jenkins graph
+        // annotations giving it context. Fogell emits none — so its banner-shaped
+        // first line is ordinary output, and dropping it made identical runs
+        // falsely diverge on same-text spoofs.
+        let hasAnnotations = all |> Array.exists (fun l -> (clean l).StartsWith "[Pipeline]")
         let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
@@ -356,7 +362,8 @@ module Trace =
             if not suppress then
                 match normaliseLine all[i] with
                 | Some l ->
-                    if afterOutputStep || not (isPreambleBanner l) then yield l
+                    if not hasAnnotations || afterOutputStep || not (isPreambleBanner l) then
+                        yield l
                 | None -> () ]
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
