@@ -238,8 +238,14 @@ module ProcessGroup =
                 IO.Directory.CreateDirectory tmpDir |> ignore
                 let f = IO.Path.Combine(tmpDir, "script.sh")
 
+                // the EXECUTE bit follows durable-task: only a shebang script gets
+                // it (only a shebang script is exec'd) — an ordinary script runs
+                // under `sh -xe` and a `[ -x \"$0\" ]` probe must say what Jenkins says
                 let mode =
-                    IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                    if request.Command.StartsWith "#!" then
+                        IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                    else
+                        IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite
 
                 try
                     use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
