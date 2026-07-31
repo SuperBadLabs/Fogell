@@ -76,65 +76,78 @@
           ;; leaving on the first `*)` drops back to :code mid-comment and the rest of
           ;; the block is read as code — an uncited claim after an inner close would
           ;; slip past `--strict`. Depth is carried across lines with the mode.
-          (loop [k 0, mode mode0, depth depth0, acc [], code? false]
-            (if (>= k n)
-              [(when (seq acc) (str/join " " acc)) mode depth code?]
-              (case mode
-                :code
-                (cond
-                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple depth acc true)
-                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth acc true)
-                  (= \" (at k)) (recur (inc k) :str depth acc true)
-                  ;; '\n' — escaped char literal
-                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code depth acc true)
-                  ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
-                  (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2))))
-                  (recur (+ k 3) :code depth acc true)
-                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block 1 acc code?)
-                  ;; `//` runs to end of line; `///` must consume all three slashes
-                  (and (= \/ (at k)) (= \/ (at (inc k))))
-                  [(str/join " " (conj acc (str/replace (subs l k) #"^/+\s?" ""))) :code depth code?]
-                  :else (recur (inc k) :code depth acc (or code? (not (Character/isWhitespace (at k))))))
+          ;;
+          ;; SPANS, not one string. Two comments with CODE between them on one line —
+          ;; `(* Receipt: X *) let x = 1 (* MEASURED ... *)` — are unrelated, and
+          ;; joining them let the first comment's receipt satisfy the second's claim.
+          ;; A span closes when code intervenes (`gap?`); adjacent comments separated
+          ;; only by whitespace still merge, since nothing separates them semantically.
+          (loop [k 0, mode mode0, depth depth0, spans [], cur [], gap? false, code? false]
+            (let [flush (fn [] (if (seq cur) (conj spans (str/join " " cur)) spans))
+                  ;; entering a comment: close the current span first if code intervened
+                  enter (fn [] (if (and gap? (seq cur)) [(flush) []] [spans cur]))]
+              (if (>= k n)
+                [(flush) mode depth code?]
+                (case mode
+                  :code
+                  (cond
+                    (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple depth spans cur true true)
+                    (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth spans cur true true)
+                    (= \" (at k)) (recur (inc k) :str depth spans cur true true)
+                    ;; '\n' — escaped char literal
+                    (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code depth spans cur true true)
+                    ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
+                    (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2))))
+                    (recur (+ k 3) :code depth spans cur true true)
+                    (and (= \( (at k)) (= \* (at (inc k))))
+                    (let [[spans' cur'] (enter)] (recur (+ k 2) :block 1 spans' cur' false code?))
+                    ;; `//` runs to end of line; `///` must consume all three slashes
+                    (and (= \/ (at k)) (= \/ (at (inc k))))
+                    (let [[spans' cur'] (enter)
+                          final (conj cur' (str/replace (subs l k) #"^/+\s?" ""))]
+                      [(conj spans' (str/join " " final)) :code depth code?])
+                    :else (let [c? (not (Character/isWhitespace (at k)))]
+                            (recur (inc k) :code depth spans cur (or gap? c?) (or code? c?))))
 
-                :block
-                (cond
-                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block (inc depth) acc code?)
-                  (and (= \* (at k)) (= \) (at (inc k))))
-                  (if (<= depth 1)
-                    (recur (+ k 2) :code 0 acc code?)
-                    (recur (+ k 2) :block (dec depth) acc code?))
-                  ;; collect the block's text one char at a time; cheap enough for a gate
-                  :else (recur (inc k) :block depth
-                               (conj (vec (butlast acc)) (str (or (last acc) "") (at k)))
-                               code?))
+                  :block
+                  (cond
+                    (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block (inc depth) spans cur gap? code?)
+                    (and (= \* (at k)) (= \) (at (inc k))))
+                    (if (<= depth 1)
+                      (recur (+ k 2) :code 0 spans cur gap? code?)
+                      (recur (+ k 2) :block (dec depth) spans cur gap? code?))
+                    ;; collect the block's text one char at a time; cheap enough for a gate
+                    :else (recur (inc k) :block depth spans
+                                 (conj (vec (butlast cur)) (str (or (last cur) "") (at k)))
+                                 gap? code?))
 
-                :str
-                (cond
-                  (= \\ (at k)) (recur (+ k 2) :str depth acc code?)
-                  (= \" (at k)) (recur (inc k) :code depth acc code?)
-                  :else (recur (inc k) :str depth acc code?))
+                  :str
+                  (cond
+                    (= \\ (at k)) (recur (+ k 2) :str depth spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth spans cur gap? code?)
+                    :else (recur (inc k) :str depth spans cur gap? code?))
 
-                ;; @"..." has no backslash escapes; "" is one literal quote
-                :verbatim
-                (cond
-                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth acc code?)
-                  (= \" (at k)) (recur (inc k) :code depth acc code?)
-                  :else (recur (inc k) :verbatim depth acc code?))
+                  ;; @"..." has no backslash escapes; "" is one literal quote
+                  :verbatim
+                  (cond
+                    (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth spans cur gap? code?)
+                    (= \" (at k)) (recur (inc k) :code depth spans cur gap? code?)
+                    :else (recur (inc k) :verbatim depth spans cur gap? code?))
 
-                :triple
-                (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
-                  (recur (+ k 3) :code depth acc code?)
-                  (recur (inc k) :triple depth acc code?)))))))
+                  :triple
+                  (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
+                    (recur (+ k 3) :code depth spans cur gap? code?)
+                    (recur (inc k) :triple depth spans cur gap? code?))))))))
 
       ;; One fold per FILE, carrying the scanner's mode AND block-comment depth. Produces
-      ;; a vector parallel to `lines`: {:text comment-text-or-nil :code? code-before-comment}.
+      ;; a vector parallel to `lines`: {:spans [comment spans] :code? code-on-the-line}.
       scan-file
       (fn [lines]
         (loop [ls lines, mode :code, depth 0, out []]
           (if (empty? ls)
             out
-            (let [[txt mode' depth' code?] (scan-line (first ls) mode depth)]
-              (recur (rest ls) mode' depth' (conj out {:text txt :code? code?}))))))
+            (let [[spans mode' depth' code?] (scan-line (first ls) mode depth)]
+              (recur (rest ls) mode' depth' (conj out {:spans spans :code? code?}))))))
 
       ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
       ;; claims (above) does not make them block members: two unrelated code lines that
@@ -143,7 +156,7 @@
       ;; bypass the block logic exists to prevent, re-entering through the new door.
       ;; Derived from the scan rather than a regex, so `(* ... *)` on its own line counts
       ;; as a full comment exactly as `//` does.
-      full-comment? (fn [s] (and (:text s) (not (:code? s))))
+      full-comment? (fn [s] (and (seq (:spans s)) (not (:code? s))))
 
       ;; One pass. These used to be two near-identical loops, and they had already
       ;; drifted — the unproven counter compared WHOLE LINES where the finder compared
@@ -154,8 +167,9 @@
             :let [lines (str/split-lines (slurp f))
                   v (scan-file lines)]
             [i line] (map-indexed vector lines)
-            :let [own (:text (v i))]
-            :when (and own (str/includes? own "MEASURED"))
+            ;; One claim PER SPAN, and only the claim's own span represents this line in
+            ;; its block — never a sibling span that code separates from it.
+            own (filter #(str/includes? % "MEASURED") (:spans (v i)))
             ;; The receipt must be cited by THIS claim's own contiguous comment block, not
             ;; merely somewhere within twenty lines. A fixed window let a receipt named by a
             ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
@@ -166,7 +180,8 @@
                   ;; COMMENT TEXT only. Including whole lines let a receipt named in
                   ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
                   ;; window, one layer down.
-                  block (->> (subvec v start (inc stop)) (keep :text) (str/join " "))
+                  neighbours (concat (subvec v start i) (subvec v (inc i) (inc stop)))
+                  block (str/join " " (concat (mapcat :spans neighbours) [own]))
                   named (filter #(str/includes? block %) receipts)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes

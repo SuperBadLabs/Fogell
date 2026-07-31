@@ -144,7 +144,14 @@ module FogellSide =
             /// Masking is run-scoped, not block-scoped: a value is masked even after its
             /// `withCredentials` ends. That is deliberately broader than the binding, on
             /// the grounds that a leaked secret does not become safe when a block closes.
-            let boundSecrets = ResizeArray<SecretBinding>()
+            ///
+            /// Each binding carries the output index it was registered AT. The final leak
+            /// check may only judge lines emitted from that point on: a build that
+            /// happens to print the credential's value BEFORE the binding exists has not
+            /// leaked anything — the text merely coincides — and flagging it would
+            /// refuse a valid trace. Masking needs no such index because it naturally
+            /// starts at registration; the retroactive scan is what had to be told.
+            let boundSecrets = ResizeArray<SecretBinding * int>()
 
             /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
             /// with NO `[branchName]` prefix — that belongs to the scripted
@@ -159,7 +166,7 @@ module FogellSide =
                         if boundSecrets.Count = 0 then
                             line
                         else
-                            Secrets.mask (List.ofSeq boundSecrets) line
+                            Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
                     output.Add safe)
             let workspace = Path.Combine(workspaceRoot, jobName)
@@ -410,9 +417,20 @@ module FogellSide =
                     |> List.map (fun b -> b.ValueVariable)
                     |> List.distinct
 
+                // Emitted in Jenkins' OWN two-line shape, deliberately. Fogell used a
+                // one-line wording of its own here, and normalisation had to recognise
+                // it by shape alone — so a BUILD printing that same shape was silently
+                // dropped from the comparison, and a case whose evidence was that line
+                // could go falsely PROVEN. Jenkins' warning is a head+body SEQUENCE,
+                // which normalisation already gates contextually: the head only counts
+                // as narration when the body follows. Emitting the same sequence puts
+                // both engines under the same gate — and it is also what lift-and-shift
+                // log tooling expects to find.
                 if not (List.isEmpty leaked) then
                     emit
-                        $"""WARNING: a secret was interpolated into `{step.Name}` via a Groovy string: {String.concat ", " leaked}"""
+                        $"Warning: A secret was passed to \"{step.Name}\" using Groovy String interpolation, which is insecure."
+
+                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
 
                 let result =
                     Executor.runStep
@@ -1283,8 +1301,12 @@ module FogellSide =
                         // The wording is not compared (see the contract); the line exists
                         // so a reader of OUR log is told what is being masked.
                         // Register BEFORE the narration line, so nothing this block can
-                        // print is emitted while the masker is still unaware of it.
-                        lock outputLock (fun () -> boundSecrets.AddRange bindings)
+                        // print is emitted while the masker is still unaware of it. The
+                        // recorded index scopes the LEAK CHECK, not the masking: only
+                        // output from here on can be a leak of these values.
+                        lock outputLock (fun () ->
+                            for b in bindings do
+                                boundSecrets.Add(b, output.Count))
 
                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
@@ -1702,10 +1724,15 @@ module FogellSide =
             // refuses to produce a trace instead.
             let leakedVars =
                 lock outputLock (fun () ->
-                    let bound = List.ofSeq boundSecrets
-
                     output
-                    |> Seq.collect (fun l -> Secrets.detectLeaks bound l)
+                    |> Seq.mapi (fun i l ->
+                        // Only bindings that existed when the line was emitted: text
+                        // printed BEFORE a value was bound merely coincides with it.
+                        let active =
+                            boundSecrets |> Seq.filter (fun (_, from) -> from <= i) |> Seq.map fst |> List.ofSeq
+
+                        if List.isEmpty active then [] else Secrets.detectLeaks active l)
+                    |> Seq.collect id
                     |> Seq.map (fun leak -> leak.Variable)
                     |> Seq.distinct
                     |> List.ofSeq)

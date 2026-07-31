@@ -106,27 +106,33 @@ let userOutputSurvives =
                   "no frame, no trace, no reason"
           }
 
-          test "the secret-interpolation warning is normalised for ANY step, not just echo" {
-              // FG-100. The receipt `sh-secret-interpolation-warning` CANNOT prove this.
-              // Both engines' warnings are normalised away, so that case stays PROVEN even
-              // if Fogell says nothing at all — a receipt that passes vacuously is exactly
-              // what this harness exists to prevent. The emission is asserted here instead.
-              //
-              // The risk is specific: the recogniser used to pin the step name to `echo`.
-              // The moment `sh` began warning, a CORRECT new warning would have surfaced as
-              // a receipt divergence — a fix presenting as a regression.
-              for step in [ "echo"; "sh"; "input" ] do
+          test "the secret-interpolation warning is contextual for BOTH engines" {
+              // FG-100. Fogell emits Jenkins' own head+body sequence — an earlier
+              // one-line wording of Fogell's own had to be recognised by shape ALONE,
+              // so a build printing that shape was dropped from the comparison
+              // unconditionally and a case whose evidence was that line could go
+              // falsely PROVEN. One sequence, one contextual gate, both engines.
+              for step in [ "echo"; "sh"; "archiveArtifacts" ] do
                   Expect.isEmpty
                       (Trace.normaliseOutput
-                          [ $"WARNING: a secret was interpolated into `{step}` via a Groovy string: TOKEN" ])
-                      $"the {step} warning is engine narration"
+                          [ $"Warning: A secret was passed to \"{step}\" using Groovy String interpolation, which is insecure."
+                            "Affected argument(s) used the following variable(s): [TOKEN]" ])
+                      $"the {step} warning sequence is engine narration"
 
-              // Not a blanket prefix: the shape has to be the whole thing, so a build that
-              // happens to print the opening words is still compared as output.
+              // The head ALONE is user output: the gate needs the body to follow, so a
+              // build that happens to print the opening sentence is still compared.
               Expect.contains
-                  (Trace.normaliseOutput [ "WARNING: a secret was interpolated into the report" ])
-                  "WARNING: a secret was interpolated into the report"
-                  "a build saying something similar is still user output"
+                  (Trace.normaliseOutput [ "Warning: A secret was passed to my auditor today" ])
+                  "Warning: A secret was passed to my auditor today"
+                  "an unaccompanied head is still user output"
+
+              // And the RETIRED one-line wording is nobody's narration any more — a
+              // build printing it survives, which is precisely what the old
+              // unconditional shape-match got wrong.
+              Expect.contains
+                  (Trace.normaliseOutput [ "WARNING: a secret was interpolated into `sh` via a Groovy string: TOKEN" ])
+                  "WARNING: a secret was interpolated into `sh` via a Groovy string: TOKEN"
+                  "the retired wording is user output now"
           }
 
           test "`Terminated` survives unless an interrupt was just narrated" {
