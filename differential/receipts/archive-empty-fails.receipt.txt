@@ -1,7 +1,7 @@
 # Differential receipt — archive-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         96284a35310a8045192d270961dd7ce8ea3bb7b396397439f2319753ae1f31e7
+seal:         0026d5c8890527f82977447f8a3252432ee30c35332482e8d392ccb4f9b2a78b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -39,11 +39,13 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (1 lines):
+  output (2 lines):
     | Archiving artifacts
+    | ‘does-not-exist-*.zip’ doesn’t match anything
 
 ## Fogell
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (1 lines):
+  output (2 lines):
     | Archiving artifacts
+    | ‘does-not-exist-*.zip’ doesn’t match anything

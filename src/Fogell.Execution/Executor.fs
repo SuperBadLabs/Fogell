@@ -322,21 +322,44 @@ module Executor =
                     Diagnostic =
                         Some
                             $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
-            elif List.isEmpty published && not allowEmpty then
-                // Jenkins fails the build here rather than passing quietly, and
-                // a silent empty archive is the worst outcome for a user.
-                { ok Failure with
-                    Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
             elif List.isEmpty published then
-                // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
-                // `allowEmptyArchive: true` PERMITS the empty archive but still says so —
-                // `No artifacts found that match the file pattern "...". Configuration
-                // error?` — and the build runs on. Passing silently would hide a broken
-                // glob from the very person who opted into tolerating it.
-                request.OnLine
-                |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
+                // Jenkins' archive advisory, measured on 2.568.1 in its three
+                // variants (typographic quotes and all) — printed whether or not the
+                // empty archive is allowed, BEFORE the outcome line. A substring
+                // suppression used to hide the Jenkins side of this; both engines
+                // speak it now and the sentences compare (FG-102).
+                let advisory =
+                    let q (x: string) = "\u2018" + x + "\u2019"
 
-                { ok Success with Archived = published }
+                    if raw.EndsWith "/**" then
+                        let starstar = q "**"
+                        $"{q raw} doesn\u2019t match anything, but {starstar} does. Perhaps that\u2019s what you mean?"
+                    elif raw.Contains "/" then
+                        let baseSeg = raw.Split('/').[0]
+
+                        if not (System.IO.Directory.Exists(System.IO.Path.Combine(request.Workspace, baseSeg))) then
+                            $"{q raw} doesn\u2019t match anything: even {q baseSeg} doesn\u2019t exist"
+                        else
+                            $"{q raw} doesn\u2019t match anything"
+                    else
+                        $"{q raw} doesn\u2019t match anything"
+
+                request.OnLine |> Option.iter (fun f -> f advisory)
+
+                if not allowEmpty then
+                    // Jenkins fails the build here rather than passing quietly, and
+                    // a silent empty archive is the worst outcome for a user.
+                    { ok Failure with
+                        Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
+                else
+                    // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
+                    // `allowEmptyArchive: true` PERMITS the empty archive but still says
+                    // so — and the build runs on. Passing silently would hide a broken
+                    // glob from the very person who opted into tolerating it.
+                    request.OnLine
+                    |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
+
+                    { ok Success with Archived = published }
             else
                 { ok Success with Archived = published }
 

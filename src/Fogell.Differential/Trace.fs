@@ -207,8 +207,6 @@ module Trace =
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
         || t.Contains "workflow.actions.ErrorAction$ErrorId"
-        || t.Contains "doesn\u2019t match anything"
-        || t.Contains "doesn't match anything"
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
