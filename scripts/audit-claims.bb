@@ -42,7 +42,10 @@
       (for [f sources
             :let [lines (str/split-lines (slurp f))]
             [i line] (map-indexed vector lines)
-            :when (str/includes? line "MEASURED")
+            ;; A COMMENT asserting MEASURED. Matching the word anywhere also matched CODE —
+            ;; a string literal or identifier containing it — so the gate could block on a
+            ;; line that asserts nothing. Found on PR #22 review 4, after the merge.
+            :when (and (str/includes? line "MEASURED") (re-find #"^\s*(?://|///)" line))
             ;; The receipt must be cited by THIS claim's own contiguous comment block, not
             ;; merely somewhere within twenty lines. A fixed window let a receipt named by a
             ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
@@ -73,7 +76,8 @@
       (count (for [f sources
                    :let [lines (str/split-lines (slurp f))]
                    [i line] (map-indexed vector lines)
-                   :when (str/includes? line "MEASURED")
+                   :when (and (str/includes? line "MEASURED")
+                              (re-find #"^\s*(?://|///)" line))
                    :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
                          v (vec lines)
                          start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))

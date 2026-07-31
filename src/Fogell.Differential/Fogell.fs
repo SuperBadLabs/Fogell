@@ -168,142 +168,10 @@ module FogellSide =
             /// Resolution is a left-to-right fold, so a declaration sees the process
             /// environment plus every earlier declaration, and a later scope wins.
             /// An unknown name expands to empty, matching Groovy's null-to-string.
-            let interpolate (known: Map<string, string>) (value: string) =
-                // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
-                //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
-                //    The parser keeps the backslash so this pass can honour it and then
-                //    remove it, instead of expanding what Jenkins leaves alone.
-                //  * `"$env.BUILD_NUMBER"` and `"${env.BUILD_NUMBER}"` are the ordinary
-                //    Jenkins spellings. The old pattern matched only a bare identifier,
-                //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
-                //    while the braced dotted form was not matched at all.
-                let resolveName (name: string) =
-                    // `env.X` is the same variable as a bare `X`. The bracketed
-                    // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
-                    // rejects it outright (measured — see the pattern below).
-                    let bare =
-                        if name.StartsWith "env." then name.Substring 4
-                        else name
-
-                    match Map.tryFind bare known with
-                    | Some v -> v
-                    | None ->
-                        match Environment.GetEnvironmentVariable bare with
-                        | null -> ""
-                        | v -> v
-
-                // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
-                // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
-                // Jenkins. The bounded interpreter already in this project evaluates it,
-                // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
-                let evalExpression (source: string) =
-                    match Fogell.Groovy.Parser.Parser.parse source with
-                    | Result.Error _ -> None
-                    | Result.Ok script ->
-                        let asValues = known |> Map.map (fun _ v -> VStr v)
-                        let bindings = asValues |> Map.add "env" (VMap asValues)
-
-                        let outcome =
-                            Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
-
-                        match outcome.Fault, outcome.Returned with
-                        | None, Some v -> Some(Value.toDisplay v)
-                        | _ -> None
-
-                // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
-                // the first `}` even when it belongs to a nested expression or a quoted
-                // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
-                // Groovy's boundary is the BALANCED brace, with quotes respected.
-                /// Does a `/` at this position OPEN a slashy string, or divide?
-                /// Groovy decides by what precedes it: a value (identifier, digit, closing
-                /// bracket) means division; anything else opens a literal.
-                let slashOpensLiteral (text: string) (idx: int) =
-                    let mutable j = idx - 1
-
-                    while j >= 0 && (text[j] = ' ' || text[j] = '\t') do
-                        j <- j - 1
-
-                    if j < 0 then
-                        true
-                    else
-                        let p = text[j]
-                        not (Char.IsLetterOrDigit p || p = '_' || p = ')' || p = ']' || p = '}')
-
-                let findClose (text: string) (openIdx: int) =
-                    let mutable i = openIdx + 2 // past "${"
-                    let mutable depth = 1
-                    let mutable quote = '\000'
-                    let mutable closeAt = -1
-
-                    while closeAt < 0 && i < text.Length do
-                        let c = text[i]
-
-                        if quote <> '\000' then
-                            if c = '\\' then i <- i + 1
-                            elif c = quote then quote <- '\000'
-                        elif c = '\'' || c = '"' then
-                            quote <- c
-                        elif c = '/' && slashOpensLiteral text i then
-                            // `/` opens a SLASHY string — `${/}/}` holds a literal whose
-                            // `}` is content — but it is also DIVISION. Groovy disambiguates
-                            // by what precedes it: after a value (identifier, number,
-                            // closing bracket) a slash is an operator, otherwise it opens a
-                            // literal. Treating every slash as a quote broke `${a / b}`.
-                            quote <- c
-                        elif c = '{' then
-                            depth <- depth + 1
-                        elif c = '}' then
-                            depth <- depth - 1
-                            if depth = 0 then closeAt <- i
-
-                        i <- i + 1
-
-                    closeAt
-
-                let expanded =
-                    let sb = Text.StringBuilder()
-                    let mutable i = 0
-
-                    while i < value.Length do
-                        if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
-                            match findClose value i with
-                            | -1 ->
-                                sb.Append value[i] |> ignore
-                                i <- i + 1
-                            | closeAt ->
-                                let inner = value.Substring(i + 2, closeAt - i - 2)
-
-                                let rendered =
-                                    if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
-                                        resolveName inner
-                                    else
-                                        match evalExpression inner with
-                                        | Some v -> v
-                                        | None -> value.Substring(i, closeAt - i + 1)
-
-                                sb.Append rendered |> ignore
-                                i <- closeAt + 1
-                        elif value[i] = '$' then
-                            // Bare `$name` stays identifier-only, as Groovy does.
-                            let m =
-                                Text.RegularExpressions.Regex.Match(
-                                    value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
-
-                            if m.Success then
-                                sb.Append(resolveName m.Groups[1].Value) |> ignore
-                                i <- i + m.Length
-                            else
-                                sb.Append value[i] |> ignore
-                                i <- i + 1
-                        else
-                            sb.Append value[i] |> ignore
-                            i <- i + 1
-
-                    sb.ToString()
-
-                // Restore escaped dollars as literal text, after expansion so they
-                // cannot themselves be expanded.
-                expanded.Replace("\u0000", "$")
+            // FG-100. The string model lives in `GString`, not here. It was a closure
+            // inside `run`, which made it unreachable from tests and invited every consumer
+            // to re-derive the rules — 52 findings' worth.
+            let interpolate (known: Map<string, string>) (value: string) = GString.interpolate known value
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
@@ -437,24 +305,11 @@ module FogellSide =
                     else
                         rawScript
                         |> Option.map (fun raw ->
+                            // FG-100: one call, no local kind logic.
                             let key =
                                 if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
 
-                            let isLiteral =
-                                if key = "message" then step.LiteralNamedArgs.Contains "message"
-                                else step.LiteralPositionalArgs.Contains 0
-
-                            let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                            if isLiteral then raw
-                            elif step.ExpressionArgs.Contains key then interpolate env ("${" + raw + "}")
-                            else
-                                let source =
-                                    step.InterpolationSource
-                                    |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
-                                    |> Option.defaultValue raw
-
-                                interpolate env source)
+                            GString.render (envForWith ctx.EnvOverlay stage |> Map.ofList) step key raw)
 
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.
@@ -1409,11 +1264,9 @@ module FogellSide =
                     // `message` may arrive positionally (`input 'Deploy ${X}?'`) or named,
                     // and Jenkins treats a single-quoted one as LITERAL either way. The
                     // named-only check interpolated every positional prompt.
-                    let messageIsLiteral =
-                        if step.Named |> List.exists (fun (k, _) -> k = "message") then
-                            step.LiteralNamedArgs.Contains "message"
-                        else
-                            step.LiteralPositionalArgs.Contains 0
+                    // FG-100: the model decides the kind; this step no longer does.
+                    let messageKeyName =
+                        if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
 
                     // Interpolating consumers read the ESCAPE-PRESERVING form, so
                     // `input message: "Deploy \$TARGET?"` shows a literal $TARGET as
@@ -1432,19 +1285,9 @@ module FogellSide =
                     // double-quoted one is a GString to interpolate; an UNQUOTED one is a
                     // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
                     // evaluates and which was being displayed as its own source text.
-                    let render (isLiteral: bool) (argName: string) (raw: string) =
-                        let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                        if isLiteral then raw
-                        elif step.ExpressionArgs.Contains argName then
-                            // Wrapped so the whole argument is evaluated, not scanned for
-                            // placeholders it does not contain.
-                            interpolate env ("${" + raw + "}")
-                        else
-                            interpolate env (sourceOf argName raw)
-
-                    emit (render messageIsLiteral messageKey message)
-                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
+                    let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+                    emit (GString.render env step messageKeyName message)
+                    emit $"""{GString.render env step "ok" okLabel} or Abort"""
 
                     match deadline with
                     | None ->

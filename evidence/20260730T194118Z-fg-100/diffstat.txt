@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ scripts/audit-claims.bb                            |   8 +-
+ src/Fogell.Differential/Fogell.Differential.fsproj |   1 +
+ src/Fogell.Differential/Fogell.fs                  | 181 ++---------------
+ src/Fogell.Differential/GString.fs                 | 213 +++++++++++++++++++++
+ tests/Fogell.Differential.Tests/Tests.fs           |  67 ++++++-
+ 6 files changed, 299 insertions(+), 173 deletions(-)

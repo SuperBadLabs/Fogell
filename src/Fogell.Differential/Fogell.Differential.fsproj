@@ -3,6 +3,7 @@
   <ItemGroup>
     <Compile Include="Trace.fs" />
     <Compile Include="Jenkins.fs" />
+    <Compile Include="GString.fs" />
     <Compile Include="Fogell.fs" />
     <Compile Include="Compare.fs" />
   </ItemGroup>

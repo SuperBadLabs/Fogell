@@ -2,6 +2,7 @@ module Fogell.Differential.Tests
 
 open Expecto
 open Fogell.Differential
+open Fogell.Ir
 
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
@@ -113,6 +114,70 @@ let userOutputSurvives =
                   "after an interrupt it is narration"
           } ]
 
+/// FG-100 acceptance. ONE table for the string model, so adding a consumer means adding a
+/// row rather than rediscovering the rules — which is what 52 review findings were.
+///
+/// Every row is a behaviour a receipt proved, restated where it can be run in
+/// milliseconds instead of a Jenkins round trip.
+let stringModel =
+    let env = Map.ofList [ "TARGET", "production"; "N", "2" ]
+
+    let step named positional literalNamed literalPos exprArgs sources =
+        { Name = "probe"
+          Positional = positional
+          Named = named
+          Block = []
+          LiteralNamedArgs = Set.ofList literalNamed
+          LiteralPositionalArgs = Set.ofList literalPos
+          ExpressionArgs = Set.ofList exprArgs
+          InterpolationSource = sources
+          RawArgs = ""
+          Position = Position.zero }
+
+    testList
+        "FG-100 the string model, one table"
+        [ test "kind is decided in ONE place, for named and positional alike" {
+              let named = step [ "m", "x" ] [] [ "m" ] [] [] []
+              Expect.equal (GString.kindOf named "m") Literal "single-quoted named"
+
+              let expr = step [ "m", "env.TARGET" ] [] [] [] [ "m" ] []
+              Expect.equal (GString.kindOf expr "m") Expression "unquoted named is CODE"
+
+              let gs = step [ "m", "hi ${TARGET}" ] [] [] [] [] []
+              Expect.equal (GString.kindOf gs "m") Interpolating "double-quoted named"
+
+              let pos = step [] [ "Deploy ${TARGET}?" ] [] [ 0 ] [] []
+              Expect.equal (GString.kindOf pos "#0") Literal "single-quoted POSITIONAL — the
+                                                              form that was interpolated for
+                                                              a whole round"
+          }
+
+          test "the render matrix" {
+              // description, step, key, raw, expected
+              let cases =
+                  [ "literal keeps its braces",
+                      step [] [ "Deploy ${TARGET}?" ] [] [ 0 ] [] [], "#0", "Deploy ${TARGET}?", "Deploy ${TARGET}?"
+                    "GString expands a name",
+                      step [ "m", "Deploy ${TARGET}?" ] [] [] [] [] [], "m", "Deploy ${TARGET}?", "Deploy production?"
+                    "GString expands a dotted env path",
+                      step [ "m", "Deploy ${env.TARGET}?" ] [] [] [] [] [], "m", "Deploy ${env.TARGET}?", "Deploy production?"
+                    "an unquoted argument is CODE, not text",
+                      step [ "m", "env.TARGET" ] [] [] [] [ "m" ] [], "m", "env.TARGET", "production"
+                    "a real Groovy expression is evaluated",
+                      step [ "m", "half is ${10 / 2}" ] [] [] [] [] [], "m", "half is ${10 / 2}", "half is 5"
+                    "division is not a slashy string",
+                      step [ "m", "${N} and ${10 / 2}" ] [] [] [] [] [], "m", "${N} and ${10 / 2}", "2 and 5"
+                    "a slashy literal's brace is content",
+                      step [ "m", "brace ${/}/}" ] [] [] [] [] [], "m", "brace ${/}/}", "brace }"
+                    "an escaped dollar stays literal",
+                      step [ "m", "keep $TARGET" ] [] [] [] [] [ "m", "keep \u0000TARGET" ], "m", "keep $TARGET", "keep $TARGET"
+                    "escaped and live dollars in ONE string",
+                      step [ "m", "x" ] [] [] [] [] [ "m", "\u0000TARGET is ${TARGET}" ], "m", "x", "$TARGET is production" ]
+
+              for (why, st, key, raw, expected) in cases do
+                  Expect.equal (GString.render env st key raw) expected why
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel ])
