@@ -69,64 +69,72 @@
       ;;
       ;; Returns [comment-text-or-nil, mode-at-end-of-line, code-before-comment?].
       scan-line
-      (fn [l mode0]
+      (fn [l mode0 depth0]
         (let [n (count l)
               at (fn [i] (get l i))]
-          (loop [k 0, mode mode0, acc [], code? false]
+          ;; `depth` is block-comment NESTING. F# nests `(* ... (* ... *) ... *)`, so
+          ;; leaving on the first `*)` drops back to :code mid-comment and the rest of
+          ;; the block is read as code — an uncited claim after an inner close would
+          ;; slip past `--strict`. Depth is carried across lines with the mode.
+          (loop [k 0, mode mode0, depth depth0, acc [], code? false]
             (if (>= k n)
-              [(when (seq acc) (str/join " " acc)) mode code?]
+              [(when (seq acc) (str/join " " acc)) mode depth code?]
               (case mode
                 :code
                 (cond
-                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple acc true)
-                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim acc true)
-                  (= \" (at k)) (recur (inc k) :str acc true)
+                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple depth acc true)
+                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth acc true)
+                  (= \" (at k)) (recur (inc k) :str depth acc true)
                   ;; '\n' — escaped char literal
-                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code acc true)
+                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code depth acc true)
                   ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
                   (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2))))
-                  (recur (+ k 3) :code acc true)
-                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block acc code?)
+                  (recur (+ k 3) :code depth acc true)
+                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block 1 acc code?)
                   ;; `//` runs to end of line; `///` must consume all three slashes
                   (and (= \/ (at k)) (= \/ (at (inc k))))
-                  [(str/join " " (conj acc (str/replace (subs l k) #"^/+\s?" ""))) :code code?]
-                  :else (recur (inc k) :code acc (or code? (not (Character/isWhitespace (at k))))))
+                  [(str/join " " (conj acc (str/replace (subs l k) #"^/+\s?" ""))) :code depth code?]
+                  :else (recur (inc k) :code depth acc (or code? (not (Character/isWhitespace (at k))))))
 
                 :block
-                (if (and (= \* (at k)) (= \) (at (inc k))))
-                  (recur (+ k 2) :code acc code?)
+                (cond
+                  (and (= \( (at k)) (= \* (at (inc k)))) (recur (+ k 2) :block (inc depth) acc code?)
+                  (and (= \* (at k)) (= \) (at (inc k))))
+                  (if (<= depth 1)
+                    (recur (+ k 2) :code 0 acc code?)
+                    (recur (+ k 2) :block (dec depth) acc code?))
                   ;; collect the block's text one char at a time; cheap enough for a gate
-                  (recur (inc k) :block
-                         (conj (vec (butlast acc)) (str (or (last acc) "") (at k)))
-                         code?))
+                  :else (recur (inc k) :block depth
+                               (conj (vec (butlast acc)) (str (or (last acc) "") (at k)))
+                               code?))
 
                 :str
                 (cond
-                  (= \\ (at k)) (recur (+ k 2) :str acc code?)
-                  (= \" (at k)) (recur (inc k) :code acc code?)
-                  :else (recur (inc k) :str acc code?))
+                  (= \\ (at k)) (recur (+ k 2) :str depth acc code?)
+                  (= \" (at k)) (recur (inc k) :code depth acc code?)
+                  :else (recur (inc k) :str depth acc code?))
 
                 ;; @"..." has no backslash escapes; "" is one literal quote
                 :verbatim
                 (cond
-                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim acc code?)
-                  (= \" (at k)) (recur (inc k) :code acc code?)
-                  :else (recur (inc k) :verbatim acc code?))
+                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim depth acc code?)
+                  (= \" (at k)) (recur (inc k) :code depth acc code?)
+                  :else (recur (inc k) :verbatim depth acc code?))
 
                 :triple
                 (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
-                  (recur (+ k 3) :code acc code?)
-                  (recur (inc k) :triple acc code?)))))))
+                  (recur (+ k 3) :code depth acc code?)
+                  (recur (inc k) :triple depth acc code?)))))))
 
-      ;; One fold per FILE, carrying the scanner's mode. Produces a vector parallel to
-      ;; `lines`: {:text comment-text-or-nil :code? code-appeared-before-the-comment}.
+      ;; One fold per FILE, carrying the scanner's mode AND block-comment depth. Produces
+      ;; a vector parallel to `lines`: {:text comment-text-or-nil :code? code-before-comment}.
       scan-file
       (fn [lines]
-        (loop [ls lines, mode :code, out []]
+        (loop [ls lines, mode :code, depth 0, out []]
           (if (empty? ls)
             out
-            (let [[txt mode' code?] (scan-line (first ls) mode)]
-              (recur (rest ls) mode' (conj out {:text txt :code? code?}))))))
+            (let [[txt mode' depth' code?] (scan-line (first ls) mode depth)]
+              (recur (rest ls) mode' depth' (conj out {:text txt :code? code?}))))))
 
       ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
       ;; claims (above) does not make them block members: two unrelated code lines that

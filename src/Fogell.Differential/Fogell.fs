@@ -131,8 +131,37 @@ module FogellSide =
             /// the reference engine does not provide is not a favour, it is a
             /// divergence.
             /// Receipt: `parallel-always-failfast`.
+            /// Every secret bound anywhere in this run. Masking lives HERE, at the one
+            /// place output is appended, rather than at each call site.
+            ///
+            /// The call-site version was reachable: once named arguments began rendering,
+            /// `archiveArtifacts artifacts: "${TOKEN}/missing"` put the credential in the
+            /// pattern, and `No artifacts found that match the file pattern "..."` came
+            /// back as a Diagnostic that runStepInner emitted verbatim. A secret in the
+            /// build log, produced by a step that never touches a shell — so masking the
+            /// shell and echo paths could not have caught it.
+            ///
+            /// Masking is run-scoped, not block-scoped: a value is masked even after its
+            /// `withCredentials` ends. That is deliberately broader than the binding, on
+            /// the grounds that a leaked secret does not become safe when a block closes.
+            let boundSecrets = ResizeArray<SecretBinding>()
+
+            /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
+            /// with NO `[branchName]` prefix — that belongs to the scripted
+            /// `parallel` map form. Fogell emitted one until the receipt said
+            /// otherwise, which diverged every parallel case. Inventing attribution
+            /// the reference engine does not provide is not a favour, it is a
+            /// divergence.
+            /// Receipt: `parallel-always-failfast`.
             let emit (line: string) =
-                lock outputLock (fun () -> output.Add line)
+                lock outputLock (fun () ->
+                    let safe =
+                        if boundSecrets.Count = 0 then
+                            line
+                        else
+                            Secrets.mask (List.ofSeq boundSecrets) line
+
+                    output.Add safe)
             let workspace = Path.Combine(workspaceRoot, jobName)
             // artifacts live OUTSIDE the workspace so archiving cannot perturb
             // the workspace hash the differential compares
@@ -1241,6 +1270,10 @@ module FogellSide =
                         // One line naming every bound variable, matching Jenkins' shape.
                         // The wording is not compared (see the contract); the line exists
                         // so a reader of OUR log is told what is being masked.
+                        // Register BEFORE the narration line, so nothing this block can
+                        // print is emitted while the masker is still unaware of it.
+                        lock outputLock (fun () -> boundSecrets.AddRange bindings)
+
                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
@@ -1647,6 +1680,29 @@ module FogellSide =
                 runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
 
             let workspaceHash, files = Trace.hashWorkspace workspace
+
+            // Fail CLOSED on a leaked secret, checked over the RAW output — before
+            // normalisation, which strips exactly the diagnostic lines a secret is
+            // most likely to ride out on. Verified by disabling masking and re-running
+            // `publish-secret-in-pattern`: the receipt still said PROVEN, because the
+            // leaking `ERROR:` line never reaches the comparison. A receipt that stays
+            // green while the log leaks is worse than no receipt, so the run itself
+            // refuses to produce a trace instead.
+            let leakedVars =
+                lock outputLock (fun () ->
+                    let bound = List.ofSeq boundSecrets
+
+                    output
+                    |> Seq.collect (fun l -> Secrets.detectLeaks bound l)
+                    |> Seq.map (fun leak -> leak.Variable)
+                    |> Seq.distinct
+                    |> List.ofSeq)
+
+            if not (List.isEmpty leakedVars) then
+                Result.Error(
+                    $"""SECRET LEAKED to build output (variable(s): {String.concat ", " leakedVars}) — refusing to emit a trace"""
+                )
+            else
 
             Result.Ok
                 { Result = BuildStatus.toWireString status
