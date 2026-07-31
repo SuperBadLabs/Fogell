@@ -10,6 +10,14 @@
 ;;
 ;; This makes the rule mechanical: a MEASURED claim naming no existing receipt is a defect.
 ;;
+;; WHAT IT CANNOT DO, stated so nobody mistakes a pass for proof: it checks that a receipt
+;; is NAMED, never that the named receipt EXERCISES the claim. Its first review found three
+;; citations of mine pointing at receipts that covered only part of the sentence — a
+;; post-order claim citing a build-#1 receipt for `fixed`/`regression` slots it never
+;; exercises, an options claim covering pipeline AND stage citing only the pipeline one, and
+;; a narration claim covering timeouts AND branch failures citing only the timeout. The
+;; check is a floor, not a ceiling; a human still has to open the receipt.
+;;
 ;;   usage: scripts/audit-claims.bb [--strict]
 ;;          --strict exits non-zero when any claim is unbacked
 

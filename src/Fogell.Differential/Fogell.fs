@@ -842,7 +842,10 @@ module FogellSide =
             /// regression -> <result arm> -> cleanup. The result arms are mutually
             /// exclusive, so their order relative to each other is unobservable
             /// and is not claimed.
-            /// Receipt: `post-order-failure`.
+            /// Receipts: `post-order-failure`, `post-order-success` — which exercise the
+            /// build-#1 arms only. The `fixed` and `regression` SLOTS in this ordering are
+            /// NOT exercised by any receipt; they come from the four-build probe and stay
+            /// UNPROVEN until FG-110 gives the harness build history.
             let postRank (cond: PostCondition) =
                 match cond with
                 | PostCondition.Always -> 0
@@ -862,7 +865,9 @@ module FogellSide =
             /// UNBOUNDED and reported success; the 60-second sleep in the probe completed.
             ///
             /// A nested deadline can only tighten an inherited one, never extend it.
-            /// Receipt: `options-timeout-pipeline`.
+            /// Receipts: `options-timeout-pipeline` AND `options-timeout-stage` — the claim
+            /// covers BOTH levels, so citing only the pipeline one left the stage half of
+            /// the sentence unbacked.
             let deadlineFromOptions (options: Step list) (inherited: int64 option) =
                 // REVIEW FIX (Codex, PR #16): an unparseable time or unsupported unit
                 // turned into None here, so the declared SAFETY BOUND silently vanished and
