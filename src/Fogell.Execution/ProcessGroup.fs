@@ -226,7 +226,11 @@ module ProcessGroup =
                 // `@tmp` keeps it out of the workspace hash.
                 // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh,
                 // rooted at the WORKSPACE even inside dir() — the full $0 is observable
-                let root = (defaultArg request.WorkspaceRoot request.WorkingDirectory).TrimEnd '/'
+                let root =
+                    let r = defaultArg request.WorkspaceRoot request.WorkingDirectory
+                    // trim only REDUNDANT separators: "/" must stay the filesystem
+                    // root, not become "" and turn the whole path relative
+                    if r.Length > 1 then r.TrimEnd '/' else r
                 let hex = Guid.NewGuid().ToString("N").Substring(0, 8)
                 mintedDurableId <- Some hex
                 let tmpDir = IO.Path.Combine(root + "@tmp", $"durable-{hex}")
