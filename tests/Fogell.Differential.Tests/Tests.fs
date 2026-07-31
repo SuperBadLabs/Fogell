@@ -460,6 +460,11 @@ let stringModel =
                   "k=fallback"
                   "MissingPropertyException is catchable"
 
+              Expect.equal
+                  (GString.render env (step [ "m", "cv=${def cx = 'before'; try { cx = 'after'; NOPE } catch (Exception e) { cx }}" ] [] [] [] [] []) "m" "cv=${def cx = 'before'; try { cx = 'after'; NOPE } catch (Exception e) { cx }}")
+                  "cv=after"
+                  "the catch observes locals as of the throw point"
+
               Expect.throws
                   (fun () -> GString.render env (step [ "m", "u=${1" ] [] [] [] [] []) "m" "u=${1" |> ignore)
                   "an unterminated placeholder refuses"

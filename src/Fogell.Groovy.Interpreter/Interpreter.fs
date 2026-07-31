@@ -612,28 +612,36 @@ module Interpreter =
             // MissingPropertyException is CATCHABLE — `try { MISSING } catch (e)`
             // renders the fallback on Jenkins — and `finally` runs whether or not
             // the fault is caught, Groovy's contract.
+            // the body executes statement by statement so a fault hands the CATCH
+            // the environment at the throw point — `x = 'after'; MISSING` must show
+            // the handler 'after', not the pre-try snapshot
+            let mutable cur = env
+
             let handle v =
                 match catch with
                 | Some(binding, handler) ->
                     let e2 =
                         match binding with
-                        | Some n -> Env.withVar n v env
-                        | None -> env
+                        | Some n -> Env.withVar n v cur
+                        | None -> cur
 
                     execBlock st e2 handler
-                | None -> env
+                | None -> cur
 
             let afterTry =
                 try
                     try
-                        execBlock st env body
+                        for stmt in body do
+                            cur <- execStmt st cur stmt
+
+                        cur
                     with
                     | Stop(Thrown v) -> handle v
                     | Stop(UnknownProperty n) when Option.isSome catch ->
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
                 with e ->
                     // uncaught: finally still runs, then the fault continues out
-                    execBlock st env fin |> ignore
+                    execBlock st cur fin |> ignore
                     raise e
 
             execBlock st afterTry fin

@@ -350,6 +350,23 @@ module FogellSide =
             /// a coincidental secret value there flags interpolation that never
             /// happened. (An escaped dollar is a sentinel at this point, so any `$`
             /// in the source is live.)
+            /// The insecure-interpolation warning for a set of GString-rendered texts,
+            /// factored out so BOTH render paths — step arguments and withEnv's
+            /// `NAME=value` entries — say what Jenkins says.
+            let warnSecretInterpolation (ctx: BranchCtx) (stepName: string) (texts: string list) =
+                let leaked =
+                    ctx.Secrets
+                    |> List.filter (fun b ->
+                        // a file() credential exports the PATH, not the content
+                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
+                        exported <> "" && texts |> List.exists (fun t -> t.Contains exported))
+                    |> List.map (fun b -> b.ValueVariable)
+                    |> List.distinct
+
+                if not (List.isEmpty leaked) then
+                    emit $"Warning: A secret was passed to \"{stepName}\" using Groovy String interpolation, which is insecure."
+                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
+
             let renderStepArgs (ctx: BranchCtx) (stage: Stage) (step: Step) : Step =
                 let env = envForWith ctx.EnvOverlay stage |> Map.ofList
 
@@ -388,22 +405,7 @@ module FogellSide =
                         GString.kindOf step k = Interpolating && (GString.sourceOf step k raw).Contains "$")
                     |> List.map (fun (_, _, r) -> r)
 
-                let leaked =
-                    ctx.Secrets
-                    |> List.filter (fun b ->
-                        // What the variable EXPORTS is what interpolation embeds: a
-                        // file() credential binds its variable to the PATH, so scanning
-                        // for the file's CONTENT missed `sh "cat ${FILE}"` entirely.
-                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
-                        exported <> "" && interpolatedTexts |> List.exists (fun t -> t.Contains exported))
-                    |> List.map (fun b -> b.ValueVariable)
-                    |> List.distinct
-
-                if not (List.isEmpty leaked) then
-                    emit
-                        $"Warning: A secret was passed to \"{step.Name}\" using Groovy String interpolation, which is insecure."
-
-                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
+                warnSecretInterpolation ctx step.Name interpolatedTexts
 
                 { step with
                     Positional = renderedPositional |> List.map (fun (_, _, r) -> r)
@@ -1153,6 +1155,9 @@ module FogellSide =
                                                 (envForWith ctx.EnvOverlay stage |> Map.ofList)
                                         else
                                             raw
+
+                                    if interpolates && raw.Contains "$" then
+                                        warnSecretInterpolation ctx "withEnv" [ value ]
 
                                     Some(name, value)
                                 | _ -> None))
