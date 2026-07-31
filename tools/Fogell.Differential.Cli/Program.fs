@@ -100,6 +100,16 @@ let main argv =
                   | "" -> ()
                   | v -> yield v, "${" + name + "}" ])
             |> List.distinct
+            // INJECTIVITY: a raw value claimed by two different names (USER on one
+            // engine equals LOGNAME on the other) cannot be canonicalised without
+            // erasing which variable it was — swapped values would collapse to one
+            // token and falsely prove. Ambiguous values drop out entirely, so any
+            // real difference diverges visibly instead.
+            |> List.groupBy fst
+            |> List.choose (fun (_, pairs) ->
+                match pairs |> List.map snd |> List.distinct with
+                | [ _ ] -> Some pairs.Head
+                | _ -> None)
 
         let cfg =
             { BaseUrl = baseUrl

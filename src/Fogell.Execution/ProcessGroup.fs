@@ -211,9 +211,16 @@ module ProcessGroup =
                 // location: executable where builds execute (hardened hosts mount
                 // /tmp noexec) and already excluded from the workspace hash as
                 // scaffolding, so no user-creatable basename is ever excluded.
-                let tmpDir = request.WorkingDirectory.TrimEnd('/') + "@tmp"
+                // `script.sh` inside a per-step directory under `@tmp` — the same
+                // OBSERVABLE identity durable-task gives a script (`$0` basename
+                // `script.sh`), so basename-dependent scripts take the same path on
+                // both engines; the random parent keeps parallel steps apart and
+                // `@tmp` keeps it out of the workspace hash.
+                let tmpDir =
+                    IO.Path.Combine(request.WorkingDirectory.TrimEnd('/') + "@tmp", $"fogell-durable-{Guid.NewGuid():N}")
+
                 IO.Directory.CreateDirectory tmpDir |> ignore
-                let f = IO.Path.Combine(tmpDir, $"fogell-shebang-{Guid.NewGuid():N}.sh")
+                let f = IO.Path.Combine(tmpDir, "script.sh")
 
                 let mode =
                     IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
@@ -236,15 +243,17 @@ module ProcessGroup =
         // where the run is already failing loudly.
         let mutable cleanupFailure: string option = None
 
+        let deleteShebang (f: string) =
+            try
+                if IO.File.Exists f then IO.File.Delete f
+                let d = IO.Path.GetDirectoryName f
+                if IO.Directory.Exists d then IO.Directory.Delete(d, false)
+            with e ->
+                cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}"
+
         use _cleanupShebang =
             { new IDisposable with
-                member _.Dispose() =
-                    shebangFile
-                    |> Option.iter (fun f ->
-                        try
-                            if IO.File.Exists f then IO.File.Delete f
-                        with e ->
-                            cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}") }
+                member _.Dispose() = shebangFile |> Option.iter deleteShebang }
 
         // The payload travels as a POSITIONAL argument (`$1`), not an environment
         // variable: reserving any env name collided with a pipeline exporting it —
@@ -436,12 +445,7 @@ module ProcessGroup =
 
         sw.Stop()
 
-        shebangFile
-        |> Option.iter (fun f ->
-            try
-                IO.File.Delete f
-            with e ->
-                cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}")
+        shebangFile |> Option.iter deleteShebang
 
         { Outcome = outcome
           Stdout = stdout.ToString()
