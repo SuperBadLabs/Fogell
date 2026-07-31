@@ -354,10 +354,21 @@ let private tryStmt: P<Stmt> =
         keyword "try" >>. block
         .>>. opt (attempt (
             keyword "catch"
-            >>. between (symbol "(") (symbol ")") (opt (attempt plainIdent) >>. opt plainIdent)
+            >>. between (symbol "(") (symbol ")") (opt (attempt plainIdent) .>>. opt plainIdent)
             .>>. block))
         .>>. opt (attempt (keyword "finally" >>. block))
-        |>> fun ((b, c), f) -> STry(b, c, defaultArg f []))
+        |>> fun ((b, c), f) ->
+                // `catch (Type name)` and `catch (name)` — a single identifier is the
+                // BINDING (Groovy defaults its type to Exception), not a type.
+                let catch =
+                    c
+                    |> Option.map (fun ((first, second), handler) ->
+                        match first, second with
+                        | Some t, Some b -> Some t, Some b, handler
+                        | Some only, None -> None, Some only, handler
+                        | None, b -> None, b, handler)
+
+                STry(b, catch, defaultArg f []))
 
 /// `switch (e) { case a: … default: … }` — flattened to nested ifs so the
 /// interpreter needs no extra case. Fallthrough is NOT modelled; Jenkinsfile

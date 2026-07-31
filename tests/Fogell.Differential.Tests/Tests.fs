@@ -465,6 +465,14 @@ let stringModel =
                   "cv=after"
                   "the catch observes locals as of the throw point"
 
+              // ...and the DECLARED type decides what a clause intercepts: an
+              // ArithmeticException handler does not catch a missing property.
+              Expect.throws
+                  (fun () ->
+                      GString.render env (step [ "m", "tt=${try { NOPE } catch (ArithmeticException e) { 'no' }}" ] [] [] [] [] []) "m" "tt=${try { NOPE } catch (ArithmeticException e) { 'no' }}"
+                      |> ignore)
+                  "an incompatible catch type lets the fault escape"
+
               Expect.throws
                   (fun () -> GString.render env (step [ "m", "u=${1" ] [] [] [] [] []) "m" "u=${1" |> ignore)
                   "an unterminated placeholder refuses"

@@ -619,7 +619,7 @@ module Interpreter =
 
             let handle v =
                 match catch with
-                | Some(binding, handler) ->
+                | Some(_, binding, handler) ->
                     let e2 =
                         match binding with
                         | Some n -> Env.withVar n v cur
@@ -627,6 +627,19 @@ module Interpreter =
 
                     execBlock st e2 handler
                 | None -> cur
+
+            // Which declared types can intercept a MissingPropertyException. Its
+            // Groovy ancestry: MissingPropertyException < GroovyRuntimeException <
+            // RuntimeException < Exception < Throwable. `catch (name)` with no type
+            // defaults to Exception — compatible. `catch (ArithmeticException e)`
+            // is NOT, and must let the fault escape.
+            let catchesMissingProperty =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "GroovyRuntimeException"; "MissingPropertyException" ]
+                    |> List.contains t
+                | None -> false
 
             let afterTry =
                 try
@@ -637,7 +650,7 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
-                    | Stop(UnknownProperty n) when Option.isSome catch ->
+                    | Stop(UnknownProperty n) when catchesMissingProperty ->
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
                 with e ->
                     // uncaught: finally still runs, then the fault continues out

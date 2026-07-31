@@ -67,7 +67,11 @@ and Stmt =
     | SBreak
     | SContinue
     | SThrow of Expr
-    | STry of body: Stmt list * catch: (string option * Stmt list) option * finallyBlock: Stmt list
+    /// catch is (declared exception type, binding, handler). The TYPE decides what
+    /// the clause can catch: `catch (ArithmeticException e)` does not intercept a
+    /// MissingPropertyException, and treating every clause as catch-all executed
+    /// fallbacks Groovy never runs.
+    | STry of body: Stmt list * catch: (string option * string option * Stmt list) option * finallyBlock: Stmt list
     /// `def name(a, b) { … }` — bound as a callable in the enclosing scope. This
     /// is how a Jenkinsfile's own helper becomes a live function, and it is the
     /// single most common escape construct in the corpus (56 files).
@@ -88,7 +92,7 @@ module Ast =
               | STry(b, c, f) ->
                   countStmts b
                   + (match c with
-                     | Some(_, cb) -> countStmts cb
+                     | Some(_, _, cb) -> countStmts cb
                      | None -> 0)
                   + countStmts f
               | SFunc(_, _, b) -> countStmts b
@@ -164,7 +168,7 @@ module Ast =
                 Set.unionMany
                     [ freeCalls b
                       (match c with
-                       | Some(_, cb) -> freeCalls cb
+                       | Some(_, _, cb) -> freeCalls cb
                        | None -> Set.empty)
                       freeCalls f ]
             | SFunc(_, _, b) -> freeCalls b)
@@ -183,7 +187,7 @@ module Ast =
                 Set.unionMany
                     [ definedFunctions b
                       (match c with
-                       | Some(_, cb) -> definedFunctions cb
+                       | Some(_, _, cb) -> definedFunctions cb
                        | None -> Set.empty)
                       definedFunctions f ]
             | SExpr _
