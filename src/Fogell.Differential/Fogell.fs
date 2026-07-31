@@ -31,6 +31,11 @@ type BranchCtx =
       /// was unbackable and the code simply let expiry win every tie — a comment promising
       /// more than the code does, which is the FG-104 defect appearing inside FG-101.
       SiblingFailedAt: int64 ref
+      /// FG-102: set when a DEADLINE actually caused a cancellation, so the
+      /// "Timeout has been exceeded" announcers key on the CAUSE — a step that
+      /// failed normally just before expiry, with cleanup nudging the clock past
+      /// the bound, is not a timeout and must not be narrated as one.
+      DeadlineFired: bool ref
       /// FG-044. Credential bindings live for this scope, so output is masked.
       Secrets: SecretBinding list
       /// FG-041b. `withEnv([...]) { }` bindings, innermost last. Block-scoped:
@@ -318,6 +323,7 @@ module FogellSide =
                     emit $"ERROR: {what} interrupted: a failFast sibling failed"
                     ctx.Failed.Value <- true
                 | DeadlineExpired ->
+                    ctx.DeadlineFired.Value <- true
                     // Jenkins narrates the cancellation BEFORE the step's own abort
                     // line. Shell steps get this line from ProcessGroup at SIGTERM
                     // time; this is the path for steps with no process — input,
@@ -527,6 +533,16 @@ module FogellSide =
                 for line in result.Stderr.Replace("\r\n", "\n").Split '\n' do
                     if line <> "" then emit line
 
+                // A SUCCESSFUL step can still carry an engine-health finding — the
+                // leak check reporting itself unavailable. FG-103: an unknown is said
+                // somewhere; the receipt is where the engine talks about itself
+                // without inventing build output Jenkins lacks. OUTSIDE the
+                // non-success guard — nested there (round 2's placement), the Success
+                // path it exists for could never reach it.
+                if result.Status = BuildStatus.Success then
+                    result.Diagnostic
+                    |> Option.iter (fun d -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {d}"))
+
                 // Jenkins prints its failure reason INTO the build log. Parity
                 // requires the same: a diagnostic the user cannot see is not a
                 // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
@@ -545,6 +561,9 @@ module FogellSide =
                         result.Status = BuildStatus.Aborted
                         && cancellationOf ctx deadline = SiblingFailed
 
+                    if result.Status = BuildStatus.Aborted && not interruptedBySibling then
+                        ctx.DeadlineFired.Value <- true
+
                     // Jenkins prints `ERROR: …` for a FAILED step. It does not for
                     // an unstable one — `junit` marks the build unstable without
                     // an ERROR line, so emitting one there is a false divergence.
@@ -553,13 +572,6 @@ module FogellSide =
                     // the JB-DUR-005 defect we promised to beat.
                     if result.Status = BuildStatus.Failure || result.Status = BuildStatus.Aborted then
                         result.Diagnostic |> Option.iter (fun d -> emit $"ERROR: {d}")
-                    else
-                        // A SUCCESSFUL step can still carry an engine-health finding —
-                        // the leak check reporting itself unavailable. FG-103: an
-                        // unknown is said somewhere; the receipt is where the engine
-                        // talks about itself without inventing output Jenkins lacks.
-                        result.Diagnostic
-                        |> Option.iter (fun d -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {d}"))
 
                     // Only a FAILED or ABORTED step halts the branch. An
                     // unstable one does not: `junit` marks the build unstable and
@@ -1035,6 +1047,7 @@ module FogellSide =
                     // announces it too.
                     if
                         body.Failed.Value
+                        && body.DeadlineFired.Value
                         && (match stageDeclaredDeadline with
                             | Some d -> runClock.ElapsedMilliseconds >= d
                             | None -> false)
@@ -1140,7 +1153,7 @@ module FogellSide =
                         // OWN deadline, not the effective one: under a shorter outer
                         // bound this block's budget may be untouched when the outer
                         // expiry aborts it, and the OWNER announces that.
-                        if runClock.ElapsedMilliseconds >= mine && ctx.Failed.Value then
+                        if ctx.DeadlineFired.Value && runClock.ElapsedMilliseconds >= mine && ctx.Failed.Value then
                             emit "Timeout has been exceeded"
 
                 // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
@@ -1762,6 +1775,10 @@ module FogellSide =
                                       // and call an outer sibling's failure a deadline.
                                       SiblingFailedAt =
                                         if failFast then siblingFailedAt else ctx.SiblingFailedAt
+                                      // the CAUSE flag is run-shared: whichever scope's
+                                      // deadline fired, its announcer checks its own
+                                      // declared bound as well
+                                      DeadlineFired = ctx.DeadlineFired
                                       Interrupt =
                                         if failFast then
                                             Some(fun () -> siblingFailed.IsCancellationRequested)
@@ -1816,7 +1833,8 @@ module FogellSide =
                   Sink = bump
                   EnvOverlay = []
                   Secrets = []
-                  SiblingFailedAt = ref -1L }
+                  SiblingFailedAt = ref -1L
+                  DeadlineFired = ref false }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
@@ -1838,6 +1856,7 @@ module FogellSide =
                 if
                     not exceededAnnounced
                     && root.Failed.Value
+                    && root.DeadlineFired.Value
                     && (match pipelineDeclaredDeadline with
                         | Some d -> runClock.ElapsedMilliseconds >= d
                         | None -> false)

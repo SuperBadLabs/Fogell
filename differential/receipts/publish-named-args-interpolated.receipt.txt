@@ -55,5 +55,3 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | Recording test results
   workspace:
     b2aa877b610b  reports/results.xml
-  engine notes (not compared):
-    ! step 'junit': 1 of 2 test(s) failed
