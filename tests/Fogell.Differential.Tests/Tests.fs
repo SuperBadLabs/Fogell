@@ -156,6 +156,11 @@ let stringModel =
         { Name = "probe"
           Positional = positional
           Named = named
+          // positional-first mirrors the helper's call shape; the parser records
+          // the TRUE source order for real pipelines
+          ArgumentOrder =
+            (positional |> List.mapi (fun i _ -> $"#{i}"))
+            @ (named |> List.map fst)
           Block = []
           LiteralNamedArgs = Set.ofList literalNamed
           LiteralPositionalArgs = Set.ofList literalPos
@@ -445,6 +450,19 @@ let stringModel =
               Expect.throws
                   (fun () -> GString.render env (step [ "m", "g=${'abc'?.length(foo: 1)}" ] [] [] [] [] []) "m" "g=${'abc'?.length(foo: 1)}" |> ignore)
                   "a NAMED argument to a zero-arg method refuses too"
+
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "h=${[1].any(123)}" ] [] [] [] [] []) "m" "h=${[1].any(123)}" |> ignore)
+                  "a positional argument to a closure method refuses"
+
+              Expect.equal
+                  (GString.render env (step [ "m", "k=${try { NOPE } catch (Exception e) { 'fallback' }}" ] [] [] [] [] []) "m" "k=${try { NOPE } catch (Exception e) { 'fallback' }}")
+                  "k=fallback"
+                  "MissingPropertyException is catchable"
+
+              Expect.throws
+                  (fun () -> GString.render env (step [ "m", "u=${1" ] [] [] [] [] []) "m" "u=${1" |> ignore)
+                  "an unterminated placeholder refuses"
 
               // Rows that RAISE rather than render: an unknown bare name is a failed
               // Groovy property lookup — in the fast path and INSIDE an expression

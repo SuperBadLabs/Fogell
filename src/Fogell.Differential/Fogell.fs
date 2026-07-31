@@ -353,13 +353,34 @@ module FogellSide =
             let renderStepArgs (ctx: BranchCtx) (stage: Stage) (step: Step) : Step =
                 let env = envForWith ctx.EnvOverlay stage |> Map.ofList
 
+                // SOURCE order, exactly as recorded: `step label: "...", "..."` must
+                // evaluate label first because Groovy does, and evaluation mutates
+                // the shared Binding. The partitioned lists cannot say who came
+                // first; ArgumentOrder can.
+                let order =
+                    if List.isEmpty step.ArgumentOrder then
+                        (step.Positional |> List.mapi (fun i _ -> $"#{i}")) @ (step.Named |> List.map fst)
+                    else
+                        step.ArgumentOrder
+
+                let renderedByKey =
+                    order
+                    |> List.map (fun key ->
+                        let raw =
+                            if key.StartsWith "#" then
+                                step.Positional |> List.tryItem (int (key.Substring 1)) |> Option.defaultValue ""
+                            else
+                                step.Named
+                                |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+                                |> Option.defaultValue ""
+
+                        key, raw, GString.renderInto scriptBinding adviseNewBinding env step key raw)
+
                 let renderedPositional =
-                    step.Positional
-                    |> List.mapi (fun i v -> $"#{i}", v, GString.renderInto scriptBinding adviseNewBinding env step $"#{i}" v)
+                    renderedByKey |> List.filter (fun (k, _, _) -> k.StartsWith "#")
 
                 let renderedNamed =
-                    step.Named
-                    |> List.map (fun (k, v) -> k, v, GString.renderInto scriptBinding adviseNewBinding env step k v)
+                    renderedByKey |> List.filter (fun (k, _, _) -> not (k.StartsWith "#"))
 
                 let interpolatedTexts =
                     renderedPositional @ renderedNamed

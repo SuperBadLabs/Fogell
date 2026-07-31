@@ -122,6 +122,12 @@ module Interpreter =
               "values"
               "readLines" ]
 
+    /// Methods whose only Groovy input is the trailing CLOSURE — a positional or
+    /// named argument has no matching overload, and the table used to silently
+    /// ignore it: `[1].any(123)` returned false where Groovy throws.
+    let private closureBuiltins =
+        set [ "each"; "collect"; "find"; "findAll"; "any"; "every"; "sort" ]
+
 
     let rec private evalExpr (st: State) (env: Env) (e: Expr) : Value =
         tick st
@@ -330,6 +336,11 @@ module Interpreter =
             | Error d -> raise (Stop(Denied d))
             | Ok _ -> evalBuiltin st env name r args named trailing
         | FreeCall name ->
+            // arguments evaluate BEFORE resolution can fail — Groovy performs their
+            // side effects even when the call is then denied
+            positionalLazy.Value |> ignore
+            namedLazy.Value |> ignore
+
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
@@ -376,7 +387,7 @@ module Interpreter =
         // `'abc'.length(foo: 1)` is `String.length(Map)` — no such signature, throw.
         if
             st.StrictVars
-            && Set.contains name zeroArgBuiltins
+            && (Set.contains name zeroArgBuiltins || Set.contains name closureBuiltins)
             && not (List.isEmpty args && List.isEmpty namedArgs)
         then
             raise (Stop(Unsupported $"method '{name}' does not accept {List.length args + List.length namedArgs} argument(s)"))
@@ -598,19 +609,32 @@ module Interpreter =
         | SContinue -> raise ContinueSignal
         | SThrow e -> raise (Stop(Thrown(evalExpr st env e)))
         | STry(body, catch, fin) ->
+            // MissingPropertyException is CATCHABLE — `try { MISSING } catch (e)`
+            // renders the fallback on Jenkins — and `finally` runs whether or not
+            // the fault is caught, Groovy's contract.
+            let handle v =
+                match catch with
+                | Some(binding, handler) ->
+                    let e2 =
+                        match binding with
+                        | Some n -> Env.withVar n v env
+                        | None -> env
+
+                    execBlock st e2 handler
+                | None -> env
+
             let afterTry =
                 try
-                    execBlock st env body
-                with Stop(Thrown v) ->
-                    match catch with
-                    | Some(binding, handler) ->
-                        let e2 =
-                            match binding with
-                            | Some n -> Env.withVar n v env
-                            | None -> env
-
-                        execBlock st e2 handler
-                    | None -> env
+                    try
+                        execBlock st env body
+                    with
+                    | Stop(Thrown v) -> handle v
+                    | Stop(UnknownProperty n) when Option.isSome catch ->
+                        handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
+                with e ->
+                    // uncaught: finally still runs, then the fault continues out
+                    execBlock st env fin |> ignore
+                    raise e
 
             execBlock st afterTry fin
         | SFunc(n, ps, body) -> Env.withFunc n ps body env

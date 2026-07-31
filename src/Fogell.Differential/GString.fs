@@ -317,6 +317,12 @@ module GString =
                 if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
                     match findClose value i with
                     | -1 ->
+                        if strict then
+                            // an unterminated `${` is invalid Groovy — Jenkins refuses
+                            // the file before any step runs; copying it verbatim let a
+                            // build succeed that Jenkins never builds
+                            raise (UnsupportedExpression $"unterminated interpolation placeholder in '{value}'")
+
                         sb.Append value[i] |> ignore
                         i <- i + 1
                     | closeAt ->
