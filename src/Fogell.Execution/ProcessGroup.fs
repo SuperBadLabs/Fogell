@@ -240,18 +240,17 @@ module ProcessGroup =
                         with e ->
                             cleanupFailure <- Some $"could not delete shebang script {f}: {e.Message}") }
 
-        match shebangFile with
-        | Some f ->
-            // the path travels in an environment variable — interpolating it into
-            // the `sh -c` text would let the OUTER shell re-expand metacharacters a
-            // legitimate directory name can contain
-            psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$FOGELL_SHEBANG\" 2>&1"
-            psi.Environment["FOGELL_SHEBANG"] <- f
-        | None ->
-            psi.ArgumentList.Add
-                $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$FOGELL_SCRIPT\" 2>&1"
+        // The payload travels as a POSITIONAL argument (`$1`), not an environment
+        // variable: reserving any env name collided with a pipeline exporting it —
+        // Jenkins passes such a variable through to the script untouched, and so
+        // does this now.
+        (match shebangFile with
+         | Some _ -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
+         | None -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xec \"$1\" 2>&1")
 
-        psi.Environment["FOGELL_SCRIPT"] <- request.Command
+        psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
+        psi.ArgumentList.Add(defaultArg shebangFile request.Command)
+
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true
@@ -260,12 +259,7 @@ module ProcessGroup =
         for k, v in request.Environment do
             psi.Environment[k] <- v
 
-        // The reserved launcher variables are assigned AFTER user environment, so a
-        // pipeline exporting FOGELL_SCRIPT / FOGELL_SHEBANG cannot redirect what
-        // this engine executes.
-        psi.Environment["FOGELL_SCRIPT"] <- request.Command
 
-        shebangFile |> Option.iter (fun f -> psi.Environment["FOGELL_SHEBANG"] <- f)
 
         use proc = new Process()
         proc.StartInfo <- psi
