@@ -1,7 +1,0 @@
-M  docs/EXECUTION_BOARD.md
-M  scripts/audit-claims.bb
-M  src/Fogell.Differential/Fogell.Differential.fsproj
-M  src/Fogell.Differential/Fogell.fs
-A  src/Fogell.Differential/GString.fs
-M  tests/Fogell.Differential.Tests/Tests.fs
-?? evidence/20260730T194118Z-fg-100/
