@@ -584,9 +584,17 @@ module FogellSide =
                     // Routed through the ONE model so the shell path cannot drift from
                     // the wrapper steps again.
                     // Receipt: `parallel-failfast`.
+                    // ONE snapshot: ProcessGroup decided the cause when the wait
+                    // ended, and both its narration and this classification read that
+                    // decision — deriving it again from timestamps let the two
+                    // disagree within a poll interval (Cancelling emitted, sibling
+                    // classified). Non-shell steps carry no snapshot and keep the
+                    // timestamp model.
                     let interruptedBySibling =
                         result.Status = BuildStatus.Aborted
-                        && cancellationOf ctx deadline = SiblingFailed
+                        && (match result.AbortedBySibling with
+                            | Some bySibling -> bySibling
+                            | None -> cancellationOf ctx deadline = SiblingFailed)
 
                     if result.Status = BuildStatus.Aborted && not interruptedBySibling then
                         recordFired deadline

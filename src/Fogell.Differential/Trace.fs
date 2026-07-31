@@ -213,6 +213,23 @@ module Trace =
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
     /// the two engines, not a guess.
+    /// FG-102: the startup banners exist only in the console PREAMBLE — before any
+    /// build output has appeared. Matching them by shape alone let a build print
+    /// `Running on marker in $WORKSPACE` mid-run and vanish from both traces with
+    /// different paths inside; the CONTEXT (nothing kept yet) is what makes the
+    /// real banner a banner.
+    let isPreambleBanner (t: string) =
+        Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /")
+        || ([ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
+            |> List.exists (fun lvl -> t = $"Running in Durability level: {lvl}"))
+        || t.StartsWith "Started by user "
+        || t.StartsWith "Started by timer"
+        || t.StartsWith "Started by upstream "
+        || t = "Started by remote host"
+        || t.StartsWith "Started by an SCM change"
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d")
+        || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d")
+
     let normaliseLine (line: string) : string option =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
@@ -230,29 +247,8 @@ module Trace =
         // the `[branch]` prefix in FG-036.
         elif t = "Post stage" then None
         // Jenkins node/workspace banners
-        // FG-102: the banner shapes are NARROWED to what Jenkins actually prints —
-        // `Running on <node> in <abs path>`, `Started by user/timer/upstream …`,
-        // a Finished line naming a real result. A bare prefix dropped any build
-        // line that happened to open with the words; `Running on my kite` now
-        // compares while the structural banner still does not.
-        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /") then None
-        elif
-            [ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
-            |> List.exists (fun lvl -> t = $"Running in Durability level: {lvl}")
-        then
-            None
         // `dir()` announces its working directory as an absolute path
         elif Text.RegularExpressions.Regex.IsMatch(t, "^Running in /") then None
-        elif
-            t.StartsWith "Started by user "
-            || t.StartsWith "Started by timer"
-            || t.StartsWith "Started by upstream "
-            || t = "Started by remote host"
-            || t.StartsWith "Started by an SCM change"
-        then
-            None
-        elif Text.RegularExpressions.Regex.IsMatch(t, @"^Resuming build at \d") then None
-        elif t = "Ready to run at" || Text.RegularExpressions.Regex.IsMatch(t, @"^Ready to run at \d") then None
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE|NOT_BUILT)$") then None
         elif
             t = "GitHub has been notified of this commit\u2019s build result"
@@ -315,6 +311,7 @@ module Trace =
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
         let mutable inStackTrace = false
+        let mutable anyKept = false
         let mutable inSecretWarning = false
 
         [ for i in 0 .. all.Length - 1 do
@@ -337,7 +334,11 @@ module Trace =
 
             if not suppress then
                 match normaliseLine all[i] with
-                | Some l -> yield l
+                | Some l ->
+                    // preamble banners are banners only BEFORE any kept output
+                    if anyKept || not (isPreambleBanner l) then
+                        anyKept <- true
+                        yield l
                 | None -> () ]
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;

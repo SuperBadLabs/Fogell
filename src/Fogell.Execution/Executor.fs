@@ -70,7 +70,13 @@ type StepResult =
       /// it can reach the receipt whatever the step's status. Folding it into
       /// Diagnostic hid it: on success nothing printed, on failure the composed
       /// ERROR line was normalised away, and the receipt stayed silent either way.
-      EngineNote: string option }
+      EngineNote: string option
+      /// For an Aborted shell step: WHICH event ended it, from ProcessGroup's one
+      /// wait-end snapshot. Some true = external interrupt (a failFast sibling),
+      /// Some false = the deadline. The walker classifies AND narrates from this
+      /// single source — deriving the cause a second time from timestamps let the
+      /// two disagree inside one poll interval.
+      AbortedBySibling: bool option }
 
 module Executor =
 
@@ -85,7 +91,8 @@ module Executor =
           Archived = []
           TestTotals = None
           Diagnostic = None
-          EngineNote = None }
+          EngineNote = None
+          AbortedBySibling = None }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
@@ -243,7 +250,12 @@ module Executor =
               Archived = []
               TestTotals = None
               Diagnostic = diagnostic
-              EngineNote = engineNote }
+              EngineNote = engineNote
+              AbortedBySibling =
+                match run.Outcome with
+                | Cancelled -> Some true
+                | TimedOut -> Some false
+                | _ -> None }
 
     /// Read a step argument that may be positional or named, matching Jenkins'
     /// tolerance for `archiveArtifacts '*.jar'` and
