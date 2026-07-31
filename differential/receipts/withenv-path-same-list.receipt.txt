@@ -1,10 +1,9 @@
 # Differential receipt — withenv-path-same-list.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         acf49a085f5be2f72d819dc702db4829defcc5ad2eb8c3b525fa45f293ca08d6
+seal:         91eb34786cc22467bd4e178af9d87c2bb15d1e1e4983c2cb0aa61f11cf1ddf48
 
-VERDICT: DIVERGED (1)
-  - output line 0: jenkins=cut -d: -f1,2 fogell=<absent>
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -36,8 +35,7 @@ VERDICT: DIVERGED (1)
 ## Jenkins
   result:         success
   workspace-hash: b6ab57a0bba4ce83e48c150aeed28ddd092c91b27535f56b10da0b3819bfb2fb
-  output (1 lines):
-    | cut -d: -f1,2
+  output (0 lines):
   workspace:
     c871225b184c  head.txt
 
