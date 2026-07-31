@@ -106,6 +106,29 @@ let userOutputSurvives =
                   "no frame, no trace, no reason"
           }
 
+          test "the secret-interpolation warning is normalised for ANY step, not just echo" {
+              // FG-100. The receipt `sh-secret-interpolation-warning` CANNOT prove this.
+              // Both engines' warnings are normalised away, so that case stays PROVEN even
+              // if Fogell says nothing at all — a receipt that passes vacuously is exactly
+              // what this harness exists to prevent. The emission is asserted here instead.
+              //
+              // The risk is specific: the recogniser used to pin the step name to `echo`.
+              // The moment `sh` began warning, a CORRECT new warning would have surfaced as
+              // a receipt divergence — a fix presenting as a regression.
+              for step in [ "echo"; "sh"; "input" ] do
+                  Expect.isEmpty
+                      (Trace.normaliseOutput
+                          [ $"WARNING: a secret was interpolated into `{step}` via a Groovy string: TOKEN" ])
+                      $"the {step} warning is engine narration"
+
+              // Not a blanket prefix: the shape has to be the whole thing, so a build that
+              // happens to print the opening words is still compared as output.
+              Expect.contains
+                  (Trace.normaliseOutput [ "WARNING: a secret was interpolated into the report" ])
+                  "WARNING: a secret was interpolated into the report"
+                  "a build saying something similar is still user output"
+          }
+
           test "`Terminated` survives unless an interrupt was just narrated" {
               Expect.contains (Trace.normaliseOutput [ "Terminated" ]) "Terminated" "on its own it is output"
 

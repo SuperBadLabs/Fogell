@@ -328,17 +328,35 @@ module FogellSide =
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.
                 // Being quieter than Jenkins about a security matter is not an option.
-                if step.Name = "echo" then
-                    match script, rawScript with
-                    | Some rendered, Some raw when rendered <> raw ->
-                        let leaked =
-                            ctx.Secrets
-                            |> List.filter (fun b -> b.Value <> "" && rendered.Contains b.Value)
-                            |> List.map (fun b -> b.ValueVariable)
+                //
+                // This was gated to `echo` while `echo` was the only step rendered. Now
+                // that `sh` renders too, that gate would have masked the command output
+                // while staying silent about the secret being embedded in the process
+                // command line — the more dangerous of the two, since a command line is
+                // readable from /proc by any process of the same user.
+                //
+                // MEASURED (receipt `sh-secret-interpolation-warning`, Jenkins 2.568.1):
+                // Jenkins names the step IN THE MESSAGE and warns for the interpolated
+                // form while staying silent for the single-quoted one, which is why the
+                // condition is "the render changed the text", not the step's name:
+                //   Warning: A secret was passed to "sh" using Groovy String interpolation, ...
+                //   [...] Affected argument(s) used the following variable(s): [TOKEN]
+                // That receipt proves what JENKINS does (read from the raw console) and
+                // that the two engines still agree end to end. It does NOT prove Fogell
+                // warns: normaliseOutput drops the warning on BOTH sides, so the case
+                // would stay PROVEN if this branch emitted nothing. The emission is
+                // asserted in Fogell.Differential.Tests instead.
+                match script, rawScript with
+                | Some rendered, Some raw when rendered <> raw ->
+                    let leaked =
+                        ctx.Secrets
+                        |> List.filter (fun b -> b.Value <> "" && rendered.Contains b.Value)
+                        |> List.map (fun b -> b.ValueVariable)
 
-                        if not (List.isEmpty leaked) then
-                            emit $"""WARNING: a secret was interpolated into `echo` via a Groovy string: {String.concat ", " leaked}"""
-                    | _ -> ()
+                    if not (List.isEmpty leaked) then
+                        emit
+                            $"""WARNING: a secret was interpolated into `{step.Name}` via a Groovy string: {String.concat ", " leaked}"""
+                | _ -> ()
 
                 let result =
                     Executor.runStep

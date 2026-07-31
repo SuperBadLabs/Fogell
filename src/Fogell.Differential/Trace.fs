@@ -284,8 +284,14 @@ module Trace =
         let isWarnBody (l: string) = l.StartsWith "Affected argument(s) used the following variable(s)"
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
+        // Step-agnostic, because Jenkins' own warning names the step it fired for
+        // (`A secret was passed to "sh" ...`) and Fogell now warns for every step whose
+        // argument the string model rendered — not just `echo`. Pinning the step name
+        // here would have silently un-normalised the `sh` warning the moment it started
+        // being emitted, turning a correct new warning into a receipt divergence.
         let isFogellWarn (l: string) =
-            l.StartsWith "WARNING: a secret was interpolated into `echo` via a Groovy string:"
+            l.StartsWith "WARNING: a secret was interpolated into `"
+            && l.Contains "` via a Groovy string:"
 
         let mutable interruptJustNarrated = false
         let mutable inStackTrace = false

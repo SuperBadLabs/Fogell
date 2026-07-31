@@ -46,16 +46,65 @@
       ;; the text after `//`, and only when the `//` is not inside a string literal.
       ;; A URL like "http://x" therefore contributes nothing, and neither does an
       ;; identifier that happens to contain the word.
+      ;;
+      ;; The scan tracks F#'s FOUR literal forms, not just ordinary strings. A first
+      ;; version treated every `"` as opening one, so `let quote = '"' // MEASURED ...`
+      ;; left the scanner stuck inside a string and dropped the claim — an uncited
+      ;; claim slipping past `--strict` again, one layer down.
+      ;;
+      ;; `'` is only a char literal when the closing quote sits where a char literal
+      ;; puts it. F# also writes generic type variables as `'T`, and skipping to the
+      ;; next `'` there would swallow the rest of the line.
+      ;;
+      ;; LIMITATION: this is line-based, so a triple-quoted or verbatim string spanning
+      ;; several lines leaves its continuation lines scanned as code. That direction is
+      ;; fail-CLOSED — it can only invent a claim, never hide one — which is the side to
+      ;; err on for a gate.
       comment-text
       (fn [l]
-        (loop [k 0, in-str? false]
-          (cond
-            (>= k (count l)) nil
-            in-str? (recur (inc k) (not (and (= \" (nth l k)) (not= \\ (nth l (dec k))))))
-            (= \" (nth l k)) (recur (inc k) true)
-            (and (= \/ (nth l k)) (= \/ (get l (inc k))) )
-            (str/replace (subs l k) #"^/+\s?" "")
-            :else (recur (inc k) false))))
+        (let [n (count l)
+              at (fn [i] (get l i))]
+          (loop [k 0, mode :code]
+            (if (>= k n)
+              nil
+              (case mode
+                :code
+                (cond
+                  (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2)))) (recur (+ k 3) :triple)
+                  (and (= \@ (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim)
+                  (= \" (at k)) (recur (inc k) :str)
+                  ;; '\n' — escaped char literal
+                  (and (= \' (at k)) (= \\ (at (inc k))) (= \' (at (+ k 3)))) (recur (+ k 4) :code)
+                  ;; 'x' — plain char literal, but NOT 'T (a generic type variable)
+                  (and (= \' (at k)) (at (inc k)) (not= \\ (at (inc k))) (= \' (at (+ k 2)))) (recur (+ k 3) :code)
+                  ;; `///` must consume all three slashes, not two
+                  (and (= \/ (at k)) (= \/ (at (inc k)))) (str/replace (subs l k) #"^/+\s?" "")
+                  :else (recur (inc k) :code))
+
+                :str
+                (cond
+                  (= \\ (at k)) (recur (+ k 2) :str)
+                  (= \" (at k)) (recur (inc k) :code)
+                  :else (recur (inc k) :str))
+
+                ;; @"..." has no backslash escapes; "" is one literal quote
+                :verbatim
+                (cond
+                  (and (= \" (at k)) (= \" (at (inc k)))) (recur (+ k 2) :verbatim)
+                  (= \" (at k)) (recur (inc k) :code)
+                  :else (recur (inc k) :verbatim))
+
+                :triple
+                (if (and (= \" (at k)) (= \" (at (inc k))) (= \" (at (+ k 2))))
+                  (recur (+ k 3) :code)
+                  (recur (inc k) :triple)))))))
+
+      ;; A block may only grow across FULL-LINE comments. Accepting trailing comments as
+      ;; claims (above) does not make them block members: two unrelated code lines that
+      ;; each carry a trailing comment would otherwise merge, letting `let b = 2 // Receipt: foo`
+      ;; satisfy a claim on `let a = 1 // MEASURED ...`. That is exactly the adjacent-claim
+      ;; bypass the block logic exists to prevent, re-entering through the new door.
+      full-comment? (fn [l] (some? (re-find #"^\s*//" l)))
 
       ;; One pass. These used to be two near-identical loops, and they had already
       ;; drifted — the unproven counter compared WHOLE LINES where the finder compared
@@ -73,8 +122,8 @@
             ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
             ;; unbacked claim sitting next to a backed one — defeating the per-claim
             ;; guarantee the check exists to give.
-            :let [start (loop [k i] (if (and (pos? k) (comment-text (v (dec k)))) (recur (dec k)) k))
-                  stop (loop [k i] (if (and (< (inc k) (count v)) (comment-text (v (inc k)))) (recur (inc k)) k))
+            :let [start (loop [k i] (if (and (pos? k) (full-comment? (v (dec k)))) (recur (dec k)) k))
+                  stop (loop [k i] (if (and (< (inc k) (count v)) (full-comment? (v (inc k)))) (recur (inc k)) k))
                   ;; COMMENT TEXT only. Including whole lines let a receipt named in
                   ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
                   ;; window, one layer down.
