@@ -213,10 +213,13 @@ module GString =
                     let close = text.IndexOf("*/", i + 2)
                     i <- if close < 0 then text.Length else close + 1
                 elif c = '/' && i + 1 < text.Length && text[i + 1] = '/' then
-                    // A line comment runs to the end of the line; in a single-line
-                    // GString that is the end of the TEXT, so the placeholder cannot
-                    // close and the caller's -1 path emits it raw.
-                    i <- text.Length
+                    // A line comment runs to the END OF THE LINE — not the end of the
+                    // text. A triple-quoted GString's placeholder can span lines, and
+                    // `${1 // note\n + 1}` resumes the expression after the newline;
+                    // jumping to text.Length left the placeholder unclosed and forwarded
+                    // it raw. Only when no newline follows does the comment end the text.
+                    let nl = text.IndexOf('\n', i)
+                    i <- if nl < 0 then text.Length else nl
                 elif c = '/' && slashOpensLiteral text i then
                     // `/` opens a SLASHY string — `${/}/}` holds a literal whose
                     // `}` is content — but it is also DIVISION. Groovy disambiguates

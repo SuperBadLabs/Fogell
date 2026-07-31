@@ -1414,26 +1414,42 @@ module FogellSide =
                     let messageKeyName =
                         if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
 
-                    // Interpolating consumers read the ESCAPE-PRESERVING form, so
-                    // `input message: "Deploy \$TARGET?"` shows a literal $TARGET as
-                    // Jenkins does. `Named` keeps the plain value because a sentinel must
-                    // never reach a step that forwards text verbatim.
-                    let sourceOf (argName: string) (fallback: string) =
-                        step.InterpolationSource
-                        |> List.tryPick (fun (k, v) -> if k = argName then Some v else None)
-                        |> Option.defaultValue fallback
-
-                    // A positional prompt's provenance lives under `#0`.
-                    let messageKey =
-                        if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
-
                     // Three kinds, not two. A single-quoted argument is literal text; a
                     // double-quoted one is a GString to interpolate; an UNQUOTED one is a
                     // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
                     // evaluates and which was being displayed as its own source text.
+                    //
+                    // Rendered in SOURCE order, exactly as the generic step path: with
+                    // rendering being evaluation, `input ok: "${x = 'Ship'; x}",
+                    // message: "$x"` binds x from `ok` before `message` reads it, and
+                    // rendering message-then-ok raised MissingProperty on it. One sweep
+                    // in the recorded order; the prompt and label select from it.
                     let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-                    emit (GString.renderWith scriptBinding env step messageKeyName message)
-                    emit $"""{GString.renderWith scriptBinding env step "ok" okLabel} or Abort"""
+
+                    let renderedPositional =
+                        step.Positional
+                        |> List.tryHead
+                        |> Option.map (fun v -> GString.renderWith scriptBinding env step "#0" v)
+
+                    let renderedNamed =
+                        step.Named
+                        |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding env step k v)
+
+                    let renderedMessage =
+                        match messageKeyName with
+                        | "#0" -> defaultArg renderedPositional message
+                        | key ->
+                            renderedNamed
+                            |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+                            |> Option.defaultValue message
+
+                    let renderedOk =
+                        renderedNamed
+                        |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+                        |> Option.defaultValue okLabel
+
+                    emit renderedMessage
+                    emit $"""{renderedOk} or Abort"""
 
                     match deadline with
                     | None ->

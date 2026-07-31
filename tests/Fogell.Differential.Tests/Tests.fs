@@ -208,7 +208,9 @@ let stringModel =
                     "a missing env path is the four letters null, not empty",
                       step [ "m", "v=${env.NOPE}" ] [] [] [] [] [], "m", "v=${env.NOPE}", "v=null"
                     "a comment's brace is text, not the placeholder close",
-                      step [ "m", "c=${1 /* } */ + 1}" ] [] [] [] [] [], "m", "c=${1 /* } */ + 1}", "c=2" ]
+                      step [ "m", "c=${1 /* } */ + 1}" ] [] [] [] [] [], "m", "c=${1 /* } */ + 1}", "c=2"
+                    "a line comment ends at the NEWLINE, not the text",
+                      step [ "m", "n=${1 // note\n + 1}" ] [] [] [] [] [], "m", "n=${1 // note\n + 1}", "n=2" ]
 
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
