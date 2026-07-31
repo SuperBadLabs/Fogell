@@ -191,18 +191,32 @@ module ProcessGroup =
         // executes the named interpreter directly and injects no flags, so a
         // `#!/bin/bash` script runs under bash untraced. The script goes to a file
         // (its interpreter line only works from one) and is executed as itself.
+        // Owner-only from the first byte — the script text can carry a rendered
+        // credential, and a 0644 window in shared /tmp is a disclosure. Deletion is
+        // guaranteed by the disposable below, exception paths included.
         let shebangFile =
             if request.Command.StartsWith "#!" then
                 let f = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-shebang-{Guid.NewGuid():N}.sh")
-                IO.File.WriteAllText(f, request.Command)
 
-                let psi0 = ProcessStartInfo("/bin/chmod", $"+x {f}")
-                psi0.UseShellExecute <- false
-                use p0 = Process.Start psi0
-                p0.WaitForExit()
+                let mode =
+                    IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+
+                use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
+                use writer = new IO.StreamWriter(stream)
+                writer.Write request.Command
                 Some f
             else
                 None
+
+        use _cleanupShebang =
+            { new IDisposable with
+                member _.Dispose() =
+                    shebangFile
+                    |> Option.iter (fun f ->
+                        try
+                            IO.File.Delete f
+                        with _ ->
+                            ()) }
 
         match shebangFile with
         | Some f -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"{f}\" 2>&1"
@@ -363,7 +377,6 @@ module ProcessGroup =
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
 
         sw.Stop()
-        shebangFile |> Option.iter (fun f -> try IO.File.Delete f with _ -> ())
 
         { Outcome = outcome
           Stdout = stdout.ToString()

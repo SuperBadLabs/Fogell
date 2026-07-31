@@ -236,7 +236,11 @@ module Trace =
         // line that happened to open with the words; `Running on my kite` now
         // compares while the structural banner still does not.
         elif Text.RegularExpressions.Regex.IsMatch(t, @"^Running on .+ in /") then None
-        elif t.StartsWith "Running in Durability level: " then None
+        elif
+            [ "MAX_SURVIVABILITY"; "SURVIVABLE_NONATOMIC"; "PERFORMANCE_OPTIMIZED" ]
+            |> List.exists (fun lvl -> t = $"Running in Durability level: {lvl}")
+        then
+            None
         // `dir()` announces its working directory as an absolute path
         elif Text.RegularExpressions.Regex.IsMatch(t, "^Running in /") then None
         elif
