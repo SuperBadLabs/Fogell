@@ -166,13 +166,6 @@ module Trace =
         // thing this contract exists to avoid. Both engines say it; the wording is not
         // compared, and the load-bearing evidence is that the value never appears.
         || t.StartsWith "Masking supported pattern matches of "
-        // FG-100. The sandbox's advice when a GString placeholder assigns a binding
-        // without `def` — printed by Jenkins before the build's own output (receipt
-        // `gstring-shared-binding`). Engine narration about code hygiene, not build
-        // output; the prefix is distinctive through the doubled context ("forget the
-        // `def` keyword" AND "WorkflowScript seems to be setting a field"), which is
-        // the same standard the masking banner above meets.
-        || t.StartsWith "Did you forget the `def` keyword? WorkflowScript seems to be setting a field named "
         // FG-044b. Jenkins warns, in three lines, when a secret is interpolated into a
         // step argument via a Groovy GString. Fogell warns too — the security advice is
         // worth keeping — but matching three sentences and a URL verbatim would be

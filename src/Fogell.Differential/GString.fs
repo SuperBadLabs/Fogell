@@ -57,6 +57,7 @@ module GString =
         (known: Map<string, string>)
         (carried0: Map<string, Value>)
         (publish: Map<string, Value> -> unit)
+        (advise: string * Value -> unit)
         (value: string)
         : string * Map<string, Value> =
         // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
@@ -149,10 +150,23 @@ module GString =
                 let outcome =
                     runInterpreter Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
 
-                match outcome.Fault, outcome.Returned with
-                | None, Some v ->
-                    // Keep what the placeholder ASSIGNED for its successors: any
-                    // binding that is new, or whose value moved, relative to the seeds.
+                // What SURVIVES a placeholder, and what the user is TOLD about it —
+                // shared by the success and fault paths, because Groovy performs an
+                // assignment the moment it executes: `${x = 'kept'; MISSING}` fails
+                // the argument, and Jenkins' post block still reads x. Absorbing only
+                // on success rolled those assignments back.
+                //
+                // A NEW key persists only when the interpreter reports it as a
+                // BINDING assignment — a `def` is a local of its own placeholder, and
+                // carrying it would let `${def x = 1; x}` leak x to the next
+                // placeholder where Groovy would not. (Closure-locality of `def` is
+                // standard Groovy, asserted from the language rather than measured.)
+                // Changed EXISTING keys always persist: reassignment wins.
+                //
+                // Each fresh binding is announced through `advise` — Jenkins prints
+                // its def-keyword advisory for exactly this event, and Fogell emits
+                // the same line so the two logs COMPARE instead of being suppressed.
+                let absorb (outcome: Outcome) =
                     carried <-
                         outcome.Env.Vars
                         |> Map.fold
@@ -160,20 +174,26 @@ module GString =
                                 if k = "env" then acc
                                 elif (match Map.tryFind k bindings with
                                       | Some old -> old <> v
-                                      | None -> true) then
+                                      | None -> Set.contains k outcome.NewBindings) then
                                     Map.add k v acc
                                 else
                                     acc)
                             carried
 
-                    // Publish IMMEDIATELY: Groovy has already performed this
-                    // assignment even if a LATER placeholder faults, and a post block
-                    // reading it must succeed — `"${x = 'kept'; x}-${MISSING}"` fails
-                    // the build, but x stays 'kept' for `post { always { echo "$x" } }`.
-                    // Waiting for the transaction to return would roll x back.
+                    for n in outcome.NewBindings do
+                        match Map.tryFind n outcome.Env.Vars with
+                        | Some v -> advise (n, v)
+                        | None -> ()
+
                     publish carried
+
+                match outcome.Fault, outcome.Returned with
+                | None, Some v ->
+                    absorb outcome
                     Some(Value.toDisplay v)
-                | Some(UnknownProperty name), _ -> raise (MissingProperty name)
+                | Some(UnknownProperty name), _ ->
+                    absorb outcome
+                    raise (MissingProperty name)
                 | _ -> None
 
         // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
@@ -329,7 +349,18 @@ module GString =
     /// failure semantics have not been measured yet (`environment`, `when`-equals);
     /// step ARGUMENTS go through [render], which is strict.
     let interpolate (known: Map<string, string>) (value: string) =
-        interpolateCore false known Map.empty ignore value |> fst
+        interpolateCore false known Map.empty ignore ignore value |> fst
+
+    /// The Java-side type name Jenkins' def-keyword advisory prints.
+    let javaTypeName (v: Value) =
+        match v with
+        | VStr _ -> "String"
+        | VInt _ -> "Integer"
+        | VBool _ -> "Boolean"
+        | VList _ -> "ArrayList"
+        | VMap _ -> "LinkedHashMap"
+        | VNull -> "null"
+        | _ -> "Object" 
 
     /// Groovy's SCRIPT BINDING, at run scope. An assignment made by a GString
     /// placeholder outlives its render call: `echo "${x = 'ok'; x}"` then
@@ -387,14 +418,24 @@ module GString =
     /// longer makes the distinction.
     /// Render with a run-scoped script binding: assignments made by this argument's
     /// placeholders become visible to every LATER rendered argument in the build.
-    let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
+    let renderInto
+        (binding: ScriptBinding)
+        (advise: string * Value -> unit)
+        (env: Map<string, string>)
+        (step: Step)
+        (key: string)
+        (raw: string)
+        : string =
         let go strict text =
-            binding.Transact(fun current publish -> interpolateCore strict env current publish text)
+            binding.Transact(fun current publish -> interpolateCore strict env current publish advise text)
 
         match kindOf step key with
         | Literal -> raw
         | Expression -> go true ("${" + raw + "}")
         | Interpolating -> go true (sourceOf step key raw)
+
+    let renderWith (binding: ScriptBinding) (env: Map<string, string>) (step: Step) (key: string) (raw: string) : string =
+        renderInto binding ignore env step key raw
 
     /// Stateless render — each call gets a fresh, discarded binding. For contexts
     /// where no build-scoped Binding exists (and for the acceptance matrix's
@@ -405,5 +446,5 @@ module GString =
         // fails the build with Jenkins' own diagnosis (measured, see the exception).
         match kindOf step key with
         | Literal -> raw
-        | Expression -> interpolateCore true env Map.empty ignore ("${" + raw + "}") |> fst
-        | Interpolating -> interpolateCore true env Map.empty ignore (sourceOf step key raw) |> fst
+        | Expression -> interpolateCore true env Map.empty ignore ignore ("${" + raw + "}") |> fst
+        | Interpolating -> interpolateCore true env Map.empty ignore ignore (sourceOf step key raw) |> fst

@@ -158,6 +158,7 @@ module FogellSide =
             // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
             let scriptBinding = GString.ScriptBinding()
 
+
             /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
             /// with NO `[branchName]` prefix — that belongs to the scripted
             /// `parallel` map form. Fogell emitted one until the receipt said
@@ -174,6 +175,16 @@ module FogellSide =
                             Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
                     output.Add safe)
+
+            // Jenkins' Binding-field advisory, emitted in ITS words so the two logs
+            // COMPARE — a suppression keyed on this wording alone was the same
+            // unconditional-shape-match defect as the retired secret-warning dialect:
+            // a build printing the sentence was silently dropped from comparison.
+            let adviseNewBinding (name: string, value: Value) =
+                emit (
+                    $"Did you forget the `def` keyword? WorkflowScript seems to be setting a field named {name} "
+                    + $"(to a value of type {GString.javaTypeName value}) which could lead to memory leaks or other issues."
+                )
             let workspace = Path.Combine(workspaceRoot, jobName)
             // artifacts live OUTSIDE the workspace so archiving cannot perturb
             // the workspace hash the differential compares
@@ -372,12 +383,12 @@ module FogellSide =
 
                 let renderedPositional =
                     match step.Positional with
-                    | s :: _ -> Some(GString.renderWith scriptBinding renderEnv step "#0" s)
+                    | s :: _ -> Some(GString.renderInto scriptBinding adviseNewBinding renderEnv step "#0" s)
                     | [] -> None
 
                 let renderedNamed =
                     step.Named
-                    |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding renderEnv step k v)
+                    |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding renderEnv step k v)
 
                 let script =
                     match renderedPositional with
@@ -1434,11 +1445,11 @@ module FogellSide =
                     let renderedPositional =
                         step.Positional
                         |> List.tryHead
-                        |> Option.map (fun v -> GString.renderWith scriptBinding env step "#0" v)
+                        |> Option.map (fun v -> GString.renderInto scriptBinding adviseNewBinding env step "#0" v)
 
                     let renderedNamed =
                         step.Named
-                        |> List.map (fun (k, v) -> k, GString.renderWith scriptBinding env step k v)
+                        |> List.map (fun (k, v) -> k, GString.renderInto scriptBinding adviseNewBinding env step k v)
 
                     let renderedMessage =
                         match messageKeyName with

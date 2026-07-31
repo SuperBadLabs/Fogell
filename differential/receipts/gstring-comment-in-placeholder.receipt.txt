@@ -1,7 +1,7 @@
 # Differential receipt — gstring-comment-in-placeholder.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         42c09b7abe3da303518377171ef5bdc96123fb2928de9491d178c2fafc812f3d
+seal:         3f44973e8e4274e681fa637d9d309f7ea55bc824e70b680483e5cc9e3f1497ff
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -35,13 +35,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (3 lines):
     | c:2
+    | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | order:ord
 
 ## Fogell
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (2 lines):
+  output (3 lines):
     | c:2
+    | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | order:ord

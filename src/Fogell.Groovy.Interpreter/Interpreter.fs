@@ -24,6 +24,10 @@ type Outcome =
     { Effects: Effect list
       Fault: Fault option
       Env: Env
+      /// Names ASSIGNED into being without `def` — Groovy's Binding-field creation,
+      /// the shape its "Did you forget the `def` keyword?" advisory fires on. A
+      /// `def` declaration is a local and is NOT recorded here.
+      NewBindings: Set<string>
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -72,7 +76,14 @@ module Interpreter =
           /// instead of yielding null — Groovy's own behaviour for a GString in a
           /// step argument. Runtime enforcement is the ONLY correct place for it:
           /// laziness means no static scan can know which ternary arm is read.
-          StrictVars: bool }
+          StrictVars: bool
+          /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
+          /// assignments made before it — Groovy performed them.
+          mutable NewBindings: Set<string>
+          /// The variable map as of the LAST binding-extending statement, so a fault
+          /// does not erase assignments Groovy already performed. Threading env
+          /// functionally is right for evaluation; this is the recovery channel.
+          mutable LatestVars: Map<string, Value> }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
@@ -388,7 +399,16 @@ module Interpreter =
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
-            Env.withVar n value env
+
+            // A bare-name assignment to a name with no prior binding CREATES a
+            // Binding field — the advisory case. Recorded even if a later statement
+            // faults, because Groovy has already performed it.
+            if not (Map.containsKey n env.Vars) then
+                st.NewBindings <- Set.add n st.NewBindings
+
+            let updated = Env.withVar n value env
+            st.LatestVars <- updated.Vars
+            updated
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse
@@ -492,7 +512,9 @@ module Interpreter =
               RegisteredSteps = registeredSteps
               Defined = defined
               LastValue = None
-              StrictVars = strictVars }
+              StrictVars = strictVars
+              NewBindings = Set.empty
+              LatestVars = env.Vars }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -510,18 +532,24 @@ module Interpreter =
             { Effects = List.rev st.Effects
               Fault = None
               Env = final
+              NewBindings = st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f
-              Env = hoisted
+              // NOT the pristine environment: assignments made BEFORE the fault were
+              // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
+              // still reads x. Erasing them here erased them everywhere downstream.
+              Env = { hoisted with Vars = st.LatestVars }
+              NewBindings = st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = hoisted
+              Env = { hoisted with Vars = st.LatestVars }
+              NewBindings = st.NewBindings
               Returned = Some v }
 
     /// Groovy's late-binding default: an unknown name reads as null.
