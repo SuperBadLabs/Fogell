@@ -38,53 +38,60 @@
                    (remove #(str/includes? % "/obj/"))
                    (remove #(str/includes? % "/bin/"))
                    sort)
-      findings
+      ;; The COMMENT PORTION of a line, or nil. Requiring the line to BEGIN with `//`
+      ;; was itself a defect: `let mode = x  // MEASURED on Jenkins: ...` is a genuine
+      ;; claim, and demanding a full-line comment let it bypass the gate entirely.
+      ;; That over-correction was introduced while fixing the opposite hole — matching
+      ;; MEASURED anywhere, including in CODE — so both directions are handled here:
+      ;; the text after `//`, and only when the `//` is not inside a string literal.
+      ;; A URL like "http://x" therefore contributes nothing, and neither does an
+      ;; identifier that happens to contain the word.
+      comment-text
+      (fn [l]
+        (loop [k 0, in-str? false]
+          (cond
+            (>= k (count l)) nil
+            in-str? (recur (inc k) (not (and (= \" (nth l k)) (not= \\ (nth l (dec k))))))
+            (= \" (nth l k)) (recur (inc k) true)
+            (and (= \/ (nth l k)) (= \/ (get l (inc k))) )
+            (str/replace (subs l k) #"^/+\s?" "")
+            :else (recur (inc k) false))))
+
+      ;; One pass. These used to be two near-identical loops, and they had already
+      ;; drifted — the unproven counter compared WHOLE LINES where the finder compared
+      ;; comment text, so a receipt named in adjacent code could silently resolve a
+      ;; claim on one path but not the other. Duplicated rules diverge; this one cannot.
+      claims
       (for [f sources
-            :let [lines (str/split-lines (slurp f))]
+            :let [lines (str/split-lines (slurp f))
+                  v (vec lines)]
             [i line] (map-indexed vector lines)
-            ;; A COMMENT asserting MEASURED. Matching the word anywhere also matched CODE —
-            ;; a string literal or identifier containing it — so the gate could block on a
-            ;; line that asserts nothing. Found on PR #22 review 4, after the merge.
-            :when (and (str/includes? line "MEASURED") (re-find #"^\s*(?://|///)" line))
+            :let [own (comment-text line)]
+            :when (and own (str/includes? own "MEASURED"))
             ;; The receipt must be cited by THIS claim's own contiguous comment block, not
             ;; merely somewhere within twenty lines. A fixed window let a receipt named by a
             ;; NEIGHBOURING claim satisfy this one, so `--strict` could pass with an
             ;; unbacked claim sitting next to a backed one — defeating the per-claim
             ;; guarantee the check exists to give.
-            :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
-                  v (vec lines)
-                  start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
-                  stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
+            :let [start (loop [k i] (if (and (pos? k) (comment-text (v (dec k)))) (recur (dec k)) k))
+                  stop (loop [k i] (if (and (< (inc k) (count v)) (comment-text (v (inc k)))) (recur (inc k)) k))
                   ;; COMMENT TEXT only. Including whole lines let a receipt named in
                   ;; adjacent CODE satisfy a claim, which is the same hole as the fixed
                   ;; window, one layer down.
-                  block (->> (subvec v start (inc stop))
-                             (keep #(second (re-find #"^\s*(?://|///)\s?(.*)$" %)))
-                             (str/join " "))
+                  block (->> (subvec v start (inc stop)) (keep comment-text) (str/join " "))
                   named (filter #(str/includes? block %) receipts)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes
                   ;; both engines fail, leaving only narration to compare). Saying so is a
                   ;; valid answer; saying nothing is not. They are counted separately so the
                   ;; admission stays visible instead of quietly passing.
-                  unproven? (str/includes? block "UNPROVEN")]
-            :when (and (empty? named) (not unproven?))]
+                  unproven? (str/includes? block "UNPROVEN")]]
         {:file (str (fs/relativize root f)) :line (inc i)
+         :backed? (or (seq named) unproven?) :unproven? unproven?
          :text (str/trim (subs line 0 (min 100 (count line))))})
 
-      unproven-count
-      (count (for [f sources
-                   :let [lines (str/split-lines (slurp f))]
-                   [i line] (map-indexed vector lines)
-                   :when (and (str/includes? line "MEASURED")
-                              (re-find #"^\s*(?://|///)" line))
-                   :let [comment? (fn [l] (re-find #"^\s*(///|//)" l))
-                         v (vec lines)
-                         start (loop [k i] (if (and (pos? k) (comment? (v (dec k)))) (recur (dec k)) k))
-                         stop (loop [k i] (if (and (< (inc k) (count v)) (comment? (v (inc k)))) (recur (inc k)) k))
-                         blk (str/join " " (subvec v start (inc stop)))]
-                   :when (str/includes? blk "UNPROVEN")]
-               1))]
+      findings (remove :backed? claims)
+      unproven-count (count (filter :unproven? claims))]
 
   (println (format "MEASURED claims: %d source files scanned, %d receipts available"
                    (count sources) (count receipts)))

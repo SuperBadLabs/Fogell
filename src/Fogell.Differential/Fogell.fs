@@ -287,29 +287,43 @@ module FogellSide =
                 deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
-                let rawScript =
+                // The argument and the KEY it arrived under travel together. `render`
+                // needs the key to ask what quoting the source used, and deriving the
+                // two separately is what let `sh` drift onto the wrong rule below.
+                let rawScript, scriptKey =
                     match step.Positional with
-                    | s :: _ -> Some s
+                    | s :: _ -> Some s, "#0"
                     | [] ->
-                        step.Named
-                        |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some v else None)
+                        match
+                            step.Named
+                            |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some(v, k) else None)
+                        with
+                        | Some(v, k) -> Some v, k
+                        | None -> None, "#0"
 
-                // FG-044b. `echo` renders text ITSELF, so — like `input` — it must apply
-                // Groovy's quoting: a single-quoted argument stays literal, a GString
-                // interpolates, an unquoted one is an expression. A shell step must NOT be
-                // pre-expanded, because the shell does that itself and doing it twice
-                // would expand what the author escaped for the shell.
+                // FG-100. Groovy expands a GString BEFORE the step is invoked — `sh`
+                // included. This code previously exempted shell steps, reasoning that
+                // the shell expands its own arguments and doing it twice would undo
+                // what an author escaped. That is wrong about WHO expands WHAT, and it
+                // was never measured.
+                //
+                // MEASURED (receipt `sh-gstring-interpolation`, Jenkins 2.568.1), with
+                // `TARGET = 'prod'`. Every row is reachable by only one model:
+                //   sh "echo double:${env.TARGET}"              -> double:prod
+                //   sh "echo upper:${env.TARGET.toUpperCase()}" -> upper:PROD
+                //   sh 'echo literal:${NOT_IN_ENV}.'            -> literal:.
+                //   sh "echo escaped:\${NOT_IN_ENV}."           -> escaped:.
+                // Groovy expands rows 1-2 — the shell can neither name `env.TARGET` nor
+                // call a method — and the shell expands rows 3-4 to empty. Under the
+                // old exemption row 1 reached /bin/sh raw and the build FAILED with
+                // "Bad substitution" where Jenkins printed `double:prod`.
+                //
+                // Escaping is not lost: a Literal argument renders to itself, and an
+                // escaped dollar emits a bare `$` for the shell — rows 3 and 4.
                 let script =
-                    if step.Name <> "echo" then
-                        rawScript
-                    else
-                        rawScript
-                        |> Option.map (fun raw ->
-                            // FG-100: one call, no local kind logic.
-                            let key =
-                                if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
-
-                            GString.render (envForWith ctx.EnvOverlay stage |> Map.ofList) step key raw)
+                    rawScript
+                    |> Option.map (fun raw ->
+                        GString.render (envForWith ctx.EnvOverlay stage |> Map.ofList) step scriptKey raw)
 
                 // Jenkins warns when a SECRET reaches a step argument through GString
                 // interpolation, and keeps the advice even though it then masks the value.
