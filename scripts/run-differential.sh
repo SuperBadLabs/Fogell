@@ -9,6 +9,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
 
+# The five `withCredentials` receipts need the same fake values on BOTH sides.
+# Without this a fresh shell simply has no store, those cases fail CLOSED, and the
+# run reads as a code regression — which cost a full debugging cycle once. The path
+# is exactly what provision-credentials.sh writes and prints an `export` line for.
+: "${FOGELL_CREDENTIALS_FILE:=$PWD/.fogell-credentials.tsv}"
+if [[ -f "$FOGELL_CREDENTIALS_FILE" ]]; then
+  export FOGELL_CREDENTIALS_FILE
+else
+  echo "note: no credential store at $FOGELL_CREDENTIALS_FILE — withCredentials cases" \
+       "will fail closed. Run scripts/provision-credentials.sh first." >&2
+fi
+
 # Jenkins does not share a filesystem with us, so the workspace is hashed WHERE
 # IT LIVES using the same manifest form as a local hash (see Trace.collectRemote).
 export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""

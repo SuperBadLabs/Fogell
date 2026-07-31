@@ -23,6 +23,11 @@ type Expr =
     | EMap of (string * Expr) list
     | EVar of string
     | EProp of target: Expr * name: string
+    /// `a?.b` — Groovy's safe navigation. Distinct from [EProp] because the
+    /// difference IS the semantics: a null receiver yields null instead of a
+    /// property lookup, so collapsing the two made `${env.OPTIONAL?.value}`
+    /// fail a build Jenkins runs.
+    | ESafeProp of target: Expr * name: string
     | EIndex of target: Expr * index: Expr
     | EUnary of op: string * operand: Expr
     | EBinary of op: string * left: Expr * right: Expr
@@ -35,6 +40,9 @@ and CallTarget =
     /// A bare call: a pipeline step, or a user function defined in this file.
     | FreeCall of name: string
     | MethodCall of target: Expr * name: string
+    /// `a?.b(...)` — the whole CALL short-circuits to null on a null receiver,
+    /// which neither a safe property read nor an unsafe call can express.
+    | SafeMethodCall of target: Expr * name: string
 
 and GStringPart =
     | GLit of string
@@ -59,7 +67,11 @@ and Stmt =
     | SBreak
     | SContinue
     | SThrow of Expr
-    | STry of body: Stmt list * catch: (string option * Stmt list) option * finallyBlock: Stmt list
+    /// catch is (declared exception type, binding, handler). The TYPE decides what
+    /// the clause can catch: `catch (ArithmeticException e)` does not intercept a
+    /// MissingPropertyException, and treating every clause as catch-all executed
+    /// fallbacks Groovy never runs.
+    | STry of body: Stmt list * catch: (string option * string option * Stmt list) option * finallyBlock: Stmt list
     /// `def name(a, b) { … }` — bound as a callable in the enclosing scope. This
     /// is how a Jenkinsfile's own helper becomes a live function, and it is the
     /// single most common escape construct in the corpus (56 files).
@@ -80,7 +92,7 @@ module Ast =
               | STry(b, c, f) ->
                   countStmts b
                   + (match c with
-                     | Some(_, cb) -> countStmts cb
+                     | Some(_, _, cb) -> countStmts cb
                      | None -> 0)
                   + countStmts f
               | SFunc(_, _, b) -> countStmts b
@@ -103,7 +115,7 @@ module Ast =
                     match trailing with
                     | Some c -> freeCalls c.Body
                     | None -> Set.empty)
-            | ECall(MethodCall(t, _), args, trailing) ->
+            | ECall((MethodCall(t, _) | SafeMethodCall(t, _)), args, trailing) ->
                 ofExpr t
                 |> Set.union (args |> List.map ofArg |> Set.unionMany)
                 |> Set.union (
@@ -118,7 +130,8 @@ module Ast =
                 |> Set.unionMany
             | EList xs -> xs |> List.map ofExpr |> Set.unionMany
             | EMap kvs -> kvs |> List.map (snd >> ofExpr) |> Set.unionMany
-            | EProp(t, _) -> ofExpr t
+            | EProp(t, _)
+            | ESafeProp(t, _) -> ofExpr t
             | EIndex(t, i) -> Set.union (ofExpr t) (ofExpr i)
             | EUnary(_, x) -> ofExpr x
             | EBinary(_, l, r) -> Set.union (ofExpr l) (ofExpr r)
@@ -155,7 +168,7 @@ module Ast =
                 Set.unionMany
                     [ freeCalls b
                       (match c with
-                       | Some(_, cb) -> freeCalls cb
+                       | Some(_, _, cb) -> freeCalls cb
                        | None -> Set.empty)
                       freeCalls f ]
             | SFunc(_, _, b) -> freeCalls b)
@@ -174,7 +187,7 @@ module Ast =
                 Set.unionMany
                     [ definedFunctions b
                       (match c with
-                       | Some(_, cb) -> definedFunctions cb
+                       | Some(_, _, cb) -> definedFunctions cb
                        | None -> Set.empty)
                       definedFunctions f ]
             | SExpr _

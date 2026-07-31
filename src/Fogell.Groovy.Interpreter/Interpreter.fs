@@ -15,11 +15,24 @@ type Fault =
     | Unsupported of construct: string
     | Thrown of Value
     | BudgetExhausted of what: string
+    /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
+    /// throws MissingPropertyException here; the default mode's late-binding null
+    /// is kept for consumers that model scripted Groovy's laxer contexts.
+    | UnknownProperty of name: string
 
 type Outcome =
     { Effects: Effect list
       Fault: Fault option
       Env: Env
+      /// Names ASSIGNED into being without `def` — Groovy's Binding-field creation,
+      /// the shape its "Did you forget the `def` keyword?" advisory fires on — in
+      /// EXECUTION ORDER, because the advisories print as the assignments run and
+      /// the lines are compared as output now: a set's name-sorted enumeration made
+      /// `${z = 1; a = 2}` announce a before z, a false divergence. Each event
+      /// carries the value AT CREATION: the advisory names that value's type, and
+      /// `${x = 1; x = 'later'}` announces an Integer even though the binding ends
+      /// as a String. A `def` declaration is a local and is NOT recorded here.
+      NewBindings: (string * Value) list
       /// FG-048. The script's VALUE, when it has one — needed because
       /// `when { expression { … } }` is a predicate, not a side effect. Two
       /// shapes occur in the corpus and both must work: an explicit `return X`,
@@ -63,13 +76,58 @@ module Interpreter =
           /// `expression { def deploy = true; deploy }` returned None, which a
           /// `when` reads as unevaluable and fails the build on — where Jenkins
           /// simply runs the stage.
-          mutable LastValue: Value option }
+          mutable LastValue: Value option
+          /// When set, reading a name bound nowhere faults with [UnknownProperty]
+          /// instead of yielding null — Groovy's own behaviour for a GString in a
+          /// step argument. Runtime enforcement is the ONLY correct place for it:
+          /// laziness means no static scan can know which ternary arm is read.
+          StrictVars: bool
+          /// See [Outcome.NewBindings]; mutable so a FAULT still reports the
+          /// assignments made before it — Groovy performed them. REVERSED order.
+          mutable NewBindings: (string * Value) list
+          /// Groovy's script BINDING: one shared, MUTABLE map, exactly as the real
+          /// thing behaves. `Env.Vars` holds LOCALS only — `def`s, closure and loop
+          /// parameters, catch variables — threaded functionally for lexical scope.
+          /// The split is what earlier patch-on-patch state (a recovery snapshot, a
+          /// declared-locals name set) approximated and kept getting wrong one
+          /// closure at a time: an assignment to a non-local name mutates HERE and
+          /// is immediately visible to every later expression, survives a fault,
+          /// and never confuses a parameter for a binding.
+          mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
 
         if st.Steps > st.Budget.MaxSteps then
             raise (Stop(BudgetExhausted $"evaluation exceeded {st.Budget.MaxSteps} steps"))
+
+    /// Method names the table dispatches WITHOUT reading `args` — zero-argument in
+    /// Groovy too. Strict mode rejects a call that passes any: `'abc'.length(1)` has
+    /// no such signature and Groovy throws, while a table that ignores args returned
+    /// 3 and let a wrong expression reach a command line.
+    let private zeroArgBuiltins =
+        set
+            [ "length"
+              "size"
+              "trim"
+              "toUpperCase"
+              "toLowerCase"
+              "toString"
+              "toInteger"
+              "reverse"
+              "first"
+              "last"
+              "isEmpty"
+              "keySet"
+              "values"
+              "readLines" ]
+
+    /// Methods whose only Groovy input is the trailing CLOSURE — a positional or
+    /// named argument has no matching overload, and the table used to silently
+    /// ignore it: `[1].any(123)` returned false where Groovy throws.
+    let private closureBuiltins =
+        set [ "each"; "collect"; "find"; "findAll"; "any"; "every"; "sort" ]
+
 
     let rec private evalExpr (st: State) (env: Env) (e: Expr) : Value =
         tick st
@@ -89,18 +147,30 @@ module Interpreter =
         | EList xs -> VList(xs |> List.map (evalExpr st env))
         | EMap kvs -> VMap(kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList)
         | EVar n ->
+            // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
             | Some v -> v
             | None ->
-                match Map.tryFind n env.Funcs with
-                | Some(ps, body) -> VFunc(n, ps, body)
-                | None -> VNull // Groovy resolves unknown bindings late; treat as null
-        | EProp(target, name) ->
-            match evalExpr st env target with
-            | VMap m -> defaultArg (Map.tryFind name m) VNull
-            | VList xs when name = "size" || name = "length" -> VInt(int64 xs.Length)
-            | VStr s when name = "size" || name = "length" -> VInt(int64 s.Length)
-            | _ -> VNull
+                match Map.tryFind n st.Binding with
+                | Some v -> v
+                | None ->
+                    match Map.tryFind n env.Funcs with
+                    | Some(ps, body) -> VFunc(n, ps, body)
+                    | None ->
+                        if st.StrictVars then
+                            // MEASURED (receipt `gstring-unresolved-property`): Groovy's
+                            // property lookup FAILS the build for a name bound nowhere.
+                            raise (Stop(UnknownProperty n))
+                        else
+                            VNull // Groovy resolves unknown bindings late; treat as null
+        | ESafeProp(target, name) ->
+            // Safe navigation: a NULL receiver short-circuits to null — no lookup,
+            // no strict fault. A non-null receiver behaves exactly like [EProp],
+            // strictness included.
+            (match evalExpr st env target with
+             | VNull -> VNull
+             | recv -> evalProp st recv name)
+        | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
             | VList xs, VInt i when i >= 0L && int i < xs.Length -> xs.[int i]
@@ -115,6 +185,8 @@ module Interpreter =
             | "-" ->
                 match v with
                 | VInt i -> VInt(-i)
+                | _ when st.StrictVars ->
+                    raise (Stop(Unsupported "unary '-' is not modelled for this operand type"))
                 | _ -> VNull
             | _ -> raise (Stop(Unsupported $"unary operator {op}"))
         | EBinary(op, l, r) -> evalBinary st env op l r
@@ -128,6 +200,19 @@ module Interpreter =
             if Value.isTruthy v then v else evalExpr st env b
         | EClosure c -> VClosure(c, env)
         | ECall(target, args, trailing) -> evalCall st env target args trailing
+
+    and private evalProp (st: State) (recv: Value) (name: string) : Value =
+        match recv with
+        | VMap m -> defaultArg (Map.tryFind name m) VNull
+        // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
+        // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
+        // "No such field found: field java.lang.String length" and the build
+        // FAILS; only the METHOD form `.length()` returns the count. The lenient
+        // convenience below is therefore confined to non-strict consumers.
+        | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Length)
+        | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
+        | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
+        | _ -> VNull
 
     and private evalBinary (st: State) (env: Env) op l r : Value =
         // short-circuit before evaluating the right side
@@ -155,6 +240,12 @@ module Interpreter =
         | "-", VInt x, VInt y -> VInt(x - y)
         | "*", VInt x, VInt y -> VInt(x * y)
         | "/", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
+        | "/", VInt x, VInt y when x % y = 0L -> VInt(x / y)
+        | "/", VInt _, VInt _ when st.StrictVars ->
+            // Groovy's `/` is DECIMAL: `1 / 2` renders `0.5`. This interpreter has no
+            // decimal value, so a non-integral quotient must refuse — truncating to
+            // VInt 0 sent `test 0 = 0.5` to a shell where Jenkins sends the truth.
+            raise (Stop(Unsupported "non-integral division; Groovy decimals are not modelled"))
         | "/", VInt x, VInt y -> VInt(x / y)
         | "%", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
         | "%", VInt x, VInt y -> VInt(x % y)
@@ -191,6 +282,12 @@ module Interpreter =
         | "..", VInt x, VInt y when y - x <= int64 st.Budget.MaxLoopIterations ->
             VList [ for i in x..y -> VInt i ]
         | "..", VInt _, VInt _ -> raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+        | _ when st.StrictVars ->
+            // An operator on operand types this interpreter does not model. Groovy
+            // THROWS for `1 - 'x'`; inventing null instead ran `deploy null` on a
+            // green build — the same silent-wrong-command shape as the erased name
+            // and the unmodelled method. Refuse by name.
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for these operand types"))
         | _ -> VNull
 
     and private evalCall (st: State) (env: Env) (target: CallTarget) (args: Arg list) (trailing: Closure option) : Value =
@@ -199,23 +296,56 @@ module Interpreter =
         if st.Depth >= st.Budget.MaxCallDepth then
             raise (Stop(BudgetExhausted $"call depth exceeded {st.Budget.MaxCallDepth}"))
 
-        let positional =
-            args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None)
+        // LAZY: a safe call on a null receiver short-circuits the WHOLE call, its
+        // arguments included — `a?.m(sideEffect())` runs nothing when a is null.
+        let positionalLazy =
+            lazy (args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None))
 
-        let named =
-            args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None)
+        let namedLazy =
+            lazy (args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None))
 
         match target with
+        | SafeMethodCall(recv, name) ->
+            // The whole call short-circuits: `env.OPTIONAL?.trim()` is null when the
+            // receiver is, with the method never dispatched — not a property read
+            // followed by a rejected `call`. Groovy's order: the RECEIVER evaluates
+            // first (its side effects are performed and survive a later denial),
+            // THEN the sandbox rules on the method — before the null test, so `?.`
+            // is no doorway past it — and only then does a non-null receiver
+            // dispatch.
+            (match evalExpr st env recv with
+             | VNull -> VNull // short-circuit: arguments never evaluate either
+             | r ->
+                 // Groovy's order on a non-null receiver: ARGUMENTS evaluate (their
+                 // side effects are performed and survive a denial), THEN the
+                 // sandbox rules, then dispatch.
+                 let args = positionalLazy.Value
+                 let named = namedLazy.Value
+
+                 match Sandbox.admitMethod name with
+                 | Error d -> raise (Stop(Denied d))
+                 | Ok _ -> evalBuiltin st env name r args named trailing)
         | MethodCall(recv, name) ->
+            // Same order as the safe-call arm: receiver, then arguments — their side
+            // effects performed and kept — then the sandbox, then dispatch.
+            let r = evalExpr st env recv
+            let args = positionalLazy.Value
+            let named = namedLazy.Value
+
             match Sandbox.admitMethod name with
             | Error d -> raise (Stop(Denied d))
-            | Ok _ -> evalBuiltin st env name (evalExpr st env recv) positional trailing
+            | Ok _ -> evalBuiltin st env name r args named trailing
         | FreeCall name ->
+            // arguments evaluate BEFORE resolution can fail — Groovy performs their
+            // side effects even when the call is then denied
+            positionalLazy.Value |> ignore
+            namedLazy.Value |> ignore
+
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
                 // a step is a request to the host, not something we perform
-                st.Effects <- StepCall(s, positional, named) :: st.Effects
+                st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
 
                 trailing
                 |> Option.iter (fun c ->
@@ -230,7 +360,7 @@ module Interpreter =
                     st.Depth <- st.Depth + 1
 
                     let callEnv =
-                        List.zip (List.truncate positional.Length ps) (List.truncate ps.Length positional)
+                        List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
 
                     let result =
@@ -242,9 +372,26 @@ module Interpreter =
 
                     st.Depth <- st.Depth - 1
                     result
-                | None -> evalBuiltin st env b VNull positional trailing
+                | None -> evalBuiltin st env b VNull positionalLazy.Value namedLazy.Value trailing
 
-    and private evalBuiltin (st: State) (env: Env) (name: string) (recv: Value) (args: Value list) (trailing: Closure option) : Value =
+    and private evalBuiltin
+        (st: State)
+        (env: Env)
+        (name: string)
+        (recv: Value)
+        (args: Value list)
+        (namedArgs: (string * Value) list)
+        (trailing: Closure option)
+        : Value =
+        // NAMED arguments count too: Groovy folds them into a Map argument, so
+        // `'abc'.length(foo: 1)` is `String.length(Map)` — no such signature, throw.
+        if
+            st.StrictVars
+            && (Set.contains name zeroArgBuiltins || Set.contains name closureBuiltins)
+            && not (List.isEmpty args && List.isEmpty namedArgs)
+        then
+            raise (Stop(Unsupported $"method '{name}' does not accept {List.length args + List.length namedArgs} argument(s)"))
+
         let applyClosure (c: Closure) (closureEnv: Env) (item: Value) =
             st.Depth <- st.Depth + 1
 
@@ -292,6 +439,10 @@ module Interpreter =
         | "toInteger", VStr s, _ ->
             match System.Int64.TryParse s with
             | true, i -> VInt i
+            | _ when st.StrictVars ->
+                // Groovy throws NumberFormatException here — a failed conversion is
+                // a FAULT, not the value null.
+                raise (Stop(Thrown(VStr $"NumberFormatException: For input string: \"{s}\"")))
             | _ -> VNull
         | "trim", VStr s, _ -> VStr(s.Trim())
         | "toUpperCase", VStr s, _ -> VStr(s.ToUpperInvariant())
@@ -340,6 +491,14 @@ module Interpreter =
             match trailing with
             | Some c -> VBool(xs |> List.forall (fun x -> Value.isTruthy (applyClosure c env x)))
             | None -> VBool true
+        | _ when st.StrictVars ->
+            // Fail CLOSED on a method this interpreter does not model. Groovy would
+            // evaluate `${env.TARGET.substring(3)}`; stringifying the old wildcard's
+            // null instead ran `deploy null` with the build green — the same
+            // silently-wrong-command shape as the erased unknown name. The bounded
+            // vocabulary is a MODELLING limit, so the honest outcome is a refusal
+            // that names the method, not an invented value.
+            raise (Stop(Unsupported $"method '{name}' is not modelled by the bounded interpreter"))
         | _ -> VNull
 
     and private execStmt (st: State) (env: Env) (s: Stmt) : Env =
@@ -367,7 +526,20 @@ module Interpreter =
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
-            Env.withVar n value env
+
+            if Map.containsKey n env.Vars then
+                // a LOCAL (def, parameter, loop/catch variable): lexical update,
+                // the shared binding never sees it
+                Env.withVar n value env
+            else
+                // the script BINDING: created on first assignment (the advisory
+                // case), mutated in place — immediately visible everywhere,
+                // including after this closure returns and after a later fault
+                if not (Map.containsKey n st.Binding) then
+                    st.NewBindings <- (n, value) :: st.NewBindings
+
+                st.Binding <- Map.add n value st.Binding
+                env
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse
@@ -437,19 +609,53 @@ module Interpreter =
         | SContinue -> raise ContinueSignal
         | SThrow e -> raise (Stop(Thrown(evalExpr st env e)))
         | STry(body, catch, fin) ->
+            // MissingPropertyException is CATCHABLE — `try { MISSING } catch (e)`
+            // renders the fallback on Jenkins — and `finally` runs whether or not
+            // the fault is caught, Groovy's contract.
+            // the body executes statement by statement so a fault hands the CATCH
+            // the environment at the throw point — `x = 'after'; MISSING` must show
+            // the handler 'after', not the pre-try snapshot
+            let mutable cur = env
+
+            let handle v =
+                match catch with
+                | Some(_, binding, handler) ->
+                    let e2 =
+                        match binding with
+                        | Some n -> Env.withVar n v cur
+                        | None -> cur
+
+                    execBlock st e2 handler
+                | None -> cur
+
+            // Which declared types can intercept a MissingPropertyException. Its
+            // Groovy ancestry: MissingPropertyException < GroovyRuntimeException <
+            // RuntimeException < Exception < Throwable. `catch (name)` with no type
+            // defaults to Exception — compatible. `catch (ArithmeticException e)`
+            // is NOT, and must let the fault escape.
+            let catchesMissingProperty =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "GroovyRuntimeException"; "MissingPropertyException" ]
+                    |> List.contains t
+                | None -> false
+
             let afterTry =
                 try
-                    execBlock st env body
-                with Stop(Thrown v) ->
-                    match catch with
-                    | Some(binding, handler) ->
-                        let e2 =
-                            match binding with
-                            | Some n -> Env.withVar n v env
-                            | None -> env
+                    try
+                        for stmt in body do
+                            cur <- execStmt st cur stmt
 
-                        execBlock st e2 handler
-                    | None -> env
+                        cur
+                    with
+                    | Stop(Thrown v) -> handle v
+                    | Stop(UnknownProperty n) when catchesMissingProperty ->
+                        handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
+                with e ->
+                    // uncaught: finally still runs, then the fault continues out
+                    execBlock st cur fin |> ignore
+                    raise e
 
             execBlock st afterTry fin
         | SFunc(n, ps, body) -> Env.withFunc n ps body env
@@ -460,7 +666,7 @@ module Interpreter =
     /// Evaluate a script. `registeredSteps` is the host's step vocabulary;
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
-    let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+    let private runWith (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
         let st =
@@ -470,7 +676,10 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Defined = defined
-              LastValue = None }
+              LastValue = None
+              StrictVars = strictVars
+              NewBindings = []
+              Binding = env.Vars }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -480,27 +689,45 @@ module Interpreter =
                     match s with
                     | SFunc(n, ps, b) -> Env.withFunc n ps b acc
                     | _ -> acc)
-                env
+                { env with Vars = Map.empty }
 
         try
             let final = execBlock st hoisted script
 
             { Effects = List.rev st.Effects
               Fault = None
-              Env = final
+              // the BINDING is the outcome's variable view — locals died with
+              // their scopes, exactly as Groovy's did
+              Env = { final with Vars = st.Binding }
+              NewBindings = List.rev st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f
-              Env = hoisted
+              // NOT the pristine environment: assignments made BEFORE the fault were
+              // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
+              // still reads x. The mutable binding survives the raise by nature.
+              Env = { hoisted with Vars = st.Binding }
+              NewBindings = List.rev st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = hoisted
+              Env = { hoisted with Vars = st.Binding }
+              NewBindings = List.rev st.NewBindings
               Returned = Some v }
+
+    /// Groovy's late-binding default: an unknown name reads as null.
+    let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith false budget registeredSteps env script
+
+    /// Groovy's property-lookup contract for GStrings in step arguments: an unknown
+    /// name faults with [UnknownProperty]. Enforced at READ time because laziness
+    /// makes the read set undecidable statically — `${c ? A : B}` reads one arm.
+    let runStrictVars (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith true budget registeredSteps env script
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script

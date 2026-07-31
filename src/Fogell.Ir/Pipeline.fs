@@ -45,6 +45,11 @@ type Step =
       /// therefore a Groovy EXPRESSION rather than text — `input message: env.TARGET`.
       /// Jenkins evaluates it; emitting the source text shows `env.TARGET` to the user.
       ExpressionArgs: Set<string>
+      /// Argument keys in SOURCE order — named names and `#i` positionals mixed as
+      /// written. Rendering is evaluation (bindings, side effects), and Groovy
+      /// evaluates call arguments left to right; the partitioned lists above cannot
+      /// reconstruct `step label: "...", "..."` faithfully.
+      ArgumentOrder: string list
       /// Indices of POSITIONAL arguments that were single-quoted. `input 'Deploy ${X}?'`
       /// is literal on Jenkins, and the positional form is as common as the named one.
       LiteralPositionalArgs: Set<int>

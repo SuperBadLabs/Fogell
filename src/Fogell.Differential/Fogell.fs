@@ -131,8 +131,60 @@ module FogellSide =
             /// the reference engine does not provide is not a favour, it is a
             /// divergence.
             /// Receipt: `parallel-always-failfast`.
+            /// Every secret bound anywhere in this run. Masking lives HERE, at the one
+            /// place output is appended, rather than at each call site.
+            ///
+            /// The call-site version was reachable: once named arguments began rendering,
+            /// `archiveArtifacts artifacts: "${TOKEN}/missing"` put the credential in the
+            /// pattern, and `No artifacts found that match the file pattern "..."` came
+            /// back as a Diagnostic that runStepInner emitted verbatim. A secret in the
+            /// build log, produced by a step that never touches a shell — so masking the
+            /// shell and echo paths could not have caught it.
+            ///
+            /// Masking is run-scoped, not block-scoped: a value is masked even after its
+            /// `withCredentials` ends. That is deliberately broader than the binding, on
+            /// the grounds that a leaked secret does not become safe when a block closes.
+            ///
+            /// Each binding carries the output index it was registered AT. The final leak
+            /// check may only judge lines emitted from that point on: a build that
+            /// happens to print the credential's value BEFORE the binding exists has not
+            /// leaked anything — the text merely coincides — and flagging it would
+            /// refuse a valid trace. Masking needs no such index because it naturally
+            /// starts at registration; the retroactive scan is what had to be told.
+            let boundSecrets = ResizeArray<SecretBinding * int>()
+
+            // Groovy's script Binding for THIS build: a placeholder's assignment
+            // outlives its step (receipt `gstring-binding-across-steps`). One per run
+            // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
+            let scriptBinding = GString.ScriptBinding()
+
+
+            /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
+            /// with NO `[branchName]` prefix — that belongs to the scripted
+            /// `parallel` map form. Fogell emitted one until the receipt said
+            /// otherwise, which diverged every parallel case. Inventing attribution
+            /// the reference engine does not provide is not a favour, it is a
+            /// divergence.
+            /// Receipt: `parallel-always-failfast`.
             let emit (line: string) =
-                lock outputLock (fun () -> output.Add line)
+                lock outputLock (fun () ->
+                    let safe =
+                        if boundSecrets.Count = 0 then
+                            line
+                        else
+                            Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
+
+                    output.Add safe)
+
+            // Jenkins' Binding-field advisory, emitted in ITS words so the two logs
+            // COMPARE — a suppression keyed on this wording alone was the same
+            // unconditional-shape-match defect as the retired secret-warning dialect:
+            // a build printing the sentence was silently dropped from comparison.
+            let adviseNewBinding (name: string, value: Value) =
+                emit (
+                    $"Did you forget the `def` keyword? WorkflowScript seems to be setting a field named {name} "
+                    + $"(to a value of type {GString.javaTypeName value}) which could lead to memory leaks or other issues."
+                )
             let workspace = Path.Combine(workspaceRoot, jobName)
             // artifacts live OUTSIDE the workspace so archiving cannot perturb
             // the workspace hash the differential compares
@@ -168,142 +220,10 @@ module FogellSide =
             /// Resolution is a left-to-right fold, so a declaration sees the process
             /// environment plus every earlier declaration, and a later scope wins.
             /// An unknown name expands to empty, matching Groovy's null-to-string.
-            let interpolate (known: Map<string, string>) (value: string) =
-                // REVIEW FIXES (Codex, PR #14 rounds 7 and 8):
-                //  * `"\$BUILD_NUMBER"` is the LITERAL text `$BUILD_NUMBER` in Groovy.
-                //    The parser keeps the backslash so this pass can honour it and then
-                //    remove it, instead of expanding what Jenkins leaves alone.
-                //  * `"$env.BUILD_NUMBER"` and `"${env.BUILD_NUMBER}"` are the ordinary
-                //    Jenkins spellings. The old pattern matched only a bare identifier,
-                //    so `$env` resolved to nothing and `.BUILD_NUMBER` was left behind,
-                //    while the braced dotted form was not matched at all.
-                let resolveName (name: string) =
-                    // `env.X` is the same variable as a bare `X`. The bracketed
-                    // `env['X']` form is deliberately NOT handled: Jenkins' sandbox
-                    // rejects it outright (measured — see the pattern below).
-                    let bare =
-                        if name.StartsWith "env." then name.Substring 4
-                        else name
-
-                    match Map.tryFind bare known with
-                    | Some v -> v
-                    | None ->
-                        match Environment.GetEnvironmentVariable bare with
-                        | null -> ""
-                        | v -> v
-
-                // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
-                // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
-                // Jenkins. The bounded interpreter already in this project evaluates it,
-                // with an EMPTY step vocabulary so a prompt cannot invoke build steps.
-                let evalExpression (source: string) =
-                    match Fogell.Groovy.Parser.Parser.parse source with
-                    | Result.Error _ -> None
-                    | Result.Ok script ->
-                        let asValues = known |> Map.map (fun _ v -> VStr v)
-                        let bindings = asValues |> Map.add "env" (VMap asValues)
-
-                        let outcome =
-                            Interpreter.run Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
-
-                        match outcome.Fault, outcome.Returned with
-                        | None, Some v -> Some(Value.toDisplay v)
-                        | _ -> None
-
-                // A GString placeholder is scanned, not regex-matched. `[^}]*` stops at
-                // the first `}` even when it belongs to a nested expression or a quoted
-                // string, so `"Result: ${'}'}"` truncated to `'` and was emitted verbatim.
-                // Groovy's boundary is the BALANCED brace, with quotes respected.
-                /// Does a `/` at this position OPEN a slashy string, or divide?
-                /// Groovy decides by what precedes it: a value (identifier, digit, closing
-                /// bracket) means division; anything else opens a literal.
-                let slashOpensLiteral (text: string) (idx: int) =
-                    let mutable j = idx - 1
-
-                    while j >= 0 && (text[j] = ' ' || text[j] = '\t') do
-                        j <- j - 1
-
-                    if j < 0 then
-                        true
-                    else
-                        let p = text[j]
-                        not (Char.IsLetterOrDigit p || p = '_' || p = ')' || p = ']' || p = '}')
-
-                let findClose (text: string) (openIdx: int) =
-                    let mutable i = openIdx + 2 // past "${"
-                    let mutable depth = 1
-                    let mutable quote = '\000'
-                    let mutable closeAt = -1
-
-                    while closeAt < 0 && i < text.Length do
-                        let c = text[i]
-
-                        if quote <> '\000' then
-                            if c = '\\' then i <- i + 1
-                            elif c = quote then quote <- '\000'
-                        elif c = '\'' || c = '"' then
-                            quote <- c
-                        elif c = '/' && slashOpensLiteral text i then
-                            // `/` opens a SLASHY string — `${/}/}` holds a literal whose
-                            // `}` is content — but it is also DIVISION. Groovy disambiguates
-                            // by what precedes it: after a value (identifier, number,
-                            // closing bracket) a slash is an operator, otherwise it opens a
-                            // literal. Treating every slash as a quote broke `${a / b}`.
-                            quote <- c
-                        elif c = '{' then
-                            depth <- depth + 1
-                        elif c = '}' then
-                            depth <- depth - 1
-                            if depth = 0 then closeAt <- i
-
-                        i <- i + 1
-
-                    closeAt
-
-                let expanded =
-                    let sb = Text.StringBuilder()
-                    let mutable i = 0
-
-                    while i < value.Length do
-                        if i + 1 < value.Length && value[i] = '$' && value[i + 1] = '{' then
-                            match findClose value i with
-                            | -1 ->
-                                sb.Append value[i] |> ignore
-                                i <- i + 1
-                            | closeAt ->
-                                let inner = value.Substring(i + 2, closeAt - i - 2)
-
-                                let rendered =
-                                    if Text.RegularExpressions.Regex.IsMatch(inner, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$") then
-                                        resolveName inner
-                                    else
-                                        match evalExpression inner with
-                                        | Some v -> v
-                                        | None -> value.Substring(i, closeAt - i + 1)
-
-                                sb.Append rendered |> ignore
-                                i <- closeAt + 1
-                        elif value[i] = '$' then
-                            // Bare `$name` stays identifier-only, as Groovy does.
-                            let m =
-                                Text.RegularExpressions.Regex.Match(
-                                    value.Substring i, @"^\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
-
-                            if m.Success then
-                                sb.Append(resolveName m.Groups[1].Value) |> ignore
-                                i <- i + m.Length
-                            else
-                                sb.Append value[i] |> ignore
-                                i <- i + 1
-                        else
-                            sb.Append value[i] |> ignore
-                            i <- i + 1
-
-                    sb.ToString()
-
-                // Restore escaped dollars as literal text, after expansion so they
-                // cannot themselves be expanded.
-                expanded.Replace("\u0000", "$")
+            // FG-100. The string model lives in `GString`, not here. It was a closure
+            // inside `run`, which made it unreachable from tests and invited every consumer
+            // to re-derive the rules — 52 findings' worth.
+            let interpolate (known: Map<string, string>) (value: string) = GString.interpolate known value
 
             let envForWith (overlay: (string * string) list) (stage: Stage) =
                 // REVIEW FIX (Codex, PR #14 round 5): the previous version UNIONED the
@@ -418,58 +338,130 @@ module FogellSide =
             let remainingMs (deadline: int64 option) =
                 deadline |> Option.map (fun d -> max 1L (d - runClock.ElapsedMilliseconds))
 
+            /// ONE render pass for a step's arguments — source order, side effects
+            /// once — plus the insecure-interpolation warning, computed HERE so every
+            /// consumer gets it: ordinary steps, wrapper branches, `dir`, `input`.
+            /// Rendering only in runStepInner left wrappers expanding secrets with no
+            /// warning where Jenkins warns on the step invocation.
+            ///
+            /// The warning wants a REAL GString: Interpolating kind AND a live `$` in
+            /// the source. Every double-quoted argument is Interpolating by kind, but
+            /// `echo "abc"` with no placeholder is an ordinary constant — warning on
+            /// a coincidental secret value there flags interpolation that never
+            /// happened. (An escaped dollar is a sentinel at this point, so any `$`
+            /// in the source is live.)
+            /// The insecure-interpolation warning for a set of GString-rendered texts,
+            /// factored out so BOTH render paths — step arguments and withEnv's
+            /// `NAME=value` entries — say what Jenkins says.
+            let warnSecretInterpolation (ctx: BranchCtx) (stepName: string) (texts: string list) =
+                let leaked =
+                    ctx.Secrets
+                    |> List.filter (fun b ->
+                        // a file() credential exports the PATH, not the content
+                        let exported = if b.ValueVariableCarriesPath then b.FilePath else b.Value
+                        exported <> "" && texts |> List.exists (fun t -> t.Contains exported))
+                    |> List.map (fun b -> b.ValueVariable)
+                    |> List.distinct
+
+                if not (List.isEmpty leaked) then
+                    emit $"Warning: A secret was passed to \"{stepName}\" using Groovy String interpolation, which is insecure."
+                    emit $"""Affected argument(s) used the following variable(s): [{String.concat ", " leaked}]"""
+
+            let renderStepArgs (ctx: BranchCtx) (stage: Stage) (step: Step) : Step =
+                let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+
+                // SOURCE order, exactly as recorded: `step label: "...", "..."` must
+                // evaluate label first because Groovy does, and evaluation mutates
+                // the shared Binding. The partitioned lists cannot say who came
+                // first; ArgumentOrder can.
+                let order =
+                    if List.isEmpty step.ArgumentOrder then
+                        (step.Positional |> List.mapi (fun i _ -> $"#{i}")) @ (step.Named |> List.map fst)
+                    else
+                        step.ArgumentOrder
+
+                let renderedByKey =
+                    order
+                    |> List.map (fun key ->
+                        let raw =
+                            if key.StartsWith "#" then
+                                step.Positional |> List.tryItem (int (key.Substring 1)) |> Option.defaultValue ""
+                            else
+                                step.Named
+                                |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+                                |> Option.defaultValue ""
+
+                        key, raw, GString.renderInto scriptBinding adviseNewBinding env step key raw)
+
+                let renderedPositional =
+                    renderedByKey |> List.filter (fun (k, _, _) -> k.StartsWith "#")
+
+                let renderedNamed =
+                    renderedByKey |> List.filter (fun (k, _, _) -> not (k.StartsWith "#"))
+
+                let interpolatedTexts =
+                    renderedPositional @ renderedNamed
+                    |> List.filter (fun (k, raw, _) ->
+                        GString.kindOf step k = Interpolating && (GString.sourceOf step k raw).Contains "$")
+                    |> List.map (fun (_, _, r) -> r)
+
+                warnSecretInterpolation ctx step.Name interpolatedTexts
+
+                { step with
+                    Positional = renderedPositional |> List.map (fun (_, _, r) -> r)
+                    Named = renderedNamed |> List.map (fun (k, _, r) -> k, r) }
+
             let runStepInner (ctx: BranchCtx) (stage: Stage) (cwd: string) (step: Step) (deadline: int64 option) =
-                let rawScript =
+                // The argument and the KEY it arrived under travel together. `render`
+                // needs the key to ask what quoting the source used, and deriving the
+                // two separately is what let `sh` drift onto the wrong rule below.
+                let scriptKey =
                     match step.Positional with
-                    | s :: _ -> Some s
+                    | _ :: _ -> "#0"
                     | [] ->
                         step.Named
-                        |> List.tryPick (fun (k, v) -> if k = "script" || k = "message" then Some v else None)
+                        |> List.tryPick (fun (k, _) -> if k = "script" || k = "message" then Some k else None)
+                        |> Option.defaultValue "#0"
 
-                // FG-044b. `echo` renders text ITSELF, so — like `input` — it must apply
-                // Groovy's quoting: a single-quoted argument stays literal, a GString
-                // interpolates, an unquoted one is an expression. A shell step must NOT be
-                // pre-expanded, because the shell does that itself and doing it twice
-                // would expand what the author escaped for the shell.
+                // FG-100. Groovy expands a GString BEFORE the step is invoked — `sh`
+                // included. This code previously exempted shell steps, reasoning that
+                // the shell expands its own arguments and doing it twice would undo
+                // what an author escaped. That is wrong about WHO expands WHAT, and it
+                // was never measured.
+                //
+                // MEASURED (receipt `sh-gstring-interpolation`, Jenkins 2.568.1), with
+                // `TARGET = 'prod'`. Every row is reachable by only one model:
+                //   sh "echo double:${env.TARGET}"              -> double:prod
+                //   sh "echo upper:${env.TARGET.toUpperCase()}" -> upper:PROD
+                //   sh 'echo literal:${NOT_IN_ENV}.'            -> literal:.
+                //   sh "echo escaped:\${NOT_IN_ENV}."           -> escaped:.
+                // Groovy expands rows 1-2 — the shell can neither name `env.TARGET` nor
+                // call a method — and the shell expands rows 3-4 to empty. Under the
+                // old exemption row 1 reached /bin/sh raw and the build FAILED with
+                // "Bad substitution" where Jenkins printed `double:prod`.
+                //
+                // Escaping is not lost: a Literal argument renders to itself, and an
+                // escaped dollar emits a bare `$` for the shell — rows 3 and 4.
+                //
+                // Arguments render in SOURCE order — positional first, then the named
+                // list as written — because rendering is now EVALUATION and Groovy
+                // evaluates call arguments left to right. Rendering the script first
+                // regardless of position broke
+                // `sh label: "${x = 'ok'; x}", script: "echo $x"`: Jenkins binds x
+                // from `label` before `script` reads it; Fogell raised
+                // MissingProperty. The script value derives from the one rendering
+                // pass rather than a second call — a placeholder's side effects run
+                // once (see the increment test).
+                // ONE render pass — source order, side effects once, warning included —
+                // shared with the wrapper branches through renderStepArgs.
+                let rendered = renderStepArgs ctx stage step
+
                 let script =
-                    if step.Name <> "echo" then
-                        rawScript
-                    else
-                        rawScript
-                        |> Option.map (fun raw ->
-                            let key =
-                                if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
+                    match rendered.Positional with
+                    | r :: _ -> Some r
+                    | [] -> rendered.Named |> List.tryPick (fun (k, v) -> if k = scriptKey then Some v else None)
 
-                            let isLiteral =
-                                if key = "message" then step.LiteralNamedArgs.Contains "message"
-                                else step.LiteralPositionalArgs.Contains 0
-
-                            let env = envForWith ctx.EnvOverlay stage |> Map.ofList
-
-                            if isLiteral then raw
-                            elif step.ExpressionArgs.Contains key then interpolate env ("${" + raw + "}")
-                            else
-                                let source =
-                                    step.InterpolationSource
-                                    |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
-                                    |> Option.defaultValue raw
-
-                                interpolate env source)
-
-                // Jenkins warns when a SECRET reaches a step argument through GString
-                // interpolation, and keeps the advice even though it then masks the value.
-                // Being quieter than Jenkins about a security matter is not an option.
-                if step.Name = "echo" then
-                    match script, rawScript with
-                    | Some rendered, Some raw when rendered <> raw ->
-                        let leaked =
-                            ctx.Secrets
-                            |> List.filter (fun b -> b.Value <> "" && rendered.Contains b.Value)
-                            |> List.map (fun b -> b.ValueVariable)
-
-                        if not (List.isEmpty leaked) then
-                            emit $"""WARNING: a secret was interpolated into `echo` via a Groovy string: {String.concat ", " leaked}"""
-                    | _ -> ()
+                let renderedNamed = rendered.Named
 
                 let result =
                     Executor.runStep
@@ -490,7 +482,7 @@ module FogellSide =
                           DeadlineExpired =
                             deadline |> Option.map (fun d -> fun () -> runClock.ElapsedMilliseconds >= d)
                           Secrets = ctx.Secrets
-                          Named = step.Named
+                          Named = renderedNamed
                           Artifacts = Some(ArtifactStore.under artifactRoot)
                           BuildKey = jobName }
 
@@ -1013,7 +1005,29 @@ module FogellSide =
             /// which does not know them — so `retry(2) { timeout(10) { sh '…' } }`
             /// failed as an unsupported step every time. Every body now re-enters
             /// this dispatcher, so wrappers compose to any depth.
+            /// Guard around every step. A GString referencing a name bound NOWHERE is a
+            /// failed Groovy property lookup, and Jenkins FAILS the build on it —
+            /// MEASURED (receipt `gstring-unresolved-property`):
+            ///   groovy.lang.MissingPropertyException: No such property: X
+            ///   for class: groovy.lang.Binding
+            /// The strict renderer raises; this converts the raise into that failure.
+            /// Erasing the name to "" instead would RUN a command the author never
+            /// wrote (`deploy ${TARGET}` → `deploy `), with the build green.
             and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
+                try
+                    runStepDispatchBody ctx cwd stage step deadline
+                with
+                | GString.MissingProperty name ->
+                    emit $"ERROR: No such property: {name} for class: groovy.lang.Binding"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | GString.UnsupportedExpression what ->
+                    // A modelling limit, refused by name — never an invented value.
+                    emit $"ERROR: cannot evaluate expression: {what}"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+
+            and runStepDispatchBody (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: int64 option) =
                 // REVIEW FIX (Codex, PR #13 round 4): a deadline only ever became a
                 // `TimeoutMs` for the shell runner. `echo`, `junit`,
                 // `archiveArtifacts` and wrapper dispatch enforce nothing, so a
@@ -1035,7 +1049,7 @@ module FogellSide =
                 // JB-FAIL-001/002: timeout and abort share one interrupt path,
                 // and the interrupt is a trappable SIGTERM with a grace window.
                 | "timeout", _ when not (List.isEmpty step.Block) ->
-                    match timeoutMs step with
+                    match timeoutMs (renderStepArgs ctx stage step) with
                     | Error why ->
                         emit $"ERROR: {why}; refusing to guess a deadline"
                         ctx.Failed.Value <- true
@@ -1058,7 +1072,7 @@ module FogellSide =
                 // the first, and there is no backoff. `retry(3)` around a step
                 // that always fails runs it exactly three times.
                 | "retry", _ when not (List.isEmpty step.Block) ->
-                    let attempts = max 1 (retryCount step)
+                    let attempts = max 1 (retryCount (renderStepArgs ctx stage step))
                     let mutable attempt = 1
                     let mutable settled = false
 
@@ -1135,9 +1149,15 @@ module FogellSide =
                                     let value =
                                         if interpolates then
                                             raw.Replace("\\$", "\u0000")
-                                            |> interpolate (envForWith ctx.EnvOverlay stage |> Map.ofList)
+                                            |> GString.interpolateInto
+                                                scriptBinding
+                                                adviseNewBinding
+                                                (envForWith ctx.EnvOverlay stage |> Map.ofList)
                                         else
                                             raw
+
+                                    if interpolates && raw.Contains "$" then
+                                        warnSecretInterpolation ctx "withEnv" [ value ]
 
                                     Some(name, value)
                                 | _ -> None))
@@ -1339,6 +1359,14 @@ module FogellSide =
                         // One line naming every bound variable, matching Jenkins' shape.
                         // The wording is not compared (see the contract); the line exists
                         // so a reader of OUR log is told what is being masked.
+                        // Register BEFORE the narration line, so nothing this block can
+                        // print is emitted while the masker is still unaware of it. The
+                        // recorded index scopes the LEAK CHECK, not the masking: only
+                        // output from here on can be a leak of these values.
+                        lock outputLock (fun () ->
+                            for b in bindings do
+                                boundSecrets.Add(b, output.Count))
+
                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
@@ -1409,42 +1437,37 @@ module FogellSide =
                     // `message` may arrive positionally (`input 'Deploy ${X}?'`) or named,
                     // and Jenkins treats a single-quoted one as LITERAL either way. The
                     // named-only check interpolated every positional prompt.
-                    let messageIsLiteral =
-                        if step.Named |> List.exists (fun (k, _) -> k = "message") then
-                            step.LiteralNamedArgs.Contains "message"
-                        else
-                            step.LiteralPositionalArgs.Contains 0
-
-                    // Interpolating consumers read the ESCAPE-PRESERVING form, so
-                    // `input message: "Deploy \$TARGET?"` shows a literal $TARGET as
-                    // Jenkins does. `Named` keeps the plain value because a sentinel must
-                    // never reach a step that forwards text verbatim.
-                    let sourceOf (argName: string) (fallback: string) =
-                        step.InterpolationSource
-                        |> List.tryPick (fun (k, v) -> if k = argName then Some v else None)
-                        |> Option.defaultValue fallback
-
-                    // A positional prompt's provenance lives under `#0`.
-                    let messageKey =
+                    // FG-100: the model decides the kind; this step no longer does.
+                    let messageKeyName =
                         if step.Named |> List.exists (fun (k, _) -> k = "message") then "message" else "#0"
 
                     // Three kinds, not two. A single-quoted argument is literal text; a
                     // double-quoted one is a GString to interpolate; an UNQUOTED one is a
                     // Groovy EXPRESSION — `input message: env.TARGET` — which Jenkins
                     // evaluates and which was being displayed as its own source text.
-                    let render (isLiteral: bool) (argName: string) (raw: string) =
-                        let env = envForWith ctx.EnvOverlay stage |> Map.ofList
+                    //
+                    // Rendered in SOURCE order, exactly as the generic step path: with
+                    // rendering being evaluation, `input ok: "${x = 'Ship'; x}",
+                    // message: "$x"` binds x from `ok` before `message` reads it, and
+                    // rendering message-then-ok raised MissingProperty on it. One sweep
+                    // in the recorded order; the prompt and label select from it.
+                    let rendered = renderStepArgs ctx stage step
 
-                        if isLiteral then raw
-                        elif step.ExpressionArgs.Contains argName then
-                            // Wrapped so the whole argument is evaluated, not scanned for
-                            // placeholders it does not contain.
-                            interpolate env ("${" + raw + "}")
-                        else
-                            interpolate env (sourceOf argName raw)
+                    let renderedMessage =
+                        match messageKeyName with
+                        | "#0" -> rendered.Positional |> List.tryHead |> Option.defaultValue message
+                        | key ->
+                            rendered.Named
+                            |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+                            |> Option.defaultValue message
 
-                    emit (render messageIsLiteral messageKey message)
-                    emit $"""{render (step.LiteralNamedArgs.Contains "ok") "ok" okLabel} or Abort"""
+                    let renderedOk =
+                        rendered.Named
+                        |> List.tryPick (fun (k, v) -> if k = "ok" then Some v else None)
+                        |> Option.defaultValue okLabel
+
+                    emit renderedMessage
+                    emit $"""{renderedOk} or Abort"""
 
                     match deadline with
                     | None ->
@@ -1486,6 +1509,7 @@ module FogellSide =
                 // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
                 // would pass a naive test and fail the one that matters.
                 | "stash", _ ->
+                    let step = renderStepArgs ctx stage step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1541,6 +1565,7 @@ module FogellSide =
                             emit $"Stashed {saved.Length} file(s)"
 
                 | "unstash", _ ->
+                    let step = renderStepArgs ctx stage step
                     let store = StashStore.under (Path.Combine(artifactRoot, "_stash"))
 
                     let name =
@@ -1580,6 +1605,8 @@ module FogellSide =
 
                 | "dir", (sub :: _) ->
                     // `dir('x') { … }` — nested cwd, auto-created
+                    let sub = (renderStepArgs ctx stage step).Positional |> List.head
+
                     match Workspace.resolveUnder cwd sub with
                     | Result.Error e ->
                         emit $"dir refused: {e.Describe}"
@@ -1757,6 +1784,34 @@ module FogellSide =
                 runPostWithDeadline { root with Failed = ref false } workspace synthetic status None pipelineDeadline
 
             let workspaceHash, files = Trace.hashWorkspace workspace
+
+            // Fail CLOSED on a leaked secret, checked over the RAW output — before
+            // normalisation, which strips exactly the diagnostic lines a secret is
+            // most likely to ride out on. Verified by disabling masking and re-running
+            // `publish-secret-in-pattern`: the receipt still said PROVEN, because the
+            // leaking `ERROR:` line never reaches the comparison. A receipt that stays
+            // green while the log leaks is worse than no receipt, so the run itself
+            // refuses to produce a trace instead.
+            let leakedVars =
+                lock outputLock (fun () ->
+                    output
+                    |> Seq.mapi (fun i l ->
+                        // Only bindings that existed when the line was emitted: text
+                        // printed BEFORE a value was bound merely coincides with it.
+                        let active =
+                            boundSecrets |> Seq.filter (fun (_, from) -> from <= i) |> Seq.map fst |> List.ofSeq
+
+                        if List.isEmpty active then [] else Secrets.detectLeaks active l)
+                    |> Seq.collect id
+                    |> Seq.map (fun leak -> leak.Variable)
+                    |> Seq.distinct
+                    |> List.ofSeq)
+
+            if not (List.isEmpty leakedVars) then
+                Result.Error(
+                    $"""SECRET LEAKED to build output (variable(s): {String.concat ", " leakedVars}) — refusing to emit a trace"""
+                )
+            else
 
             Result.Ok
                 { Result = BuildStatus.toWireString status

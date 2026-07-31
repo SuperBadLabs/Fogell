@@ -277,15 +277,17 @@ module Trace =
         let looksLikeExceptionHead (l: string) =
             Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
 
-        // Jenkins' secret-interpolation warning is a THREE-LINE sequence; Fogell emits a
-        // one-line equivalent. Every line of it is text a build could print on its own, so
-        // the head counts as narration only when the line that must follow it does.
+        // The secret-interpolation warning is a SEQUENCE — Jenkins emits head+body+tail,
+        // Fogell emits the same head+body — and every line of it is text a build could
+        // print on its own, so the head counts as narration only when the line that must
+        // follow it does. Fogell once had a one-line wording of its own, recognised here
+        // by shape ALONE; a build printing that shape was dropped from the comparison
+        // unconditionally, so a case whose evidence was that line could go falsely
+        // PROVEN. Both engines now speak the same sequence and sit under this one
+        // contextual gate; there is no unconditional match left.
         let isWarnHead (l: string) = l.StartsWith "Warning: A secret was passed to"
         let isWarnBody (l: string) = l.StartsWith "Affected argument(s) used the following variable(s)"
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
-
-        let isFogellWarn (l: string) =
-            l.StartsWith "WARNING: a secret was interpolated into `echo` via a Groovy string:"
 
         let mutable interruptJustNarrated = false
         let mutable inStackTrace = false
@@ -305,7 +307,6 @@ module Trace =
                 || (looksLikeExceptionHead raw && isFrame next)
                 || (isWarnHead raw && isWarnBody next)
                 || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
-                || isFogellWarn raw
 
             inSecretWarning <-
                 (isWarnHead raw && isWarnBody next)

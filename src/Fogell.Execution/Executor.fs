@@ -297,6 +297,16 @@ module Executor =
                 // a silent empty archive is the worst outcome for a user.
                 { ok Failure with
                     Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
+            elif List.isEmpty published then
+                // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
+                // `allowEmptyArchive: true` PERMITS the empty archive but still says so —
+                // `No artifacts found that match the file pattern "...". Configuration
+                // error?` — and the build runs on. Passing silently would hide a broken
+                // glob from the very person who opted into tolerating it.
+                request.OnLine
+                |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
+
+                { ok Success with Archived = published }
             else
                 { ok Success with Archived = published }
 
