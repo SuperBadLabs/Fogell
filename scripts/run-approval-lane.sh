@@ -21,7 +21,11 @@
 #      instead of inheriting the first build's approval;
 #   E. with NO inbox there is no approver, and an un-timed prompt fails closed
 #      by name instead of waiting forever for a human who cannot answer;
-#   F. neither a half-written answer nor an ambiguous two-line one is an answer.
+#   F. neither a half-written answer nor an ambiguous two-line one is an answer
+#      (by either separator — a bare CR is a line break too);
+#   G. the same physical journal reached through a symlink alias resolves to the
+#      same action id, so an answer published under one spelling is found under
+#      the other instead of the human being asked again.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -224,12 +228,40 @@ printf 'approve alice\nreject bob\n' > "$F/approvals/$FID.decision"
 sleep 3
 grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: an ambiguous two-line answer was accepted"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
 kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on an ambiguous answer"; cat "$F/run.log"; exit 1; }
+# the same ambiguity separated by a bare CR: newline-terminated, one `\n`, and
+# the journal's own sanitiser would have flattened the CR to a space and
+# recorded it as a decision
+printf 'approve alice\rreject bob\n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a CR-separated ambiguous answer was accepted"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a CR-separated answer"; cat "$F/run.log"; exit 1; }
 printf 'approve frank\n' > "$F/approvals/$FID.decision"   # the completed write
 set +e; wait "$PID"; RC=$?; set -e
 [ "$RC" -eq 0 ] || { echo "FAIL: the completed answer was not honoured (rc=$RC)"; cat "$F/run.log"; exit 1; }
 grep -q $'^input-decision\tGate\t1\tapproved\tfrank$' "$F/build.journal" || {
   echo "FAIL: the submitter was not recorded from the completed write"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
 echo "waited through the fragment AND the ambiguous pair, then took the completed answer with its submitter intact"
+
+# ---------------------------------------------------------------- scenario G
+echo "=== G: the same journal through a symlink alias finds the same answer ==="
+G="$LANE/g"; mkdir -p "$G/approvals"
+printf '%s\n' "$JF" > "$G/Jenkinsfile"
+"$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/build.journal" "$G/approvals" > "$G/run1.log" 2>&1 &
+PID=$!
+GID=$(await_pending "$G/approvals") || { echo "FAIL: no prompt published"; cat "$G/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+printf 'approve grace\n' > "$G/approvals/$GID.decision"
+# the human answered the id published for the REAL path; the resume reaches the
+# same physical journal by another name, which every other identity check here
+# already tolerates
+ln -s "$G/build.journal" "$G/alias.journal"
+timeout 120 "$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/alias.journal" "$G/approvals" > "$G/run2.log" 2>&1 || {
+  echo "FAIL: the aliased resume did not complete — the answer was not found"; cat "$G/run2.log"; exit 1; }
+grep -q 'needs-reconciliation' "$G/run2.log" && { echo "FAIL: an answered prompt was sent for reconciliation under an alias"; exit 1; }
+grep -q 'completed: success' "$G/run2.log" || { echo "FAIL: aliased resume not successful"; cat "$G/run2.log"; exit 1; }
+grep -q $'^input-decision\tGate\t1\tapproved\tgrace$' "$G/build.journal" || {
+  echo "FAIL: the answer was not journaled under the alias"; sed 's/^/  | /' "$G/build.journal"; exit 1; }
+echo "the alias resolved to the same action id; nobody was asked twice"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

@@ -200,11 +200,20 @@ let main argv =
         // auto-approved them, and recorded in each journal that a named human had
         // approved a build they never saw. The id must be stable across ATTEMPTS
         // of one build (that is what lets an answer written between attempts be
-        // found) and unique across builds; the journal path is exactly that.
+        // found) and unique across builds; the journal is exactly that.
+        //
+        // RESOLVED, not lexical, for the same reason every other identity here
+        // is: two spellings of one physical journal pass the resume, digest and
+        // workspace checks identically, so an attempt that reached the journal
+        // through a symlink alias would hash to a different id, fail to find the
+        // answer published under the original one, and refuse with
+        // needs-reconciliation — asking a human who had already answered.
+        let journalIdentity = trimSep (resolve journalPath)
+
         let actionId (stage: string) (index: int) =
             use h = Security.Cryptography.SHA256.Create()
 
-            Text.Encoding.UTF8.GetBytes($"{journalPath.Length}:{journalPath}|{stage.Length}:{stage}|{index}")
+            Text.Encoding.UTF8.GetBytes($"{journalIdentity.Length}:{journalIdentity}|{stage.Length}:{stage}|{index}")
             |> h.ComputeHash
             |> Convert.ToHexString
             |> fun x -> x.ToLowerInvariant()
@@ -231,11 +240,17 @@ let main argv =
             //      an unnamed submitter, was journaled, and the file was never
             //      re-read: a scheduling accident silently erasing the only
             //      audit content the record carries.
-            //   2. EXACTLY ONE LINE. With a two-field split and no line check,
-            //      `approve alice\nreject bob\n` — two approvers, or automation
-            //      appending — read as an approval by "alice reject bob". An
-            //      ambiguous file is not an answer; it is two answers, or a
-            //      mistake, and either way nobody said what to do.
+            //   2. EXACTLY ONE LINE, by EITHER separator. With a two-field split
+            //      and no line check, `approve alice\nreject bob\n` — two
+            //      approvers, or automation appending — read as an approval by
+            //      "alice reject bob". An ambiguous file is not an answer; it is
+            //      two answers, or a mistake, and either way nobody said what to
+            //      do. A bare `\r` counts: it is a line separator on its own,
+            //      and checking only `\n` left `approve alice\rreject bob\n`
+            //      accepted — with the journal's own sanitiser then flattening
+            //      the CR to a space and durably recording the ambiguity as a
+            //      decision. A defence that launders its own evidence is worse
+            //      than none.
             //   3. BOTH FIELDS. A verdict alone is not an answer.
             let contents =
                 try
@@ -259,7 +274,7 @@ let main argv =
 
             if body.Trim() = "" then
                 None
-            elif body.Contains '\n' then
+            elif body.Contains '\n' || body.Contains '\r' then
                 Some(Error $"{path} has more than one line — an answer is exactly '<approve|reject> <who>'")
             else
 
