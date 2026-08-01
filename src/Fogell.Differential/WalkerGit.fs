@@ -123,7 +123,13 @@ module WalkerGit =
     let private scmDir (artifactRoot: string) (jobKey: string) =
         Path.Combine(artifactRoot, "_scm", jobKey)
 
+    // Parallel branches can check out the same (url, branch) concurrently and
+    // would race File.WriteAllText on the same record; one writer would take an
+    // IOException. Coarse but correct: record IO is tiny and rare.
+    let private recordLock = obj ()
+
     let private readPriorRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) =
+        lock recordLock (fun () ->
         let dir = scmDir artifactRoot jobKey
 
         if not (Directory.Exists dir) then
@@ -138,18 +144,20 @@ module WalkerGit =
                 | _ -> None)
             |> Array.sortByDescending fst
             |> Array.tryHead
-            |> Option.map (fun (_, f) -> (File.ReadAllText f).Trim())
+            |> Option.map (fun (_, f) -> (File.ReadAllText f).Trim()))
 
     let private writeRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) (sha: string) =
-        let dir = scmDir artifactRoot jobKey
-        Directory.CreateDirectory dir |> ignore
-        File.WriteAllText(Path.Combine(dir, $"{key}@{buildNumber}.revision"), sha)
+        lock recordLock (fun () ->
+            let dir = scmDir artifactRoot jobKey
+            Directory.CreateDirectory dir |> ignore
+            File.WriteAllText(Path.Combine(dir, $"{key}@{buildNumber}.revision"), sha))
 
     /// Forget a job's SCM history — called when the harness creates the job
     /// fresh, mirroring Jenkins' doDelete (history dies with the job).
     let resetHistory (artifactRoot: string) (jobKey: string) =
-        let dir = scmDir artifactRoot jobKey
-        if Directory.Exists dir then Directory.Delete(dir, true)
+        lock recordLock (fun () ->
+            let dir = scmDir artifactRoot jobKey
+            if Directory.Exists dir then Directory.Delete(dir, true))
 
     /// Execute the step. First failure wins: later commands are skipped and the
     /// branch fails with the failing command named (fail closed — carrying on
@@ -213,12 +221,22 @@ module WalkerGit =
 
                     None
 
-        /// A query whose nonzero exit is an ANSWER, not a failure — exactly the
+        /// A query whose NONZERO EXIT is an answer, not a failure — exactly the
         /// two commands Jenkins runs that way (an unset config key exits 1).
-        let query (narration: string) (args: string list) =
+        /// Everything else — timeout, interrupt, a git that cannot start — is a
+        /// real breakdown and fails like any other command.
+        let query (narration: string) (what: string) (args: string list) =
             if failure.IsNone && not cancelled then
                 emit narration
-                git env (bound ()) shouldStop cwd args |> ignore
+
+                match git env (bound ()) shouldStop cwd args with
+                | Ok _ -> checkCancelled ()
+                | Result.Error e when e.StartsWith "exit " -> checkCancelled ()
+                | Result.Error e ->
+                    checkCancelled ()
+
+                    if not cancelled then
+                        failure <- Some $"{what} ({e})"
 
         // The REAL discriminator (a `.git` that is a worktree FILE, not a
         // directory, must not read as fresh): ran silently here, narrated in
@@ -304,7 +322,10 @@ module WalkerGit =
             | None -> ()
             | Some sha ->
                 emit $"Checking out Revision {sha} (refs/remotes/origin/{branch})"
-                query "> git config core.sparsecheckout # timeout=10" [ "config"; "core.sparsecheckout" ]
+                query
+                    "> git config core.sparsecheckout # timeout=10"
+                    "git config core.sparsecheckout"
+                    [ "config"; "core.sparsecheckout" ]
 
                 step (Some $"> git checkout -f {sha} # timeout=10") "git checkout -f" [ "checkout"; "-f"; sha ]
                 |> ignore
