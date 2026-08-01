@@ -85,9 +85,11 @@ let main argv =
 
         // same shape for the WORKSPACE: durable setup steps were skipped on the
         // strength of effects that live in a particular tree
+        let rootFull = Path.GetFullPath workspaceRoot
+
         match plan.WorkspaceIdentity with
-        | Some recorded when recorded <> workspaceFull ->
-            eprintfn $"workspace-changed: the journal belongs to {recorded}; refusing to resume against {workspaceFull}"
+        | Some(r, j) when r <> rootFull || j <> jobName ->
+            eprintfn $"workspace-changed: the journal belongs to ({r}, {j}); refusing to resume against ({rootFull}, {jobName})"
             4
         | _ ->
 
@@ -132,7 +134,7 @@ let main argv =
             journal.Append(ScriptDigest digest)
 
         if plan.WorkspaceIdentity.IsNone then
-            journal.Append(WorkspaceIdentity workspaceFull)
+            journal.Append(WorkspaceIdentity(rootFull, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()

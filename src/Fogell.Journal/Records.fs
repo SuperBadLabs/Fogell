@@ -25,10 +25,11 @@ type Record =
     /// A resume against a CHANGED definition would hybrid-execute two
     /// pipelines against one key space — the digest lets it refuse by name.
     | ScriptDigest of sha256: string
-    /// FG-112. The workspace this journal's build ran in. A resume pointed at
-    /// a DIFFERENT workspace would skip durable setup steps against an
-    /// unrelated tree — the identity lets it refuse by name.
-    | WorkspaceIdentity of path: string
+    /// FG-112. The workspace this journal's build ran in — ROOT and JOB
+    /// separately, because distinct pairs can combine to one path while their
+    /// controller-side state (artifacts, stashes, SCM records — all under the
+    /// root) differs. A resume pointed elsewhere refuses by name.
+    | WorkspaceIdentity of root: string * job: string
 
 module Record =
 
@@ -42,7 +43,7 @@ module Record =
         | StageCommitted stage -> $"stage-committed\t{stage}"
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
         | ScriptDigest d -> $"script-digest\t{d}"
-        | WorkspaceIdentity p -> $"workspace-identity\t{p}"
+        | WorkspaceIdentity(r, j) -> $"workspace-identity\t{r}\t{j}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -57,5 +58,5 @@ module Record =
         | [| "stage-committed"; stage |] -> Some(StageCommitted stage)
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished
         | [| "script-digest"; d |] -> Some(ScriptDigest d)
-        | [| "workspace-identity"; p |] -> Some(WorkspaceIdentity p)
+        | [| "workspace-identity"; r; j |] -> Some(WorkspaceIdentity(r, j))
         | _ -> None

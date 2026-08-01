@@ -23,8 +23,8 @@ type ResumePlan =
       Terminal: BuildStatus option
       /// The definition this journal belongs to, when recorded.
       ScriptDigest: string option
-      /// The workspace the build ran in, when recorded.
-      WorkspaceIdentity: string option
+      /// The (workspace root, job name) the build ran in, when recorded.
+      WorkspaceIdentity: (string * string) option
       /// Steps that started without finishing. Non-empty means a human or a
       /// policy must decide, because the engine genuinely does not know.
       NeedsReconciliation: (string * int) list }
@@ -70,7 +70,7 @@ module Resume =
           WorkspaceIdentity =
             records
             |> List.tryPick (function
-                | WorkspaceIdentity p -> Some p
+                | WorkspaceIdentity(r, j) -> Some(r, j)
                 | _ -> None)
           NeedsReconciliation =
             steps
