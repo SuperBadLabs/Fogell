@@ -5,6 +5,7 @@
     <Compile Include="Jenkins.fs" />
     <Compile Include="GString.fs" />
     <Compile Include="WalkerRules.fs" />
+    <Compile Include="WalkerCtx.fs" />
     <Compile Include="Fogell.fs" />
     <Compile Include="Compare.fs" />
   </ItemGroup>

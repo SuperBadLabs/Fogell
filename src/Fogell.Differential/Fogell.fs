@@ -94,91 +94,15 @@ module FogellSide =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
         | Result.Ok pipeline ->
-            let output = System.Collections.Generic.List<string>()
-            // Parallel branches append from several threads at once.
-            let outputLock = obj ()
-
-            // FG-102: WHICH deadlines actually fired a cancellation, by absolute
-            // value. The exceeded announcer for a scope speaks only when ITS OWN
-            // declared bound is in this set — a shared boolean let branch B's
-            // normal failure ride branch A's expiry, and clock arithmetic alone
-            // announced timeouts that never caused anything. The firing deadline is
-            // the EFFECTIVE one at the cancelled step, which by construction is the
-            // owning scope's declared bound (the min of the chain is what fires).
-            let firedDeadlines = System.Collections.Generic.HashSet<int>()
-            let mutable nextDeadlineToken = 0
-
-            let mkDeadline (absMs: int64) : Deadline =
-                let token = System.Threading.Interlocked.Increment &nextDeadlineToken
-                { AtMs = absMs; Token = token }
-
-            let recordFired (deadline: Deadline option) =
-                deadline
-                |> Option.iter (fun d -> lock outputLock (fun () -> firedDeadlines.Add d.Token |> ignore))
-
-            let deadlineDidFire (declared: Deadline option) =
-                match declared with
-                | Some d -> lock outputLock (fun () -> firedDeadlines.Contains d.Token)
-                | None -> false
-
-            /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
-            /// with NO `[branchName]` prefix — that belongs to the scripted
-            /// `parallel` map form. Fogell emitted one until the receipt said
-            /// otherwise, which diverged every parallel case. Inventing attribution
-            /// the reference engine does not provide is not a favour, it is a
-            /// divergence.
-            /// Receipt: `parallel-always-failfast`.
-            /// Every secret bound anywhere in this run. Masking lives HERE, at the one
-            /// place output is appended, rather than at each call site.
-            ///
-            /// The call-site version was reachable: once named arguments began rendering,
-            /// `archiveArtifacts artifacts: "${TOKEN}/missing"` put the credential in the
-            /// pattern, and `No artifacts found that match the file pattern "..."` came
-            /// back as a Diagnostic that runStepInner emitted verbatim. A secret in the
-            /// build log, produced by a step that never touches a shell — so masking the
-            /// shell and echo paths could not have caught it.
-            ///
-            /// Masking is run-scoped, not block-scoped: a value is masked even after its
-            /// `withCredentials` ends. That is deliberately broader than the binding, on
-            /// the grounds that a leaked secret does not become safe when a block closes.
-            ///
-            /// Each binding carries the output index it was registered AT. The final leak
-            /// check may only judge lines emitted from that point on: a build that
-            /// happens to print the credential's value BEFORE the binding exists has not
-            /// leaked anything — the text merely coincides — and flagging it would
-            /// refuse a valid trace. Masking needs no such index because it naturally
-            /// starts at registration; the retroactive scan is what had to be told.
-            let boundSecrets = ResizeArray<SecretBinding * int>()
-
-            // FG-103: engine-health notes for the RECEIPT — never build output.
-            let engineNotes = ResizeArray<string>()
-
-            // the EXACT durable-script ids this run minted, canonicalised by value —
-            // a spoofed id in output stays literal and diverges visibly
-            let durableIds = ResizeArray<string>()
-
-            // Groovy's script Binding for THIS build: a placeholder's assignment
-            // outlives its step (receipt `gstring-binding-across-steps`). One per run
-            // — a fresh build starts with a fresh Binding, exactly as Jenkins does.
-            let scriptBinding = GString.ScriptBinding()
-
-
-            /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
-            /// with NO `[branchName]` prefix — that belongs to the scripted
-            /// `parallel` map form. Fogell emitted one until the receipt said
-            /// otherwise, which diverged every parallel case. Inventing attribution
-            /// the reference engine does not provide is not a favour, it is a
-            /// divergence.
-            /// Receipt: `parallel-always-failfast`.
-            let emit (line: string) =
-                lock outputLock (fun () ->
-                    let safe =
-                        if boundSecrets.Count = 0 then
-                            line
-                        else
-                            Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
-
-                    output.Add safe)
+            // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
+            // one stated contract, one internal lock. These rebinds keep call
+            // sites unchanged while the units migrate out of this closure.
+            let runCtx = WalkerCtx.create ()
+            let emit = runCtx.Emit
+            let mkDeadline = runCtx.MkDeadline
+            let recordFired = runCtx.RecordFired
+            let deadlineDidFire = runCtx.DeadlineDidFire
+            let scriptBinding = runCtx.ScriptBinding
 
             // Jenkins' Binding-field advisory, emitted in ITS words so the two logs
             // COMPARE — a suppression keyed on this wording alone was the same
@@ -255,13 +179,9 @@ module FogellSide =
                     Map.empty
                 |> Map.toList
 
-            let mutable status = BuildStatus.Success
-            let statusLock = obj ()
-            let bump (s: BuildStatus) = lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
+            let bump = runCtx.Bump
 
-            /// One clock for the whole build, so a `timeout` deadline is an
-            /// absolute point in time rather than a per-step budget.
-            let runClock = Diagnostics.Stopwatch.StartNew()
+            let runClock = runCtx.RunClock
 
             /// FG-101. THE cancellation model: one predicate, one classification, one place
             /// that decides `aborted` versus `failure`.
@@ -529,9 +449,9 @@ module FogellSide =
                 // the composed ERROR line is normalised away — either way the
                 // receipt stayed silent until this carried them separately (FG-103).
                 result.EngineNote
-                |> Option.iter (fun n -> lock outputLock (fun () -> engineNotes.Add $"step '{step.Name}': {n}"))
+                |> Option.iter (fun n -> runCtx.NoteEngine $"step '{step.Name}': {n}")
 
-                result.DurableId |> Option.iter (fun i -> lock outputLock (fun () -> durableIds.Add i))
+                result.DurableId |> Option.iter runCtx.AddDurableId
 
                 // Jenkins prints its failure reason INTO the build log. Parity
                 // requires the same: a diagnostic the user cannot see is not a
@@ -1313,9 +1233,7 @@ module FogellSide =
                         // print is emitted while the masker is still unaware of it. The
                         // recorded index scopes the LEAK CHECK, not the masking: only
                         // output from here on can be a leak of these values.
-                        lock outputLock (fun () ->
-                            for b in bindings do
-                                boundSecrets.Add(b, output.Count))
+                        runCtx.BindSecrets bindings
 
                         let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                         emit $"""Masking supported pattern matches of {String.concat " or " names}"""
@@ -1754,7 +1672,7 @@ module FogellSide =
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
                 let postRoot = { root with Failed = ref false }
-                runPostWithDeadline postRoot workspace synthetic status None pipelineDeadline
+                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) None pipelineDeadline
                 if postRoot.Failed.Value then root.Failed.Value <- true
 
             announcePipelineExceeded ()
@@ -1769,19 +1687,10 @@ module FogellSide =
             // green while the log leaks is worse than no receipt, so the run itself
             // refuses to produce a trace instead.
             let leakedVars =
-                lock outputLock (fun () ->
-                    output
-                    |> Seq.mapi (fun i l ->
-                        // Only bindings that existed when the line was emitted: text
-                        // printed BEFORE a value was bound merely coincides with it.
-                        let active =
-                            boundSecrets |> Seq.filter (fun (_, from) -> from <= i) |> Seq.map fst |> List.ofSeq
-
-                        if List.isEmpty active then [] else Secrets.detectLeaks active l)
-                    |> Seq.collect id
-                    |> Seq.map (fun leak -> leak.Variable)
-                    |> Seq.distinct
-                    |> List.ofSeq)
+                runCtx.OutputWithActiveSecrets()
+                |> List.collect (fun (l, active) -> if List.isEmpty active then [] else Secrets.detectLeaks active l)
+                |> List.map (fun leak -> leak.Variable)
+                |> List.distinct
 
             if not (List.isEmpty leakedVars) then
                 Result.Error(
@@ -1790,11 +1699,11 @@ module FogellSide =
             else
 
             Result.Ok
-                { Result = BuildStatus.toWireString status
-                  EngineNotes = List.ofSeq engineNotes
+                { Result = BuildStatus.toWireString (runCtx.Status())
+                  EngineNotes = runCtx.EngineNotes()
                   Output =
                     (let idReplacements =
-                        durableIds
+                        runCtx.DurableIds()
                         |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
                         |> List.ofSeq
 
@@ -1802,8 +1711,8 @@ module FogellSide =
                          false
                          ((workspace, "${WORKSPACE}") :: idReplacements)
                          envReplacements
-                         output)
+                         (runCtx.Output()))
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  ReportedFailureReason = Trace.reportedFailureReason output }
+                  ReportedFailureReason = Trace.reportedFailureReason (runCtx.Output()) }
