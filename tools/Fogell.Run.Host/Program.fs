@@ -42,15 +42,17 @@ let main argv =
             eprintfn $"journal path is inside the workspace ({workspaceFull}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2
 
-        let script = File.ReadAllText jenkinsfile
+        // an absolute or traversing job-name (`../other`) resolves the
+        // workspace OUTSIDE the root, and the fresh-attempt wipe would then
+        // recursively delete an unrelated directory — refuse by name
+        let rootFull =
+            Path
+                .GetFullPath(workspaceRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
-        let digest =
-            use h = Security.Cryptography.SHA256.Create()
-
-            Text.Encoding.UTF8.GetBytes(script.Replace("\r\n", "\n"))
-            |> h.ComputeHash
-            |> Convert.ToHexString
-            |> fun x -> x.ToLowerInvariant()
+        if not (workspaceFull.StartsWith(rootFull + string Path.DirectorySeparatorChar)) then
+            eprintfn $"job-name resolves outside the workspace root ({workspaceFull} vs {rootFull}) — the wipe would delete an unrelated directory; refusing"
+            exit 2
 
         // control characters in the identity would tear the journal's wire
         // format exactly like a hostile stage name — refuse by name
@@ -68,11 +70,23 @@ let main argv =
 
         let plan = Resume.plan (Journal.read journalPath)
 
+        // the terminal no-op must not depend on the Jenkinsfile still existing
+        // (a completed build queried after rotation) — check BEFORE reading it
         match plan.Terminal with
         | Some t ->
             printfn $"already-terminal: {BuildStatus.toWireString t}"
             0
         | None ->
+
+        let script = File.ReadAllText jenkinsfile
+
+        let digest =
+            use h = Security.Cryptography.SHA256.Create()
+
+            Text.Encoding.UTF8.GetBytes(script.Replace("\r\n", "\n"))
+            |> h.ComputeHash
+            |> Convert.ToHexString
+            |> fun x -> x.ToLowerInvariant()
 
         // A resume against a CHANGED definition hybrid-executes two pipelines
         // over one (stage, index) key space — a changed step occupying a
@@ -85,8 +99,6 @@ let main argv =
 
         // same shape for the WORKSPACE: durable setup steps were skipped on the
         // strength of effects that live in a particular tree
-        let rootFull = Path.GetFullPath workspaceRoot
-
         match plan.WorkspaceIdentity with
         | Some(r, j) when r <> rootFull || j <> jobName ->
             eprintfn $"workspace-changed: the journal belongs to ({r}, {j}); refusing to resume against ({rootFull}, {jobName})"
