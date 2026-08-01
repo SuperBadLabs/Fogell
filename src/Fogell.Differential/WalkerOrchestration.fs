@@ -729,6 +729,52 @@ module WalkerOrchestration =
 
                     applyCancellation ctx "input" deadline outcome
 
+            // FG-111/FG-052. The `git` step — a real clone/fetch plus the git
+            // plugin's measured narration, in WalkerGit. An absent `branch`
+            // defaults to `master`: MEASURED (receipt `git-step-default-branch` —
+            // Jenkins rev-parses refs/remotes/origin/master and re-branches as
+            // master), the form 13 of the 228 corpus files use.
+            | "git", _ ->
+                let step = renderStepArgs ctx stage step
+
+                let url =
+                    step.Positional
+                    |> List.tryHead
+                    |> Option.orElse (step.Named |> List.tryPick (fun (k, v) -> if k = "url" then Some v else None))
+
+                let branch =
+                    step.Named
+                    |> List.tryPick (fun (k, v) -> if k = "branch" then Some v else None)
+                    |> Option.defaultValue "master"
+
+                // A credentialsId this engine cannot honour must REFUSE, not
+                // silently clone unauthenticated while narrating "No credentials
+                // specified" — wrong twice (FG-103: name the unknown).
+                let credentialsId =
+                    step.Named |> List.tryPick (fun (k, v) -> if k = "credentialsId" then Some v else None)
+
+                match url, credentialsId with
+                | None, _ ->
+                    emit "ERROR: git step requires a url"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | _, Some c ->
+                    emit $"ERROR: git step credentialsId '{c}' is not modelled (the lane has no credentialed remote to measure against)"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | Some u, None ->
+                    WalkerGit.runStep
+                        runCtx
+                        ctx
+                        cwd
+                        deadline
+                        (envForWith ctx.EnvOverlay stage)
+                        artifactRoot
+                        jobName
+                        deps.BuildNumber
+                        u
+                        branch
+
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive
             // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace

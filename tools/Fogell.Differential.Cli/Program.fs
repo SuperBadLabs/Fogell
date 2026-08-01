@@ -115,6 +115,84 @@ let main argv =
                     | [ _ ] -> Some pairs.Head
                     | _ -> None)
 
+        // FG-111. The `git` step echoes each engine's OWN `git --version` — an
+        // environment-of-necessity pair exactly like HOME. Both versions fold to
+        // ${GITVERSION} through the same two-sided compare rule (and the fold is
+        // listed in any receipt that used it). Both sides or neither, and a
+        // CONFIGURED collector that cannot deliver refuses the run (FG-103).
+        let gitVersionReplacements =
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_GIT_VERSION_CMD" with
+            | null
+            | "" -> []
+            | cmd ->
+                let refuse (why: string) =
+                    eprintfn $"git version collector failed: {why}; refusing a one-sided fold"
+                    exit 2
+
+                let collect (exe: string) (args: string list) =
+                    try
+                        let psi = Diagnostics.ProcessStartInfo(exe)
+                        args |> List.iter psi.ArgumentList.Add
+                        psi.RedirectStandardOutput <- true
+                        psi.UseShellExecute <- false
+                        use p = new Diagnostics.Process(StartInfo = psi)
+                        let sb = Text.StringBuilder()
+
+                        // ASYNC read + bounded wait: a stalled ssh that never
+                        // closes stdout hangs a synchronous ReadToEnd forever,
+                        // and wait-then-read deadlocks on a full pipe — the two
+                        // failure shapes WalkerGit's runner closes, closed here.
+                        p.OutputDataReceived.Add(fun e ->
+                            if not (isNull e.Data) then
+                                sb.AppendLine e.Data |> ignore)
+
+                        p.Start() |> ignore
+                        p.BeginOutputReadLine()
+
+                        if not (p.WaitForExit 30_000) then
+                            p.Kill(true)
+                            p.WaitForExit()
+                            refuse "timed out"
+
+                        // flush the async handlers before reading — a fast exit
+                        // can beat the last OutputDataReceived callback
+                        p.WaitForExit()
+
+                        let out = sb.ToString().Trim()
+                        if p.ExitCode <> 0 || out = "" then refuse $"exit {p.ExitCode}"
+                        out
+                    with ex ->
+                        refuse ex.Message
+                        ""
+
+                let jenkinsGit = collect "/bin/sh" [ "-c"; cmd ]
+                let localGit = collect "git" [ "--version" ]
+
+                // SCOPED to the plugin's narration line (Codex P1, twice —
+                // round 1's "fix" for this never reached the tree): folding the
+                // raw version string also collapses a build's OWN
+                // `sh 'git --version'` stdout, manufactured equality on output
+                // a lift-and-shift user genuinely sees differ. The full-line
+                // shape can only match engine narration; raw version text in
+                // build output DIVERGES visibly.
+                let shape (v: string) = $"> git --version # '{v}'"
+
+                [ shape jenkinsGit, "> git --version # '${GITVERSION}'"
+                  shape localGit, "> git --version # '${GITVERSION}'" ]
+                |> List.distinct
+
+        // through the SAME ambiguity dropper as the env pairs: an env value that
+        // literally equals a `git version ...` string must drop out, not become
+        // one key with two tokens decided by replacement order
+        let envReplacementsAll =
+            envReplacements @ gitVersionReplacements
+            |> List.distinct
+            |> List.groupBy fst
+            |> List.choose (fun (_, pairs) ->
+                match pairs |> List.map snd |> List.distinct with
+                | [ _ ] -> Some pairs.Head
+                | _ -> None)
+
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
@@ -187,8 +265,8 @@ let main argv =
                         let e = Result.Error "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
                         scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
                     else
-                        Jenkins.runMany cfg envReplacements job scripts,
-                        FogellSide.runMany envReplacements fogellRoot job scripts
+                        Jenkins.runMany cfg envReplacementsAll job scripts,
+                        FogellSide.runMany envReplacementsAll fogellRoot job scripts
 
                 let solo = List.length scripts = 1
 
@@ -206,7 +284,7 @@ let main argv =
                             let ext = Path.GetExtension name
                             $"{stem}.b{bi + 1}{ext}"
 
-                    let r = Compare.receipt caseName core envReplacements jenkins fogell
+                    let r = Compare.receipt caseName core envReplacementsAll jenkins fogell
                     let path = Compare.seal receiptDir r
 
                     if not (sealedPaths.Add path) then

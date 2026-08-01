@@ -578,6 +578,28 @@ let continuationResolution =
               | v -> failtest $"expected divergence without replacements, got {v}"
           }
 
+          test "the GITVERSION fold is scoped to the plugin line (FG-111 P1 look-alike)" {
+              // The fold pair is the FULL narration line, never the raw version
+              // string: a build running `sh 'git --version'` prints each
+              // engine's version as ORDINARY stdout, and that difference is one
+              // a lift-and-shift user genuinely sees — it must DIVERGE, while
+              // the plugin's own narration line folds.
+              let repl =
+                  [ "> git --version # 'git version 2.47.3'", "> git --version # '${GITVERSION}'"
+                    "> git --version # 'git version 2.43.0'", "> git --version # '${GITVERSION}'" ]
+
+              let jenkins = mkTrace [ "> git --version # 'git version 2.47.3'"; "git version 2.47.3" ]
+              let fogell = mkTrace [ "> git --version # 'git version 2.43.0'"; "git version 2.43.0" ]
+
+              match Compare.traces repl jenkins fogell with
+              | Diverged [ OutputDiffers(1, Some "git version 2.47.3", Some "git version 2.43.0") ], folds ->
+                  Expect.equal
+                      folds
+                      [ "line 0 compared canonically: > git --version # '${GITVERSION}'" ]
+                      "the narration line folded and was reported; the stdout line diverged"
+              | v -> failtest $"raw version stdout must diverge while the plugin line folds, got {v}"
+          }
+
           test "ordinary output printing an inherited value folds VISIBLY (round 48 P1)" {
               // The reviewer's own example: `sh 'printenv HOME'`. The trace rows are
               // byte-equal; the stdout pair differs only by the engines' inherited

@@ -131,7 +131,14 @@ module Trace =
                         None
                     else
                         let hash = parts[0].Trim()
-                        let relative = parts[1].Trim().TrimStart('.', '/').Replace('\\', '/')
+
+                        // Strip exactly one leading "./" — a charset TrimStart ate
+                        // the dot of ".git/" too, so .git internals (reflogs, the
+                        // index: nondeterministic BY NATURE) escaped the exclusion
+                        // list and poisoned the first SCM workspace hash (FG-111).
+                        let relative =
+                            let p = parts[1].Trim().Replace('\\', '/')
+                            if p.StartsWith "./" then p.Substring 2 else p
 
                         if hash = "" || relative = "" || isScaffolding relative then
                             None
