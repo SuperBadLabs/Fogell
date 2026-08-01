@@ -6,6 +6,16 @@ open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
 
+/// FG-046b. A human's answer to an `input` prompt. Deliberately NOT a bool: the
+/// two outcomes narrate and terminate differently (MEASURED on Jenkins 2.568.1 —
+/// an approval prints NOTHING and the build carries on; a rejection prints
+/// `Rejected` and the build ends ABORTED), and a bool at this boundary is how a
+/// caller ends up defaulting one of them. UNPROVEN BY RECEIPT — measured by
+/// `scripts/probe-input.bb`, asserted by `scripts/run-approval-lane.sh`.
+type InputAnswer =
+    | InputApproved of submitter: string
+    | InputRejected of submitter: string
+
 /// FG-112. Durability hooks for a persisted run. The unit of durability is the
 /// TOP-LEVEL step of a stage: a wrapper (retry/timeout/withEnv) journals as one
 /// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
@@ -48,7 +58,36 @@ type PersistenceHooks =
       /// stage -> stepIndex -> the step's worst sunk status.
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
-      OnStageCommitted: string -> unit }
+      OnStageCommitted: string -> unit
+      /// FG-046b. stage -> stepIndex -> prompt -> the answer, if one has been
+      /// given. Polled while an `input` waits, and expected to be CHEAP: it is
+      /// called on every poll of the wait loop.
+      ///
+      /// `None` — the whole field — means THERE IS NO APPROVER, and an un-timed
+      /// prompt then fails closed with FG-046's named refusal rather than
+      /// waiting for a human who cannot arrive. That distinction has to live in
+      /// the type: inferring "journaled, therefore answerable" made a host
+      /// started without an inbox hang silently and forever on a prompt nobody
+      /// could see (the host buffers console output until the build ends), which
+      /// is precisely the silent outcome FG-046 refuses.
+      ///
+      /// When present, the implementor owns two things the walker deliberately
+      /// does not know about: where an answer comes from (a file, an API) and
+      /// making it DURABLE before returning it. The walker acts on the answer
+      /// the instant it sees one, so an answer returned but not yet recorded is
+      /// an answer that can be lost — the one failure this ticket exists to
+      /// prevent. Returning None from the FUNCTION forever is legitimate: it
+      /// means nobody has answered yet, and the prompt waits exactly as Jenkins'
+      /// does (MEASURED: a pending input survives a controller restart with the
+      /// same action id and is still approvable afterwards).
+      ///
+      /// UNPROVEN BY RECEIPT, and unprovable by one: a receipt is a differential
+      /// against real Jenkins, and the harness has no approver on EITHER side —
+      /// an answered prompt cannot be driven in both engines from a Jenkinsfile
+      /// alone. The measurement is `scripts/probe-input.bb` against
+      /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
+      /// `scripts/run-approval-lane.sh`, which runs in the gate.
+      PollInputAnswer: (string -> int -> string -> InputAnswer option) option }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -846,12 +885,84 @@ module WalkerOrchestration =
                 emit renderedMessage
                 emit $"""{renderedOk} or Abort"""
 
-                match deadline with
-                | None ->
+                // FG-046b. An approver requires all three: a JOURNALED run, a
+                // durability key for this step to answer against, and a hook that
+                // actually has somewhere to take an answer FROM. A host started
+                // without an approvals inbox satisfies the first two and still has
+                // no approver — inferring one from the first two alone made such a
+                // run wait forever on a prompt no human could see. The
+                // differential path has none of the three and keeps the refusal.
+                let approver =
+                    match persistence, ctx.DurabilityKey with
+                    | Some hooks, Some(stageKey, stepIndex) ->
+                        hooks.PollInputAnswer
+                        |> Option.map (fun poll -> fun () -> poll stageKey stepIndex renderedMessage)
+                    | _ -> None
+
+                match approver, deadline with
+                | None, None ->
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some _ ->
+                | Some poll, _ ->
+                    // Wait for the answer, the deadline, or a failFast sibling —
+                    // whichever comes first. With no deadline this waits
+                    // indefinitely, which is what Jenkins does and what an
+                    // approver makes safe to reproduce.
+                    let mutable outcome = Cancellation.Running
+                    let mutable answer = None
+
+                    while outcome = Cancellation.Running && answer.IsNone do
+                        // A failFast SIBLING outranks an answer: the build is
+                        // already failing for a named cause and Jenkins
+                        // interrupts the prompt. The DEADLINE does not — a human
+                        // who answered before it passed has answered, and
+                        // discarding that because a poll interval straddled the
+                        // expiry throws away the one input this ticket is about.
+                        // So the sibling is checked first and the answer is
+                        // preferred over expiry on the same poll.
+                        //
+                        // The ordering matters most on a RESUMED attempt, where
+                        // the answer is already on record and the first poll
+                        // returns instantly: checking the answer first would exit
+                        // the loop without ever reading the interrupt.
+                        match cancellationOf ctx deadline with
+                        | Cancellation.SiblingFailed -> outcome <- Cancellation.SiblingFailed
+                        | c ->
+                            match poll () with
+                            | Some a -> answer <- Some a
+                            | None when c <> Cancellation.Running -> outcome <- c
+                            | None ->
+                                let left = defaultArg (remainingMs deadline) 250L
+                                System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
+
+                    match answer with
+                    | Some(InputApproved _) ->
+                        // MEASURED on Jenkins 2.568.1: approving prints NOTHING —
+                        // the console goes straight from the prompt to the next
+                        // step, with no "Approved by ..." line. Emitting one here
+                        // would be a divergence invented out of politeness.
+                        // UNPROVEN BY RECEIPT (the harness cannot answer a prompt
+                        // on the Jenkins side): measured by probe, asserted by
+                        // scripts/run-approval-lane.sh.
+                        ()
+                    | Some(InputRejected _) ->
+                        // MEASURED: a human abort ends the build ABORTED with
+                        // `Rejected` as the reason line. Two stated residuals, both
+                        // visible in the probe's console: Jenkins follows it with an
+                        // `ErrorAction$ErrorId: <uuid>` line naming a Java class,
+                        // which is engine-internal mimicry and is NOT emitted; and
+                        // Jenkins prints both at END of build, after the pipeline
+                        // teardown, whereas this emits at the step. Neither is
+                        // observable in a receipt (the harness has no approver), so
+                        // both are recorded rather than matched by guesswork.
+                        // UNPROVEN BY RECEIPT, same reason as the approval path;
+                        // asserted by scripts/run-approval-lane.sh.
+                        emit "Rejected"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Aborted
+                    | None -> applyCancellation ctx "input" deadline outcome
+                | None, Some _ ->
                     // Wait out the deadline exactly as an unanswered prompt would.
                     //
                     // REVIEW FIX (both reviewers, PR #17): the loop exited on EITHER
@@ -1115,7 +1226,14 @@ module WalkerOrchestration =
                                         Sink =
                                             fun st ->
                                                 observed.Value <- BuildStatus.worstOf observed.Value st
-                                                ctx.Sink st }
+                                                ctx.Sink st
+                                        // FG-046b: the key this step's durable
+                                        // records are written under, so a step
+                                        // that needs to consult them (`input`)
+                                        // can name itself without the walker
+                                        // threading an index through every
+                                        // wrapper body it may be nested in
+                                        DurabilityKey = Some(stage.Name, i) }
 
                                 runStepDispatch observing cwd stage step deadline
                                 hooks.OnStepFinished stage.Name i observed.Value)
@@ -1177,7 +1295,14 @@ module WalkerOrchestration =
                                     if failFast then
                                         Some(fun () -> siblingFailed.IsCancellationRequested)
                                     else
-                                        ctx.Interrupt }
+                                        ctx.Interrupt
+                                  // FG-046b: NOT inherited. The branch is about to
+                                  // run its own stage body, which sets the key for
+                                  // each step it executes; carrying the parent's
+                                  // key in would name the PARALLEL step that owns
+                                  // the branches, so an `input` inside two branches
+                                  // would answer to one shared key.
+                                  DurabilityKey = None }
 
                             branchCtx,
                             System.Threading.Tasks.Task.Run(fun () ->

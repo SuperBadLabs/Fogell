@@ -47,7 +47,16 @@ type BranchCtx =
       /// MEASURED on Jenkins, after the block an added variable is UNSET and a
       /// shadowed one reverts to its outer value.
       /// Receipt: `withenv-scoping`.
-      EnvOverlay: (string * string) list }
+      EnvOverlay: (string * string) list
+      /// FG-046b. The (stage, top-level step index) this branch is currently
+      /// executing — the key durability records are written under. Carried on
+      /// the BRANCH, not in run-scoped state, because parallel branches execute
+      /// different keys at the same instant and one mutable would hand a branch
+      /// its sibling's key. None where nothing is journaled: the differential
+      /// path, and `post` (whose steps this design does not record — see
+      /// PersistenceHooks' stated limit), so an `input` there has no durable
+      /// approval and behaves exactly as it did before this ticket.
+      DurabilityKey: (string * int) option }
 
 /// FG-105. The walker's decision rules, extracted from the `run` closure so
 /// each is reviewable and unit-testable in isolation. Contract: nothing in

@@ -25,6 +25,14 @@ type ResumePlan =
       ScriptDigest: string option
       /// The (workspace root, job name) the build ran in, when recorded.
       WorkspaceIdentity: (string * string) option
+      /// FG-046b. Answers already given to `input` prompts, per (stage, index):
+      /// (approved, submitter). Durable and independent of whether the step that
+      /// asked ever finished.
+      InputDecisions: Map<string * int, bool * string>
+      /// FG-046b. Steps a prior attempt started as `input`. Needed because a
+      /// disposition alone does not say WHICH step was interrupted, and the
+      /// re-run rule below applies to `input` and to nothing else.
+      InputSteps: Set<string * int>
       /// Steps that started without finishing. Non-empty means a human or a
       /// policy must decide, because the engine genuinely does not know.
       NeedsReconciliation: (string * int) list }
@@ -47,10 +55,31 @@ module Resume =
                     | StageCommitted _
                     | BuildFinished _
                     | ScriptDigest _
-                    | WorkspaceIdentity _ -> acc)
+                    | WorkspaceIdentity _
+                    | InputDecision _ -> acc)
+                Map.empty
+
+        let inputSteps =
+            records
+            |> List.choose (function
+                | StepStarted(stage, i, "input") -> Some(stage, i)
+                | _ -> None)
+            |> Set.ofList
+
+        // last answer wins: a re-answered prompt (the first answer's attempt
+        // died before the step could act on it) is still one human decision
+        let inputDecisions =
+            records
+            |> List.fold
+                (fun acc r ->
+                    match r with
+                    | InputDecision(stage, i, approved, who) -> Map.add (stage, i) (approved, who) acc
+                    | _ -> acc)
                 Map.empty
 
         { Steps = steps
+          InputDecisions = inputDecisions
+          InputSteps = inputSteps
           CommittedStages =
             records
             |> List.choose (function
@@ -77,6 +106,7 @@ module Resume =
             |> Map.toList
             |> List.choose (fun (k, v) ->
                 match v with
+                | Interrupted when Set.contains k inputSteps && Map.containsKey k inputDecisions -> None
                 | Interrupted -> Some k
                 | AlreadyFinished _
                 | NotStarted -> None) }
@@ -84,15 +114,38 @@ module Resume =
     let dispositionOf (plan: ResumePlan) (stage: string) (index: int) =
         Map.tryFind (stage, index) plan.Steps |> Option.defaultValue NotStarted
 
+    /// FG-046b. An interrupted `input` whose answer is already on record is the
+    /// ONE step that is safe to re-run. Every other step is refused because we
+    /// cannot know whether its effect happened; an `input`'s only effect IS the
+    /// answer, and the answer is durable, so running it again consults the
+    /// record instead of asking a human twice. Both halves are required: an
+    /// interrupted input with NO decision still refuses (nobody has answered),
+    /// and a decision recorded against a non-`input` step grants nothing.
+    ///
+    /// STATED LIMIT — it covers a BARE top-level `input` only. The durability
+    /// unit is the top-level step, so `timeout(…) { input … }` journals as
+    /// `timeout`: the answer is still recorded and still survives (the human is
+    /// never re-asked for it), but the interrupted WRAPPER refuses reconciliation
+    /// as any other wrapper does. That is deliberate, not an omission — a wrapper
+    /// body may hold other steps whose effects already landed, and re-running the
+    /// body to reach the prompt would re-run those too, which is exactly the
+    /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
+    /// `input` files use the wrapped shape, so the limit is stated on the board
+    /// rather than buried here.
+    let inputAnswered (plan: ResumePlan) (stage: string) (index: int) =
+        Set.contains (stage, index) plan.InputSteps
+        && Map.containsKey (stage, index) plan.InputDecisions
+
     /// Should this step execute now?
     ///
     /// `false` for a durably finished step — that is exactly-once. `false` for an
     /// interrupted one too, because re-running it is precisely the at-least-once
-    /// behaviour this design exists to avoid; it is reported instead.
+    /// behaviour this design exists to avoid; it is reported instead. The single
+    /// exception is [inputAnswered], stated above.
     let shouldExecute (plan: ResumePlan) (stage: string) (index: int) =
         match dispositionOf plan stage index with
         | AlreadyFinished _ -> false
-        | Interrupted -> false
+        | Interrupted -> inputAnswered plan stage index
         | NotStarted -> true
 
     let isResumable (plan: ResumePlan) = plan.Terminal.IsNone

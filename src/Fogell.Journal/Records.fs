@@ -30,12 +30,35 @@ type Record =
     /// controller-side state (artifacts, stashes, SCM records — all under the
     /// root) differs. A resume pointed elsewhere refuses by name.
     | WorkspaceIdentity of root: string * job: string
+    /// FG-046b. A human's answer to an `input` prompt, recorded the moment it
+    /// arrives and INDEPENDENTLY of the step's own outcome. That independence is
+    /// the whole point: an approval is a human act, expensive and unrepeatable,
+    /// and a crash between the answer and the step finishing must not ask for it
+    /// twice. MEASURED on Jenkins 2.568.1: a pending input survives a controller
+    /// restart with the SAME action id, so an approval addressed before the
+    /// restart still lands after it. UNPROVEN BY RECEIPT — the differential
+    /// harness has no approver on the Jenkins side, so this is probe-measured
+    /// (ADR 0005) and lane-asserted (scripts/run-approval-lane.sh).
+    | InputDecision of stage: string * stepIndex: int * approved: bool * submitter: string
 
 module Record =
 
     /// Text encoding, one record per line, tab separated. Deliberately plain: a
     /// journal that cannot be read with `cat` during an incident is worse than a
     /// slightly larger one.
+    /// FG-046b. A field that came from OUTSIDE the engine (an approval's
+    /// submitter is whatever the approver wrote) cannot be allowed to carry a
+    /// tab or a newline into a tab-separated, line-per-record journal: the
+    /// resulting line would decode to None, `Journal.read` stops at the first
+    /// undecodable line, and every durable record BEHIND it would be forgotten
+    /// — steps re-running is exactly the at-least-once outcome ADR 0003 exists
+    /// to reject. Separators become spaces; nothing else is touched.
+    let private oneLine (s: string) =
+        if isNull s then
+            ""
+        else
+            s.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ')
+
     let encode =
         function
         | StepStarted(stage, i, name) -> $"step-started\t{stage}\t{i}\t{name}"
@@ -44,6 +67,9 @@ module Record =
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
         | ScriptDigest d -> $"script-digest\t{d}"
         | WorkspaceIdentity(r, j) -> $"workspace-identity\t{r}\t{j}"
+        | InputDecision(stage, i, approved, who) ->
+            let verdict = if approved then "approved" else "rejected"
+            $"input-decision\t{oneLine stage}\t{i}\t{verdict}\t{oneLine who}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -59,4 +85,12 @@ module Record =
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished
         | [| "script-digest"; d |] -> Some(ScriptDigest d)
         | [| "workspace-identity"; r; j |] -> Some(WorkspaceIdentity(r, j))
+        | [| "input-decision"; stage; i; verdict; who |] ->
+            match System.Int32.TryParse i, verdict with
+            | (true, idx), "approved" -> Some(InputDecision(stage, idx, true, who))
+            | (true, idx), "rejected" -> Some(InputDecision(stage, idx, false, who))
+            // an unrecognised verdict is NOT a silent approval and not a silent
+            // rejection: it fails to decode, which stops the read where the
+            // damage starts rather than guessing a human's answer
+            | _ -> None
         | _ -> None
