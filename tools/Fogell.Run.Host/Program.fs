@@ -61,22 +61,30 @@ let main argv =
         // recursive wipe follows the link to an unrelated tree. Compare
         // RESOLVED paths — of the deepest existing ancestor, since the
         // workspace itself may not exist yet on a first attempt.
-        let rec deepestExisting (p: string) =
-            if Directory.Exists p then
-                Some p
-            else
-                match Path.GetDirectoryName p with
-                | null
-                | "" -> None
-                | parent -> deepestExisting parent
-
+        // EVERY existing component is resolved, not just the deepest: an
+        // intermediate symlink (/safe/link -> /srv) with an existing final
+        // directory would otherwise be examined only at that final component,
+        // which is not a link, and the wipe would still follow the link.
         let resolve (p: string) =
-            match deepestExisting p with
-            | Some existing ->
-                let real = Directory.ResolveLinkTarget(existing, true)
-                let realPath = if isNull real then existing else real.FullName
-                realPath + p.Substring(existing.Length)
-            | None -> p
+            let rooted = Path.GetFullPath p
+
+            let parts =
+                rooted.Split([| Path.DirectorySeparatorChar |], StringSplitOptions.RemoveEmptyEntries)
+
+            let mutable acc = string Path.DirectorySeparatorChar
+
+            for part in parts do
+                let candidate = Path.Combine(acc, part)
+
+                acc <-
+                    if Directory.Exists candidate || File.Exists candidate then
+                        match Directory.ResolveLinkTarget(candidate, true) with
+                        | null -> candidate
+                        | real -> real.FullName
+                    else
+                        candidate
+
+            acc
 
         let realWorkspace = resolve workspaceFull
         let realRoot = (resolve rootFull).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
