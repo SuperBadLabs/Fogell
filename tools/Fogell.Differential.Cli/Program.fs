@@ -137,11 +137,13 @@ let main argv =
                         psi.UseShellExecute <- false
                         use p = Diagnostics.Process.Start psi
 
+                        // read BEFORE waiting — the wait-then-read order is the
+                        // env collector's original stall bug re-entering
+                        let out = p.StandardOutput.ReadToEnd().Trim()
+
                         if not (p.WaitForExit 30_000) then
                             p.Kill(true)
                             refuse "timed out"
-
-                        let out = p.StandardOutput.ReadToEnd().Trim()
                         if p.ExitCode <> 0 || out = "" then refuse $"exit {p.ExitCode}"
                         out
                     with ex ->
@@ -153,7 +155,17 @@ let main argv =
 
                 [ jenkinsGit, "${GITVERSION}"; localGit, "${GITVERSION}" ] |> List.distinct
 
-        let envReplacementsAll = envReplacements @ gitVersionReplacements
+        // through the SAME ambiguity dropper as the env pairs: an env value that
+        // literally equals a `git version ...` string must drop out, not become
+        // one key with two tokens decided by replacement order
+        let envReplacementsAll =
+            envReplacements @ gitVersionReplacements
+            |> List.distinct
+            |> List.groupBy fst
+            |> List.choose (fun (_, pairs) ->
+                match pairs |> List.map snd |> List.distinct with
+                | [ _ ] -> Some pairs.Head
+                | _ -> None)
 
         let cfg =
             { BaseUrl = baseUrl

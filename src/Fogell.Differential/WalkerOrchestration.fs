@@ -730,9 +730,10 @@ module WalkerOrchestration =
                     applyCancellation ctx "input" deadline outcome
 
             // FG-111/FG-052. The `git` step — a real clone/fetch plus the git
-            // plugin's measured narration, in WalkerGit. `branch` has no measured
-            // default here, so its absence REFUSES by name rather than guessing
-            // (the plugin's default is not something this engine has receipts for).
+            // plugin's measured narration, in WalkerGit. An absent `branch`
+            // defaults to `master`: MEASURED (receipt `git-step-default-branch` —
+            // Jenkins rev-parses refs/remotes/origin/master and re-branches as
+            // master), the form 13 of the 228 corpus files use.
             | "git", _ ->
                 let step = renderStepArgs ctx stage step
 
@@ -742,18 +743,16 @@ module WalkerOrchestration =
                     |> Option.orElse (step.Named |> List.tryPick (fun (k, v) -> if k = "url" then Some v else None))
 
                 let branch =
-                    step.Named |> List.tryPick (fun (k, v) -> if k = "branch" then Some v else None)
+                    step.Named
+                    |> List.tryPick (fun (k, v) -> if k = "branch" then Some v else None)
+                    |> Option.defaultValue "master"
 
-                match url, branch with
-                | None, _ ->
+                match url with
+                | None ->
                     emit "ERROR: git step requires a url"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | _, None ->
-                    emit "ERROR: git step without an explicit branch is not modelled (no measured default)"
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Failure
-                | Some u, Some b -> WalkerGit.runStep runCtx ctx cwd u b
+                | Some u -> WalkerGit.runStep runCtx ctx cwd u branch
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive

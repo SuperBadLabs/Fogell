@@ -2,9 +2,10 @@
 // the FG-110 sequence lane: build 2 re-fetches into the workspace build 1
 // cloned — "Fetching changes from the remote Git repository", `git branch -D`
 // before the re-branch, and `git rev-list --no-walk <pre-fetch HEAD>` as the
-// last line. Measured with the remote unchanged AND with a commit pushed
-// between builds: the console is structurally identical (the changelog is
-// computed, never printed by this step).
+// last line. These receipts seal the UNCHANGED-remote variant; a probe with a
+// commit pushed between builds measured the console structurally identical
+// (the changelog is computed, never printed by this step) — that variant is
+// measurement, not yet a sealed receipt.
 pipeline {
     agent any
     stages {

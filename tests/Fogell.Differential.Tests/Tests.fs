@@ -578,6 +578,26 @@ let continuationResolution =
               | v -> failtest $"expected divergence without replacements, got {v}"
           }
 
+          test "a build PRINTING version-shaped text is compared, not folded (FG-111 look-alike)" {
+              // The ${GITVERSION} pair folds each engine's own `git --version`
+              // echo. A build whose OWN output contains such text — a corpus
+              // file runs raw git in `sh` — must still compare as output:
+              // identical literals never fold (they are equal), and a pair
+              // differing beyond the folded value still diverges.
+              let repl = [ "git version 2.47.3", "${GITVERSION}"; "git version 2.43.0", "${GITVERSION}" ]
+              let same = mkTrace [ "+ git --version"; "git version 2.47.3" ]
+              let verdict, folds = Compare.traces repl same same
+              Expect.equal verdict Proven "identical version text compares equal"
+              Expect.isEmpty folds "and is never reported as a fold"
+
+              let jenkins = mkTrace [ "mine: git version 2.47.3 ok" ]
+              let fogell = mkTrace [ "mine: git version 2.43.0 NOT-ok" ]
+
+              match Compare.traces repl jenkins fogell with
+              | Diverged [ OutputDiffers(0, _, _) ], _ -> ()
+              | v -> failtest $"a difference beyond the folded value must diverge, got {v}"
+          }
+
           test "ordinary output printing an inherited value folds VISIBLY (round 48 P1)" {
               // The reviewer's own example: `sh 'printenv HOME'`. The trace rows are
               // byte-equal; the stdout pair differs only by the engines' inherited
