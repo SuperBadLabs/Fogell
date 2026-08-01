@@ -42,16 +42,47 @@ let main argv =
             eprintfn $"journal path is inside the workspace ({workspaceFull}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2
 
-        // an absolute or traversing job-name (`../other`) resolves the
-        // workspace OUTSIDE the root, and the fresh-attempt wipe would then
-        // recursively delete an unrelated directory — refuse by name
+        // The job name is also a controller-state KEY (artifacts, stashes, SCM
+        // records all combine it as a relative segment), so it must be a plain
+        // relative name — not rooted, not traversing. Checking the combined
+        // path alone accepted `/tmp/ws/job` (inside the root, yet rooted) and
+        // let a Path.Combine downstream discard its own prefix.
+        if Path.IsPathRooted jobName || jobName.Split([| '/'; '\\' |]) |> Array.contains ".." then
+            eprintfn $"job-name must be a plain relative name (not rooted, no traversal): {jobName}"
+            exit 2
+
         let rootFull =
             Path
                 .GetFullPath(workspaceRoot)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
-        if not (workspaceFull.StartsWith(rootFull + string Path.DirectorySeparatorChar)) then
-            eprintfn $"job-name resolves outside the workspace root ({workspaceFull} vs {rootFull}) — the wipe would delete an unrelated directory; refusing"
+        // Lexical containment is not enough: an intermediate SYMLINK
+        // (/safe/link -> /srv, job "link/prod") keeps the prefix while the
+        // recursive wipe follows the link to an unrelated tree. Compare
+        // RESOLVED paths — of the deepest existing ancestor, since the
+        // workspace itself may not exist yet on a first attempt.
+        let rec deepestExisting (p: string) =
+            if Directory.Exists p then
+                Some p
+            else
+                match Path.GetDirectoryName p with
+                | null
+                | "" -> None
+                | parent -> deepestExisting parent
+
+        let resolve (p: string) =
+            match deepestExisting p with
+            | Some existing ->
+                let real = Directory.ResolveLinkTarget(existing, true)
+                let realPath = if isNull real then existing else real.FullName
+                realPath + p.Substring(existing.Length)
+            | None -> p
+
+        let realWorkspace = resolve workspaceFull
+        let realRoot = (resolve rootFull).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        if not (realWorkspace.StartsWith(realRoot + string Path.DirectorySeparatorChar)) then
+            eprintfn $"job-name resolves outside the workspace root ({realWorkspace} vs {realRoot}) — the wipe would delete an unrelated directory; refusing"
             exit 2
 
         // control characters in the identity would tear the journal's wire
