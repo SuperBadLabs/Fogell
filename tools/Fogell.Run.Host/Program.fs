@@ -697,7 +697,12 @@ let main argv =
                 fun stage ->
                     journal.Append(StageCommitted stage)
                     journal.Sync()
-              PollInputAnswer = pollInputAnswer }
+              PollInputAnswer = pollInputAnswer
+              OnInputClosed =
+                fun stage i occ ->
+                    // both files: the prompt is gone, and an answer left for it
+                    // is an answer to a question nobody is asking any more
+                    approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ) }
 
         // A prompt can stop being outstanding without being ANSWERED — a deadline
         // expiring, a failFast sibling. Its marker would otherwise outlive the

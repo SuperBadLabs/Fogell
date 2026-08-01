@@ -39,7 +39,9 @@
 #   L. `retry` does not re-ask a human who said no: a rejection is an
 #      interruption, not a retryable failure;
 #   M. and it escapes NESTED retries — the inner scope's fresh per-attempt
-#      signal must still reach the outer one.
+#      signal must still reach the outer one;
+#   N. a prompt killed by its timeout is WITHDRAWN before the retry publishes the
+#      next one, so the inbox never advertises a gate nothing is listening to.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -523,6 +525,49 @@ grep -q '| Retrying' "$M/run.log" && { echo "FAIL: a rejection was retried at so
   echo "FAIL: more than one decision was recorded"; sed 's/^/  | /' "$M/build.journal"; exit 1; }
 grep -q '^shipped$' "$M/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a rejected gate ran"; exit 1; }
 echo "declined once at depth two, aborted, never re-asked"
+
+# ---------------------------------------------------------------- scenario N
+echo "=== N: a timed-out prompt is withdrawn before the retry publishes ==="
+# retry starts the next occurrence the instant the timeout aborts the last one.
+# If the dead marker lingers, the inbox advertises two prompts and the operator
+# will reach for the one that appeared first — whose answer nothing reads.
+N="$LANE/n"; mkdir -p "$N/approvals"
+cat > "$N/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                retry(2) {
+                    timeout(time: 4, unit: 'SECONDS') {
+                        input message: "Deploy?", ok: "Ship it"
+                    }
+                }
+            }
+        }
+    }
+}
+JF
+timeout 120 "$HOST_BIN" "$N/Jenkinsfile" "$N/ws" gate "$N/build.journal" "$N/approvals" > "$N/run.log" 2>&1 &
+PID=$!
+N1=$(await_pending "$N/approvals") || { echo "FAIL: no prompt published"; cat "$N/run.log"; exit 1; }
+# sample the inbox across the whole run: it must NEVER show two prompts at once
+MAXSEEN=0
+for _ in $(seq 1 100); do
+  C=$(find "$N/approvals" -maxdepth 1 -name '*.pending' | wc -l)
+  [ "$C" -gt "$MAXSEEN" ] && MAXSEEN=$C
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.2
+done
+set +e; wait "$PID"; RC=$?; set -e
+[ "$MAXSEEN" -le 1 ] || { echo "FAIL: the inbox advertised $MAXSEEN prompts at once — a dead one was still listed"; exit 1; }
+grep -q 'completed: aborted' "$N/run.log" || { echo "FAIL: the exhausted retry did not abort"; cat "$N/run.log"; exit 1; }
+# both occurrences ran (the timeout is retried — receipt retry-timeout-retries)
+[ "$(grep -c '| Deploy?' "$N/run.log")" -eq 2 ] || {
+  echo "FAIL: expected two prompts across two attempts"; cat "$N/run.log"; exit 1; }
+[ "$(find "$N/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
+  echo "FAIL: a prompt is still advertised against a finished build"; exit 1; }
+echo "never more than one live prompt; both attempts asked, neither lingered"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

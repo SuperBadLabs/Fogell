@@ -92,7 +92,18 @@ type PersistenceHooks =
       /// alone. The measurement is `scripts/probe-input.bb` against
       /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
       /// `scripts/run-approval-lane.sh`, which runs in the gate.
-      PollInputAnswer: (string -> int -> int -> string -> InputAnswer option) option }
+      PollInputAnswer: (string -> int -> int -> string -> InputAnswer option) option
+      /// FG-046b. stage -> stepIndex -> occurrence -> this prompt has stopped
+      /// waiting WITHOUT an answer (a deadline, a failFast sibling, a faulted
+      /// approver), so withdraw it from wherever it was advertised.
+      ///
+      /// Called at the moment the prompt dies rather than at the end of the
+      /// build, because `retry { timeout { input … } }` starts the NEXT
+      /// occurrence immediately: the inbox otherwise showed the expired prompt
+      /// and the live one side by side, and an operator answering the expired id
+      /// — the natural one to reach for, it was there first — had their decision
+      /// silently discarded while the real gate went on waiting.
+      OnInputClosed: string -> int -> int -> unit }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -945,7 +956,9 @@ module WalkerOrchestration =
                             // attempt re-running the same body reaches it in the
                             // same order and draws the same ordinal.
                             let occurrence = runCtx.NextInputOccurrence(stageKey, stepIndex)
-                            fun () -> poll stageKey stepIndex occurrence renderedMessage)
+
+                            (fun () -> poll stageKey stepIndex occurrence renderedMessage),
+                            (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence))
                     | _ -> None
 
                 match approver, deadline with
@@ -953,7 +966,7 @@ module WalkerOrchestration =
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some poll, _ ->
+                | Some(poll, withdraw), _ ->
                     // Wait for the answer, the deadline, or a failFast sibling —
                     // whichever comes first. With no deadline this waits
                     // indefinitely, which is what Jenkins does and what an
@@ -1048,8 +1061,15 @@ module WalkerOrchestration =
                         ctx.Failed.Value <- true
                         ctx.HumanRejected.Value <- true
                         ctx.Sink BuildStatus.Aborted
-                    | None when approverFaulted -> ()
-                    | None -> applyCancellation ctx "input" deadline outcome
+                    // WITHDRAWN the moment it dies, not at the end of the
+                    // build: a retry starts the next occurrence immediately, and
+                    // an inbox showing both is an invitation to answer the dead
+                    // one. An answered prompt needs no withdrawal — the approver
+                    // consumed it when it recorded the answer.
+                    | None when approverFaulted -> withdraw ()
+                    | None ->
+                        withdraw ()
+                        applyCancellation ctx "input" deadline outcome
                 | None, Some _ ->
                     // Wait out the deadline exactly as an unanswered prompt would.
                     //
