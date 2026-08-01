@@ -29,8 +29,11 @@
     (doseq [{:keys [stem body]} scm-cases]
       (let [branch (str "case/" stem)
             current (let [r (sh {:dir work :continue true} "git" "show" (str "origin/" branch ":Jenkinsfile"))]
-                      (when (zero? (:exit r)) (:out r)))]
-        (if (= current body)
+                      (when (zero? (:exit r)) (:out r)))
+            main-head (str/trim (:out (sh {:dir work} "git" "rev-parse" "origin/main")))
+            branch-parent (let [r (sh {:dir work :continue true} "git" "rev-parse" (str "origin/" branch "^"))]
+                            (when (zero? (:exit r)) (str/trim (:out r))))]
+        (if (and (= current body) (= branch-parent main-head))
           nil ; already in agreement — nothing moves, the sealed sha stays put
           (do
             (shell {:dir work :out :string :err :string}
