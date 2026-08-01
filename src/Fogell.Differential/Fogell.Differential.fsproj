@@ -9,6 +9,7 @@
     <Compile Include="WalkerCancellation.fs" />
     <Compile Include="WalkerArgs.fs" />
     <Compile Include="WalkerStep.fs" />
+    <Compile Include="WalkerWhen.fs" />
     <Compile Include="Fogell.fs" />
     <Compile Include="Compare.fs" />
   </ItemGroup>
