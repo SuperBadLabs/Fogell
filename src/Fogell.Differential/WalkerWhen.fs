@@ -17,6 +17,7 @@ module WalkerWhen =
     /// both divergences, so an unmodelled condition fails the build with a
     /// named reason instead of guessing a direction.
     let rec evalWhen
+            (restarted: bool)
             (envForWith: (string * string) list -> Stage -> (string * string) list)
             (stage: Stage)
             (cond: WhenCondition)
@@ -117,8 +118,10 @@ module WalkerWhen =
         | WhenBuildingTag -> Some(Map.containsKey "TAG_NAME" env)
         | WhenChangeRequest -> Some(Map.containsKey "CHANGE_ID" env)
         | WhenIsRestartedRun ->
-            // Nothing in this engine restarts a run yet, so this cannot be true.
-            Some false
+            // True exactly when this attempt RESUMES an interrupted journal —
+            // the FG-112 restart lane asserts a stage guarded by it runs only
+            // on the resumed attempt.
+            Some restarted
         | WhenTriggeredBy _ ->
             // MEASURED false on a user-started build, and it stays false until real
             // cause metadata exists.
@@ -138,7 +141,7 @@ module WalkerWhen =
             // evaluates false.
             Some false
 
-        | WhenNot inner -> evalWhen envForWith stage inner |> Option.map not
+        | WhenNot inner -> evalWhen restarted envForWith stage inner |> Option.map not
 
         // REVIEW FIX (Codex, PR #13 round 2): an unevaluable operand used to
         // dominate, so `allOf { <false>, triggeredBy(...) }` failed the build
@@ -147,14 +150,14 @@ module WalkerWhen =
         // only a genuinely undetermined result is reported unevaluable. This
         // shrinks the fail-closed surface without guessing anything.
         | WhenAllOf conds ->
-            let results = conds |> List.map (evalWhen envForWith stage)
+            let results = conds |> List.map (evalWhen restarted envForWith stage)
 
             if results |> List.contains (Some false) then Some false
             elif results |> List.exists Option.isNone then None
             else Some true
 
         | WhenAnyOf conds ->
-            let results = conds |> List.map (evalWhen envForWith stage)
+            let results = conds |> List.map (evalWhen restarted envForWith stage)
 
             if results |> List.contains (Some true) then Some true
             elif results |> List.exists Option.isNone then None

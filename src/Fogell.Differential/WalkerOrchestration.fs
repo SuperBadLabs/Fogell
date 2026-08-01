@@ -6,6 +6,50 @@ open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
 
+/// FG-112. Durability hooks for a persisted run. The unit of durability is the
+/// TOP-LEVEL step of a stage: a wrapper (retry/timeout/withEnv) journals as one
+/// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
+/// stated rather than implied. None (the differential path) journals nothing.
+///
+/// STATED LIMIT: build-scoped Groovy BINDINGS assigned by a durably finished
+/// step are NOT restored on resume. Jenkins serialises its whole CPS
+/// continuation and keeps them (receipt `gstring-binding-across-steps`); this
+/// journal records step OUTCOMES, not interpreter state, so a resumed attempt
+/// starts with a fresh ScriptBinding. A later step referencing such a variable
+/// therefore FAILS BY NAME (strict-vars raises MissingProperty) rather than
+/// resolving to something else — fail-visible, never silently different.
+/// Closing it means durably serialising interpreter values, which is its own
+/// ticket; the host warns on every resume so the operator is not surprised.
+///
+/// STATED LIMIT: `post` steps are NOT journaled and re-run on every resume —
+/// at-least-once for post effects. Closing that needs post-scoped keys and a
+/// re-selection story (the arms select against a status resume must
+/// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
+type PersistenceHooks =
+    { /// True when this attempt RESUMES an interrupted journal — what
+      /// `when { isRestartedRun() }` evaluates to.
+      IsRestartedRun: bool
+      /// stage -> stepIndex -> run it? False = durably finished in a prior
+      /// attempt: the step is skipped SILENTLY (its output already happened;
+      /// replaying narration would double it).
+      ShouldExecute: string -> int -> bool
+      /// stage -> did a prior attempt durably commit this stage's boundary?
+      /// A container stage (parallel/sequential group) has no direct steps, so
+      /// this is its only evidence of having run.
+      StageWasCommitted: string -> bool
+      /// stage -> stepIndex -> the status a durably finished step RECORDED, so
+      /// the skip path can replay it — without this, a resume after
+      /// `step-finished failure` (but before BuildFinished) flips the build to
+      /// success and runs stages the failure should have halted.
+      SkippedStatus: string -> int -> BuildStatus option
+      /// stage -> stepIndex -> stepName. Written (and made durable) BEFORE the
+      /// step runs.
+      OnStepStarted: string -> int -> string -> unit
+      /// stage -> stepIndex -> the step's worst sunk status.
+      OnStepFinished: string -> int -> BuildStatus -> unit
+      /// The stage boundary — the journal's group-commit point.
+      OnStageCommitted: string -> unit }
+
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
 type OrchestrationDeps =
@@ -30,7 +74,9 @@ type OrchestrationDeps =
       /// FG-052. The job's SCM, when the job is SCM-defined — what
       /// `checkout scm` checks out. None for inline-script jobs, where
       /// `checkout scm` REFUSES exactly as Jenkins errors there.
-      Scm: ScmSpec option }
+      Scm: ScmSpec option
+      /// FG-112. Durability hooks; None journals nothing (the differential path).
+      Persistence: PersistenceHooks option }
 
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
@@ -63,6 +109,7 @@ module WalkerOrchestration =
         let jobName = deps.JobName
         let credentialStore = deps.Credentials
         let previousBuild = deps.PreviousBuild
+        let persistence = deps.Persistence
         // Jenkins scopes a stash to the BUILD that saved it — receipt
         // `stash-not-carried`: build 2's unstash of build 1's stash FAILS.
         let stashKey = $"{deps.JobName}#build-{deps.BuildNumber}"
@@ -151,6 +198,111 @@ module WalkerOrchestration =
                     // stage did not run is the JB-DUR-005 defect in miniature.
                     // Receipt: `when-conditions`.
                     emit $"Stage \"{stage.Name}\" skipped due to when conditional"
+
+                    // FG-112: a restart-sensitive gate (isRestartedRun and kin)
+                    // can evaluate DIFFERENTLY on the resumed attempt — but a
+                    // status this stage (or ANY nested child — parallel branch,
+                    // sequential group) durably RECORDED already happened, and
+                    // when-skipping the parent must not skip the consequence.
+                    match persistence with
+                    | Some hooks ->
+                        // PER STAGE, parent and every nested child alike: each
+                        // that previously ran replays its OWN status and owes
+                        // its OWN post (the controller may have died before or
+                        // during it, and post is unjournaled — the stated
+                        // at-least-once limit; dropping the arm is data loss).
+                        // a container's post selects against the worst status
+                        // its SUBTREE recorded — its own (zero) steps say nothing
+                        let subtreeStatus (root: Stage) =
+                            Pipeline.flattenStages [ root ]
+                            |> List.collect (fun d -> d.Steps |> List.mapi (fun i _ -> d.Name, i))
+                            |> List.choose (fun (n, i) -> hooks.SkippedStatus n i)
+                            |> List.fold BuildStatus.worstOf BuildStatus.Success
+
+                        // REVERSED: flattenStages is preorder, so replaying in
+                        // its order ran a parent's post before its children's —
+                        // Jenkins finishes the inner stage (and its post) first.
+                        // Each stage's replayed outcome, keyed by name. A single
+                        // accumulator leaked ACROSS SIBLINGS — a later sibling's
+                        // failure reached an earlier sibling's status-selective
+                        // post, which never ran under it. The children-first walk
+                        // folds only a stage's OWN nested outcomes.
+                        let outcomes = System.Collections.Generic.Dictionary<string, BuildStatus>()
+
+                        for st in List.rev (Pipeline.flattenStages [ stage ]) do
+                            let mutable entered = false
+                            let mutable replayed = BuildStatus.Success
+
+                            st.Steps
+                            |> List.iteri (fun i _ ->
+                                match hooks.SkippedStatus st.Name i with
+                                | Some recorded ->
+                                    entered <- true
+                                    replayed <- BuildStatus.worstOf replayed recorded
+                                    ctx.Sink recorded
+
+                                    if
+                                        recorded = BuildStatus.Failure
+                                        || recorded = BuildStatus.Aborted
+                                    then
+                                        ctx.Failed.Value <- true
+                                | None -> ())
+
+                            // A container stage has NO direct steps: its
+                            // durable evidence of having run is its committed
+                            // boundary, not a step record.
+                            // A container's evidence of having run is its own
+                            // commit OR any durable record in its subtree: a
+                            // child can finish a step and the process die before
+                            // the parent's StageCommitted is written.
+                            let committed =
+                                List.isEmpty st.Steps
+                                && (hooks.StageWasCommitted st.Name
+                                    || Pipeline.flattenStages [ st ]
+                                       |> List.exists (fun d ->
+                                           d.Steps |> List.mapi (fun i _ -> i) |> List.exists (fun i ->
+                                               (hooks.SkippedStatus d.Name i).IsSome)))
+
+                            let childrenWorst =
+                                st.Nested
+                                |> List.fold
+                                    (fun acc (c: Stage) ->
+                                        match outcomes.TryGetValue c.Name with
+                                        | true, v -> BuildStatus.worstOf acc v
+                                        | _ -> acc)
+                                    BuildStatus.Success
+
+                            let status =
+                                BuildStatus.worstOf
+                                    (if entered then replayed else subtreeStatus st)
+                                    childrenWorst
+
+                            let mutable outcome = status
+
+                            if (entered || committed) && not (List.isEmpty st.Post) then
+                                // observe what the POST itself sinks: `junit` can
+                                // sink Unstable without failing, and a container's
+                                // arm must see that too — the failure flag alone
+                                // is not the post's outcome.
+                                let postObserved = ref BuildStatus.Success
+
+                                let postCtx =
+                                    { ctx with
+                                        Failed = ref false
+                                        Sink =
+                                            fun st ->
+                                                postObserved.Value <- BuildStatus.worstOf postObserved.Value st
+                                                ctx.Sink st }
+
+                                runPostWithDeadline postCtx cwd st status previousBuild inherited
+                                outcome <- BuildStatus.worstOf outcome postObserved.Value
+
+                                if postCtx.Failed.Value then
+                                    ctx.Failed.Value <- true
+                                    outcome <- BuildStatus.worstOf outcome BuildStatus.Failure
+
+                            outcomes[st.Name] <- outcome
+                    | None -> ()
 
                 | None ->
                     // Cannot decide. Fail closed with a named reason rather
@@ -935,9 +1087,40 @@ module WalkerOrchestration =
             | _ -> runStepInner ctx stage cwd step deadline
 
         and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: Deadline option) (stage: Stage) =
-                for step in stage.Steps do
+                stage.Steps
+                |> List.iteri (fun i step ->
                     if not (halted ctx) then
-                        runStepDispatch ctx cwd stage step deadline
+                        match persistence with
+                        | None -> runStepDispatch ctx cwd stage step deadline
+                        | Some hooks ->
+                            if not (hooks.ShouldExecute stage.Name i) then
+                                // replay the recorded outcome: skipping the
+                                // EXECUTION must not skip the CONSEQUENCE
+                                match hooks.SkippedStatus stage.Name i with
+                                | Some st ->
+                                    ctx.Sink st
+
+                                    if st = BuildStatus.Failure || st = BuildStatus.Aborted then
+                                        ctx.Failed.Value <- true
+                                | None -> ()
+                            else
+                                hooks.OnStepStarted stage.Name i step.Name
+
+                                // observe THIS step's worst sunk status without
+                                // disturbing the branch's own sink
+                                let observed = ref BuildStatus.Success
+
+                                let observing =
+                                    { ctx with
+                                        Sink =
+                                            fun st ->
+                                                observed.Value <- BuildStatus.worstOf observed.Value st
+                                                ctx.Sink st }
+
+                                runStepDispatch observing cwd stage step deadline
+                                hooks.OnStepFinished stage.Name i observed.Value)
+
+
 
                 if stage.IsParallel && not (List.isEmpty stage.Nested) then
                     // JB-FAIL-006/007. Branches run concurrently and, by
@@ -1037,4 +1220,14 @@ module WalkerOrchestration =
                 else
                     for nested in stage.Nested do
                         runStage ctx cwd deadline nested
+
+                // the group-commit boundary — AFTER nested/parallel content, so
+                // "everything before it is durable" is actually true of it, and
+                // UNCONDITIONAL: this is a durability point, not a success
+                // signal — a halted stage's finished records still need their
+                // fsync under EveryStage policy
+                match persistence with
+                | Some hooks -> hooks.OnStageCommitted stage.Name
+                | None -> ()
+
         runStage, runPostWithDeadline

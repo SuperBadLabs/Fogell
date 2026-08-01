@@ -32,4 +32,10 @@ if [ -x scripts/audit-claims.bb ]; then
 
 fi
 
+# FG-112: the restart lane is self-contained (dotnet + bash + a SIGKILL) and
+# is the ONLY automated coverage of PersistenceHooks/resume — it runs in the
+# gate so the headline durability semantics cannot silently regress.
+echo "=== restart lane (FG-112, blocking) ==="
+./scripts/run-restart-lane.sh || { echo "RESTART LANE FAILED"; exit 1; }
+
 echo "OK"

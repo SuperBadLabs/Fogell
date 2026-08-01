@@ -17,6 +17,7 @@
     <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
     <Project Path="tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj" />
     <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
+    <Project Path="tools/Fogell.Run.Host/Fogell.Run.Host.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />

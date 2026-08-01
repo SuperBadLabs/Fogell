@@ -92,6 +92,7 @@ module FogellSide =
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
         (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -263,7 +264,10 @@ module FogellSide =
                 WalkerStep.runStepInner runCtx envForWith workspace artifactRoot jobName
 
             // FG-105: when-evaluation lives in WalkerWhen.
-            let evalWhen = WalkerWhen.evalWhen envForWith
+            let evalWhen =
+                WalkerWhen.evalWhen
+                    (persistence |> Option.map (fun h -> h.IsRestartedRun) |> Option.defaultValue false)
+                    envForWith
 
             let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
 
@@ -282,7 +286,8 @@ module FogellSide =
                       Credentials = credentialStore
                       PreviousBuild = previousBuild
                       BuildNumber = buildNumber
-                      Scm = scm }
+                      Scm = scm
+                      Persistence = persistence }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
@@ -397,7 +402,60 @@ module FogellSide =
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true None script
+            runWith envReplacements workspaceRoot jobName 1 None true None None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// FG-112. Run one build with durability hooks — the restart lane's entry.
+    /// Same walker, same semantics; the hooks journal top-level steps.
+    let runPersisted
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (freshWorkspace: bool)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        try
+            // The journal key is (stage name, step index) — a flat map. Two
+            // stages sharing a name (top-level, nested, or parallel branches)
+            // would collide, and a collision records a never-run step as
+            // durably done. REFUSED by name up front (FG-103), not keyed
+            // around: unique names are the corpus norm and the stated limit.
+            match Fogell.Pipeline.Parser.Parser.parse script with
+            | Result.Error _ -> () // the run itself reports parse errors
+            | Ok p ->
+                let dupes =
+                    p.Stages
+                    |> Pipeline.flattenStages
+                    |> List.countBy (fun st -> st.Name)
+                    |> List.filter (fun (_, n) -> n > 1)
+                    |> List.map fst
+
+                if not (List.isEmpty dupes) then
+                    failwith (
+                        "persisted runs require globally unique stage names; duplicated: "
+                        + String.concat ", " dupes
+                    )
+
+                // the journal's wire format delimits with tabs and newlines; a
+                // stage name carrying either would TEAR the record and truncate
+                // every later read — refused by name, not escaped around
+                let unsafe =
+                    p.Stages
+                    |> Pipeline.flattenStages
+                    |> List.filter (fun st ->
+                        st.Name.Contains '\t' || st.Name.Contains '\n' || st.Name.Contains '\r')
+                    |> List.map (fun st ->
+                        st.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
+
+                if not (List.isEmpty unsafe) then
+                    failwith (
+                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
+                        + String.concat ", " unsafe
+                    )
+
+            runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
         with ex ->
             Result.Error ex.Message
 
@@ -412,7 +470,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) script
+            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) None script
         with ex ->
             Result.Error ex.Message
 
@@ -455,6 +513,7 @@ module FogellSide =
                                 (List.length acc + 1)
                                 previous
                                 (List.isEmpty acc)
+                                None
                                 None
                                 script
                         with ex ->
