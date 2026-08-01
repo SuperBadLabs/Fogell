@@ -37,7 +37,9 @@
 #      finishes — cleanup identifies markers by what they say, not by what the
 #      cleaning process remembers publishing;
 #   L. `retry` does not re-ask a human who said no: a rejection is an
-#      interruption, not a retryable failure.
+#      interruption, not a retryable failure;
+#   M. and it escapes NESTED retries — the inner scope's fresh per-attempt
+#      signal must still reach the outer one.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -481,6 +483,46 @@ grep -q '| Retrying' "$L/run.log" && { echo "FAIL: an abort was treated as a ret
   echo "FAIL: more than one decision was recorded"; sed 's/^/  | /' "$L/build.journal"; exit 1; }
 grep -q '^shipped$' "$L/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a rejected gate ran"; exit 1; }
 echo "asked once, declined once, aborted"
+
+# ---------------------------------------------------------------- scenario M
+echo "=== M: a rejection escapes NESTED retries ==="
+# the inner retry mints a fresh rejection ref per attempt (so one attempt cannot
+# poison the next); that also severs it from the OUTER retry, which then saw an
+# ordinary failed attempt and put the prompt back in front of someone who had
+# already declined it
+M="$LANE/m"; mkdir -p "$M/approvals"
+cat > "$M/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                retry(3) {
+                    retry(2) {
+                        input message: "Deploy?", ok: "Ship it"
+                    }
+                }
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+JF
+timeout 180 "$HOST_BIN" "$M/Jenkinsfile" "$M/ws" gate "$M/build.journal" "$M/approvals" > "$M/run.log" 2>&1 &
+PID=$!
+MID=$(await_pending "$M/approvals") || { echo "FAIL: no prompt published"; cat "$M/run.log"; exit 1; }
+printf 'reject mallory\n' > "$M/approvals/$MID.decision"
+set +e; wait "$PID"; RC=$?; set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the nested rejected retry hung"; exit 1; }
+[ "$RC" -eq 1 ] || { echo "FAIL: a rejected build must not exit 0 (got $RC)"; cat "$M/run.log"; exit 1; }
+grep -q 'completed: aborted' "$M/run.log" || { echo "FAIL: rejection did not abort"; cat "$M/run.log"; exit 1; }
+[ "$(grep -c '| Deploy?' "$M/run.log")" -eq 1 ] || {
+  echo "FAIL: the prompt was republished — the rejection did not escape the inner retry"; cat "$M/run.log"; exit 1; }
+grep -q '| Retrying' "$M/run.log" && { echo "FAIL: a rejection was retried at some level"; cat "$M/run.log"; exit 1; }
+[ "$(grep -c '^input-decision' "$M/build.journal")" -eq 1 ] || {
+  echo "FAIL: more than one decision was recorded"; sed 's/^/  | /' "$M/build.journal"; exit 1; }
+grep -q '^shipped$' "$M/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a rejected gate ran"; exit 1; }
+echo "declined once at depth two, aborted, never re-asked"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

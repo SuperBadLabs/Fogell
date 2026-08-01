@@ -549,6 +549,16 @@ module WalkerOrchestration =
                         // why it re-ran the body.
                         ctx.Sink attemptStatus.Value
                         ctx.Failed.Value <- true
+                        // PROPAGATED, and this line is the whole nested case:
+                        // the attempt's ref is fresh precisely so one attempt's
+                        // rejection does not leak into the next, but that also
+                        // severs it from an ENCLOSING retry. Without this,
+                        // `retry(3) { retry(2) { input … } }` had the outer scope
+                        // see an ordinary failed attempt, print `Retrying`, and
+                        // put the prompt back in front of someone who had already
+                        // declined it. A parallel branch needs no equivalent — it
+                        // INHERITS the ref rather than minting one.
+                        ctx.HumanRejected.Value <- true
                         settled <- true
                     elif attempt < attempts then
                         // Jenkins prints this between attempts, with no delay:
