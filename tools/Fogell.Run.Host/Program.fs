@@ -31,7 +31,12 @@ let main argv =
         // a journal INSIDE the workspace would be unlinked by the fresh-attempt
         // wipe — every record then lands on an unlinked inode and resume reads
         // an empty file. Refused by name; the journal is controller-side state.
-        let workspaceFull = Path.GetFullPath(Path.Combine(workspaceRoot, jobName))
+        // trailing separators survive GetFullPath and would turn the prefix
+        // into "…//", defeating the containment check
+        let workspaceFull =
+            Path
+                .GetFullPath(Path.Combine(workspaceRoot, jobName))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
         if journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar) then
             eprintfn $"journal path is inside the workspace ({workspaceFull}) — the fresh-attempt wipe would unlink it; keep it controller-side"
