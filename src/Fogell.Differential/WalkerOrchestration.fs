@@ -192,10 +192,15 @@ module WalkerOrchestration =
                     // when-skipping the parent must not skip the consequence.
                     match persistence with
                     | Some hooks ->
-                        let mutable entered = false
-                        let mutable replayed = BuildStatus.Success
-
+                        // PER STAGE, parent and every nested child alike: each
+                        // that previously ran replays its OWN status and owes
+                        // its OWN post (the controller may have died before or
+                        // during it, and post is unjournaled — the stated
+                        // at-least-once limit; dropping the arm is data loss).
                         for st in Pipeline.flattenStages [ stage ] do
+                            let mutable entered = false
+                            let mutable replayed = BuildStatus.Success
+
                             st.Steps
                             |> List.iteri (fun i _ ->
                                 match hooks.SkippedStatus st.Name i with
@@ -211,15 +216,10 @@ module WalkerOrchestration =
                                         ctx.Failed.Value <- true
                                 | None -> ())
 
-                        // A stage that PREVIOUSLY RAN but is gated off on this
-                        // attempt still owes its `post`: the controller may have
-                        // died before or during it, and post is not journaled
-                        // (the stated at-least-once limit) — running it again is
-                        // that semantics, silently dropping it is data loss.
-                        if entered && not (List.isEmpty stage.Post) then
-                            let postCtx = { ctx with Failed = ref false }
-                            runPostWithDeadline postCtx cwd stage replayed previousBuild inherited
-                            if postCtx.Failed.Value then ctx.Failed.Value <- true
+                            if entered && not (List.isEmpty st.Post) then
+                                let postCtx = { ctx with Failed = ref false }
+                                runPostWithDeadline postCtx cwd st replayed previousBuild inherited
+                                if postCtx.Failed.Value then ctx.Failed.Value <- true
                     | None -> ()
 
                 | None ->

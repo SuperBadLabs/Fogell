@@ -24,47 +24,14 @@ open Fogell.Journal
 let main argv =
     match Array.toList argv with
     | [ jenkinsfile; workspaceRoot; jobName; journalArg ] ->
-        // a relative journal path would hand Journal.ensure an empty directory
-        // name and fail the first append — normalise before anything reads it
-        let journalPath = Path.GetFullPath journalArg
-
-        // a journal INSIDE the workspace would be unlinked by the fresh-attempt
-        // wipe — every record then lands on an unlinked inode and resume reads
-        // an empty file. Refused by name; the journal is controller-side state.
-        // trailing separators survive GetFullPath and would turn the prefix
-        // into "…//", defeating the containment check
-        let workspaceFull =
-            Path
-                .GetFullPath(Path.Combine(workspaceRoot, jobName))
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-
-        if journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar) then
-            eprintfn $"journal path is inside the workspace ({workspaceFull}) — the fresh-attempt wipe would unlink it; keep it controller-side"
-            exit 2
-
-        // The job name is also a controller-state KEY (artifacts, stashes, SCM
-        // records all combine it as a relative segment), so it must be a plain
-        // relative name — not rooted, not traversing. Checking the combined
-        // path alone accepted `/tmp/ws/job` (inside the root, yet rooted) and
-        // let a Path.Combine downstream discard its own prefix.
-        if Path.IsPathRooted jobName || jobName.Split([| '/'; '\\' |]) |> Array.contains ".." then
-            eprintfn $"job-name must be a plain relative name (not rooted, no traversal): {jobName}"
-            exit 2
-
-        let rootFull =
-            Path
-                .GetFullPath(workspaceRoot)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-
-        // Lexical containment is not enough: an intermediate SYMLINK
-        // (/safe/link -> /srv, job "link/prod") keeps the prefix while the
-        // recursive wipe follows the link to an unrelated tree. Compare
-        // RESOLVED paths — of the deepest existing ancestor, since the
-        // workspace itself may not exist yet on a first attempt.
-        // EVERY existing component is resolved, not just the deepest: an
-        // intermediate symlink (/safe/link -> /srv) with an existing final
-        // directory would otherwise be examined only at that final component,
-        // which is not a link, and the wipe would still follow the link.
+        // Paths first, RESOLVED once: every containment decision below compares
+        // physical locations, because a symlink anywhere in the chain makes a
+        // lexical prefix meaningless (the wipe follows links, the OS does not
+        // care about our string arithmetic).
+        //
+        // EVERY existing component is resolved, walking from the root — an
+        // intermediate link is invisible if only the deepest component is
+        // examined and that component is not itself a link.
         let resolve (p: string) =
             let rooted = Path.GetFullPath p
 
@@ -86,11 +53,35 @@ let main argv =
 
             acc
 
-        let realWorkspace = resolve workspaceFull
-        let realRoot = (resolve rootFull).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+        let trimSep (p: string) =
+            p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        // a relative journal path would hand Journal.ensure an empty directory
+        // name and fail the first append — normalise before anything reads it
+        let journalPath = Path.GetFullPath journalArg
+
+        // The job name is also a controller-state KEY (artifacts, stashes, SCM
+        // records all combine it as a relative segment), so it must be a plain
+        // relative name — not rooted, not traversing.
+        if Path.IsPathRooted jobName || jobName.Split([| '/'; '\\' |]) |> Array.contains ".." then
+            eprintfn $"job-name must be a plain relative name (not rooted, no traversal): {jobName}"
+            exit 2
+
+        let workspaceFull = trimSep (Path.GetFullPath(Path.Combine(workspaceRoot, jobName)))
+        let realWorkspace = trimSep (resolve workspaceFull)
+        let realRoot = trimSep (resolve workspaceRoot)
 
         if not (realWorkspace.StartsWith(realRoot + string Path.DirectorySeparatorChar)) then
             eprintfn $"job-name resolves outside the workspace root ({realWorkspace} vs {realRoot}) — the wipe would delete an unrelated directory; refusing"
+            exit 2
+
+        // a journal PHYSICALLY inside the workspace would be unlinked by the
+        // fresh-attempt wipe — every record then lands on an unlinked inode and
+        // resume reads an empty file. Compared resolved: an aliasing symlink
+        // (root=/tmp/link -> /tmp/real, journal under /tmp/real/job) is the
+        // same physical location and must refuse too.
+        if (resolve journalPath).StartsWith(realWorkspace + string Path.DirectorySeparatorChar) then
+            eprintfn $"journal path is inside the workspace ({realWorkspace}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2
 
         // control characters in the identity would tear the journal's wire
@@ -138,9 +129,12 @@ let main argv =
 
         // same shape for the WORKSPACE: durable setup steps were skipped on the
         // strength of effects that live in a particular tree
+        // RESOLVED root: a symlink retargeted between attempts changes the
+        // physical tree while the lexical path is unchanged, and the resumed
+        // run would skip durable setup against a different directory.
         match plan.WorkspaceIdentity with
-        | Some(r, j) when r <> rootFull || j <> jobName ->
-            eprintfn $"workspace-changed: the journal belongs to ({r}, {j}); refusing to resume against ({rootFull}, {jobName})"
+        | Some(r, j) when r <> realRoot || j <> jobName ->
+            eprintfn $"workspace-changed: the journal belongs to ({r}, {j}); refusing to resume against ({realRoot}, {jobName})"
             4
         | _ ->
 
@@ -185,7 +179,7 @@ let main argv =
             journal.Append(ScriptDigest digest)
 
         if plan.WorkspaceIdentity.IsNone then
-            journal.Append(WorkspaceIdentity(rootFull, jobName))
+            journal.Append(WorkspaceIdentity(realRoot, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()
