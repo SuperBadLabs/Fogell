@@ -235,6 +235,12 @@ printf 'approve alice\rreject bob\n' > "$F/approvals/$FID.decision"
 sleep 3
 grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a CR-separated ambiguous answer was accepted"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
 kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a CR-separated answer"; cat "$F/run.log"; exit 1; }
+# a blank second line is ambiguous too — and trimming EVERY trailing terminator
+# quietly turned it back into a clean one-liner
+printf 'approve alice\n\n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a trailing blank line was trimmed into an answer"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a trailing-blank-line answer"; cat "$F/run.log"; exit 1; }
 printf 'approve frank\n' > "$F/approvals/$FID.decision"   # the completed write
 set +e; wait "$PID"; RC=$?; set -e
 [ "$RC" -eq 0 ] || { echo "FAIL: the completed answer was not honoured (rc=$RC)"; cat "$F/run.log"; exit 1; }
@@ -262,6 +268,15 @@ grep -q 'completed: success' "$G/run2.log" || { echo "FAIL: aliased resume not s
 grep -q $'^input-decision\tGate\t1\tapproved\tgrace$' "$G/build.journal" || {
   echo "FAIL: the answer was not journaled under the alias"; sed 's/^/  | /' "$G/build.journal"; exit 1; }
 echo "the alias resolved to the same action id; nobody was asked twice"
+
+echo "=== G2: a terminal journal sweeps a marker its build left behind ==="
+# the state a kill between the terminal record's sync and the in-process cleanup
+# leaves: a finished build with a prompt still advertised as outstanding
+touch "$G/approvals/$GID.pending"
+"$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/build.journal" "$G/approvals" > "$G/run3.log" 2>&1
+grep -q 'already-terminal' "$G/run3.log" || { echo "FAIL: expected already-terminal"; cat "$G/run3.log"; exit 1; }
+[ -f "$G/approvals/$GID.pending" ] && { echo "FAIL: a finished build still advertises a pending prompt"; exit 1; }
+echo "swept on the already-terminal path"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

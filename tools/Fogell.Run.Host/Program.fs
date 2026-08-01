@@ -252,11 +252,21 @@ let main argv =
             //      decision. A defence that launders its own evidence is worse
             //      than none.
             //   3. BOTH FIELDS. A verdict alone is not an answer.
+            // A file that EXISTS and cannot be read is not silence. Swallowing
+            // the exception into "" made it indistinguishable from an unanswered
+            // prompt, so a permission or sharing error left an un-timed input
+            // polling forever while the operator looked at a decision file that
+            // was plainly there — the interface promises a warning for an answer
+            // this host cannot read, and that has to include cannot-read-at-all.
             let contents =
                 try
-                    File.ReadAllText path
-                with _ ->
-                    ""
+                    Ok(File.ReadAllText path)
+                with ex ->
+                    Result.Error $"{path} could not be read: {ex.GetType().Name}"
+
+            match contents with
+            | Result.Error e -> Some(Error e)
+            | Ok contents ->
 
             if contents = "" then
                 None
@@ -268,9 +278,17 @@ let main argv =
                 Some(Error $"{path} is not newline-terminated ({contents.Length} chars) — an answer must end with a newline")
             else
 
-            // only the TERMINATOR is stripped; an interior newline survives to be
-            // rejected below rather than being trimmed into invisibility
-            let body = contents.Replace("\r\n", "\n").TrimEnd '\n'
+            // Exactly ONE terminator is stripped, and that word is doing work:
+            // `TrimEnd '\n'` removed EVERY trailing newline, so `approve alice\n\n`
+            // — a blank second line, which the protocol calls ambiguous — was
+            // trimmed back into a clean single line and accepted. Everything that
+            // survives this strip is interior, and interior separators are
+            // rejected below rather than trimmed into invisibility.
+            let body =
+                if contents.EndsWith "\r\n" then
+                    contents.Substring(0, contents.Length - 2)
+                else
+                    contents.Substring(0, contents.Length - 1)
 
             if body.Trim() = "" then
                 None
@@ -323,6 +341,20 @@ let main argv =
         // (a completed build queried after rotation) — check BEFORE reading it
         match plan.Terminal with
         | Some t ->
+            // FG-046b. A prompt can stop being outstanding without being
+            // answered — a deadline, a failFast sibling — and the in-process
+            // cleanup that removes its marker runs AFTER the terminal record is
+            // synced. A kill in that window left the marker behind, and this
+            // fast path returns before anything is republished, so the prompt
+            // stayed advertised as pending against a finished build forever.
+            // Every step the journal knows about is swept, not just the ones
+            // recorded as `input`: a wrapped prompt journals under its wrapper's
+            // name and its marker is just as stale.
+            approvalsDir
+            |> Option.iter (fun dir ->
+                for KeyValue((stage, i), _) in plan.Steps do
+                    consumeAnswer dir stage i)
+
             printfn $"already-terminal: {BuildStatus.toWireString t}"
             0
         | None ->
