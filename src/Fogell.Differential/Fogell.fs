@@ -112,6 +112,11 @@ module FogellSide =
             if freshWorkspace && Directory.Exists workspace then
                 Directory.Delete(workspace, true)
 
+            // a NEW job has no build history — mirror the harness's doDelete
+            // (the record otherwise survives from a previous run of this case)
+            if freshWorkspace then
+                WalkerGit.resetHistory artifactRoot jobName
+
             Directory.CreateDirectory workspace |> ignore
 
             /// Environment visible to a step: pipeline scope, overridden by stage

@@ -762,7 +762,8 @@ module WalkerOrchestration =
                     emit $"ERROR: git step credentialsId '{c}' is not modelled (the lane has no credentialed remote to measure against)"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some u, None -> WalkerGit.runStep runCtx ctx cwd deadline u branch
+                | Some u, None ->
+                    WalkerGit.runStep runCtx ctx cwd deadline (envForWith ctx.EnvOverlay stage) artifactRoot jobName u branch
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive

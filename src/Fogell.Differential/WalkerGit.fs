@@ -37,11 +37,20 @@ module WalkerGit =
     /// buffer filled), a 10-minute wait matching the `# timeout=10` the
     /// narration promises, kill on expiry, and every start failure (missing
     /// binary included) is an Error, never an unhandled throw.
-    let private git (waitMs: int) (shouldStop: unit -> bool) (cwd: string) (args: string list) : Result<string, string> =
+    let private git
+        (env: (string * string) list)
+        (waitMs: int)
+        (shouldStop: unit -> bool)
+        (cwd: string)
+        (args: string list)
+        : Result<string, string> =
         try
             let psi = Diagnostics.ProcessStartInfo("git")
             args |> List.iter psi.ArgumentList.Add
             psi.WorkingDirectory <- cwd
+            // the EFFECTIVE build environment (environment/withEnv resolved) —
+            // exactly what the shell path hands its subprocesses
+            env |> List.iter (fun (k, v) -> psi.Environment[k] <- v)
             psi.RedirectStandardOutput <- true
             psi.RedirectStandardError <- true
             psi.UseShellExecute <- false
@@ -89,6 +98,22 @@ module WalkerGit =
         with ex ->
             Result.Error ex.Message
 
+    /// The last-built revision, kept CONTROLLER-side (under the artifact root,
+    /// like the stash store) because that is where Jenkins keeps SCM build
+    /// data: `deleteDir()` wipes the workspace, not the build history.
+    /// MEASURED (receipt `git-step-deletedir.b2`): a wiped workspace on build 2
+    /// gets the full CLONE shape but ends `git rev-list --no-walk <prior sha>`,
+    /// NOT "First time build" — shape is workspace-keyed, the TAIL is
+    /// history-keyed, and they are independent.
+    let private revisionRecord (artifactRoot: string) (jobKey: string) =
+        Path.Combine(artifactRoot, "_scm", $"{jobKey}.revision")
+
+    /// Forget a job's SCM history — called when the harness creates the job
+    /// fresh, mirroring Jenkins' doDelete (history dies with the job).
+    let resetHistory (artifactRoot: string) (jobKey: string) =
+        let f = revisionRecord artifactRoot jobKey
+        if File.Exists f then File.Delete f
+
     /// Execute the step. First failure wins: later commands are skipped and the
     /// branch fails with the failing command named (fail closed — carrying on
     /// with a half-initialised repo is the silent-loss shape).
@@ -97,6 +122,9 @@ module WalkerGit =
         (ctx: BranchCtx)
         (cwd: string)
         (deadline: Deadline option)
+        (env: (string * string) list)
+        (artifactRoot: string)
+        (jobKey: string)
         (url: string)
         (branch: string)
         : unit =
@@ -135,7 +163,7 @@ module WalkerGit =
             else
                 narration |> Option.iter emit
 
-                match git (bound ()) shouldStop cwd args with
+                match git env (bound ()) shouldStop cwd args with
                 | Ok out ->
                     checkCancelled ()
                     if cancelled then None else Some out
@@ -152,28 +180,23 @@ module WalkerGit =
         let query (narration: string) (args: string list) =
             if failure.IsNone && not cancelled then
                 emit narration
-                git (bound ()) shouldStop cwd args |> ignore
+                git env (bound ()) shouldStop cwd args |> ignore
 
         // The REAL discriminator (a `.git` that is a worktree FILE, not a
         // directory, must not read as fresh): ran silently here, narrated in
         // its measured position below when the repo exists.
         let fresh =
-            match git (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
+            match git env (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
             | Ok _ -> false
             | Result.Error _ -> true
 
-        // A repo whose pre-fetch HEAD cannot be read would only fail AFTER the
-        // fetch mutated it and 16 lines of success narration printed — refuse
-        // UP FRONT instead, by name.
+        // Build HISTORY, independent of the workspace: the record survives
+        // deleteDir() exactly as Jenkins' build data does. (In the
+        // same-workspace re-fetch, the record equals the pre-fetch HEAD the
+        // measurement showed — receipt `git-step-refetch.b2`.)
         let prevSha =
-            if fresh then
-                None
-            else
-                match git (bound ()) shouldStop cwd [ "rev-parse"; "HEAD" ] with
-                | Ok sha -> Some sha
-                | Result.Error e ->
-                    failure <- Some $"pre-fetch HEAD unreadable in an existing repo ({e})"
-                    None
+            let f = revisionRecord artifactRoot jobKey
+            if File.Exists f then Some((File.ReadAllText f).Trim()) else None
 
         if failure.IsNone then
             emit "The recommended git tool is: NONE"
@@ -269,17 +292,20 @@ module WalkerGit =
                 |> Option.iter (fun subject ->
                     emit $"Commit message: \"{subject}\""
 
-                    if fresh then
-                        emit "First time build. Skipping changelog."
-                    else
-                        match prevSha with
-                        | Some prev ->
-                            step
-                                (Some $"> git rev-list --no-walk {prev} # timeout=10")
-                                "git rev-list"
-                                [ "rev-list"; "--no-walk"; prev ]
-                            |> ignore
-                        | None -> ())
+                    // the TAIL is history-keyed, not workspace-keyed
+                    match prevSha with
+                    | None -> emit "First time build. Skipping changelog."
+                    | Some prev ->
+                        step
+                            (Some $"> git rev-list --no-walk {prev} # timeout=10")
+                            "git rev-list"
+                            [ "rev-list"; "--no-walk"; prev ]
+                        |> ignore
+
+                    if failure.IsNone && not cancelled then
+                        let f = revisionRecord artifactRoot jobKey
+                        Directory.CreateDirectory(Path.GetDirectoryName f) |> ignore
+                        File.WriteAllText(f, sha))
 
         // a cancellation already narrated and sank through the model
         if not cancelled then
