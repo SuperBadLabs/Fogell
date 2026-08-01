@@ -210,10 +210,10 @@ let main argv =
         // needs-reconciliation — asking a human who had already answered.
         let journalIdentity = trimSep (resolve journalPath)
 
-        let actionId (stage: string) (index: int) =
+        let actionId (stage: string) (index: int) (occurrence: int) =
             use h = Security.Cryptography.SHA256.Create()
 
-            Text.Encoding.UTF8.GetBytes($"{journalIdentity.Length}:{journalIdentity}|{stage.Length}:{stage}|{index}")
+            Text.Encoding.UTF8.GetBytes($"{journalIdentity.Length}:{journalIdentity}|{stage.Length}:{stage}|{index}|{occurrence}")
             |> h.ComputeHash
             |> Convert.ToHexString
             |> fun x -> x.ToLowerInvariant()
@@ -223,8 +223,8 @@ let main argv =
         // distinguishes them only to warn, because neither is an answer and
         // guessing which way a malformed one leaned would be inventing a human's
         // decision, the one thing durability exists to protect.
-        let readDecision (dir: string) (stage: string) (index: int) : Result<bool * string, string> option =
-            let path = Path.Combine(dir, actionId stage index + ".decision")
+        let readDecision (dir: string) (stage: string) (index: int) (occurrence: int) : Result<bool * string, string> option =
+            let path = Path.Combine(dir, actionId stage index occurrence + ".decision")
 
             if not (File.Exists path) then
                 None
@@ -311,13 +311,50 @@ let main argv =
         // answer waiting to be re-read by something it was never given to.
         // Called only AFTER the record is journaled and synced — in the other
         // order a kill in between would destroy the only copy of the answer.
-        let consumeAnswer (dir: string) (stage: string) (index: int) =
+        let consumeAnswer (dir: string) (stage: string) (index: int) (occurrence: int) =
             for suffix in [ ".pending"; ".decision" ] do
                 try
-                    let p = Path.Combine(dir, actionId stage index + suffix)
+                    let p = Path.Combine(dir, actionId stage index occurrence + suffix)
                     if File.Exists p then File.Delete p
                 with _ ->
                     ()
+
+        // Remove every marker in the inbox belonging to THIS journal, by reading
+        // what each one says it is and checking those fields hash back to its own
+        // filename. Needed where the prompts are not otherwise known — the
+        // already-terminal path returns before anything is republished, and the
+        // journal does not record how many prompts a step asked. Self-verifying
+        // by construction: another build's marker cannot hash to its own name
+        // under this journal's identity, so it is left alone.
+        //
+        // STATED LIMIT: a marker whose fields cannot be read — truncated by a
+        // kill mid-write, or written by an older version — is also left alone,
+        // because leaving clutter is the conservative error and deleting a file
+        // this host cannot identify is not. It costs an operator one stale
+        // filename, never a lost answer.
+        let sweepOwnPrompts (dir: string) =
+            try
+                for file in Directory.GetFiles(dir, "*.pending") do
+                    try
+                        let fields =
+                            File.ReadAllLines file
+                            |> Array.choose (fun l ->
+                                match l.Split '\t' with
+                                | [| k; v |] -> Some(k, v)
+                                | _ -> None)
+                            |> Map.ofArray
+
+                        match Map.tryFind "stage" fields, Map.tryFind "step" fields, Map.tryFind "prompt#" fields with
+                        | Some stage, Some step, Some occ ->
+                            match Int32.TryParse step, Int32.TryParse occ with
+                            | (true, i), (true, o) when actionId stage i o + ".pending" = Path.GetFileName file ->
+                                consumeAnswer dir stage i o
+                            | _ -> ()
+                        | _ -> ()
+                    with _ ->
+                        ()
+            with _ ->
+                ()
 
         // control characters in the identity would tear the journal's wire
         // format exactly like a hostile stage name — refuse by name
@@ -347,13 +384,13 @@ let main argv =
             // synced. A kill in that window left the marker behind, and this
             // fast path returns before anything is republished, so the prompt
             // stayed advertised as pending against a finished build forever.
-            // Every step the journal knows about is swept, not just the ones
-            // recorded as `input`: a wrapped prompt journals under its wrapper's
-            // name and its marker is just as stale.
-            approvalsDir
-            |> Option.iter (fun dir ->
-                for KeyValue((stage, i), _) in plan.Steps do
-                    consumeAnswer dir stage i)
+            // The markers NAME THEMSELVES, which is what makes an exact sweep
+            // possible without the journal recording how many prompts a step
+            // asked: each file carries its stage, step and prompt ordinal, and a
+            // marker is removed only when those fields hash back to its own
+            // filename. A marker belonging to another build therefore cannot
+            // match under this journal's identity and is left alone.
+            approvalsDir |> Option.iter sweepOwnPrompts
 
             printfn $"already-terminal: {BuildStatus.toWireString t}"
             0
@@ -425,11 +462,15 @@ let main argv =
             match approvalsDir with
             | None -> plan
             | Some dir ->
+                // occurrence 1, and only occurrence 1: a step eligible for the
+                // exemption is a BARE top-level `input`, which asks exactly one
+                // prompt. Adopting a later occurrence would mean guessing which
+                // of a wrapper's several gates an answer belonged to.
                 let adopted =
                     plan.NeedsReconciliation
                     |> List.filter (fun k -> Set.contains k plan.InputSteps)
                     |> List.choose (fun (stage, i) ->
-                        match readDecision dir stage i with
+                        match readDecision dir stage i 1 with
                         | Some(Ok(approved, who)) -> Some(stage, i, approved, who)
                         | Some(Error e) ->
                             eprintfn $"approvals: {e} — still waiting"
@@ -442,7 +483,7 @@ let main argv =
                     use j = Journal.openAt journalPath EveryStep
 
                     for stage, i, approved, who in adopted do
-                        j.Append(InputDecision(stage, i, approved, who))
+                        j.Append(InputDecision(stage, i, 1, approved, who))
                         let verdict = if approved then "approved" else "rejected"
                         printfn $"answer adopted: {stage}#{i} {verdict} by {who}"
 
@@ -450,7 +491,7 @@ let main argv =
                     j.Close()
 
                     for stage, i, _, _ in adopted do
-                        consumeAnswer dir stage i
+                        consumeAnswer dir stage i 1
 
                     Resume.plan (Journal.read journalPath)
 
@@ -524,10 +565,10 @@ let main argv =
         // what makes an answer SURVIVE: after it, the inbox is not consulted
         // again for that prompt — a resumed attempt reads the human's decision
         // out of the journal even if the inbox is gone.
-        let answered = Collections.Concurrent.ConcurrentDictionary<string * int, InputAnswer>()
+        let answered = Collections.Concurrent.ConcurrentDictionary<string * int * int, InputAnswer>()
 
-        for KeyValue((stage, i), (approved, who)) in plan.InputDecisions do
-            answered[(stage, i)] <- (if approved then InputApproved who else InputRejected who)
+        for KeyValue((stage, i, occ), (approved, who)) in plan.InputDecisions do
+            answered[(stage, i, occ)] <- (if approved then InputApproved who else InputRejected who)
 
             // Consumed HERE, not on the poll that returns the seeded answer. A
             // kill between the record's sync and its consume leaves both inbox
@@ -536,12 +577,12 @@ let main argv =
             // stay advertised as outstanding forever — and the terminal cleanup
             // could not find it either, since nothing was published in THIS
             // process. Doing it at seed time covers every later path at once.
-            approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i)
+            approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ)
 
         // Written once per prompt (the file's existence is the marker), and once
         // per distinct malformed answer — a 250 ms poll loop would otherwise
         // print thousands of identical lines and bury the one that matters.
-        let publishedPending = Collections.Concurrent.ConcurrentDictionary<string * int, bool>()
+        let publishedPending = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
         let warnedAbout = Collections.Concurrent.ConcurrentDictionary<string, bool>()
 
         // `None` when no inbox was given: there is then no approver at all, and
@@ -550,15 +591,15 @@ let main argv =
         let pollInputAnswer =
             approvalsDir
             |> Option.map (fun dir ->
-                fun (stage: string) (index: int) (prompt: string) ->
-                    match answered.TryGetValue((stage, index)) with
+                fun (stage: string) (index: int) (occurrence: int) (prompt: string) ->
+                    match answered.TryGetValue((stage, index, occurrence)) with
                     | true, a -> Some a
                     | _ ->
 
-                    match readDecision dir stage index with
+                    match readDecision dir stage index occurrence with
                     | None ->
                         // publish what is being waited on, once
-                        if publishedPending.TryAdd((stage, index), true) then
+                        if publishedPending.TryAdd((stage, index, occurrence), true) then
                             Directory.CreateDirectory dir |> ignore
                             // named in full so a human answering has to guess
                             // nothing: which prompt, in which stage, at which
@@ -571,8 +612,8 @@ let main argv =
                                 if isNull s then "" else s.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ')
 
                             File.WriteAllText(
-                                Path.Combine(dir, actionId stage index + ".pending"),
-                                $"stage\t{oneLine stage}\nstep\t{index}\nprompt\t{oneLine prompt}\n"
+                                Path.Combine(dir, actionId stage index occurrence + ".pending"),
+                                $"stage\t{oneLine stage}\nstep\t{index}\nprompt#\t{occurrence}\nprompt\t{oneLine prompt}\n"
                             )
 
                         None
@@ -589,15 +630,15 @@ let main argv =
                         // ordering: the walker proceeds the instant this returns,
                         // so appending after the fact would lose the human's
                         // answer to a kill in between and ask them again.
-                        journal.Append(InputDecision(stage, index, approved, who))
+                        journal.Append(InputDecision(stage, index, occurrence, approved, who))
                         journal.Sync()
 
                         let answer = if approved then InputApproved who else InputRejected who
-                        answered[(stage, index)] <- answer
+                        answered[(stage, index, occurrence)] <- answer
                         // consumed only now that it is durable: the prompt is no
                         // longer outstanding, and an answer left in the inbox is
                         // one waiting to be re-read by a build it was never given to
-                        consumeAnswer dir stage index
+                        consumeAnswer dir stage index occurrence
                         Some answer)
 
         let hooks =
@@ -635,8 +676,8 @@ let main argv =
             match approvalsDir with
             | None -> ()
             | Some dir ->
-                for KeyValue((stage, i), _) in publishedPending do
-                    consumeAnswer dir stage i
+                for KeyValue((stage, i, occ), _) in publishedPending do
+                    consumeAnswer dir stage i occ
 
         // the workspace is already prepared above — never re-wipe here
         match FogellSide.runPersisted [] workspaceRoot jobName false hooks script with

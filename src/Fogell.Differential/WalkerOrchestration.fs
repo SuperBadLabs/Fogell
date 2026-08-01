@@ -59,9 +59,14 @@ type PersistenceHooks =
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
       OnStageCommitted: string -> unit
-      /// FG-046b. stage -> stepIndex -> prompt -> the answer, if one has been
-      /// given. Polled while an `input` waits, and expected to be CHEAP: it is
-      /// called on every poll of the wait loop.
+      /// FG-046b. stage -> stepIndex -> occurrence -> prompt -> the answer, if
+      /// one has been given. Polled while an `input` waits, and expected to be
+      /// CHEAP: it is called on every poll of the wait loop.
+      ///
+      /// The OCCURRENCE is part of the identity, not decoration: the durability
+      /// key names a top-level step, so every prompt inside one wrapper shares
+      /// it, and an implementation that caches by key alone hands the first
+      /// human's answer to the next gate untouched.
       ///
       /// `None` — the whole field — means THERE IS NO APPROVER, and an un-timed
       /// prompt then fails closed with FG-046's named refusal rather than
@@ -87,7 +92,7 @@ type PersistenceHooks =
       /// alone. The measurement is `scripts/probe-input.bb` against
       /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
       /// `scripts/run-approval-lane.sh`, which runs in the gate.
-      PollInputAnswer: (string -> int -> string -> InputAnswer option) option }
+      PollInputAnswer: (string -> int -> int -> string -> InputAnswer option) option }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -896,7 +901,14 @@ module WalkerOrchestration =
                     match persistence, ctx.DurabilityKey with
                     | Some hooks, Some(stageKey, stepIndex) ->
                         hooks.PollInputAnswer
-                        |> Option.map (fun poll -> fun () -> poll stageKey stepIndex renderedMessage)
+                        |> Option.map (fun poll ->
+                            // taken ONCE, here, and reused for every poll: this
+                            // prompt's identity within its durability key. Drawn
+                            // at the moment the prompt is reached, so a resumed
+                            // attempt re-running the same body reaches it in the
+                            // same order and draws the same ordinal.
+                            let occurrence = runCtx.NextInputOccurrence(stageKey, stepIndex)
+                            fun () -> poll stageKey stepIndex occurrence renderedMessage)
                     | _ -> None
 
                 match approver, deadline with
@@ -913,28 +925,29 @@ module WalkerOrchestration =
                     let mutable answer = None
 
                     while outcome = Cancellation.Running && answer.IsNone do
-                        // A failFast SIBLING outranks an answer: the build is
-                        // already failing for a named cause and Jenkins
-                        // interrupts the prompt. The DEADLINE does not — a human
-                        // who answered before it passed has answered, and
-                        // discarding that because a poll interval straddled the
-                        // expiry throws away the one input this ticket is about.
-                        // So the sibling is checked first and the answer is
-                        // preferred over expiry on the same poll.
+                        // CANCELLATION IS CHECKED FIRST, both kinds, and an
+                        // answer first OBSERVED after it is refused.
                         //
-                        // The ordering matters most on a RESUMED attempt, where
-                        // the answer is already on record and the first poll
-                        // returns instantly: checking the answer first would exit
-                        // the loop without ever reading the interrupt.
+                        // The earlier version preferred an answer over an
+                        // expired deadline, reasoning that a human who answered
+                        // before expiry had answered. Nothing here can know
+                        // that: the poll observes a FILE, the sleep can overshoot
+                        // the deadline by its own interval, and an answer written
+                        // in that window is indistinguishable from one written
+                        // before. That is the same defect as every claim this
+                        // project has had to retract — a comment asserting more
+                        // than the code can establish — and here it would let a
+                        // late approval defeat the safety bound the pipeline
+                        // author wrote down. A `timeout` wins its ties; the human
+                        // can answer the next build.
                         match cancellationOf ctx deadline with
-                        | Cancellation.SiblingFailed -> outcome <- Cancellation.SiblingFailed
-                        | c ->
+                        | Cancellation.Running ->
                             match poll () with
                             | Some a -> answer <- Some a
-                            | None when c <> Cancellation.Running -> outcome <- c
                             | None ->
                                 let left = defaultArg (remainingMs deadline) 250L
                                 System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
+                        | c -> outcome <- c
 
                     match answer with
                     | Some(InputApproved _) ->

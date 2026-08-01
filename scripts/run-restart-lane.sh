@@ -68,7 +68,7 @@ wait "$PID" 2>/dev/null || true
 # strict-looking check was quietly a loose one. `kill -0` joins it because the
 # two answer different questions: this process is gone, and no OTHER host
 # survived (the interposed-driver case this anchoring exists for).
-HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') "
+HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') .*$(printf '%s' "$LANE" | sed 's/[.[\*^$()+?{}|\\]/\\&/g')"
 kill -0 "$PID" 2>/dev/null && { echo "FAIL: the killed host is still alive"; exit 1; }
 for _ in 1 2 3 4; do pgrep -f "$HOST_RE" >/dev/null || break; sleep 0.5; done
 pgrep -f "$HOST_RE" >/dev/null && { echo "FAIL: a host process survived the SIGKILL"; pgrep -af "$HOST_RE"; exit 1; }

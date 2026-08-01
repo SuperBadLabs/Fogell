@@ -25,7 +25,9 @@
 #      (by either separator — a bare CR is a line break too);
 #   G. the same physical journal reached through a symlink alias resolves to the
 #      same action id, so an answer published under one spelling is found under
-#      the other instead of the human being asked again.
+#      the other instead of the human being asked again;
+#   H. two prompts inside one wrapper are two GATES: they share a durability key
+#      and must not share an answer.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -36,11 +38,26 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 LANE=$(mktemp -d /tmp/fogell-approval-lane.XXXXXX)
-trap '[ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2' EXIT
+cleanup() {
+  # a lane that dies mid-scenario must not leave a host waiting on a prompt
+  # nobody will answer — it would outlive this run and fail the NEXT one
+  # `|| true` is load-bearing: pkill exits 1 when nothing matches, and as the
+  # LAST command of an && list that failure is NOT exempt from `set -e` — the
+  # trap died there, taking the script's exit code to 1 with every assertion
+  # passed. A cleanup step must never be able to fail the thing it cleans up.
+  [ -n "${HOST_RE_BIN:-}" ] && pkill -9 -f "^${HOST_RE_BIN} .*${LANE_RE}" 2>/dev/null || true
+  [ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2
+}
+trap cleanup EXIT
 
 dotnet build -c Release --nologo >/dev/null
 HOST_BIN=$(find tools/Fogell.Run.Host/bin/Release -name Fogell.Run.Host -type f | head -1)
 [ -x "$HOST_BIN" ] || { echo "FAIL: host binary not found"; exit 1; }
+# `pgrep -f` takes a REGEX: both of these appear in patterns below and contain
+# characters (dots, most of all) that would otherwise match anything
+requote() { printf '%s' "$1" | sed 's/[.[\*^$()+?{}|\\]/\\&/g'; }
+HOST_RE_BIN=$(requote "$HOST_BIN")
+LANE_RE=$(requote "$LANE")
 
 JF='pipeline {
     agent any
@@ -86,7 +103,10 @@ kill -9 "$PID"; wait "$PID" 2>/dev/null || true
 # the real walker lives on underneath it. The pattern is REGEX-QUOTED: the
 # binary name contains dots, and an unescaped `.` matches any character, so the
 # strict check was quietly a loose one.
-HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') "
+# SCOPED TO THIS LANE's directory as well as the binary: the check means "no
+# host is still working on MY files", and matching the binary alone let an
+# unrelated host elsewhere on the machine fail a lane that was perfectly fine.
+HOST_RE="^${HOST_RE_BIN} .*${LANE_RE}"
 kill -0 "$PID" 2>/dev/null && { echo "FAIL: the killed host is still alive"; exit 1; }
 for _ in 1 2 3 4; do pgrep -f "$HOST_RE" >/dev/null || break; sleep 0.5; done
 pgrep -f "$HOST_RE" >/dev/null && { echo "FAIL: a host process survived the SIGKILL"; pgrep -af "$HOST_RE"; exit 1; }
@@ -114,7 +134,7 @@ grep -q '| Deploy?' "$A/run3.log" || { echo "FAIL: the prompt was not narrated";
 grep -q '| Ship it or Abort' "$A/run3.log" || { echo "FAIL: the ok label was not narrated"; exit 1; }
 # MEASURED: approving narrates NOTHING. Anything approval-shaped is a divergence.
 grep -qiE '\| .*(approved|approval|alice)' "$A/run3.log" && { echo "FAIL: approval narrated something Jenkins does not"; exit 1; }
-grep -q $'^input-decision\tGate\t1\tapproved\talice$' "$AJ" || { echo "FAIL: the answer was not journaled"; sed 's/^/  | /' "$AJ"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\tapproved\talice$' "$AJ" || { echo "FAIL: the answer was not journaled"; sed 's/^/  | /' "$AJ"; exit 1; }
 [ -f "$AINBOX/$ID.pending" ] && { echo "FAIL: an answered prompt is still listed as pending"; exit 1; }
 [ "$(grep -c '^two$' "$AMARK")" -eq 1 ] || { echo "FAIL: the step after the prompt did not run exactly once"; exit 1; }
 [ "$(grep -c '^one$' "$AMARK")" -eq 1 ] || { echo "FAIL: the durable step before the prompt re-ran"; exit 1; }
@@ -161,7 +181,7 @@ set -e
 grep -q 'completed: aborted' "$C/run.log" || { echo "FAIL: rejection did not abort the build"; cat "$C/run.log"; exit 1; }
 grep -q '| Rejected' "$C/run.log" || { echo "FAIL: the measured 'Rejected' line is missing"; cat "$C/run.log"; exit 1; }
 grep -q '^two$' "$CMARK" 2>/dev/null && { echo "FAIL: the step after a rejected prompt ran"; exit 1; }
-grep -q $'^input-decision\tGate\t1\trejected\tcarol$' "$CJ" || { echo "FAIL: the rejection was not journaled"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\trejected\tcarol$' "$CJ" || { echo "FAIL: the rejection was not journaled"; exit 1; }
 echo "rejected, aborted, nothing after the prompt ran"
 
 # ---------------------------------------------------------------- scenario D
@@ -244,7 +264,7 @@ kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a trailing-blank-
 printf 'approve frank\n' > "$F/approvals/$FID.decision"   # the completed write
 set +e; wait "$PID"; RC=$?; set -e
 [ "$RC" -eq 0 ] || { echo "FAIL: the completed answer was not honoured (rc=$RC)"; cat "$F/run.log"; exit 1; }
-grep -q $'^input-decision\tGate\t1\tapproved\tfrank$' "$F/build.journal" || {
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tfrank$' "$F/build.journal" || {
   echo "FAIL: the submitter was not recorded from the completed write"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
 echo "waited through the fragment AND the ambiguous pair, then took the completed answer with its submitter intact"
 
@@ -265,18 +285,69 @@ timeout 120 "$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/alias.journal" "$G/app
   echo "FAIL: the aliased resume did not complete — the answer was not found"; cat "$G/run2.log"; exit 1; }
 grep -q 'needs-reconciliation' "$G/run2.log" && { echo "FAIL: an answered prompt was sent for reconciliation under an alias"; exit 1; }
 grep -q 'completed: success' "$G/run2.log" || { echo "FAIL: aliased resume not successful"; cat "$G/run2.log"; exit 1; }
-grep -q $'^input-decision\tGate\t1\tapproved\tgrace$' "$G/build.journal" || {
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tgrace$' "$G/build.journal" || {
   echo "FAIL: the answer was not journaled under the alias"; sed 's/^/  | /' "$G/build.journal"; exit 1; }
 echo "the alias resolved to the same action id; nobody was asked twice"
 
 echo "=== G2: a terminal journal sweeps a marker its build left behind ==="
 # the state a kill between the terminal record's sync and the in-process cleanup
 # leaves: a finished build with a prompt still advertised as outstanding
-touch "$G/approvals/$GID.pending"
+printf 'stage\tGate\nstep\t1\nprompt#\t1\nprompt\tDeploy?\n' > "$G/approvals/$GID.pending"
 "$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/build.journal" "$G/approvals" > "$G/run3.log" 2>&1
 grep -q 'already-terminal' "$G/run3.log" || { echo "FAIL: expected already-terminal"; cat "$G/run3.log"; exit 1; }
 [ -f "$G/approvals/$GID.pending" ] && { echo "FAIL: a finished build still advertises a pending prompt"; exit 1; }
 echo "swept on the already-terminal path"
+
+# ---------------------------------------------------------------- scenario H
+echo "=== H: two prompts under one wrapper are two gates ==="
+# both `input`s journal under the SAME durability key (the top-level `timeout`),
+# so an approval cached by key alone answered the second gate with the first
+# human's decision — nobody reviewed it
+H="$LANE/h"; mkdir -p "$H/approvals"
+cat > "$H/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: "Deploy the app?", ok: "Ship it"
+                    sh "echo app >> markers.txt"
+                    input message: "And the database?", ok: "Ship it"
+                    sh "echo db >> markers.txt"
+                }
+            }
+        }
+    }
+}
+JF
+timeout 200 "$HOST_BIN" "$H/Jenkinsfile" "$H/ws" gate "$H/build.journal" "$H/approvals" > "$H/run.log" 2>&1 &
+PID=$!
+H1=$(await_pending "$H/approvals") || { echo "FAIL: the first prompt was never published"; cat "$H/run.log"; exit 1; }
+grep -q 'Deploy the app?' "$H/approvals/$H1.pending" || { echo "FAIL: wrong first prompt"; cat "$H/approvals/$H1.pending"; exit 1; }
+printf 'approve heidi\n' > "$H/approvals/$H1.decision"
+
+# the SECOND gate must publish its own prompt and wait for its own human
+# explicitly NOT the first gate's marker: it is consumed asynchronously once the
+# answer is durable, so a plain "any pending file" search can still see it
+H2=""
+for _ in $(seq 1 240); do
+  H2=$(find "$H/approvals" -maxdepth 1 -name '*.pending' ! -name "$H1.pending" | head -1)
+  [ -n "$H2" ] && break
+  sleep 0.25
+done
+[ -n "$H2" ] || { echo "FAIL: the second gate never asked — it inherited the first answer"; cat "$H/run.log"; sed 's/^/  | /' "$H/build.journal"; exit 1; }
+H2=$(basename "$H2" .pending)
+grep -q 'And the database?' "$H/approvals/$H2.pending" || { echo "FAIL: the second marker is not the second prompt"; cat "$H/approvals/$H2.pending"; exit 1; }
+grep -q '^db$' "$H/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step past the SECOND gate ran before anyone answered it"; exit 1; }
+printf 'reject heidi\n' > "$H/approvals/$H2.decision"
+set +e; wait "$PID"; RC=$?; set -e
+[ "$RC" -eq 1 ] || { echo "FAIL: rejecting the second gate should not exit 0 (got $RC)"; cat "$H/run.log"; exit 1; }
+grep -q 'completed: aborted' "$H/run.log" || { echo "FAIL: the second gate's rejection did not abort"; cat "$H/run.log"; exit 1; }
+grep -q '^app$' "$H/ws/gate/markers.txt" || { echo "FAIL: the step past the FIRST gate did not run"; exit 1; }
+grep -q '^db$' "$H/ws/gate/markers.txt" && { echo "FAIL: the step past a REJECTED gate ran"; exit 1; }
+echo "two prompts, two ids, two answers; journal:"
+rg '^input-decision' "$H/build.journal" | sed 's/^/  | /'
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

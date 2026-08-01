@@ -39,7 +39,17 @@ type Record =
     /// restart still lands after it. UNPROVEN BY RECEIPT — the differential
     /// harness has no approver on the Jenkins side, so this is probe-measured
     /// (ADR 0005) and lane-asserted (scripts/run-approval-lane.sh).
-    | InputDecision of stage: string * stepIndex: int * approved: bool * submitter: string
+    ///
+    /// `occurrence` counts the prompts under one durability key, from 1. The key
+    /// is the TOP-LEVEL step, so two prompts inside one `timeout` share it —
+    /// without the ordinal, the first human's answer was cached and handed
+    /// straight to the second gate, which nobody had reviewed.
+    | InputDecision of
+        stage: string *
+        stepIndex: int *
+        occurrence: int *
+        approved: bool *
+        submitter: string
 
 module Record =
 
@@ -67,9 +77,9 @@ module Record =
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
         | ScriptDigest d -> $"script-digest\t{d}"
         | WorkspaceIdentity(r, j) -> $"workspace-identity\t{r}\t{j}"
-        | InputDecision(stage, i, approved, who) ->
+        | InputDecision(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
-            $"input-decision\t{oneLine stage}\t{i}\t{verdict}\t{oneLine who}"
+            $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -85,10 +95,10 @@ module Record =
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished
         | [| "script-digest"; d |] -> Some(ScriptDigest d)
         | [| "workspace-identity"; r; j |] -> Some(WorkspaceIdentity(r, j))
-        | [| "input-decision"; stage; i; verdict; who |] ->
-            match System.Int32.TryParse i, verdict with
-            | (true, idx), "approved" -> Some(InputDecision(stage, idx, true, who))
-            | (true, idx), "rejected" -> Some(InputDecision(stage, idx, false, who))
+        | [| "input-decision"; stage; i; occurrence; verdict; who |] ->
+            match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with
+            | (true, idx), (true, occ), "approved" -> Some(InputDecision(stage, idx, occ, true, who))
+            | (true, idx), (true, occ), "rejected" -> Some(InputDecision(stage, idx, occ, false, who))
             // an unrecognised verdict is NOT a silent approval and not a silent
             // rejection: it fails to decode, which stops the read where the
             // damage starts rather than guessing a human's answer

@@ -25,10 +25,12 @@ type ResumePlan =
       ScriptDigest: string option
       /// The (workspace root, job name) the build ran in, when recorded.
       WorkspaceIdentity: (string * string) option
-      /// FG-046b. Answers already given to `input` prompts, per (stage, index):
-      /// (approved, submitter). Durable and independent of whether the step that
-      /// asked ever finished.
-      InputDecisions: Map<string * int, bool * string>
+      /// FG-046b. Answers already given to `input` prompts, per
+      /// (stage, index, occurrence): (approved, submitter). Durable and
+      /// independent of whether the step that asked ever finished. The
+      /// occurrence separates prompts sharing one durability key — two `input`s
+      /// in a `timeout` block are two gates, not one.
+      InputDecisions: Map<string * int * int, bool * string>
       /// FG-046b. Steps a prior attempt started as `input`. Needed because a
       /// disposition alone does not say WHICH step was interrupted, and the
       /// re-run rule below applies to `input` and to nothing else.
@@ -73,7 +75,7 @@ module Resume =
             |> List.fold
                 (fun acc r ->
                     match r with
-                    | InputDecision(stage, i, approved, who) -> Map.add (stage, i) (approved, who) acc
+                    | InputDecision(stage, i, occ, approved, who) -> Map.add (stage, i, occ) (approved, who) acc
                     | _ -> acc)
                 Map.empty
 
@@ -106,7 +108,12 @@ module Resume =
             |> Map.toList
             |> List.choose (fun (k, v) ->
                 match v with
-                | Interrupted when Set.contains k inputSteps && Map.containsKey k inputDecisions -> None
+                // the same rule as [inputAnswered], which cannot be called yet
+                | Interrupted when
+                    Set.contains k inputSteps
+                    && (inputDecisions |> Map.exists (fun (s, i, _) _ -> (s, i) = k))
+                    ->
+                    None
                 | Interrupted -> Some k
                 | AlreadyFinished _
                 | NotStarted -> None) }
@@ -132,9 +139,17 @@ module Resume =
     /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
     /// `input` files use the wrapped shape, so the limit is stated on the board
     /// rather than buried here.
+    /// A BARE top-level `input` is the only shape this can apply to (see the
+    /// stated limit above), and such a step asks exactly one prompt — occurrence
+    /// 1. That is load-bearing beyond this function: it is also what keeps
+    /// WalkerCtx.NextInputOccurrence's derived ordinal safe, since this is the
+    /// ONLY place a resumed attempt re-runs a prompt to consult a recorded
+    /// answer. Widening it to wrappers requires a durable ordinal first. Written as "some occurrence under this key was answered" rather than
+    /// hard-coding 1, so a future shape that widens the exemption cannot get a
+    /// silent free pass from a stale constant.
     let inputAnswered (plan: ResumePlan) (stage: string) (index: int) =
         Set.contains (stage, index) plan.InputSteps
-        && Map.containsKey (stage, index) plan.InputDecisions
+        && plan.InputDecisions |> Map.exists (fun (s, i, _) _ -> s = stage && i = index)
 
     /// Should this step execute now?
     ///
