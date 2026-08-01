@@ -8,13 +8,16 @@ open Fogell.Execution
 /// build, passed explicitly where the 2,000-line closure used to capture it.
 ///
 /// Contract, stated once:
-///  * this record is the ONLY mutable state a walker unit may touch — a unit
-///    that wants a new mutable is asking for a new field, and the review sees
-///    the request;
-///  * every operation is safe to call from parallel branches: ONE internal
-///    lock, held per call. The same lock orders output against secret
-///    registration, so a line can never be appended while the masker is
-///    unaware of a secret that was bound before it;
+///  * this record is the only RUN-scoped mutable state — a unit that wants new
+///    run-wide state is asking for a new field, and the review sees the
+///    request. (Branch-scoped signals live in BranchCtx; step-local mutables
+///    in the orchestration bodies are their own scope's business.)
+///  * every operation is safe to call from parallel branches. TWO internal
+///    locks: outputLock orders output, secret registration, the fired-set,
+///    engine notes and durable ids against each other — a line can never be
+///    appended while the masker is unaware of a secret bound before it;
+///    statusLock guards Bump/Status alone, so a Status() read is NOT ordered
+///    with respect to output. Nothing may rely on such an ordering;
 ///  * `Emit` masks against every secret bound so far — masking is run-scoped,
 ///    not block-scoped, because a leaked value does not become safe when its
 ///    `withCredentials` block closes;

@@ -5,7 +5,6 @@ open System.IO
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
-open Fogell.Groovy.Interpreter
 
 
 /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
@@ -131,7 +130,6 @@ module FogellSide =
 
             let bump = runCtx.Bump
 
-            let runClock = runCtx.RunClock
 
             // FG-105: the cancellation model lives in WalkerCancellation.
 

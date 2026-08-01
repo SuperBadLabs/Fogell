@@ -45,10 +45,13 @@ type BranchCtx =
       /// Receipt: `withenv-scoping`.
       EnvOverlay: (string * string) list }
 
-/// FG-105. The walker's PURE decision rules, extracted from the `run` closure so
-/// each is reviewable and unit-testable in isolation. Contract: nothing in this
-/// module reads or writes walker state — no emit, no status, no clocks, no
-/// deadline registry. A function that needs any of those does not belong here.
+/// FG-105. The walker's decision rules, extracted from the `run` closure so
+/// each is reviewable and unit-testable in isolation. Contract: nothing in
+/// this module touches RUN-scoped walker state — no emit, no status, no
+/// clocks, no deadline registry — and nothing here has side effects. `halted`
+/// is the one non-pure READER: it polls the branch's own signals (the Failed
+/// ref and the interrupt predicate handed to it in BranchCtx) and decides
+/// nothing beyond them. A function needing more does not belong here.
 module WalkerRules =
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
     /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,

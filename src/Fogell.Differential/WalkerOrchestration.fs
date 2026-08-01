@@ -5,7 +5,6 @@ open System.IO
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
-open Fogell.Groovy.Interpreter
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -23,10 +22,14 @@ type OrchestrationDeps =
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
 /// wrapper bodies -> nested stages -> post) stays in one reviewable unit.
-/// Contract: state through WalkerCtx, decisions through WalkerRules/
-/// WalkerCancellation/WalkerWhen, step execution through WalkerStep; the
-/// bindings below are the COMPLETE import list — the cluster touches nothing
-/// else.
+/// Contract: run-scoped state through WalkerCtx, decisions through
+/// WalkerRules/WalkerCancellation/WalkerWhen, step execution through
+/// WalkerStep. The bindings below are the complete list of what the cluster
+/// used to CAPTURE from run() — that is the boundary this record makes
+/// reviewable. The cluster ALSO calls module-level services directly, exactly
+/// as it did inside the closure: Fogell.Execution (Credentials, Secrets,
+/// Stash, Workspace, Executor), GString, filesystem IO for dir/deleteDir/
+/// stash bookkeeping, and the process environment for PATH augmentation.
 module WalkerOrchestration =
 
     /// Returns (runStage, runPostWithDeadline) — the two entry points run()

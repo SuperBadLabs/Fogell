@@ -1,7 +1,6 @@
 namespace Fogell.Differential
 
 open System
-open Fogell.Domain
 open Fogell.Ir
 open Fogell.Groovy.Interpreter
 

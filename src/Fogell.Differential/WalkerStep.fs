@@ -1,6 +1,4 @@
 namespace Fogell.Differential
-
-open System
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
@@ -9,8 +7,11 @@ open Fogell.Ir
 /// executor with the branch's deadline/interrupt wiring, then classify and
 /// narrate the outcome through the one cancellation model. Contract: this is
 /// the ONLY place a Step becomes an Executor.runStep call, and every
-/// non-success outcome routes through WalkerCancellation's classification —
-/// a status decided anywhere else is the drift FG-101 closed.
+/// ABORT without a ProcessGroup snapshot is classified through
+/// WalkerCancellation — a cancellation cause decided anywhere else is the
+/// drift FG-101 closed. Plain Failure and Unstable sink directly: they are
+/// step RESULTS, not cancellations, and the measured rules (no ERROR line for
+/// unstable, unstable does not halt the branch) live here.
 module WalkerStep =
 
     let runStepInner
