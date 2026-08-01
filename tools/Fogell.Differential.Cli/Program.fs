@@ -154,6 +154,10 @@ let main argv =
                             p.WaitForExit()
                             refuse "timed out"
 
+                        // flush the async handlers before reading — a fast exit
+                        // can beat the last OutputDataReceived callback
+                        p.WaitForExit()
+
                         let out = sb.ToString().Trim()
                         if p.ExitCode <> 0 || out = "" then refuse $"exit {p.ExitCode}"
                         out

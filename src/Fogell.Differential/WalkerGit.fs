@@ -37,7 +37,7 @@ module WalkerGit =
     /// buffer filled), a 10-minute wait matching the `# timeout=10` the
     /// narration promises, kill on expiry, and every start failure (missing
     /// binary included) is an Error, never an unhandled throw.
-    let private git (waitMs: int) (cwd: string) (args: string list) : Result<string, string> =
+    let private git (waitMs: int) (shouldStop: unit -> bool) (cwd: string) (args: string list) : Result<string, string> =
         try
             let psi = Diagnostics.ProcessStartInfo("git")
             args |> List.iter psi.ArgumentList.Add
@@ -59,12 +59,27 @@ module WalkerGit =
             p.BeginOutputReadLine()
             p.BeginErrorReadLine()
 
-            if not (p.WaitForExit waitMs) then
+            // Wait in slices so an external cancellation (a failFast SIBLING —
+            // ctx.Interrupt has no deadline to bound this wait with) interrupts
+            // a stalled subprocess instead of riding out the whole budget.
+            let clock = Diagnostics.Stopwatch.StartNew()
+            let mutable exited = false
+            let mutable stopped = false
+
+            while not exited && not stopped && clock.ElapsedMilliseconds < int64 waitMs do
+                exited <- p.WaitForExit 250
+                if not exited then stopped <- shouldStop ()
+
+            if not exited then
                 p.Kill true
                 // wait out the kill: returning while git still terminates would
                 // leave it mutating the workspace after the step reported failure
                 p.WaitForExit()
-                Result.Error $"timed out after {waitMs} ms"
+
+                if stopped then
+                    Result.Error "interrupted"
+                else
+                    Result.Error $"timed out after {waitMs} ms"
             else
                 p.WaitForExit() // flush the async handlers
                 if p.ExitCode = 0 then
@@ -98,6 +113,9 @@ module WalkerGit =
             |> Option.map (fun r -> int (min 600_000L r))
             |> Option.defaultValue 600_000
 
+        let shouldStop () =
+            WalkerCancellation.cancellationOf runCtx ctx deadline <> Cancellation.Running
+
         // A slow command that SUCCEEDS after the deadline must still cancel —
         // the classification goes through the ONE model, exactly like every
         // other self-working step.
@@ -117,7 +135,7 @@ module WalkerGit =
             else
                 narration |> Option.iter emit
 
-                match git (bound ()) cwd args with
+                match git (bound ()) shouldStop cwd args with
                 | Ok out ->
                     checkCancelled ()
                     if cancelled then None else Some out
@@ -134,13 +152,13 @@ module WalkerGit =
         let query (narration: string) (args: string list) =
             if failure.IsNone && not cancelled then
                 emit narration
-                git (bound ()) cwd args |> ignore
+                git (bound ()) shouldStop cwd args |> ignore
 
         // The REAL discriminator (a `.git` that is a worktree FILE, not a
         // directory, must not read as fresh): ran silently here, narrated in
         // its measured position below when the repo exists.
         let fresh =
-            match git (bound ()) cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
+            match git (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
             | Ok _ -> false
             | Result.Error _ -> true
 
@@ -151,7 +169,7 @@ module WalkerGit =
             if fresh then
                 None
             else
-                match git (bound ()) cwd [ "rev-parse"; "HEAD" ] with
+                match git (bound ()) shouldStop cwd [ "rev-parse"; "HEAD" ] with
                 | Ok sha -> Some sha
                 | Result.Error e ->
                     failure <- Some $"pre-fetch HEAD unreadable in an existing repo ({e})"

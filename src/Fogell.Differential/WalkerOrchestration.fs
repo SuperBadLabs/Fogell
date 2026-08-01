@@ -747,12 +747,22 @@ module WalkerOrchestration =
                     |> List.tryPick (fun (k, v) -> if k = "branch" then Some v else None)
                     |> Option.defaultValue "master"
 
-                match url with
-                | None ->
+                // A credentialsId this engine cannot honour must REFUSE, not
+                // silently clone unauthenticated while narrating "No credentials
+                // specified" — wrong twice (FG-103: name the unknown).
+                let credentialsId =
+                    step.Named |> List.tryPick (fun (k, v) -> if k = "credentialsId" then Some v else None)
+
+                match url, credentialsId with
+                | None, _ ->
                     emit "ERROR: git step requires a url"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some u -> WalkerGit.runStep runCtx ctx cwd deadline u branch
+                | _, Some c ->
+                    emit $"ERROR: git step credentialsId '{c}' is not modelled (the lane has no credentialed remote to measure against)"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | Some u, None -> WalkerGit.runStep runCtx ctx cwd deadline u branch
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive
