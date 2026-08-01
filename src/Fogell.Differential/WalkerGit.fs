@@ -159,13 +159,19 @@ module WalkerGit =
     let private tailMarker (artifactRoot: string) (jobKey: string) (buildNumber: int) =
         Path.Combine(scmDir artifactRoot jobKey, $"changelog-narrated@{buildNumber}")
 
-    let private tailAlreadyNarrated (artifactRoot: string) (jobKey: string) (buildNumber: int) =
-        lock recordLock (fun () -> File.Exists(tailMarker artifactRoot jobKey buildNumber))
-
-    let private markTailNarrated (artifactRoot: string) (jobKey: string) (buildNumber: int) =
+    /// ATOMIC claim: check-and-create under ONE lock acquisition — a separate
+    /// check followed by a later mark let two parallel `checkout scm` branches
+    /// both pass the check and narrate the once-per-build tail twice.
+    let private tryClaimTail (artifactRoot: string) (jobKey: string) (buildNumber: int) =
         lock recordLock (fun () ->
-            Directory.CreateDirectory(scmDir artifactRoot jobKey) |> ignore
-            File.WriteAllText(tailMarker artifactRoot jobKey buildNumber, ""))
+            let f = tailMarker artifactRoot jobKey buildNumber
+
+            if File.Exists f then
+                false
+            else
+                Directory.CreateDirectory(scmDir artifactRoot jobKey) |> ignore
+                File.WriteAllText(f, "")
+                true)
 
     /// Forget a job's SCM history — called when the harness creates the job
     /// fresh, mirroring Jenkins' doDelete (history dies with the job).
@@ -386,9 +392,9 @@ module WalkerGit =
 
                     // the TAIL is history-keyed, not workspace-keyed — and for
                     // GitScm it narrates only on the build's FIRST checkout
+                    // (atomic claim: parallel checkouts cannot both narrate)
                     let narrateTail =
-                        style = GitStep
-                        || not (tailAlreadyNarrated artifactRoot jobKey buildNumber)
+                        style = GitStep || tryClaimTail artifactRoot jobKey buildNumber
 
                     if narrateTail then
                         match prevSha with
@@ -399,9 +405,6 @@ module WalkerGit =
                                 "git rev-list"
                                 [ "rev-list"; "--no-walk"; prev ]
                             |> ignore
-
-                        if style = GitScm then
-                            markTailNarrated artifactRoot jobKey buildNumber
 
                     if failure.IsNone && not cancelled then
                         writeRevision artifactRoot jobKey key buildNumber sha)

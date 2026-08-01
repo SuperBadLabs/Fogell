@@ -220,18 +220,34 @@ module FogellSide =
                       FailFast = false
                       Position = { Line = 0L; Column = 0L } }
 
+                // Jenkins-provided env ONLY: the auto-checkout runs BEFORE the
+                // withEnv wrapper (measured order — the Obtained line precedes
+                // everything), so pipeline `environment {}` must not reach it.
                 WalkerGit.runCheckout
                     runCtx
                     root
                     workspace
                     pipelineDeadline
-                    (envForWith [] syntheticStage)
+                    jenkinsProvided
                     artifactRoot
                     jobName
                     buildNumber
                     spec
 
-                if root.Failed.Value then bump BuildStatus.Failure
+                if root.Failed.Value then
+                    bump BuildStatus.Failure
+                else
+                    // The lane's core invariant, checked FAIL-CLOSED per case:
+                    // the bytes this engine was handed must be the bytes the SCM
+                    // serves (Jenkins runs the latter). A stale sync otherwise
+                    // seals a receipt over two DIFFERENT scripts.
+                    let checkedOut = Path.Combine(workspace, "Jenkinsfile")
+
+                    if not (File.Exists checkedOut) || File.ReadAllText checkedOut <> script then
+                        failwith (
+                            "SCM case drift: the local case body does not match the checked-out "
+                            + "Jenkinsfile — sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                        )
             | _ -> ()
 
             let mutable exceededAnnounced = false

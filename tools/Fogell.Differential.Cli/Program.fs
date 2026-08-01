@@ -263,14 +263,21 @@ let main argv =
 
                 let scripts =
                     if isScmCase then
-                        [ script.Substring(script.IndexOf '\n' + 1) ]
+                        match script.IndexOf '\n' with
+                        | -1 -> [ "" ] // marker-only: caught as malformed below, by name
+                        | i -> [ script.Substring(i + 1) ]
                     else
                         buildSeparator.Split script |> Array.toList
 
-                // A malformed sequence (leading/trailing/doubled separator) must
-                // fail NAMED, not as an opaque parse error on an empty pipeline.
+                // A malformed case must fail NAMED, not as an opaque parse error:
+                // empty sequence segments, a marker with no body, or an SCM case
+                // that also declares NEXT BUILD separators (SCM sequences are not
+                // wired — FogellSide.runMany passes Scm = None deliberately).
                 let malformed =
-                    List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace
+                    (List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace)
+                    || (isScmCase
+                        && (String.IsNullOrWhiteSpace scripts.Head
+                            || buildSeparator.IsMatch scripts.Head))
 
                 let scmSpec =
                     if isScmCase then
@@ -288,7 +295,13 @@ let main argv =
 
                 let jenkinsRuns, fogellRuns =
                     if malformed then
-                        let e = Result.Error "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                        let e =
+                            Result.Error (
+                                if isScmCase then
+                                    "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
+                                else
+                                    "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                            )
                         scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
                     else
                         match scmSpec with
