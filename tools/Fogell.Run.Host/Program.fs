@@ -106,9 +106,19 @@ let main argv =
         // its presence in the plan proves one existed — without this, the
         // workspace of a real prior attempt is wiped and isRestartedRun lies
         let resuming = plan.ScriptDigest.IsSome || not (Map.isEmpty plan.Steps)
-        // the first attempt starts clean; a RESUME must keep the workspace —
-        // that is the state the finished steps produced
-        let freshWorkspace = not resuming
+
+        // The HOST owns the fresh-attempt wipe, and it happens BEFORE the first
+        // metadata append: a kill between metadata and a later wipe would make
+        // the next invocation "resume" over a never-wiped stale tree. With this
+        // order, metadata-present always implies workspace-prepared — and a
+        // kill after the wipe but before metadata just wipes again, idempotent.
+        if not resuming then
+            if Directory.Exists workspaceFull then
+                Directory.Delete(workspaceFull, true)
+
+            Directory.CreateDirectory workspaceFull |> ignore
+            // mirror runWith's fresh path: a new job has no SCM build history
+            WalkerGit.resetHistory (Path.Combine(workspaceRoot, "_artifacts")) jobName
 
         if resuming then
             printfn "resuming: one recovery event for this build"
@@ -152,7 +162,8 @@ let main argv =
                     journal.Append(StageCommitted stage)
                     journal.Sync() }
 
-        match FogellSide.runPersisted [] workspaceRoot jobName freshWorkspace hooks script with
+        // the workspace is already prepared above — never re-wipe here
+        match FogellSide.runPersisted [] workspaceRoot jobName false hooks script with
         | Result.Error e ->
             // The attempt is OVER and failed — steps may already be durably
             // finished (the leak guard, for one, refuses AFTER they ran), and
