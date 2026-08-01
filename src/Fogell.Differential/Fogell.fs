@@ -227,11 +227,34 @@ module FogellSide =
             | Some spec when not root.Failed.Value ->
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
 
+                // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
+                // (a check that rode along with the auto-checkout vanished
+                // exactly when skipDefaultCheckout did): the bytes this engine
+                // was handed must be the bytes the SCM serves, because Jenkins
+                // executes the latter. Read them from the SCM itself.
+                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                // the subprocess reader trims trailing whitespace, so compare
+                // TRIMMED on both sides (a trailing newline is not a different
+                // script) with line endings normalised
+                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
+                    failwith (
+                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                    )
+                | Ok _ -> ()
+
                 // `options { skipDefaultCheckout() }` suppresses the Declarative
                 // auto-checkout; the Obtained line still prints (the definition
-                // was still loaded from SCM). Receipt: `checkout-scm-skip-default`.
+                // was still loaded from SCM). A positional `false` RE-ENABLES it
+                // — the option's argument decides, not its presence.
+                // Receipt: `checkout-scm-skip-default`.
                 let skipDefault =
-                    pipeline.Options |> List.exists (fun o -> o.Name = "skipDefaultCheckout")
+                    pipeline.Options
+                    |> List.exists (fun o ->
+                        o.Name = "skipDefaultCheckout"
+                        && (o.Positional.IsEmpty || o.Positional.Head.Trim() <> "false"))
 
                 if not skipDefault then
 
@@ -250,21 +273,7 @@ module FogellSide =
                         buildNumber
                         spec
 
-                    if root.Failed.Value then
-                        bump BuildStatus.Failure
-                    else
-                        // The lane's core invariant, checked FAIL-CLOSED per
-                        // case: the bytes this engine was handed must be the
-                        // bytes the SCM serves (Jenkins runs the latter). A
-                        // stale sync otherwise seals a receipt over two
-                        // DIFFERENT scripts.
-                        let checkedOut = Path.Combine(workspace, "Jenkinsfile")
-
-                        if not (File.Exists checkedOut) || File.ReadAllText checkedOut <> script then
-                            failwith (
-                                "SCM case drift: the local case body does not match the checked-out "
-                                + "Jenkinsfile — sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                            )
+                    if root.Failed.Value then bump BuildStatus.Failure
             | _ -> ()
 
             let mutable exceededAnnounced = false

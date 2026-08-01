@@ -418,6 +418,35 @@ module WalkerGit =
                 ctx.Failed.Value <- true
                 ctx.Sink BuildStatus.Failure
 
+    /// FG-052. Read the Jenkinsfile an SCM branch currently serves — the bytes
+    /// Jenkins executes. Used by the harness's fail-closed drift check, which
+    /// must hold for EVERY SCM case (including skipDefaultCheckout, where no
+    /// workspace checkout exists to compare against). Shallow fetch into a
+    /// throwaway dir; any failure is an Error the caller refuses on.
+    let readRemoteJenkinsfile (url: string) (branch: string) : Result<string, string> =
+        let tmp = Path.Combine(Path.GetTempPath(), "fogell-scm-verify-" + Guid.NewGuid().ToString "N")
+
+        try
+            try
+                Directory.CreateDirectory tmp |> ignore
+                let noStop () = false
+
+                let run what args =
+                    match git [] 600_000 noStop tmp args with
+                    | Ok out -> Ok out
+                    | Result.Error e -> Result.Error $"{what} ({e})"
+
+                run "git init" [ "init"; tmp ]
+                |> Result.bind (fun _ -> run "git fetch" [ "fetch"; "--depth"; "1"; "--"; url; branch ])
+                |> Result.bind (fun _ -> run "git show" [ "show"; "FETCH_HEAD:Jenkinsfile" ])
+            with ex ->
+                Result.Error ex.Message
+        finally
+            try
+                Directory.Delete(tmp, true)
+            with _ ->
+                ()
+
     /// The `git` step's public face — unchanged contract.
     let runStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch =
         runWithStyle GitStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch
