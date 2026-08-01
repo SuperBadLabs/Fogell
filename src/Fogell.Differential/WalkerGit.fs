@@ -37,7 +37,7 @@ module WalkerGit =
     /// buffer filled), a 10-minute wait matching the `# timeout=10` the
     /// narration promises, kill on expiry, and every start failure (missing
     /// binary included) is an Error, never an unhandled throw.
-    let private git (cwd: string) (args: string list) : Result<string, string> =
+    let private git (waitMs: int) (cwd: string) (args: string list) : Result<string, string> =
         try
             let psi = Diagnostics.ProcessStartInfo("git")
             args |> List.iter psi.ArgumentList.Add
@@ -59,12 +59,12 @@ module WalkerGit =
             p.BeginOutputReadLine()
             p.BeginErrorReadLine()
 
-            if not (p.WaitForExit 600_000) then
+            if not (p.WaitForExit waitMs) then
                 p.Kill true
                 // wait out the kill: returning while git still terminates would
                 // leave it mutating the workspace after the step reported failure
                 p.WaitForExit()
-                Result.Error "timed out after 10 minutes"
+                Result.Error $"timed out after {waitMs} ms"
             else
                 p.WaitForExit() // flush the async handlers
                 if p.ExitCode = 0 then
@@ -81,39 +81,66 @@ module WalkerGit =
         (runCtx: WalkerCtx)
         (ctx: BranchCtx)
         (cwd: string)
+        (deadline: Deadline option)
         (url: string)
         (branch: string)
         : unit =
         let emit = runCtx.Emit
         let refspec = "+refs/heads/*:refs/remotes/origin/*"
         let mutable failure: string option = None
+        let mutable cancelled = false
+
+        // Each subprocess waits AT MOST the remaining enclosing deadline (a
+        // `timeout` block must not be outlived by a ten-minute fetch), floored
+        // at 1 so an already-expired deadline classifies rather than hangs.
+        let bound () =
+            WalkerCancellation.remainingMs runCtx deadline
+            |> Option.map (fun r -> int (min 600_000L r))
+            |> Option.defaultValue 600_000
+
+        // A slow command that SUCCEEDS after the deadline must still cancel —
+        // the classification goes through the ONE model, exactly like every
+        // other self-working step.
+        let checkCancelled () =
+            if not cancelled && failure.IsNone then
+                match WalkerCancellation.cancellationOf runCtx ctx deadline with
+                | Cancellation.Running -> ()
+                | c ->
+                    WalkerCancellation.applyCancellation runCtx ctx "git" deadline c
+                    cancelled <- true
 
         /// Narrate (Jenkins prints the attempted line BEFORE running), then run,
         /// then check. Returns the command's stdout when it succeeded.
         let step (narration: string option) (what: string) (args: string list) : string option =
-            if failure.IsSome then
+            if failure.IsSome || cancelled then
                 None
             else
                 narration |> Option.iter emit
 
-                match git cwd args with
-                | Ok out -> Some out
+                match git (bound ()) cwd args with
+                | Ok out ->
+                    checkCancelled ()
+                    if cancelled then None else Some out
                 | Result.Error e ->
-                    failure <- Some $"{what} ({e})"
+                    checkCancelled ()
+
+                    if not cancelled then
+                        failure <- Some $"{what} ({e})"
+
                     None
 
         /// A query whose nonzero exit is an ANSWER, not a failure — exactly the
         /// two commands Jenkins runs that way (an unset config key exits 1).
         let query (narration: string) (args: string list) =
-            if failure.IsNone then
+            if failure.IsNone && not cancelled then
                 emit narration
-                git cwd args |> ignore
+                git (bound ()) cwd args |> ignore
 
         // The REAL discriminator (a `.git` that is a worktree FILE, not a
         // directory, must not read as fresh): ran silently here, narrated in
         // its measured position below when the repo exists.
         let fresh =
-            match git cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
+            match git (bound ()) cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
             | Ok _ -> false
             | Result.Error _ -> true
 
@@ -124,7 +151,7 @@ module WalkerGit =
             if fresh then
                 None
             else
-                match git cwd [ "rev-parse"; "HEAD" ] with
+                match git (bound ()) cwd [ "rev-parse"; "HEAD" ] with
                 | Ok sha -> Some sha
                 | Result.Error e ->
                     failure <- Some $"pre-fetch HEAD unreadable in an existing repo ({e})"
@@ -236,9 +263,11 @@ module WalkerGit =
                             |> ignore
                         | None -> ())
 
-        match failure with
-        | None -> ()
-        | Some why ->
-            emit $"ERROR: git step failed at: {why}"
-            ctx.Failed.Value <- true
-            ctx.Sink BuildStatus.Failure
+        // a cancellation already narrated and sank through the model
+        if not cancelled then
+            match failure with
+            | None -> ()
+            | Some why ->
+                emit $"ERROR: git step failed at: {why}"
+                ctx.Failed.Value <- true
+                ctx.Sink BuildStatus.Failure

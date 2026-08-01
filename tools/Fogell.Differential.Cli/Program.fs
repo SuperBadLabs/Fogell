@@ -135,15 +135,26 @@ let main argv =
                         args |> List.iter psi.ArgumentList.Add
                         psi.RedirectStandardOutput <- true
                         psi.UseShellExecute <- false
-                        use p = Diagnostics.Process.Start psi
+                        use p = new Diagnostics.Process(StartInfo = psi)
+                        let sb = Text.StringBuilder()
 
-                        // read BEFORE waiting — the wait-then-read order is the
-                        // env collector's original stall bug re-entering
-                        let out = p.StandardOutput.ReadToEnd().Trim()
+                        // ASYNC read + bounded wait: a stalled ssh that never
+                        // closes stdout hangs a synchronous ReadToEnd forever,
+                        // and wait-then-read deadlocks on a full pipe — the two
+                        // failure shapes WalkerGit's runner closes, closed here.
+                        p.OutputDataReceived.Add(fun e ->
+                            if not (isNull e.Data) then
+                                sb.AppendLine e.Data |> ignore)
+
+                        p.Start() |> ignore
+                        p.BeginOutputReadLine()
 
                         if not (p.WaitForExit 30_000) then
                             p.Kill(true)
+                            p.WaitForExit()
                             refuse "timed out"
+
+                        let out = sb.ToString().Trim()
                         if p.ExitCode <> 0 || out = "" then refuse $"exit {p.ExitCode}"
                         out
                     with ex ->
@@ -153,7 +164,18 @@ let main argv =
                 let jenkinsGit = collect "/bin/sh" [ "-c"; cmd ]
                 let localGit = collect "git" [ "--version" ]
 
-                [ jenkinsGit, "${GITVERSION}"; localGit, "${GITVERSION}" ] |> List.distinct
+                // SCOPED to the plugin's narration line (Codex P1, twice —
+                // round 1's "fix" for this never reached the tree): folding the
+                // raw version string also collapses a build's OWN
+                // `sh 'git --version'` stdout, manufactured equality on output
+                // a lift-and-shift user genuinely sees differ. The full-line
+                // shape can only match engine narration; raw version text in
+                // build output DIVERGES visibly.
+                let shape (v: string) = $"> git --version # '{v}'"
+
+                [ shape jenkinsGit, "> git --version # '${GITVERSION}'"
+                  shape localGit, "> git --version # '${GITVERSION}'" ]
+                |> List.distinct
 
         // through the SAME ambiguity dropper as the env pairs: an env value that
         // literally equals a `git version ...` string must drop out, not become

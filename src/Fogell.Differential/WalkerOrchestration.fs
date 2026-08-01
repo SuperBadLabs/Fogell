@@ -752,7 +752,7 @@ module WalkerOrchestration =
                     emit "ERROR: git step requires a url"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some u -> WalkerGit.runStep runCtx ctx cwd u branch
+                | Some u -> WalkerGit.runStep runCtx ctx cwd deadline u branch
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive
