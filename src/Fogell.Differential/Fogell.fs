@@ -84,10 +84,13 @@ module FogellSide =
 
                 Map.ofList entries
 
-    let run
+    let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (buildNumber: int)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -104,7 +107,11 @@ module FogellSide =
             // artifacts live OUTSIDE the workspace so archiving cannot perturb
             // the workspace hash the differential compares
             let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
-            if Directory.Exists workspace then Directory.Delete(workspace, true)
+            // FG-110: only a sequence's FIRST build starts clean — Jenkins does
+            // not wipe the workspace between builds of one job, and neither do we.
+            if freshWorkspace && Directory.Exists workspace then
+                Directory.Delete(workspace, true)
+
             Directory.CreateDirectory workspace |> ignore
 
             /// Environment visible to a step: pipeline scope, overridden by stage
@@ -116,9 +123,11 @@ module FogellSide =
             /// a stage Jenkins runs. Declarative overrides still win, as they do on
             /// Jenkins — hence these go first.
             let jenkinsProvided =
-                [ "BUILD_NUMBER", "1"
-                  "BUILD_ID", "1"
-                  "BUILD_DISPLAY_NAME", "#1"
+                // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
+                // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
+                [ "BUILD_NUMBER", string buildNumber
+                  "BUILD_ID", string buildNumber
+                  "BUILD_DISPLAY_NAME", $"#{buildNumber}"
                   "JOB_NAME", jobName
                   "JOB_BASE_NAME", jobName
                   "WORKSPACE", Path.Combine(workspaceRoot, jobName)
@@ -156,7 +165,9 @@ module FogellSide =
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
-                      Credentials = credentialStore }
+                      Credentials = credentialStore
+                      PreviousBuild = previousBuild
+                      BuildNumber = buildNumber }
 
             let root =
                 { Interrupt = None
@@ -227,7 +238,7 @@ module FogellSide =
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
                 let postRoot = { root with Failed = ref false }
-                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) None pipelineDeadline
+                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
                 if postRoot.Failed.Value then root.Failed.Value <- true
 
             announcePipelineExceeded ()
@@ -271,3 +282,62 @@ module FogellSide =
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
                   ReportedFailureReason = Trace.reportedFailureReason (runCtx.Output()) }
+
+    /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
+    let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
+        try
+            runWith envReplacements workspaceRoot jobName 1 None true script
+        with ex ->
+            Result.Error ex.Message
+
+    /// FG-110. Run a SEQUENCE of builds of one job: the workspace persists
+    /// across builds (build 1 starts clean) and each build's terminal result is
+    /// the next build's `previous` — what `changed`/`fixed`/`regression` select
+    /// against. Fail closed: a build the harness could not run at all stops the
+    /// sequence, and every later build reports that error rather than running
+    /// against an invented history.
+    let runMany
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scripts: string list)
+        : Result<Trace, string> list =
+        // FG-103: an unmappable terminal result must HALT the sequence by name,
+        // never quietly become None — None means "no history" (build-#1
+        // semantics: changed fires, fixed/regression cannot), which is exactly
+        // the wrong thing to invent for build k+1.
+        let statusOf (t: Trace) : Result<BuildStatus, string> =
+            match t.Result with
+            | "success" -> Ok BuildStatus.Success
+            | "failure" -> Ok BuildStatus.Failure
+            | "unstable" -> Ok BuildStatus.Unstable
+            | "aborted" -> Ok BuildStatus.Aborted
+            | other -> Result.Error $"build produced a result this sequence cannot carry forward: '{other}'"
+
+        scripts
+        |> List.fold
+            (fun (acc, previous, halted) script ->
+                match halted with
+                | Some why -> (Result.Error $"sequence halted: {why}" :: acc, previous, halted)
+                | None ->
+                    let r =
+                        try
+                            runWith
+                                envReplacements
+                                workspaceRoot
+                                jobName
+                                (List.length acc + 1)
+                                previous
+                                (List.isEmpty acc)
+                                script
+                        with ex ->
+                            Result.Error ex.Message
+
+                    match r with
+                    | Result.Ok t ->
+                        match statusOf t with
+                        | Ok st -> (r :: acc, Some st, None)
+                        | Result.Error why -> (r :: acc, previous, Some why)
+                    | Result.Error why -> (r :: acc, previous, Some $"a prior build failed to run ({why})"))
+            ([], None, None)
+        |> fun (acc, _, _) -> List.rev acc

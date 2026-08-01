@@ -17,7 +17,16 @@ type OrchestrationDeps =
       WorkspaceRoot: string
       ArtifactRoot: string
       JobName: string
-      Credentials: unit -> Map<string, Credential> }
+      Credentials: unit -> Map<string, Credential>
+      /// FG-110. The PREVIOUS build's terminal result, when the harness kept the
+      /// job across builds — what `changed`/`fixed`/`regression` select against.
+      /// None on a first build (and for every single-build case), exactly as
+      /// measured: `changed` FIRES on build #1, `fixed`/`regression` cannot.
+      PreviousBuild: BuildStatus option
+      /// FG-110. This build's number within its job — 1 for every single-build
+      /// case. Scopes per-BUILD state (stashes) so a sequence cannot read a
+      /// prior build's leftovers where Jenkins would say the stash is missing.
+      BuildNumber: int }
 
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
@@ -49,6 +58,10 @@ module WalkerOrchestration =
         let artifactRoot = deps.ArtifactRoot
         let jobName = deps.JobName
         let credentialStore = deps.Credentials
+        let previousBuild = deps.PreviousBuild
+        // Jenkins scopes a stash to the BUILD that saved it — receipt
+        // `stash-not-carried`: build 2's unstash of build 1's stash FAILS.
+        let stashKey = $"{deps.JobName}#build-{deps.BuildNumber}"
         let humanizeSpan = WalkerRules.humanizeSpan
         let timeoutMs = WalkerRules.timeoutMs
         let retryCount = WalkerRules.retryCount
@@ -161,11 +174,11 @@ module WalkerOrchestration =
                 // expiry right after the interrupted body, BEFORE the post arm the
                 // abort selects (`cancellation-selects-post-arm`).
 
-                // Stage post is selected against the STAGE's result, and
-                // `previous` is None because this harness runs one build per
-                // job (it deletes the job around every run). `fixed` and
-                // `regression` are therefore implemented and measured but not
-                // receipt-proven — see FG-049b.
+                // Stage post is selected against the STAGE's result; `previous`
+                // is the prior build's terminal result when the FG-110 sequence
+                // lane kept the job (None on a first build and for every
+                // single-build case). `fixed`/`regression` are receipt-proven by
+                // the `post-history` sequence (FG-049b closed).
                 //
                 // REVIEW FIX (Codex, PR #13): the post context's failure flag was
                 // created fresh and then DISCARDED, so a failing `post` on an
@@ -181,7 +194,7 @@ module WalkerOrchestration =
                 // Passing the stage's own expired deadline into post aborted every arm
                 // before it could run — which would have silently swallowed exactly the
                 // failure notifications a `post { aborted }` exists to send.
-                runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
+                runPostWithDeadline postCtx cwd stage stageStatus.Value previousBuild inherited
                 if postCtx.Failed.Value then ctx.Failed.Value <- true
 
                 // MEASURED position (`cancellation-selects-post-arm`): the
@@ -759,7 +772,7 @@ module WalkerOrchestration =
                         |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
                         |> Option.defaultValue []
 
-                    let saved, aborted = Stash.save store jobName cwd n includes excludes abort
+                    let saved, aborted = Stash.save store stashKey cwd n includes excludes abort
 
                     if aborted then
                         applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
@@ -795,7 +808,7 @@ module WalkerOrchestration =
                 | Some n ->
                     let abort () = cancellationOf ctx deadline <> Cancellation.Running
 
-                    match Stash.restore store jobName cwd n abort with
+                    match Stash.restore store stashKey cwd n abort with
                     | Result.Error e ->
                         // A missing stash FAILS. Carrying on with none of the files
                         // the build asked for is the silent-loss shape.

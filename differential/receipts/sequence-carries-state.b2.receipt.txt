@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — sequence-carries-state.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         820f73e7b814ea27f1cd8a824cb66370876facbcd65f081520ac826ef24bba3d
+seal:         91b395fb0798fada92bf3671cc948f6aefd3342b73e9405736320ce45f86b4a3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -45,34 +45,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: d566a22cec3b3cf51fbda9a9ff0d882eecfbbd585d0e07879dadcb0725f06062
+  output (4 lines):
+    | + cat carried.txt
+    | carried-from-one
+    | + echo build=2
+    | build=2
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    59cc51d417e1  carried.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: d566a22cec3b3cf51fbda9a9ff0d882eecfbbd585d0e07879dadcb0725f06062
+  output (4 lines):
+    | + cat carried.txt
+    | carried-from-one
+    | + echo build=2
+    | build=2
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    59cc51d417e1  carried.txt
