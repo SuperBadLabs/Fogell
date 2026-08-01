@@ -35,7 +35,9 @@
 #      be swallowed by the waiter, and finish SUCCESS unapproved;
 #   K. a marker published by an attempt that DIED is swept when the build
 #      finishes — cleanup identifies markers by what they say, not by what the
-#      cleaning process remembers publishing.
+#      cleaning process remembers publishing;
+#   L. `retry` does not re-ask a human who said no: a rejection is an
+#      interruption, not a retryable failure.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -442,6 +444,43 @@ grep -q 'completed: success' "$K/run2.log" || { echo "FAIL: reconciled resume no
 grep -q 'skip (durably finished): Gate#1' "$K/run2.log" || { echo "FAIL: the reconciled prompt was re-run"; exit 1; }
 [ -f "$K/approvals/$KID.pending" ] && { echo "FAIL: a finished build still advertises a prompt from a dead attempt"; exit 1; }
 echo "swept a marker this process never published"
+
+# ---------------------------------------------------------------- scenario L
+echo "=== L: retry does not re-ask a human who said no ==="
+# a rejection is an INTERRUPTION, not a retryable failure. The retry dispatcher
+# used to re-run the body, republish the prompt, and let a later approval carry
+# the build to success — asking someone who already declined until they agree.
+L="$LANE/l"; mkdir -p "$L/approvals"
+cat > "$L/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                retry(3) {
+                    input message: "Deploy?", ok: "Ship it"
+                }
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+JF
+timeout 180 "$HOST_BIN" "$L/Jenkinsfile" "$L/ws" gate "$L/build.journal" "$L/approvals" > "$L/run.log" 2>&1 &
+PID=$!
+LID=$(await_pending "$L/approvals") || { echo "FAIL: no prompt published"; cat "$L/run.log"; exit 1; }
+printf 'reject laura\n' > "$L/approvals/$LID.decision"
+set +e; wait "$PID"; RC=$?; set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the rejected retry hung"; exit 1; }
+[ "$RC" -eq 1 ] || { echo "FAIL: a rejected build must not exit 0 (got $RC)"; cat "$L/run.log"; exit 1; }
+grep -q 'completed: aborted' "$L/run.log" || { echo "FAIL: rejection did not abort"; cat "$L/run.log"; exit 1; }
+[ "$(grep -c '| Deploy?' "$L/run.log")" -eq 1 ] || {
+  echo "FAIL: the prompt was published more than once — the human was re-asked"; cat "$L/run.log"; exit 1; }
+grep -q '| Retrying' "$L/run.log" && { echo "FAIL: an abort was treated as a retryable failure"; cat "$L/run.log"; exit 1; }
+[ "$(grep -c '^input-decision' "$L/build.journal")" -eq 1 ] || {
+  echo "FAIL: more than one decision was recorded"; sed 's/^/  | /' "$L/build.journal"; exit 1; }
+grep -q '^shipped$' "$L/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a rejected gate ran"; exit 1; }
+echo "asked once, declined once, aborted"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

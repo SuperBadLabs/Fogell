@@ -523,6 +523,23 @@ module WalkerOrchestration =
                         // not a retryable failure, so it must reach the build.
                         ctx.Sink attemptStatus.Value
                         settled <- true
+                    elif attemptStatus.Value = BuildStatus.Aborted then
+                        // FG-046b (Codex P1). An ABORT is an interruption, not a
+                        // retryable failure, and retrying one is worse than
+                        // useless: a human who REJECTED a deployment gate was
+                        // asked again by the next attempt, and an approval there
+                        // could carry the whole build to success. The person said
+                        // no. Same rule for a deadline: `retry` must not
+                        // re-attempt work its own timeout already stopped.
+                        //
+                        // A failFast SIBLING needs no case here — it signals
+                        // through the interrupt predicate, so `halted` stops each
+                        // attempt before any inner step runs and nothing is
+                        // re-executed. A rejection has no such predicate, only
+                        // Failed + Aborted, which is why it re-ran the body.
+                        ctx.Sink attemptStatus.Value
+                        ctx.Failed.Value <- true
+                        settled <- true
                     elif attempt < attempts then
                         // Jenkins prints this between attempts, with no delay:
                         // retry does not back off.
