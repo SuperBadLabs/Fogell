@@ -64,6 +64,14 @@ let main argv =
             4
         | _ ->
 
+        // same shape for the WORKSPACE: durable setup steps were skipped on the
+        // strength of effects that live in a particular tree
+        match plan.WorkspaceIdentity with
+        | Some recorded when recorded <> workspaceFull ->
+            eprintfn $"workspace-changed: the journal belongs to {recorded}; refusing to resume against {workspaceFull}"
+            4
+        | _ ->
+
         if not (List.isEmpty plan.NeedsReconciliation) then
             let named =
                 plan.NeedsReconciliation
@@ -91,6 +99,7 @@ let main argv =
         // first attempt records what definition this journal belongs to
         if plan.ScriptDigest.IsNone then
             journal.Append(ScriptDigest digest)
+            journal.Append(WorkspaceIdentity workspaceFull)
             journal.Sync()
 
         let hooks =

@@ -444,12 +444,14 @@ module FogellSide =
                 let unsafe =
                     p.Stages
                     |> Pipeline.flattenStages
-                    |> List.filter (fun st -> st.Name.Contains '\t' || st.Name.Contains '\n')
-                    |> List.map (fun st -> st.Name.Replace("\t", "\\t").Replace("\n", "\\n"))
+                    |> List.filter (fun st ->
+                        st.Name.Contains '\t' || st.Name.Contains '\n' || st.Name.Contains '\r')
+                    |> List.map (fun st ->
+                        st.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
 
                 if not (List.isEmpty unsafe) then
                     failwith (
-                        "persisted runs cannot journal stage names containing tabs or newlines: "
+                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
                         + String.concat ", " unsafe
                     )
 

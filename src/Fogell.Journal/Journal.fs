@@ -38,20 +38,27 @@ type Journal(path: string, policy: FsyncPolicy) =
         | None ->
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
 
-            // FG-112: a kill mid-write leaves a torn final line. `read` ignores
-            // it — but APPENDING onto it would weld the next record to the
-            // fragment and lose BOTH. Terminate the fragment first so it stays
-            // an ignorable garbage line and every later record starts clean.
+            // FG-112: a kill mid-write leaves a torn final line. `read` stops at
+            // the first undecodable line, so newline-terminating the fragment
+            // (the first version of this repair) would hide every LATER record
+            // behind it. TRUNCATE instead: the torn record was never durable,
+            // and dropping it restores the invariant that every line decodes.
             if File.Exists path then
-                use probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+                use repair = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read)
 
-                if probe.Length > 0L then
-                    probe.Seek(-1L, SeekOrigin.End) |> ignore
+                if repair.Length > 0L then
+                    repair.Seek(-1L, SeekOrigin.End) |> ignore
 
-                    if probe.ReadByte() <> int '\n' then
-                        probe.Close()
-                        use repair = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)
-                        repair.WriteByte(byte '\n')
+                    if repair.ReadByte() <> int '\n' then
+                        // walk back to the last newline; everything after it is
+                        // the fragment
+                        let mutable pos = repair.Length - 1L
+
+                        while pos > 0L do
+                            repair.Seek(pos - 1L, SeekOrigin.Begin) |> ignore
+                            if repair.ReadByte() = int '\n' then pos <- -pos else pos <- pos - 1L
+
+                        repair.SetLength(max 0L (abs pos))
                         repair.Flush true
 
             let s = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)

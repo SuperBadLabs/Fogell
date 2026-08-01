@@ -23,6 +23,8 @@ type ResumePlan =
       Terminal: BuildStatus option
       /// The definition this journal belongs to, when recorded.
       ScriptDigest: string option
+      /// The workspace the build ran in, when recorded.
+      WorkspaceIdentity: string option
       /// Steps that started without finishing. Non-empty means a human or a
       /// policy must decide, because the engine genuinely does not know.
       NeedsReconciliation: (string * int) list }
@@ -44,7 +46,8 @@ module Resume =
                     | StepFinished(stage, i, status) -> Map.add (stage, i) (AlreadyFinished status) acc
                     | StageCommitted _
                     | BuildFinished _
-                    | ScriptDigest _ -> acc)
+                    | ScriptDigest _
+                    | WorkspaceIdentity _ -> acc)
                 Map.empty
 
         { Steps = steps
@@ -63,6 +66,11 @@ module Resume =
             records
             |> List.tryPick (function
                 | ScriptDigest d -> Some d
+                | _ -> None)
+          WorkspaceIdentity =
+            records
+            |> List.tryPick (function
+                | WorkspaceIdentity p -> Some p
                 | _ -> None)
           NeedsReconciliation =
             steps
