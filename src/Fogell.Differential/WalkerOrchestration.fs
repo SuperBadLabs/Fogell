@@ -512,6 +512,9 @@ module WalkerOrchestration =
                     let attemptCtx =
                         { ctx with
                             Failed = ref false
+                            // fresh per attempt, like Failed: this attempt's own
+                            // rejection, not one inherited from an earlier one
+                            HumanRejected = ref false
                             Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
 
                     for inner in step.Block do
@@ -523,20 +526,27 @@ module WalkerOrchestration =
                         // not a retryable failure, so it must reach the build.
                         ctx.Sink attemptStatus.Value
                         settled <- true
-                    elif attemptStatus.Value = BuildStatus.Aborted then
-                        // FG-046b (Codex P1). An ABORT is an interruption, not a
-                        // retryable failure, and retrying one is worse than
-                        // useless: a human who REJECTED a deployment gate was
+                    elif attemptCtx.HumanRejected.Value then
+                        // FG-046b. A human who REJECTED a deployment gate was
                         // asked again by the next attempt, and an approval there
                         // could carry the whole build to success. The person said
-                        // no. Same rule for a deadline: `retry` must not
-                        // re-attempt work its own timeout already stopped.
+                        // no; that is not a retryable failure.
+                        //
+                        // Tested on the REJECTION, not on the aborted status, and
+                        // the difference is measured rather than reasoned: a
+                        // nested `timeout` expiring also aborts the attempt, and
+                        // Jenkins RETRIES that one — three attempts, two
+                        // `Retrying` lines (receipt `retry-timeout-retries`).
+                        // Reading the status stopped both, silently costing every
+                        // `retry { timeout { … } }` pipeline its remaining
+                        // attempts. That regression was mine, introduced by
+                        // asserting Jenkins' behaviour instead of measuring it.
                         //
                         // A failFast SIBLING needs no case here — it signals
                         // through the interrupt predicate, so `halted` stops each
                         // attempt before any inner step runs and nothing is
-                        // re-executed. A rejection has no such predicate, only
-                        // Failed + Aborted, which is why it re-ran the body.
+                        // re-executed. A rejection has no such predicate, which is
+                        // why it re-ran the body.
                         ctx.Sink attemptStatus.Value
                         ctx.Failed.Value <- true
                         settled <- true
@@ -1026,6 +1036,7 @@ module WalkerOrchestration =
                         // asserted by scripts/run-approval-lane.sh.
                         emit "Rejected"
                         ctx.Failed.Value <- true
+                        ctx.HumanRejected.Value <- true
                         ctx.Sink BuildStatus.Aborted
                     | None when approverFaulted -> ()
                     | None -> applyCancellation ctx "input" deadline outcome
@@ -1369,7 +1380,12 @@ module WalkerOrchestration =
                                   // key in would name the PARALLEL step that owns
                                   // the branches, so an `input` inside two branches
                                   // would answer to one shared key.
-                                  DurabilityKey = None }
+                                  DurabilityKey = None
+                                  // INHERITED, unlike the key: a human declining a
+                                  // gate in any branch is a rejection of the
+                                  // enclosing attempt, and an enclosing `retry`
+                                  // must see it rather than ask them again.
+                                  HumanRejected = ctx.HumanRejected }
 
                             branchCtx,
                             System.Threading.Tasks.Task.Run(fun () ->

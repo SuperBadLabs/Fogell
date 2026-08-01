@@ -56,7 +56,17 @@ type BranchCtx =
       /// path, and `post` (whose steps this design does not record — see
       /// PersistenceHooks' stated limit), so an `input` there has no durable
       /// approval and behaves exactly as it did before this ticket.
-      DurabilityKey: (string * int) option }
+      DurabilityKey: (string * int) option
+      /// FG-046b. A human REJECTED an `input` in this scope. Distinct from the
+      /// Aborted status, and it has to be: MEASURED on 2.568.1, a nested
+      /// `timeout` expiring inside `retry(3)` is RETRIED — three attempts, two
+      /// `Retrying` lines, ABORTED at the end (receipt
+      /// `retry-timeout-retries`). Both interruptions produce Aborted, so a
+      /// retry rule written against the STATUS cannot tell them apart, and the
+      /// first version of it stopped retrying timeouts too. A rejection is the
+      /// one interruption that must not be re-attempted: asking someone who
+      /// declined until they agree is not a retry policy.
+      HumanRejected: bool ref }
 
 /// FG-105. The walker's decision rules, extracted from the `run` closure so
 /// each is reviewable and unit-testable in isolation. Contract: nothing in
