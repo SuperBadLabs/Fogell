@@ -184,24 +184,8 @@ module FogellSide =
                   Secrets = []
                   SiblingFailedAt = ref -1L }
 
-            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+            let mutable scmWrapperEnv: (string * string) list = []
 
-            match pipelineOptionError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
-                root.Failed.Value <- true
-                bump BuildStatus.Failure
-            | None -> ()
-
-            // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
-            // point it is first observed to have aborted work — after the stages
-            // when a stage died to it, or after the pipeline post when the post did
-            // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
-            // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
-            // FIRST, then Declarative auto-inserts a checkout stage before any
-            // user stage (measured — the stage annotations are excluded from
-            // comparison; the checkout narration inside it is compared).
             match scm with
             | Some spec when not root.Failed.Value ->
                 // MEASURED only for `agent any` at pipeline level (receipt
@@ -261,21 +245,57 @@ module FogellSide =
                     // Jenkins-provided env ONLY: the auto-checkout runs BEFORE
                     // the withEnv wrapper (measured order — the Obtained line
                     // precedes everything), so pipeline `environment {}` must
-                    // not reach it.
-                    WalkerGit.runCheckout
-                        runCtx
-                        root
-                        workspace
-                        pipelineDeadline
-                        jenkinsProvided
-                        artifactRoot
-                        jobName
-                        buildNumber
-                        spec
+                    // not reach it. The top-level timeout does NOT bound it and
+                    // its banner prints AFTER the checkout — MEASURED (receipt
+                    // `checkout-scm-timeout-env`) — hence deadline None here
+                    // and the deadline computation BELOW this block.
+                    let sha =
+                        WalkerGit.runCheckout
+                            runCtx
+                            root
+                            workspace
+                            None
+                            jenkinsProvided
+                            artifactRoot
+                            jobName
+                            buildNumber
+                            spec
 
-                    if root.Failed.Value then bump BuildStatus.Failure
+                    if root.Failed.Value then
+                        bump BuildStatus.Failure
+                    else
+                        // The wrapper env the checkout returns — MEASURED values
+                        // (receipt `checkout-scm-timeout-env`): full sha,
+                        // origin/-prefixed branch, the remote url — overlaid on
+                        // every user stage and the pipeline post, exactly the
+                        // withEnv wrapper Jenkins inserts.
+                        scmWrapperEnv <-
+                            match sha with
+                            | Some s ->
+                                [ "GIT_COMMIT", s
+                                  "GIT_BRANCH", $"origin/{spec.Branch}"
+                                  "GIT_URL", spec.Url ]
+                            | None -> []
             | _ -> ()
 
+            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
+            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+
+            match pipelineOptionError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
+            // point it is first observed to have aborted work — after the stages
+            // when a stage died to it, or after the pipeline post when the post did
+            // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+            // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
+            // FIRST, then Declarative auto-inserts a checkout stage before any
+            // user stage (measured — the stage annotations are excluded from
+            // comparison; the checkout narration inside it is compared).
             let mutable exceededAnnounced = false
 
             // ONE announcement, after the pipeline post: the post runs under the
@@ -297,7 +317,7 @@ module FogellSide =
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
-                    runStage root workspace pipelineDeadline stage
+                    runStage { root with EnvOverlay = scmWrapperEnv } workspace pipelineDeadline stage
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only
@@ -322,7 +342,10 @@ module FogellSide =
                 // runStage but NOT the pipeline-level post, so a slow `post { always }`
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
-                let postRoot = { root with Failed = ref false }
+                let postRoot =
+                    { root with
+                        Failed = ref false
+                        EnvOverlay = scmWrapperEnv }
                 runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
                 if postRoot.Failed.Value then root.Failed.Value <- true
 

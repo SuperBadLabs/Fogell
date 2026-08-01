@@ -205,11 +205,12 @@ module WalkerGit =
         (buildNumber: int)
         (url: string)
         (branch: string)
-        : unit =
+        : string option =
         let emit = runCtx.Emit
         let refspec = "+refs/heads/*:refs/remotes/origin/*"
         let mutable failure: string option = None
         let mutable cancelled = false
+        let mutable checkedOutSha: string option = None
 
         // Each subprocess waits AT MOST the remaining enclosing deadline (a
         // `timeout` block must not be outlived by a ten-minute fetch), floored
@@ -360,6 +361,7 @@ module WalkerGit =
             match sha with
             | None -> ()
             | Some sha ->
+                checkedOutSha <- Some sha
                 emit $"Checking out Revision {sha} (refs/remotes/origin/{branch})"
                 query
                     "> git config core.sparsecheckout # timeout=10"
@@ -418,6 +420,8 @@ module WalkerGit =
                 ctx.Failed.Value <- true
                 ctx.Sink BuildStatus.Failure
 
+        if failure.IsNone && not cancelled then checkedOutSha else None
+
     /// FG-052. Read the Jenkinsfile an SCM branch currently serves — the bytes
     /// Jenkins executes. Used by the harness's fail-closed drift check, which
     /// must hold for EVERY SCM case (including skipDefaultCheckout, where no
@@ -447,9 +451,12 @@ module WalkerGit =
             with _ ->
                 ()
 
-    /// The `git` step's public face — unchanged contract.
+    /// The `git` step's public face — unchanged contract. (Whether the git
+    /// STEP also exports GIT_* to later steps is unmeasured; its sha is
+    /// deliberately dropped rather than wrapped.)
     let runStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch =
         runWithStyle GitStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch
+        |> ignore
 
     /// FG-052. `checkout scm` and the Declarative auto-checkout stage.
     let runCheckout runCtx ctx cwd deadline env artifactRoot jobKey buildNumber (scm: ScmSpec) =

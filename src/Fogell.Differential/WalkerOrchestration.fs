@@ -741,6 +741,9 @@ module WalkerOrchestration =
             | "checkout", [ "scm" ] when step.Named.IsEmpty ->
                 match deps.Scm with
                 | Some spec ->
+                    // an EXPLICIT `checkout scm` does not re-wrap later stages
+                    // in GIT_* env (only the Declarative auto-checkout does) —
+                    // the returned sha is deliberately dropped
                     WalkerGit.runCheckout
                         runCtx
                         ctx
@@ -751,6 +754,7 @@ module WalkerOrchestration =
                         jobName
                         deps.BuildNumber
                         spec
+                    |> ignore
                 | None ->
                     emit "ERROR: checkout scm is only available when the pipeline came from SCM"
                     ctx.Failed.Value <- true

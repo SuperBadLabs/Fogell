@@ -1,0 +1,124 @@
+# Differential receipt — checkout-scm-timeout-env.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         e5ae5ef85ec1c034a6c97e2fd38e8af5300d2dcda4aeea936e6330ac1330e1e2
+
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Output pairs compared canonically — inherited env (1)
+  line 9 compared canonically: > git --version # '${GITVERSION}'
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps, ANSI escapes, blank lines
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
+  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
+    context-gated, emitted identically by both engines, or an exact measured
+    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
+    text is COMPARED, and tests carry look-alike rows proving it.
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+
+## Jenkins
+  result:         success
+  workspace-hash: 852c5ae317f1f3ace4b408d25a8427954110606babaaaf3b80030d6cd520ce5e
+  output (27 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/case/checkout-scm-timeout-env^{commit} # timeout=10
+    | Checking out Revision 14f3e4036d4b2e6dd6711642f96a865dcd67180d (refs/remotes/origin/case/checkout-scm-timeout-env)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f 14f3e4036d4b2e6dd6711642f96a865dcd67180d # timeout=10
+    | Commit message: "sync: checkout-scm-timeout-env"
+    | First time build. Skipping changelog.
+    | Timeout set to expire in 2 min 0 sec
+    | + echo commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | + echo branch=origin/case/checkout-scm-timeout-env
+    | branch=origin/case/checkout-scm-timeout-env
+    | + echo url=git://100.105.179.51/repo.git
+    | url=git://100.105.179.51/repo.git
+  workspace:
+    8ff3d5df4856  Jenkinsfile
+    959ee89d1972  README.md
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt
+
+## Fogell
+  result:         success
+  workspace-hash: 852c5ae317f1f3ace4b408d25a8427954110606babaaaf3b80030d6cd520ce5e
+  output (27 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.43.0'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/case/checkout-scm-timeout-env^{commit} # timeout=10
+    | Checking out Revision 14f3e4036d4b2e6dd6711642f96a865dcd67180d (refs/remotes/origin/case/checkout-scm-timeout-env)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f 14f3e4036d4b2e6dd6711642f96a865dcd67180d # timeout=10
+    | Commit message: "sync: checkout-scm-timeout-env"
+    | First time build. Skipping changelog.
+    | Timeout set to expire in 2 min 0 sec
+    | + echo commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | + echo branch=origin/case/checkout-scm-timeout-env
+    | branch=origin/case/checkout-scm-timeout-env
+    | + echo url=git://100.105.179.51/repo.git
+    | url=git://100.105.179.51/repo.git
+  workspace:
+    8ff3d5df4856  Jenkinsfile
+    959ee89d1972  README.md
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt
