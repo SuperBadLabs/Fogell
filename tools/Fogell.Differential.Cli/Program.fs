@@ -115,6 +115,46 @@ let main argv =
                     | [ _ ] -> Some pairs.Head
                     | _ -> None)
 
+        // FG-111. The `git` step echoes each engine's OWN `git --version` — an
+        // environment-of-necessity pair exactly like HOME. Both versions fold to
+        // ${GITVERSION} through the same two-sided compare rule (and the fold is
+        // listed in any receipt that used it). Both sides or neither, and a
+        // CONFIGURED collector that cannot deliver refuses the run (FG-103).
+        let gitVersionReplacements =
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_GIT_VERSION_CMD" with
+            | null
+            | "" -> []
+            | cmd ->
+                let refuse (why: string) =
+                    eprintfn $"git version collector failed: {why}; refusing a one-sided fold"
+                    exit 2
+
+                let collect (exe: string) (args: string list) =
+                    try
+                        let psi = Diagnostics.ProcessStartInfo(exe)
+                        args |> List.iter psi.ArgumentList.Add
+                        psi.RedirectStandardOutput <- true
+                        psi.UseShellExecute <- false
+                        use p = Diagnostics.Process.Start psi
+
+                        if not (p.WaitForExit 30_000) then
+                            p.Kill(true)
+                            refuse "timed out"
+
+                        let out = p.StandardOutput.ReadToEnd().Trim()
+                        if p.ExitCode <> 0 || out = "" then refuse $"exit {p.ExitCode}"
+                        out
+                    with ex ->
+                        refuse ex.Message
+                        ""
+
+                let jenkinsGit = collect "/bin/sh" [ "-c"; cmd ]
+                let localGit = collect "git" [ "--version" ]
+
+                [ jenkinsGit, "${GITVERSION}"; localGit, "${GITVERSION}" ] |> List.distinct
+
+        let envReplacementsAll = envReplacements @ gitVersionReplacements
+
         let cfg =
             { BaseUrl = baseUrl
               CoreVersion = core
@@ -187,8 +227,8 @@ let main argv =
                         let e = Result.Error "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
                         scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
                     else
-                        Jenkins.runMany cfg envReplacements job scripts,
-                        FogellSide.runMany envReplacements fogellRoot job scripts
+                        Jenkins.runMany cfg envReplacementsAll job scripts,
+                        FogellSide.runMany envReplacementsAll fogellRoot job scripts
 
                 let solo = List.length scripts = 1
 
@@ -206,7 +246,7 @@ let main argv =
                             let ext = Path.GetExtension name
                             $"{stem}.b{bi + 1}{ext}"
 
-                    let r = Compare.receipt caseName core envReplacements jenkins fogell
+                    let r = Compare.receipt caseName core envReplacementsAll jenkins fogell
                     let path = Compare.seal receiptDir r
 
                     if not (sealedPaths.Add path) then

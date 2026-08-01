@@ -1,9 +1,12 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — git-step-refetch.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8cc4bf511cfbe55b828d7f71fd7072ee9ed85eb1ef32c3eca095984d8f8e72f3
+seal:         e09fcad8c520efdb3791c283bcd6ca26a4ab76c48e2b825efc6d7b7481bafde3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Output pairs compared canonically — inherited env (1)
+  line 7 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract
   compared: terminal result
@@ -45,34 +48,61 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | + sleep 6
-    | + echo done
+  result:         success
+  workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
+  output (20 lines):
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/main)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | > git branch -a -v --no-abbrev # timeout=10
+    | > git checkout -b main 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | Commit message: "seed: second commit for changelog"
+    | First time build. Skipping changelog.
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    959ee89d1972  README.md
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
+  output (20 lines):
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.43.0'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/main)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | > git branch -a -v --no-abbrev # timeout=10
+    | > git checkout -b main 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | Commit message: "seed: second commit for changelog"
+    | First time build. Skipping changelog.
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    959ee89d1972  README.md
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt

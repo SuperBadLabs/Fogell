@@ -26,6 +26,18 @@ fi
 export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
 # engine-inherited env (PATH and friends) for trace canonicalisation
 export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
+# each engine's `git --version` folds to ${GITVERSION} (FG-111 git step)
+export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
+
+# FG-111: the SCM lane repo. The git-step cases clone git://<luigi>/repo.git,
+# served by a git daemon on ${FOGELL_JENKINS_HOST} (base-path ~/fogell-scm).
+# If it is down the cases fail closed as build failures on BOTH engines — this
+# preflight names the actual cause instead.
+: "${FOGELL_SCM_URL:=git://100.105.179.51/repo.git}"
+if ! git ls-remote "$FOGELL_SCM_URL" >/dev/null 2>&1; then
+  echo "warning: SCM lane repo unreachable at $FOGELL_SCM_URL — git-step cases will fail." >&2
+  echo "         start it on ${FOGELL_JENKINS_HOST}: git daemon --base-path=\$HOME/fogell-scm --export-all --enable=receive-pack --reuseaddr --port=9418" >&2
+fi
 export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
 dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }

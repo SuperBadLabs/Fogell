@@ -729,6 +729,32 @@ module WalkerOrchestration =
 
                     applyCancellation ctx "input" deadline outcome
 
+            // FG-111/FG-052. The `git` step — a real clone/fetch plus the git
+            // plugin's measured narration, in WalkerGit. `branch` has no measured
+            // default here, so its absence REFUSES by name rather than guessing
+            // (the plugin's default is not something this engine has receipts for).
+            | "git", _ ->
+                let step = renderStepArgs ctx stage step
+
+                let url =
+                    step.Positional
+                    |> List.tryHead
+                    |> Option.orElse (step.Named |> List.tryPick (fun (k, v) -> if k = "url" then Some v else None))
+
+                let branch =
+                    step.Named |> List.tryPick (fun (k, v) -> if k = "branch" then Some v else None)
+
+                match url, branch with
+                | None, _ ->
+                    emit "ERROR: git step requires a url"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | _, None ->
+                    emit "ERROR: git step without an explicit branch is not modelled (no measured default)"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | Some u, Some b -> WalkerGit.runStep runCtx ctx cwd u b
+
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive
             // `deleteDir()`, as measured on Jenkins. Keeping it in the workspace
