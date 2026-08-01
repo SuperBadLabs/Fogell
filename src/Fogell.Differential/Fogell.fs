@@ -94,8 +94,8 @@ module FogellSide =
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
         | Result.Ok pipeline ->
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
-            // one stated contract, one internal lock. These rebinds keep call
-            // sites unchanged while the units migrate out of this closure.
+            // one stated contract (see WalkerCtx.fs for its two-lock discipline).
+            // These rebinds keep call sites unchanged.
             let runCtx = WalkerCtx.create ()
             let emit = runCtx.Emit
             let deadlineDidFire = runCtx.DeadlineDidFire

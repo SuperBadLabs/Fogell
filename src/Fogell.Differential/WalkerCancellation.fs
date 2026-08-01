@@ -57,9 +57,15 @@ module WalkerCancellation =
         elif expiredNow then Cancellation.DeadlineExpired
         else Cancellation.SiblingFailed
 
-    /// Emit the reason, mark the branch failed, and sink the status the CAUSE
-    /// dictates. Every cancellable step routes through this so the classification
-    /// cannot drift per-step again.
+    /// Emit the reason, mark the branch failed, and — on expiry — sink the
+    /// Aborted the cause dictates. SiblingFailed deliberately sinks NOTHING:
+    /// the cause's status enters the build through the FAILING SIBLING's own
+    /// sink — the build is a FAILURE and this interruption is collateral
+    /// (receipts `parallel-failfast`, `input-failfast-is-failure`) — and
+    /// sinking Failure here would additionally teach `retry` to re-run a body
+    /// that was only interrupted, since retry judges the attempt by what the
+    /// throwaway sink saw. Every cancellable step routes through this so the
+    /// classification cannot drift per-step again.
     let applyCancellation (runCtx: WalkerCtx) (ctx: BranchCtx) (what: string) (deadline: Deadline option) (c: Cancellation) =
         match c with
         | Cancellation.Running -> ()
