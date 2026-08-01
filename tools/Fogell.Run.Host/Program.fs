@@ -86,11 +86,13 @@ let main argv =
 
         // control characters in the identity would tear the journal's wire
         // format exactly like a hostile stage name — refuse by name
+        // the RESOLVED values are what get journaled: a clean lexical root can
+        // resolve through a symlink into a target carrying a delimiter
         if
-            [ workspaceRoot; jobName ]
+            [ workspaceRoot; jobName; realWorkspace; realRoot ]
             |> List.exists (fun v -> v.Contains '\t' || v.Contains '\n' || v.Contains '\r')
         then
-            eprintfn "workspace-root/job-name contain tab/newline/carriage-return — unjournalable; refusing"
+            eprintfn "workspace path or job-name contains tab/newline/carriage-return (after symlink resolution) — unjournalable; refusing"
             exit 2
 
         // repair a torn tail BEFORE the plan is built: the reconciliation
@@ -132,9 +134,13 @@ let main argv =
         // RESOLVED root: a symlink retargeted between attempts changes the
         // physical tree while the lexical path is unchanged, and the resumed
         // run would skip durable setup against a different directory.
+        // Keyed on the resolved WORKSPACE, not just the root: a symlink inside
+        // the job path retargeted between attempts (ws/job -> ws/a becoming
+        // ws/job -> ws/b) keeps root and lexical name equal while the physical
+        // tree changes underneath the durable steps.
         match plan.WorkspaceIdentity with
-        | Some(r, j) when r <> realRoot || j <> jobName ->
-            eprintfn $"workspace-changed: the journal belongs to ({r}, {j}); refusing to resume against ({realRoot}, {jobName})"
+        | Some(w, j) when w <> realWorkspace || j <> jobName ->
+            eprintfn $"workspace-changed: the journal belongs to ({w}, {j}); refusing to resume against ({realWorkspace}, {jobName})"
             4
         | _ ->
 
@@ -179,13 +185,14 @@ let main argv =
             journal.Append(ScriptDigest digest)
 
         if plan.WorkspaceIdentity.IsNone then
-            journal.Append(WorkspaceIdentity(realRoot, jobName))
+            journal.Append(WorkspaceIdentity(realWorkspace, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()
 
         let hooks =
             { IsRestartedRun = resuming
+              StageWasCommitted = fun stage -> Set.contains stage plan.CommittedStages
               SkippedStatus =
                 fun stage i ->
                     match Resume.dispositionOf plan stage i with

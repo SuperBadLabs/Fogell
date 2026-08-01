@@ -23,6 +23,10 @@ type PersistenceHooks =
       /// attempt: the step is skipped SILENTLY (its output already happened;
       /// replaying narration would double it).
       ShouldExecute: string -> int -> bool
+      /// stage -> did a prior attempt durably commit this stage's boundary?
+      /// A container stage (parallel/sequential group) has no direct steps, so
+      /// this is its only evidence of having run.
+      StageWasCommitted: string -> bool
       /// stage -> stepIndex -> the status a durably finished step RECORDED, so
       /// the skip path can replay it — without this, a resume after
       /// `step-finished failure` (but before BuildFinished) flips the build to
@@ -216,7 +220,13 @@ module WalkerOrchestration =
                                         ctx.Failed.Value <- true
                                 | None -> ())
 
-                            if entered && not (List.isEmpty st.Post) then
+                            // A container stage has NO direct steps: its
+                            // durable evidence of having run is its committed
+                            // boundary, not a step record.
+                            let committed =
+                                List.isEmpty st.Steps && hooks.StageWasCommitted st.Name
+
+                            if (entered || committed) && not (List.isEmpty st.Post) then
                                 let postCtx = { ctx with Failed = ref false }
                                 runPostWithDeadline postCtx cwd st replayed previousBuild inherited
                                 if postCtx.Failed.Value then ctx.Failed.Value <- true
