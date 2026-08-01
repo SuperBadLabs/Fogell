@@ -25,6 +25,17 @@ type Record =
     /// A resume against a CHANGED definition would hybrid-execute two
     /// pipelines against one key space — the digest lets it refuse by name.
     | ScriptDigest of sha256: string
+    /// FG-046b. This build's own identity, minted once by its first attempt and
+    /// read by every later one. Approval action ids derive from it.
+    ///
+    /// It exists because deriving that identity from the journal's PATH cannot
+    /// be made correct: `resolve` canonicalises symlinks, but a hard link is a
+    /// second name for the same inode with no distinguished original, so two
+    /// spellings of one journal produced two different ids — and an answer
+    /// written under the first was invisible to an attempt opened through the
+    /// second, which then asked the human again. A name the journal CARRIES has
+    /// no aliases.
+    | BuildIdentity of id: string
     /// FG-112. The workspace this journal's build ran in — ROOT and JOB
     /// separately, because distinct pairs can combine to one path while their
     /// controller-side state (artifacts, stashes, SCM records — all under the
@@ -53,9 +64,6 @@ type Record =
 
 module Record =
 
-    /// Text encoding, one record per line, tab separated. Deliberately plain: a
-    /// journal that cannot be read with `cat` during an incident is worse than a
-    /// slightly larger one.
     /// FG-046b. A field that came from OUTSIDE the engine (an approval's
     /// submitter is whatever the approver wrote) cannot be allowed to carry a
     /// tab or a newline into a tab-separated, line-per-record journal: the
@@ -69,6 +77,9 @@ module Record =
         else
             s.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ')
 
+    /// Text encoding, one record per line, tab separated. Deliberately plain: a
+    /// journal that cannot be read with `cat` during an incident is worse than a
+    /// slightly larger one.
     let encode =
         function
         | StepStarted(stage, i, name) -> $"step-started\t{stage}\t{i}\t{name}"
@@ -77,6 +88,7 @@ module Record =
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
         | ScriptDigest d -> $"script-digest\t{d}"
         | WorkspaceIdentity(r, j) -> $"workspace-identity\t{r}\t{j}"
+        | BuildIdentity id -> $"build-identity\t{oneLine id}"
         | InputDecision(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
             $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
@@ -95,6 +107,7 @@ module Record =
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished
         | [| "script-digest"; d |] -> Some(ScriptDigest d)
         | [| "workspace-identity"; r; j |] -> Some(WorkspaceIdentity(r, j))
+        | [| "build-identity"; id |] when id <> "" -> Some(BuildIdentity id)
         | [| "input-decision"; stage; i; occurrence; verdict; who |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with
             | (true, idx), (true, occ), "approved" -> Some(InputDecision(stage, idx, occ, true, who))

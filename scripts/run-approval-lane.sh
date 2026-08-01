@@ -27,7 +27,9 @@
 #      same action id, so an answer published under one spelling is found under
 #      the other instead of the human being asked again;
 #   H. two prompts inside one wrapper are two GATES: they share a durability key
-#      and must not share an answer.
+#      and must not share an answer;
+#   I. a HARD LINK to the journal is the same build — no path resolution can
+#      canonicalise one, so the build's identity is carried by the journal.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -297,6 +299,29 @@ printf 'stage\tGate\nstep\t1\nprompt#\t1\nprompt\tDeploy?\n' > "$G/approvals/$GI
 grep -q 'already-terminal' "$G/run3.log" || { echo "FAIL: expected already-terminal"; cat "$G/run3.log"; exit 1; }
 [ -f "$G/approvals/$GID.pending" ] && { echo "FAIL: a finished build still advertises a pending prompt"; exit 1; }
 echo "swept on the already-terminal path"
+
+# ---------------------------------------------------------------- scenario I
+echo "=== I: a HARD LINK to the journal is the same build ==="
+# a hard link has no distinguished original, so no amount of path resolution can
+# canonicalise it — the identity has to be carried BY the journal
+I="$LANE/i"; mkdir -p "$I/approvals"
+printf '%s\n' "$JF" > "$I/Jenkinsfile"
+"$HOST_BIN" "$I/Jenkinsfile" "$I/ws" gate "$I/build.journal" "$I/approvals" > "$I/run1.log" 2>&1 &
+PID=$!
+IID=$(await_pending "$I/approvals") || { echo "FAIL: no prompt published"; cat "$I/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+printf 'approve ivan\n' > "$I/approvals/$IID.decision"
+ln "$I/build.journal" "$I/hard.journal"
+[ "$(stat -c %i "$I/build.journal")" = "$(stat -c %i "$I/hard.journal")" ] || { echo "FAIL: not actually a hard link"; exit 1; }
+timeout 120 "$HOST_BIN" "$I/Jenkinsfile" "$I/ws" gate "$I/hard.journal" "$I/approvals" > "$I/run2.log" 2>&1 || {
+  echo "FAIL: the hard-linked resume did not complete — the answer was not found"; cat "$I/run2.log"; exit 1; }
+grep -q 'needs-reconciliation' "$I/run2.log" && { echo "FAIL: an answered prompt was sent for reconciliation under a hard link"; exit 1; }
+grep -q 'completed: success' "$I/run2.log" || { echo "FAIL: hard-linked resume not successful"; cat "$I/run2.log"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tivan$' "$I/build.journal" || {
+  echo "FAIL: the answer was not journaled under the hard link"; sed 's/^/  | /' "$I/build.journal"; exit 1; }
+[ "$(grep -c '^build-identity' "$I/build.journal")" -eq 1 ] || {
+  echo "FAIL: the build identity was minted more than once"; sed 's/^/  | /' "$I/build.journal"; exit 1; }
+echo "same inode, same identity, same action id; nobody was asked twice"
 
 # ---------------------------------------------------------------- scenario H
 echo "=== H: two prompts under one wrapper are two gates ==="

@@ -25,6 +25,9 @@ type ResumePlan =
       ScriptDigest: string option
       /// The (workspace root, job name) the build ran in, when recorded.
       WorkspaceIdentity: (string * string) option
+      /// FG-046b. This build's own identity, when its first attempt recorded
+      /// one. Approval action ids derive from it rather than from any pathname.
+      BuildIdentity: string option
       /// FG-046b. Answers already given to `input` prompts, per
       /// (stage, index, occurrence): (approved, submitter). Durable and
       /// independent of whether the step that asked ever finished. The
@@ -58,6 +61,7 @@ module Resume =
                     | BuildFinished _
                     | ScriptDigest _
                     | WorkspaceIdentity _
+                    | BuildIdentity _
                     | InputDecision _ -> acc)
                 Map.empty
 
@@ -103,6 +107,11 @@ module Resume =
             |> List.tryPick (function
                 | WorkspaceIdentity(r, j) -> Some(r, j)
                 | _ -> None)
+          BuildIdentity =
+            records
+            |> List.tryPick (function
+                | BuildIdentity id -> Some id
+                | _ -> None)
           NeedsReconciliation =
             steps
             |> Map.toList
@@ -139,14 +148,15 @@ module Resume =
     /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
     /// `input` files use the wrapped shape, so the limit is stated on the board
     /// rather than buried here.
-    /// A BARE top-level `input` is the only shape this can apply to (see the
-    /// stated limit above), and such a step asks exactly one prompt — occurrence
-    /// 1. That is load-bearing beyond this function: it is also what keeps
-    /// WalkerCtx.NextInputOccurrence's derived ordinal safe, since this is the
-    /// ONLY place a resumed attempt re-runs a prompt to consult a recorded
-    /// answer. Widening it to wrappers requires a durable ordinal first. Written as "some occurrence under this key was answered" rather than
-    /// hard-coding 1, so a future shape that widens the exemption cannot get a
-    /// silent free pass from a stale constant.
+    ///
+    /// That a bare top-level `input` asks exactly ONE prompt — occurrence 1 — is
+    /// load-bearing beyond this function: this is the only place a resumed
+    /// attempt re-runs a prompt to consult a recorded answer, which is what
+    /// keeps WalkerCtx.NextInputOccurrence's DERIVED ordinal safe. Widening the
+    /// exemption to wrappers requires a durable ordinal first. The test below is
+    /// still written as "some occurrence under this key was answered" rather
+    /// than hard-coding 1, so such a widening cannot get a silent free pass from
+    /// a stale constant.
     let inputAnswered (plan: ResumePlan) (stage: string) (index: int) =
         Set.contains (stage, index) plan.InputSteps
         && plan.InputDecisions |> Map.exists (fun (s, i, _) _ -> s = stage && i = index)

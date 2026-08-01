@@ -202,18 +202,21 @@ let main argv =
         // of one build (that is what lets an answer written between attempts be
         // found) and unique across builds; the journal is exactly that.
         //
-        // RESOLVED, not lexical, for the same reason every other identity here
-        // is: two spellings of one physical journal pass the resume, digest and
-        // workspace checks identically, so an attempt that reached the journal
-        // through a symlink alias would hash to a different id, fail to find the
-        // answer published under the original one, and refuse with
-        // needs-reconciliation — asking a human who had already answered.
-        let journalIdentity = trimSep (resolve journalPath)
+        // The identity is CARRIED BY the journal, not derived from its path, and
+        // that distinction is the whole correctness argument. Resolving symlinks
+        // was not enough: a HARD link is a second name for the same inode with
+        // no distinguished original, so two spellings of one journal hashed to
+        // two different ids while every resume, digest and workspace check
+        // passed — and an answer written under the first was invisible to an
+        // attempt opened through the second, which asked the human again. A name
+        // the journal carries has no aliases. Minted below, before any id is
+        // derived from it.
+        let mutable buildIdentity = ""
 
         let actionId (stage: string) (index: int) (occurrence: int) =
             use h = Security.Cryptography.SHA256.Create()
 
-            Text.Encoding.UTF8.GetBytes($"{journalIdentity.Length}:{journalIdentity}|{stage.Length}:{stage}|{index}|{occurrence}")
+            Text.Encoding.UTF8.GetBytes($"{buildIdentity.Length}:{buildIdentity}|{stage.Length}:{stage}|{index}|{occurrence}")
             |> h.ComputeHash
             |> Convert.ToHexString
             |> fun x -> x.ToLowerInvariant()
@@ -373,6 +376,7 @@ let main argv =
         Journal.repairTail journalPath
 
         let plan = Resume.plan (Journal.read journalPath)
+        buildIdentity <- defaultArg plan.BuildIdentity ""
 
         // the terminal no-op must not depend on the Jenkinsfile still existing
         // (a completed build queried after rotation) — check BEFORE reading it
@@ -390,7 +394,10 @@ let main argv =
             // marker is removed only when those fields hash back to its own
             // filename. A marker belonging to another build therefore cannot
             // match under this journal's identity and is left alone.
-            approvalsDir |> Option.iter sweepOwnPrompts
+            // only meaningful once an identity exists; a journal that never
+            // minted one never published a marker under an id we could verify
+            if buildIdentity <> "" then
+                approvalsDir |> Option.iter sweepOwnPrompts
 
             printfn $"already-terminal: {BuildStatus.toWireString t}"
             0
@@ -440,6 +447,19 @@ let main argv =
             eprintfn $"workspace-changed: the journal belongs to ({w}, {j}); refusing to resume against ({identity}, {jobName})"
             4
         | _ ->
+
+        // FG-046b. Minted here: after the gates that establish this journal is the
+        // right one, and BEFORE the adoption pass below — the first place a live
+        // attempt derives an action id from it. Written and synced immediately,
+        // because an identity that is not durable is not an identity: the next
+        // attempt would mint a different one and lose every answer addressed to
+        // the first.
+        if buildIdentity = "" then
+            buildIdentity <- Guid.NewGuid().ToString "N"
+            use j = Journal.openAt journalPath EveryStep
+            j.Append(BuildIdentity buildIdentity)
+            j.Sync()
+            j.Close()
 
         // FG-046b. An answer that arrived while NOTHING was running is still an
         // answer. Adopt it into the journal before the reconciliation decision:
