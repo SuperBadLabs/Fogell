@@ -966,7 +966,20 @@ module WalkerOrchestration =
                                 ctx.Failed.Value <- true
                                 ctx.Sink BuildStatus.Failure
                                 approverFaulted <- true
-                            | Ok(Some a) -> answer <- Some a
+                            | Ok(Some a) ->
+                                // RECHECKED, because a poll is not
+                                // instantaneous: it reads the inbox, appends the
+                                // answer to the journal and FSYNCS it, so on slow
+                                // or stalled storage a poll that began inside the
+                                // deadline can return outside it. Checking only
+                                // BEFORE the poll left exactly the hole the
+                                // pre-poll fix was meant to close, one layer down.
+                                // The human's answer is durable either way — it is
+                                // on record, it is simply too late for this build,
+                                // and a `timeout` still wins its ties.
+                                match cancellationOf ctx deadline with
+                                | Cancellation.Running -> answer <- Some a
+                                | c -> outcome <- c
                             | Ok None ->
                                 let left = defaultArg (remainingMs deadline) 250L
                                 System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
@@ -1392,7 +1405,7 @@ module WalkerOrchestration =
                                 | :? AggregateException as agg ->
                                     agg.Flatten().InnerExceptions
                                     |> Seq.tryHead
-                                    |> Option.defaultValue (ex :> exn)
+                                    |> Option.defaultValue ex
                                 | _ -> ex
 
                             emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"

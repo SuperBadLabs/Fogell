@@ -32,7 +32,10 @@
 #      canonicalise one, so the build's identity is carried by the journal;
 #   J. a gate whose own machinery breaks FAILS the build; it does not open. An
 #      unwritable inbox inside a parallel branch used to fault the branch task,
-#      be swallowed by the waiter, and finish SUCCESS unapproved.
+#      be swallowed by the waiter, and finish SUCCESS unapproved;
+#   K. a marker published by an attempt that DIED is swept when the build
+#      finishes — cleanup identifies markers by what they say, not by what the
+#      cleaning process remembers publishing.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -415,6 +418,30 @@ set -e
 grep -q 'completed: success' "$J/run.log" && { echo "FAIL: reported success with an unapproved gate"; cat "$J/run.log"; exit 1; }
 grep -q 'cannot publish a prompt' "$J/run.log" || { echo "FAIL: the unwritable inbox was not named"; cat "$J/run.log"; exit 1; }
 echo "failed closed, inbox named, exit $RC"
+
+# ---------------------------------------------------------------- scenario K
+echo "=== K: a marker from a DEAD attempt is swept when the build finishes ==="
+# publish, kill, reconcile the interrupted step by hand, resume. The resumed run
+# never re-executes that prompt, so its marker is not in this process's published
+# set — completion has to sweep by what the marker SAYS it is, not by what this
+# process remembers publishing.
+K="$LANE/k"; mkdir -p "$K/approvals"
+printf '%s\n' "$JF" > "$K/Jenkinsfile"
+KMARK="$K/ws/gate/markers.txt"
+"$HOST_BIN" "$K/Jenkinsfile" "$K/ws" gate "$K/build.journal" "$K/approvals" > "$K/run1.log" 2>&1 &
+PID=$!
+KID=$(await_pending "$K/approvals") || { echo "FAIL: no prompt published"; cat "$K/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+[ -f "$K/approvals/$KID.pending" ] || { echo "FAIL: the marker did not survive the kill"; exit 1; }
+# the operator decides the gate was passed and records it, exactly as the
+# restart lane's reconciliation does
+printf 'step-finished\tGate\t1\tsuccess\n' >> "$K/build.journal"
+timeout 120 "$HOST_BIN" "$K/Jenkinsfile" "$K/ws" gate "$K/build.journal" "$K/approvals" > "$K/run2.log" 2>&1 || {
+  echo "FAIL: the reconciled resume did not complete"; cat "$K/run2.log"; exit 1; }
+grep -q 'completed: success' "$K/run2.log" || { echo "FAIL: reconciled resume not successful"; cat "$K/run2.log"; exit 1; }
+grep -q 'skip (durably finished): Gate#1' "$K/run2.log" || { echo "FAIL: the reconciled prompt was re-run"; exit 1; }
+[ -f "$K/approvals/$KID.pending" ] && { echo "FAIL: a finished build still advertises a prompt from a dead attempt"; exit 1; }
+echo "swept a marker this process never published"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

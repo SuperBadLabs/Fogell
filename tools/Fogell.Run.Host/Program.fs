@@ -703,12 +703,17 @@ let main argv =
         // expiring, a failFast sibling. Its marker would otherwise outlive the
         // build, and `ls *.pending` is only useful to an approver if everything
         // in it is genuinely still waiting.
+        //
+        // The SELF-VERIFYING sweep, not this process's published set. A marker
+        // published by an ATTEMPT THAT DIED is not in this dictionary, and if an
+        // operator then reconciles that step the resumed run reaches its terminal
+        // record without ever re-executing the prompt — leaving the old marker
+        // advertised against a finished build forever. The sweep identifies
+        // markers by what they say they are, so it covers every attempt of this
+        // build rather than only the one doing the cleaning.
         let clearOutstandingPrompts () =
-            match approvalsDir with
-            | None -> ()
-            | Some dir ->
-                for KeyValue((stage, i, occ), _) in publishedPending do
-                    consumeAnswer dir stage i occ
+            if buildIdentity <> "" then
+                approvalsDir |> Option.iter sweepOwnPrompts
 
         // the workspace is already prepared above — never re-wipe here
         match FogellSide.runPersisted [] workspaceRoot jobName false hooks script with
