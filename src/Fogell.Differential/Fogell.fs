@@ -84,10 +84,12 @@ module FogellSide =
 
                 Map.ofList entries
 
-    let run
+    let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -104,7 +106,11 @@ module FogellSide =
             // artifacts live OUTSIDE the workspace so archiving cannot perturb
             // the workspace hash the differential compares
             let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
-            if Directory.Exists workspace then Directory.Delete(workspace, true)
+            // FG-110: only a sequence's FIRST build starts clean — Jenkins does
+            // not wipe the workspace between builds of one job, and neither do we.
+            if freshWorkspace && Directory.Exists workspace then
+                Directory.Delete(workspace, true)
+
             Directory.CreateDirectory workspace |> ignore
 
             /// Environment visible to a step: pipeline scope, overridden by stage
@@ -156,7 +162,8 @@ module FogellSide =
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
-                      Credentials = credentialStore }
+                      Credentials = credentialStore
+                      PreviousBuild = previousBuild }
 
             let root =
                 { Interrupt = None
@@ -227,7 +234,7 @@ module FogellSide =
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
                 let postRoot = { root with Failed = ref false }
-                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) None pipelineDeadline
+                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
                 if postRoot.Failed.Value then root.Failed.Value <- true
 
             announcePipelineExceeded ()
@@ -271,3 +278,42 @@ module FogellSide =
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
                   ReportedFailureReason = Trace.reportedFailureReason (runCtx.Output()) }
+
+    /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
+    let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
+        runWith envReplacements workspaceRoot jobName None true script
+
+    /// FG-110. Run a SEQUENCE of builds of one job: the workspace persists
+    /// across builds (build 1 starts clean) and each build's terminal result is
+    /// the next build's `previous` — what `changed`/`fixed`/`regression` select
+    /// against. Fail closed: a build the harness could not run at all stops the
+    /// sequence, and every later build reports that error rather than running
+    /// against an invented history.
+    let runMany
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scripts: string list)
+        : Result<Trace, string> list =
+        let statusOf (t: Trace) =
+            match t.Result with
+            | "success" -> Some BuildStatus.Success
+            | "failure" -> Some BuildStatus.Failure
+            | "unstable" -> Some BuildStatus.Unstable
+            | "aborted" -> Some BuildStatus.Aborted
+            | _ -> None
+
+        scripts
+        |> List.fold
+            (fun (acc, previous, halted) script ->
+                if halted then
+                    (Result.Error "a prior build in this sequence failed to run" :: acc, previous, true)
+                else
+                    let r =
+                        runWith envReplacements workspaceRoot jobName previous (List.isEmpty acc) script
+
+                    match r with
+                    | Result.Ok t -> (r :: acc, statusOf t, false)
+                    | Result.Error _ -> (r :: acc, previous, true))
+            ([], None, false)
+        |> fun (acc, _, _) -> List.rev acc

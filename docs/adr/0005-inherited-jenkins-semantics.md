@@ -37,7 +37,9 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   the result as changed. `fixed` needs a previous FAILURE/UNSTABLE and a current
   SUCCESS; `regression` needs a previous SUCCESS and anything worse now.
   (Proven for build #1 by `post-order-failure`/`post-order-success`; the
-  history-dependent arms are measured but not receipt-proven — FG-049b.)
+  history-dependent arms by the FG-110 `post-history` sequence — `.b2` fires
+  `fixed`, `.b4` fires `regression`, and `.b3` proves `changed` stays quiet on
+  a same-result build. FG-049b closed.)
 - A `when`-skipped stage leaves the build **SUCCESS** and its **`post` block does
   not run**. (Proven: `when-conditions`.)
 - On a plain (non-multibranch) job, `when { branch … }` and `when { tag … }` are

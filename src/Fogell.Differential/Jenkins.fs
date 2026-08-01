@@ -60,13 +60,19 @@ module Jenkins =
         + $"<script>{xmlEscape script}</script><sandbox>true</sandbox></definition>"
         + "<triggers/><disabled>false</disabled></flow-definition>"
 
-    /// Run one Jenkinsfile under a disposable job name and return its trace.
-    let run
+    /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
+    /// build. The job is created once, its definition UPDATED between builds
+    /// (a sequence's scripts may differ), and deleted only at the end, so
+    /// build history exists and `changed`/`fixed`/`regression` can select
+    /// against a real previous result. Each build is polled BY NUMBER — build
+    /// k of the sequence is build #k of the job — and the workspace is hashed
+    /// after each build, exactly where it lives.
+    let runMany
         (cfg: JenkinsConfig)
         (envReplacements: (string * string) list)
         (jobName: string)
-        (script: string)
-        : Result<Trace, string> =
+        (scripts: string list)
+        : Result<Trace, string> list =
         try
             let field, value = crumb cfg
 
@@ -79,15 +85,30 @@ module Jenkins =
 
             post $"/job/{jobName}/doDelete" None |> ignore
 
-            let xml = new StringContent(jobXml script, Encoding.UTF8, "application/xml")
-            let created = post $"/createItem?name={jobName}" (Some xml)
+            let runOne (buildNumber: int) (script: string) : Result<Trace, string> =
+                let xml () =
+                    new StringContent(jobXml script, Encoding.UTF8, "application/xml")
 
-            if created <> 200 && created <> 201 then
-                Error $"createItem returned HTTP {created}"
-            else
+                let ready =
+                    if buildNumber = 1 then
+                        let created = post $"/createItem?name={jobName}" (Some(xml ()))
+
+                        if created = 200 || created = 201 then
+                            Ok()
+                        else
+                            Error $"createItem returned HTTP {created}"
+                    else
+                        // update the definition in place; history survives
+                        let updated = post $"/job/{jobName}/config.xml" (Some(xml ()))
+                        if updated = 200 then Ok() else Error $"config.xml update returned HTTP {updated}"
+
+                match ready with
+                | Error e -> Error e
+                | Ok() ->
+
                 post $"/job/{jobName}/build" None |> ignore
 
-                // poll to a terminal state
+                // poll THIS build number to a terminal state
                 let mutable result = None
                 let mutable attempts = 0
 
@@ -97,7 +118,7 @@ module Jenkins =
 
                     try
                         let body =
-                            client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/api/json").Result
+                            client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json").Result
 
                         if Regex.IsMatch(body, "\"building\":false") then
                             let m = Regex.Match(body, "\"result\":\"([A-Z_]+)\"")
@@ -109,7 +130,7 @@ module Jenkins =
                 | None -> Error "jenkins build did not reach a terminal state"
                 | Some terminal ->
                     let console =
-                        client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/lastBuild/consoleText").Result
+                        client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
 
                     let workspaceHash, files =
                         match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
@@ -143,7 +164,32 @@ module Jenkins =
                           Concurrent = false
                           ReportedFailureReason = Trace.reportedFailureReason rawLines }
 
-                    post $"/job/{jobName}/doDelete" None |> ignore
                     Ok trace
+
+            let results =
+                scripts
+                |> List.fold
+                    (fun (acc, halted) script ->
+                        if halted then
+                            (Error "a prior build in this sequence failed to run" :: acc, true)
+                        else
+                            let r = runOne (List.length acc + 1) script
+
+                            match r with
+                            | Ok _ -> (r :: acc, false)
+                            | Error _ -> (r :: acc, true))
+                    ([], false)
+                |> fun (acc, _) -> List.rev acc
+
+            post $"/job/{jobName}/doDelete" None |> ignore
+            results
         with ex ->
-            Error ex.Message
+            // one entry PER REQUESTED BUILD, so a caller zipping against the
+            // fogell side cannot misalign a sequence on a harness exception
+            scripts |> List.map (fun _ -> Error ex.Message)
+
+    /// Run one Jenkinsfile under a disposable job name — the pre-FG-110 contract.
+    let run (cfg: JenkinsConfig) (envReplacements: (string * string) list) (jobName: string) (script: string) =
+        match runMany cfg envReplacements jobName [ script ] with
+        | [ r ] -> r
+        | _ -> Error "single-build run returned an unexpected shape"

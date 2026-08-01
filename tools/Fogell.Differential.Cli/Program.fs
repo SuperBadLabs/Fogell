@@ -135,9 +135,17 @@ let main argv =
              | None, None -> "<not collected — workspace hashes NOT compared>")
         printfn ""
 
+        // FG-110. A case whose file contains `//// NEXT BUILD ////` separator
+        // lines is a SEQUENCE: its scripts run as consecutive builds of ONE job
+        // (workspace and build history persist; each build's result is the next
+        // build's `previous`). Every build gets its own full receipt, named
+        // `<case>.b<N>`, and counts in the totals like any other case.
+        let buildSeparator =
+            Text.RegularExpressions.Regex(@"(?m)^//// NEXT BUILD ////\s*$")
+
         let receipts =
             files
-            |> List.mapi (fun i file ->
+            |> List.collect (fun file ->
                 let name = Path.GetFileName file
                 let script = File.ReadAllText file
                 // Job names MUST be derived from the file, not its index: an
@@ -162,31 +170,47 @@ let main argv =
                     use p = Diagnostics.Process.Start psi
                     p.WaitForExit 30_000 |> ignore
 
-                let jenkins = Jenkins.run cfg envReplacements job script
-                let fogell = FogellSide.run envReplacements fogellRoot job script
-                let r = Compare.receipt name core envReplacements jenkins fogell
-                let path = Compare.seal receiptDir r
+                let scripts = buildSeparator.Split script |> Array.toList
 
-                let workspaceCompared =
-                    match r.Jenkins, r.Fogell with
-                    | Some j, Some f -> Compare.workspaceWasCompared j f
-                    | _ -> false
+                let jenkinsRuns = Jenkins.runMany cfg envReplacements job scripts
+                let fogellRuns = FogellSide.runMany envReplacements fogellRoot job scripts
+                let solo = List.length scripts = 1
 
-                let verdict =
+                List.zip jenkinsRuns fogellRuns
+                |> List.mapi (fun bi (jenkins, fogell) ->
+                    let caseName =
+                        if solo then
+                            name
+                        else
+                            name.Replace(".Jenkinsfile", $".b{bi + 1}.Jenkinsfile")
+
+                    let r = Compare.receipt caseName core envReplacements jenkins fogell
+                    let path = Compare.seal receiptDir r
+
+                    let workspaceCompared =
+                        match r.Jenkins, r.Fogell with
+                        | Some j, Some f -> Compare.workspaceWasCompared j f
+                        | _ -> false
+
+                    let verdict =
+                        match r.Verdict with
+                        | Proven when workspaceCompared -> "PROVEN"
+                        | Proven -> "PROVEN-PARTIAL"
+                        | Diverged ds -> $"DIVERGED({ds.Length})"
+                        | NotComparable _ -> "NOT-COMPARABLE"
+
+                    printfn
+                        "  %-46s %-16s %s"
+                        (caseName.Substring(0, min 44 caseName.Length))
+                        verdict
+                        (Path.GetFileName path)
+
                     match r.Verdict with
-                    | Proven when workspaceCompared -> "PROVEN"
-                    | Proven -> "PROVEN-PARTIAL"
-                    | Diverged ds -> $"DIVERGED({ds.Length})"
-                    | NotComparable _ -> "NOT-COMPARABLE"
+                    | Diverged ds -> for d in ds do printfn "        %s" d.Describe
+                    | NotComparable d -> printfn "        %s" d.Describe
+                    | Proven -> ()
 
-                printfn "  %-46s %-16s %s" (name.Substring(0, min 44 name.Length)) verdict (Path.GetFileName path)
-
-                match r.Verdict with
-                | Diverged ds -> for d in ds do printfn "        %s" d.Describe
-                | NotComparable d -> printfn "        %s" d.Describe
-                | Proven -> ()
-
-                r)
+                    r))
 
         let isFull (r: Receipt) =
             r.Verdict = Proven

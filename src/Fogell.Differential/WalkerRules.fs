@@ -214,10 +214,11 @@ module WalkerRules =
     /// regression -> <result arm> -> cleanup. The result arms are mutually
     /// exclusive, so their order relative to each other is unobservable
     /// and is not claimed.
-    /// Receipts: `post-order-failure`, `post-order-success` — which exercise the
-    /// build-#1 arms only. The `fixed` and `regression` SLOTS in this ordering are
-    /// NOT exercised by any receipt; they come from the four-build probe and stay
-    /// UNPROVEN until FG-110 gives the harness build history.
+    /// Receipts: `post-order-failure`, `post-order-success` (build-#1 arms) and,
+    /// since FG-110 gave the harness build history, the `post-history` sequence —
+    /// `post-history.b2` exercises the `fixed` slot, `post-history.b4` the
+    /// `regression` slot, and `post-history.b3` proves `changed` stays QUIET on a
+    /// same-result build. The four-build probe's table is receipt-backed in full.
     let postRank (cond: PostCondition) =
         match cond with
         | PostCondition.Always -> 0

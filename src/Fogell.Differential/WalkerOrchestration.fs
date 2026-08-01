@@ -17,7 +17,12 @@ type OrchestrationDeps =
       WorkspaceRoot: string
       ArtifactRoot: string
       JobName: string
-      Credentials: unit -> Map<string, Credential> }
+      Credentials: unit -> Map<string, Credential>
+      /// FG-110. The PREVIOUS build's terminal result, when the harness kept the
+      /// job across builds — what `changed`/`fixed`/`regression` select against.
+      /// None on a first build (and for every single-build case), exactly as
+      /// measured: `changed` FIRES on build #1, `fixed`/`regression` cannot.
+      PreviousBuild: BuildStatus option }
 
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
@@ -49,6 +54,7 @@ module WalkerOrchestration =
         let artifactRoot = deps.ArtifactRoot
         let jobName = deps.JobName
         let credentialStore = deps.Credentials
+        let previousBuild = deps.PreviousBuild
         let humanizeSpan = WalkerRules.humanizeSpan
         let timeoutMs = WalkerRules.timeoutMs
         let retryCount = WalkerRules.retryCount
@@ -181,7 +187,7 @@ module WalkerOrchestration =
                 // Passing the stage's own expired deadline into post aborted every arm
                 // before it could run — which would have silently swallowed exactly the
                 // failure notifications a `post { aborted }` exists to send.
-                runPostWithDeadline postCtx cwd stage stageStatus.Value None inherited
+                runPostWithDeadline postCtx cwd stage stageStatus.Value previousBuild inherited
                 if postCtx.Failed.Value then ctx.Failed.Value <- true
 
                 // MEASURED position (`cancellation-selects-post-arm`): the
