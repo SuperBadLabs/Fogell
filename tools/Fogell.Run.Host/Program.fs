@@ -47,6 +47,20 @@ let main argv =
             |> Convert.ToHexString
             |> fun x -> x.ToLowerInvariant()
 
+        // control characters in the identity would tear the journal's wire
+        // format exactly like a hostile stage name — refuse by name
+        if
+            [ workspaceRoot; jobName ]
+            |> List.exists (fun v -> v.Contains '\t' || v.Contains '\n' || v.Contains '\r')
+        then
+            eprintfn "workspace-root/job-name contain tab/newline/carriage-return — unjournalable; refusing"
+            exit 2
+
+        // repair a torn tail BEFORE the plan is built: the reconciliation
+        // refusal exits before any journal open, and an operator's appended
+        // fix would otherwise land invisibly behind the fragment
+        Journal.repairTail journalPath
+
         let plan = Resume.plan (Journal.read journalPath)
 
         match plan.Terminal with
@@ -97,9 +111,15 @@ let main argv =
         use journal = Journal.openAt journalPath EveryStep
 
         // first attempt records what definition this journal belongs to
+        // backfilled INDEPENDENTLY: a death between the two appends must not
+        // leave the missing one unrecordable forever
         if plan.ScriptDigest.IsNone then
             journal.Append(ScriptDigest digest)
+
+        if plan.WorkspaceIdentity.IsNone then
             journal.Append(WorkspaceIdentity workspaceFull)
+
+        if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()
 
         let hooks =
