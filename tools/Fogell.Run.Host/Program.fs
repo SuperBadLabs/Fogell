@@ -80,7 +80,13 @@ let main argv =
         // resume reads an empty file. Compared resolved: an aliasing symlink
         // (root=/tmp/link -> /tmp/real, journal under /tmp/real/job) is the
         // same physical location and must refuse too.
-        if (resolve journalPath).StartsWith(realWorkspace + string Path.DirectorySeparatorChar) then
+        // BOTH forms: the resolved check catches an aliasing root, the lexical
+        // one catches a journal that IS a symlink sitting inside the workspace
+        // (its target is controller-side, but the wipe removes the link itself)
+        if
+            (resolve journalPath).StartsWith(realWorkspace + string Path.DirectorySeparatorChar)
+            || journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar)
+        then
             eprintfn $"journal path is inside the workspace ({realWorkspace}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2
 
@@ -138,9 +144,14 @@ let main argv =
         // the job path retargeted between attempts (ws/job -> ws/a becoming
         // ws/job -> ws/b) keeps root and lexical name equal while the physical
         // tree changes underneath the durable steps.
+        // Root AND workspace: two different roots can reach one physical job
+        // directory through symlinks while the walker derives controller state
+        // (artifacts, stashes, SCM records) from the ROOT — which would differ.
+        let identity = $"{realRoot}|{realWorkspace}"
+
         match plan.WorkspaceIdentity with
-        | Some(w, j) when w <> realWorkspace || j <> jobName ->
-            eprintfn $"workspace-changed: the journal belongs to ({w}, {j}); refusing to resume against ({realWorkspace}, {jobName})"
+        | Some(w, j) when w <> identity || j <> jobName ->
+            eprintfn $"workspace-changed: the journal belongs to ({w}, {j}); refusing to resume against ({identity}, {jobName})"
             4
         | _ ->
 
@@ -185,7 +196,7 @@ let main argv =
             journal.Append(ScriptDigest digest)
 
         if plan.WorkspaceIdentity.IsNone then
-            journal.Append(WorkspaceIdentity(realWorkspace, jobName))
+            journal.Append(WorkspaceIdentity(identity, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()

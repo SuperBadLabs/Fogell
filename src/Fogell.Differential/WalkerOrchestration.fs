@@ -201,6 +201,14 @@ module WalkerOrchestration =
                         // its OWN post (the controller may have died before or
                         // during it, and post is unjournaled — the stated
                         // at-least-once limit; dropping the arm is data loss).
+                        // a container's post selects against the worst status
+                        // its SUBTREE recorded — its own (zero) steps say nothing
+                        let subtreeStatus (root: Stage) =
+                            Pipeline.flattenStages [ root ]
+                            |> List.collect (fun d -> d.Steps |> List.mapi (fun i _ -> d.Name, i))
+                            |> List.choose (fun (n, i) -> hooks.SkippedStatus n i)
+                            |> List.fold BuildStatus.worstOf BuildStatus.Success
+
                         for st in Pipeline.flattenStages [ stage ] do
                             let mutable entered = false
                             let mutable replayed = BuildStatus.Success
@@ -228,7 +236,8 @@ module WalkerOrchestration =
 
                             if (entered || committed) && not (List.isEmpty st.Post) then
                                 let postCtx = { ctx with Failed = ref false }
-                                runPostWithDeadline postCtx cwd st replayed previousBuild inherited
+                                let status = if entered then replayed else subtreeStatus st
+                                runPostWithDeadline postCtx cwd st status previousBuild inherited
                                 if postCtx.Failed.Value then ctx.Failed.Value <- true
                     | None -> ()
 
