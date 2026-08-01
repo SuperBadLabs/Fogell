@@ -41,7 +41,10 @@
 #   M. and it escapes NESTED retries — the inner scope's fresh per-attempt
 #      signal must still reach the outer one;
 #   N. a prompt killed by its timeout is WITHDRAWN before the retry publishes the
-#      next one, so the inbox never advertises a gate nothing is listening to.
+#      next one, so the inbox never advertises a gate nothing is listening to;
+#   O. a `submitter:`-restricted gate is REFUSED rather than approved by whoever
+#      can write to the inbox — this engine cannot authenticate a submitter, and
+#      enforcing a restriction on a self-declared name is theatre.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -275,6 +278,13 @@ printf 'approve alice\n\n' > "$F/approvals/$FID.decision"
 sleep 3
 grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a trailing blank line was trimmed into an answer"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
 kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a trailing-blank-line answer"; cat "$F/run.log"; exit 1; }
+# a file the writer FINISHED with nothing in it is malformed, not silence: it
+# must be named, or an un-timed prompt waits forever without a word
+printf '   \n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q 'is blank' "$F/run.log" || { echo "FAIL: a completed blank answer was not reported"; cat "$F/run.log"; exit 1; }
+grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a blank answer was accepted"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a blank answer"; cat "$F/run.log"; exit 1; }
 printf 'approve frank\n' > "$F/approvals/$FID.decision"   # the completed write
 set +e; wait "$PID"; RC=$?; set -e
 [ "$RC" -eq 0 ] || { echo "FAIL: the completed answer was not honoured (rc=$RC)"; cat "$F/run.log"; exit 1; }
@@ -568,6 +578,39 @@ grep -q 'completed: aborted' "$N/run.log" || { echo "FAIL: the exhausted retry d
 [ "$(find "$N/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
   echo "FAIL: a prompt is still advertised against a finished build"; exit 1; }
 echo "never more than one live prompt; both attempts asked, neither lingered"
+
+# ---------------------------------------------------------------- scenario O
+echo "=== O: a submitter-restricted gate is refused, not approved by anyone ==="
+# `submitter:` names WHO may approve. This engine cannot authenticate anyone —
+# the inbox takes a self-declared name — so honouring the option would let
+# whoever can write to the inbox pass a gate Jenkins reserves for a named group.
+O="$LANE/o"; mkdir -p "$O/approvals"
+cat > "$O/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: "Deploy?", ok: "Ship it", submitter: "release-team"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+JF
+set +e
+timeout 60 "$HOST_BIN" "$O/Jenkinsfile" "$O/ws" gate "$O/build.journal" "$O/approvals" > "$O/run.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: a submitter-restricted gate hung"; exit 1; }
+[ "$RC" -ne 0 ] || { echo "FAIL: a submitter-restricted gate did not fail closed"; cat "$O/run.log"; exit 1; }
+grep -q 'completed: failure' "$O/run.log" || { echo "FAIL: expected a failed build"; cat "$O/run.log"; exit 1; }
+# nothing was published, so nothing could be answered by the wrong person
+[ "$(find "$O/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
+  echo "FAIL: a restricted gate published a prompt anyone could answer"; exit 1; }
+grep -q '^input-decision' "$O/build.journal" 2>/dev/null && { echo "FAIL: a restricted gate recorded an approval"; exit 1; }
+grep -q '^shipped$' "$O/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a restricted gate ran"; exit 1; }
+echo "refused by name; no prompt published, no approval recorded"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

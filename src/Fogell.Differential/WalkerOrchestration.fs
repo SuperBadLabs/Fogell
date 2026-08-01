@@ -961,6 +961,30 @@ module WalkerOrchestration =
                             (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence))
                     | _ -> None
 
+                // FG-046b (Codex P1). `submitter: 'release-team'` restricts WHO may
+                // approve, and this engine cannot authenticate anyone: the inbox
+                // protocol takes a self-declared `<who>`, so honouring the option
+                // would mean anyone able to write to the inbox could pass a gate
+                // Jenkins reserves for a named user or group. Enforcing it on a
+                // name the approver chose for themselves is not enforcement, it
+                // is theatre with an audit trail.
+                //
+                // So it fails closed BY NAME, and only where an answer could
+                // otherwise be accepted — an unattended `timeout` run reaches its
+                // deadline exactly as it does on Jenkins for anyone unauthorised,
+                // so that path is left alone.
+                let restrictedTo =
+                    step.Named
+                    |> List.tryPick (fun (k, _) ->
+                        if k = "submitter" || k = "submitterParameter" then Some k else None)
+
+                match approver, restrictedTo with
+                | Some _, Some option ->
+                    emit $"ERROR: input restricts approval with `{option}` and this engine cannot authenticate a submitter; it will not accept an unauthenticated approval"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | _ ->
+
                 match approver, deadline with
                 | None, None ->
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"

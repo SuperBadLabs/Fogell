@@ -294,7 +294,12 @@ let main argv =
                     contents.Substring(0, contents.Length - 1)
 
             if body.Trim() = "" then
-                None
+                // TERMINATED and blank is not silence. An empty file is a write
+                // in progress and returns None above; a file the writer finished
+                // with nothing in it is a malformed answer, and reporting it is
+                // the difference between an operator seeing why their decision is
+                // ignored and an un-timed prompt waiting forever without a word.
+                Some(Error $"{path} is blank — an answer is exactly '<approve|reject> <who>'")
             elif body.Contains '\n' || body.Contains '\r' then
                 Some(Error $"{path} has more than one line — an answer is exactly '<approve|reject> <who>'")
             else
