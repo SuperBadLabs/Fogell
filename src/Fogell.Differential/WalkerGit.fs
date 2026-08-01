@@ -61,6 +61,9 @@ module WalkerGit =
 
             if not (p.WaitForExit 600_000) then
                 p.Kill true
+                // wait out the kill: returning while git still terminates would
+                // leave it mutating the workspace after the step reported failure
+                p.WaitForExit()
                 Result.Error "timed out after 10 minutes"
             else
                 p.WaitForExit() // flush the async handlers
@@ -135,8 +138,10 @@ module WalkerGit =
                 emit "Cloning the remote Git repository"
                 emit $"Cloning repository {url}"
                 step (Some $"> git init {cwd} # timeout=10") "git init" [ "init"; cwd ] |> ignore
-                emit $"Fetching upstream changes from {url}"
-                emit "> git --version # timeout=10"
+
+                if failure.IsNone then
+                    emit $"Fetching upstream changes from {url}"
+                    emit "> git --version # timeout=10"
 
                 step None "git --version" [ "--version" ]
                 |> Option.iter (fun v -> emit $"> git --version # '{v}'")

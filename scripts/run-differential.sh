@@ -37,7 +37,7 @@ export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec 
 # NOTE: the committed git-step cases PIN this URL in their text (the lane is
 # pinned lab infrastructure, like the Jenkins core); overriding FOGELL_SCM_URL
 # moves only this preflight, not the cases.
-if ! git ls-remote "$FOGELL_SCM_URL" >/dev/null 2>&1; then
+if ! timeout 15 git ls-remote "$FOGELL_SCM_URL" >/dev/null 2>&1; then
   echo "warning: SCM lane repo unreachable at $FOGELL_SCM_URL — git-step cases will fail." >&2
   echo "         start it on ${FOGELL_JENKINS_HOST}: git daemon --base-path=\$HOME/fogell-scm --export-all --enable=receive-pack --reuseaddr --port=9418" >&2
 fi

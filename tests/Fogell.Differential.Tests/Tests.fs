@@ -578,24 +578,26 @@ let continuationResolution =
               | v -> failtest $"expected divergence without replacements, got {v}"
           }
 
-          test "a build PRINTING version-shaped text is compared, not folded (FG-111 look-alike)" {
-              // The ${GITVERSION} pair folds each engine's own `git --version`
-              // echo. A build whose OWN output contains such text — a corpus
-              // file runs raw git in `sh` — must still compare as output:
-              // identical literals never fold (they are equal), and a pair
-              // differing beyond the folded value still diverges.
-              let repl = [ "git version 2.47.3", "${GITVERSION}"; "git version 2.43.0", "${GITVERSION}" ]
-              let same = mkTrace [ "+ git --version"; "git version 2.47.3" ]
-              let verdict, folds = Compare.traces repl same same
-              Expect.equal verdict Proven "identical version text compares equal"
-              Expect.isEmpty folds "and is never reported as a fold"
+          test "the GITVERSION fold is scoped to the plugin line (FG-111 P1 look-alike)" {
+              // The fold pair is the FULL narration line, never the raw version
+              // string: a build running `sh 'git --version'` prints each
+              // engine's version as ORDINARY stdout, and that difference is one
+              // a lift-and-shift user genuinely sees — it must DIVERGE, while
+              // the plugin's own narration line folds.
+              let repl =
+                  [ "> git --version # 'git version 2.47.3'", "> git --version # '${GITVERSION}'"
+                    "> git --version # 'git version 2.43.0'", "> git --version # '${GITVERSION}'" ]
 
-              let jenkins = mkTrace [ "mine: git version 2.47.3 ok" ]
-              let fogell = mkTrace [ "mine: git version 2.43.0 NOT-ok" ]
+              let jenkins = mkTrace [ "> git --version # 'git version 2.47.3'"; "git version 2.47.3" ]
+              let fogell = mkTrace [ "> git --version # 'git version 2.43.0'"; "git version 2.43.0" ]
 
               match Compare.traces repl jenkins fogell with
-              | Diverged [ OutputDiffers(0, _, _) ], _ -> ()
-              | v -> failtest $"a difference beyond the folded value must diverge, got {v}"
+              | Diverged [ OutputDiffers(1, Some "git version 2.47.3", Some "git version 2.43.0") ], folds ->
+                  Expect.equal
+                      folds
+                      [ "line 0 compared canonically: > git --version # '${GITVERSION}'" ]
+                      "the narration line folded and was reported; the stdout line diverged"
+              | v -> failtest $"raw version stdout must diverge while the plugin line folds, got {v}"
           }
 
           test "ordinary output printing an inherited value folds VISIBLY (round 48 P1)" {
