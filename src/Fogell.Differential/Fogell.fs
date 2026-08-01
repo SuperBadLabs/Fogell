@@ -204,21 +204,28 @@ module FogellSide =
             // comparison; the checkout narration inside it is compared).
             match scm with
             | Some spec when not root.Failed.Value ->
-                emit $"Obtained Jenkinsfile from git {spec.Url}"
+                // MEASURED only for `agent any` at pipeline level (receipt
+                // `checkout-scm-basic`: one up-front auto-checkout). Under
+                // `agent none`/stage agents Jenkins places the default checkout
+                // at each applicable stage-agent entry instead — UNPROVEN here,
+                // so that shape refuses by name rather than checking out where
+                // Jenkins would not (FG-103).
+                let stageAgents =
+                    pipeline.Stages
+                    |> Pipeline.flattenStages
+                    |> List.exists (fun st -> st.Agent.IsSome)
 
-                let syntheticStage =
-                    { Name = "Declarative: Checkout SCM"
-                      Agent = None
-                      Environment = []
-                      EnvironmentLiteralNames = Set.empty
-                      Steps = []
-                      Options = []
-                      When = None
-                      Post = []
-                      Nested = []
-                      IsParallel = false
-                      FailFast = false
-                      Position = { Line = 0L; Column = 0L } }
+                if pipeline.Agent <> AgentAny || stageAgents then
+                    emit
+                        "ERROR: an SCM-defined pipeline without a top-level `agent any` (or with stage-level agents) is not modelled — default-checkout placement differs and is unmeasured"
+
+                    root.Failed.Value <- true
+                    bump BuildStatus.Failure
+            | _ -> ()
+
+            match scm with
+            | Some spec when not root.Failed.Value ->
+                emit $"Obtained Jenkinsfile from git {spec.Url}"
 
                 // Jenkins-provided env ONLY: the auto-checkout runs BEFORE the
                 // withEnv wrapper (measured order — the Obtained line precedes
