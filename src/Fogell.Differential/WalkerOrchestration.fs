@@ -212,10 +212,12 @@ module WalkerOrchestration =
                         // REVERSED: flattenStages is preorder, so replaying in
                         // its order ran a parent's post before its children's —
                         // Jenkins finishes the inner stage (and its post) first.
-                        // A replayed child's POST can fail; its container's arm
-                        // must see that, so descendant outcomes accumulate as
-                        // the reversed (children-first) walk proceeds.
-                        let mutable descendantWorst = BuildStatus.Success
+                        // Each stage's replayed outcome, keyed by name. A single
+                        // accumulator leaked ACROSS SIBLINGS — a later sibling's
+                        // failure reached an earlier sibling's status-selective
+                        // post, which never ran under it. The children-first walk
+                        // folds only a stage's OWN nested outcomes.
+                        let outcomes = System.Collections.Generic.Dictionary<string, BuildStatus>()
 
                         for st in List.rev (Pipeline.flattenStages [ stage ]) do
                             let mutable entered = false
@@ -242,21 +244,31 @@ module WalkerOrchestration =
                             let committed =
                                 List.isEmpty st.Steps && hooks.StageWasCommitted st.Name
 
+                            let childrenWorst =
+                                st.Nested
+                                |> List.fold
+                                    (fun acc (c: Stage) ->
+                                        match outcomes.TryGetValue c.Name with
+                                        | true, v -> BuildStatus.worstOf acc v
+                                        | _ -> acc)
+                                    BuildStatus.Success
+
+                            let status =
+                                BuildStatus.worstOf
+                                    (if entered then replayed else subtreeStatus st)
+                                    childrenWorst
+
+                            let mutable outcome = status
+
                             if (entered || committed) && not (List.isEmpty st.Post) then
                                 let postCtx = { ctx with Failed = ref false }
-
-                                let status =
-                                    BuildStatus.worstOf
-                                        (if entered then replayed else subtreeStatus st)
-                                        descendantWorst
-
                                 runPostWithDeadline postCtx cwd st status previousBuild inherited
 
                                 if postCtx.Failed.Value then
                                     ctx.Failed.Value <- true
-                                    descendantWorst <- BuildStatus.worstOf descendantWorst BuildStatus.Failure
-                            elif entered then
-                                descendantWorst <- BuildStatus.worstOf descendantWorst replayed
+                                    outcome <- BuildStatus.worstOf outcome BuildStatus.Failure
+
+                            outcomes[st.Name] <- outcome
                     | None -> ()
 
                 | None ->
