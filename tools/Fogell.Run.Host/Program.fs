@@ -620,7 +620,18 @@ let main argv =
                     | None ->
                         // publish what is being waited on, once
                         if publishedPending.TryAdd((stage, index, occurrence), true) then
-                            Directory.CreateDirectory dir |> ignore
+                            // A prompt nobody can SEE is not a gate. If the inbox
+                            // cannot be written — read-only, or the path is an
+                            // ordinary file — this throws, and the walker turns
+                            // that into a named build failure rather than letting
+                            // the build past unapproved. The path is named here
+                            // because the walker only sees an exception type.
+                            try
+                                Directory.CreateDirectory dir |> ignore
+                            with ex ->
+                                eprintfn $"approvals: cannot publish a prompt to {dir}: {ex.GetType().Name}"
+                                reraise ()
+
                             // named in full so a human answering has to guess
                             // nothing: which prompt, in which stage, at which
                             // step. The PROMPT is author-written text and may

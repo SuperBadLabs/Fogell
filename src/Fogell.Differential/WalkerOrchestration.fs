@@ -923,8 +923,13 @@ module WalkerOrchestration =
                     // approver makes safe to reproduce.
                     let mutable outcome = Cancellation.Running
                     let mutable answer = None
+                    // reported at its own site; it must NOT be routed through
+                    // applyCancellation, which would name a failFast sibling
+                    // that does not exist — the collateral-outranks-cause
+                    // misclassification this walker has fought five times
+                    let mutable approverFaulted = false
 
-                    while outcome = Cancellation.Running && answer.IsNone do
+                    while outcome = Cancellation.Running && answer.IsNone && not approverFaulted do
                         // CANCELLATION IS CHECKED FIRST, both kinds, and an
                         // answer first OBSERVED after it is refused.
                         //
@@ -942,9 +947,27 @@ module WalkerOrchestration =
                         // can answer the next build.
                         match cancellationOf ctx deadline with
                         | Cancellation.Running ->
-                            match poll () with
-                            | Some a -> answer <- Some a
-                            | None ->
+                            // An approver that FAULTS is not an approver, and a
+                            // fault here used to escape the step entirely: inside
+                            // a parallel branch it faulted the branch task, which
+                            // was swallowed, and the build could finish
+                            // successfully having never been approved. It is a
+                            // named failure now — the one thing a gate must never
+                            // do is let the build past without an answer.
+                            let polled =
+                                try
+                                    Ok(poll ())
+                                with ex ->
+                                    Result.Error ex
+
+                            match polled with
+                            | Result.Error ex ->
+                                emit $"ERROR: input approver failed: {ex.GetType().Name}: {ex.Message}"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Failure
+                                approverFaulted <- true
+                            | Ok(Some a) -> answer <- Some a
+                            | Ok None ->
                                 let left = defaultArg (remainingMs deadline) 250L
                                 System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
                         | c -> outcome <- c
@@ -974,6 +997,7 @@ module WalkerOrchestration =
                         emit "Rejected"
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Aborted
+                    | None when approverFaulted -> ()
                     | None -> applyCancellation ctx "input" deadline outcome
                 | None, Some _ ->
                     // Wait out the deadline exactly as an unanswered prompt would.
@@ -1347,11 +1371,33 @@ module WalkerOrchestration =
                     // interrupted branch still has a process group to reap,
                     // and abandoning it is how orphans happen (FG-032).
                     branches
-                    |> List.iter (fun (_, t) ->
+                    |> List.iter (fun (bc, t) ->
                         try
                             t.Wait()
-                        with _ ->
-                            ())
+                        with ex ->
+                            // FG-046b (Codex P1). This used to swallow the
+                            // exception and move on, while the ONLY failure
+                            // signal read below is `bc.Failed` — which a fault
+                            // never sets. So a branch that threw vanished: the
+                            // build could report SUCCESS having silently skipped
+                            // whatever that branch was doing, and for an `input`
+                            // branch that means shipping without the approval.
+                            //
+                            // A branch's ordinary failure never arrives here (it
+                            // is recorded through Failed/Sink), so anything that
+                            // does is an ENGINE fault, and the honest response to
+                            // one is to fail the build by name.
+                            let root =
+                                match ex with
+                                | :? AggregateException as agg ->
+                                    agg.Flatten().InnerExceptions
+                                    |> Seq.tryHead
+                                    |> Option.defaultValue (ex :> exn)
+                                | _ -> ex
+
+                            emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"
+                            bc.Failed.Value <- true
+                            bc.Sink BuildStatus.Failure)
 
                     if branches |> List.exists (fun (bc, _) -> bc.Failed.Value) then
                         ctx.Failed.Value <- true

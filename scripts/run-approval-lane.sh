@@ -29,7 +29,10 @@
 #   H. two prompts inside one wrapper are two GATES: they share a durability key
 #      and must not share an answer;
 #   I. a HARD LINK to the journal is the same build — no path resolution can
-#      canonicalise one, so the build's identity is carried by the journal.
+#      canonicalise one, so the build's identity is carried by the journal;
+#   J. a gate whose own machinery breaks FAILS the build; it does not open. An
+#      unwritable inbox inside a parallel branch used to fault the branch task,
+#      be swallowed by the waiter, and finish SUCCESS unapproved.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -373,6 +376,45 @@ grep -q '^app$' "$H/ws/gate/markers.txt" || { echo "FAIL: the step past the FIRS
 grep -q '^db$' "$H/ws/gate/markers.txt" && { echo "FAIL: the step past a REJECTED gate ran"; exit 1; }
 echo "two prompts, two ids, two answers; journal:"
 rg '^input-decision' "$H/build.journal" | sed 's/^/  | /'
+
+# ---------------------------------------------------------------- scenario J
+echo "=== J: an unwritable inbox fails the build, it does not ship unapproved ==="
+# the prompt runs inside a PARALLEL branch and the approvals path is an ordinary
+# FILE, so publishing throws. Before this fix the exception faulted the branch
+# task, the waiter swallowed it, and the build finished SUCCESS having never been
+# approved — a gate that opens when its own machinery breaks is not a gate.
+J="$LANE/j"; mkdir -p "$J"
+printf 'not a directory\n' > "$J/approvals"
+cat > "$J/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            parallel {
+                stage("ask") {
+                    steps {
+                        input message: "Deploy?", ok: "Ship it"
+                    }
+                }
+                stage("other") {
+                    steps {
+                        sh "echo other >> markers.txt"
+                    }
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+timeout 120 "$HOST_BIN" "$J/Jenkinsfile" "$J/ws" gate "$J/build.journal" "$J/approvals" > "$J/run.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: an unpublishable prompt HUNG"; exit 1; }
+[ "$RC" -ne 0 ] || { echo "FAIL: the build SUCCEEDED without an approval"; cat "$J/run.log"; exit 1; }
+grep -q 'completed: success' "$J/run.log" && { echo "FAIL: reported success with an unapproved gate"; cat "$J/run.log"; exit 1; }
+grep -q 'cannot publish a prompt' "$J/run.log" || { echo "FAIL: the unwritable inbox was not named"; cat "$J/run.log"; exit 1; }
+echo "failed closed, inbox named, exit $RC"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
