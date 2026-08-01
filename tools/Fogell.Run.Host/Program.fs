@@ -47,21 +47,29 @@ let main argv =
                 // still followed: a journal symlink whose target does not exist
                 // yet would otherwise look like an ordinary path and escape
                 // both containment checks, then be created inside the workspace.
-                let info = FileInfo candidate
+                // Follow the WHOLE chain: a link pointing at another link left
+                // the earlier one-hop version resolving to a path that was
+                // itself a link, and containment then compared a location the
+                // kernel would never touch. Bounded — a cycle must terminate.
+                let mutable current = candidate
+                let mutable hops = 0
 
-                acc <-
-                    match info.LinkTarget with
-                    | null -> candidate
-                    | target ->
-                        let resolved =
-                            if Path.IsPathRooted target then
-                                target
-                            else
-                                Path.Combine(acc, target)
+                while hops < 64 && not (isNull (FileInfo current).LinkTarget) do
+                    let target = (FileInfo current).LinkTarget
 
-                        // one hop per component, then normalise: a link chain
-                        // deeper than the path is pathological, not expected
-                        Path.GetFullPath resolved
+                    current <-
+                        if Path.IsPathRooted target then
+                            Path.GetFullPath target
+                        else
+                            Path.GetFullPath(Path.Combine(Path.GetDirectoryName current, target))
+
+                    hops <- hops + 1
+
+                if hops >= 64 then
+                    eprintfn $"symlink chain too deep at {candidate} — refusing"
+                    exit 2
+
+                acc <- current
 
             acc
 
@@ -163,7 +171,11 @@ let main argv =
         // attempt records is computed after the wipe (below), because the wipe
         // can replace a workspace SYMLINK with a real directory and change the
         // physical target under us.
-        let identity = $"{realRoot}|{realWorkspace}"
+        // the ARTIFACT root too: stashes, archived artifacts and SCM records
+        // live under it, and it can be retargeted independently of the
+        // workspace (a symlink of its own)
+        let artifactsResolved = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
+        let identity = $"{realRoot}|{realWorkspace}|{artifactsResolved}"
 
         match plan.WorkspaceIdentity with
         | Some(w, j) when w <> identity || j <> jobName ->
@@ -214,7 +226,11 @@ let main argv =
         if plan.WorkspaceIdentity.IsNone then
             // recomputed post-wipe: the fresh path may have replaced a symlink
             // with a real directory, making the pre-wipe resolution stale
-            let identityNow = $"{trimSep (resolve workspaceRoot)}|{trimSep (resolve workspaceFull)}"
+            let identityNow =
+                let r = trimSep (resolve workspaceRoot)
+                let w = trimSep (resolve workspaceFull)
+                let a = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
+                $"{r}|{w}|{a}"
             journal.Append(WorkspaceIdentity(identityNow, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then

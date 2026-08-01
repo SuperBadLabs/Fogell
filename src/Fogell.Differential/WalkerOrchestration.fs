@@ -209,7 +209,10 @@ module WalkerOrchestration =
                             |> List.choose (fun (n, i) -> hooks.SkippedStatus n i)
                             |> List.fold BuildStatus.worstOf BuildStatus.Success
 
-                        for st in Pipeline.flattenStages [ stage ] do
+                        // REVERSED: flattenStages is preorder, so replaying in
+                        // its order ran a parent's post before its children's —
+                        // Jenkins finishes the inner stage (and its post) first.
+                        for st in List.rev (Pipeline.flattenStages [ stage ]) do
                             let mutable entered = false
                             let mutable replayed = BuildStatus.Success
 
