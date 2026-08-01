@@ -21,6 +21,8 @@ type ResumePlan =
       CommittedStages: Set<string>
       /// Set when the build already reached a terminal state; resume is a no-op.
       Terminal: BuildStatus option
+      /// The definition this journal belongs to, when recorded.
+      ScriptDigest: string option
       /// Steps that started without finishing. Non-empty means a human or a
       /// policy must decide, because the engine genuinely does not know.
       NeedsReconciliation: (string * int) list }
@@ -41,7 +43,8 @@ module Resume =
                         | _ -> Map.add (stage, i) Interrupted acc
                     | StepFinished(stage, i, status) -> Map.add (stage, i) (AlreadyFinished status) acc
                     | StageCommitted _
-                    | BuildFinished _ -> acc)
+                    | BuildFinished _
+                    | ScriptDigest _ -> acc)
                 Map.empty
 
         { Steps = steps
@@ -55,6 +58,11 @@ module Resume =
             records
             |> List.tryPick (function
                 | BuildFinished s -> Some s
+                | _ -> None)
+          ScriptDigest =
+            records
+            |> List.tryPick (function
+                | ScriptDigest d -> Some d
                 | _ -> None)
           NeedsReconciliation =
             steps

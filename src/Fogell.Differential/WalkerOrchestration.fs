@@ -16,7 +16,10 @@ open Fogell.Ir
 /// re-selection story (the arms select against a status resume must
 /// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
 type PersistenceHooks =
-    { /// stage -> stepIndex -> run it? False = durably finished in a prior
+    { /// True when this attempt RESUMES an interrupted journal — what
+      /// `when { isRestartedRun() }` evaluates to.
+      IsRestartedRun: bool
+      /// stage -> stepIndex -> run it? False = durably finished in a prior
       /// attempt: the step is skipped SILENTLY (its output already happened;
       /// replaying narration would double it).
       ShouldExecute: string -> int -> bool
@@ -1100,9 +1103,12 @@ module WalkerOrchestration =
                         runStage ctx cwd deadline nested
 
                 // the group-commit boundary — AFTER nested/parallel content, so
-                // "everything before it is durable" is actually true of it
+                // "everything before it is durable" is actually true of it, and
+                // UNCONDITIONAL: this is a durability point, not a success
+                // signal — a halted stage's finished records still need their
+                // fsync under EveryStage policy
                 match persistence with
-                | Some hooks when not (halted ctx) -> hooks.OnStageCommitted stage.Name
-                | _ -> ()
+                | Some hooks -> hooks.OnStageCommitted stage.Name
+                | None -> ()
 
         runStage, runPostWithDeadline

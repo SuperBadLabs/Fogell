@@ -31,6 +31,12 @@ pipeline {
                 sh 'echo three >> markers.txt'
             }
         }
+        stage('Recovery') {
+            when { isRestartedRun() }
+            steps {
+                sh 'echo recovered >> markers.txt'
+            }
+        }
     }
 }
 JF
@@ -70,6 +76,18 @@ set -e
 grep -q 'needs-reconciliation: Build#1' "$LANE/run2.log" || { echo "FAIL: refusal did not name Build#1"; exit 1; }
 echo "refused, step named: $(grep -o 'needs-reconciliation.*' "$LANE/run2.log")"
 
+echo "=== attempt 2b: a CHANGED definition must refuse (exit 4) ==="
+cp "$LANE/Jenkinsfile" "$LANE/Jenkinsfile.orig"
+printf '\n// drifted\n' >> "$LANE/Jenkinsfile"
+set +e
+"${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run2b.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -eq 4 ] || { echo "FAIL: expected definition-changed exit 4, got $RC"; cat "$LANE/run2b.log"; exit 1; }
+grep -q 'definition-changed' "$LANE/run2b.log" || { echo "FAIL: refusal not named"; exit 1; }
+mv "$LANE/Jenkinsfile.orig" "$LANE/Jenkinsfile"
+echo "refused the drifted definition; original restored"
+
 echo "=== operator reconciliation: the marker shows the effect landed ==="
 grep -q '^two$' "$MARKERS"
 printf 'step-finished\tBuild\t1\tsuccess\n' >> "$JOURNAL"
@@ -82,9 +100,12 @@ grep -q 'skip (durably finished): Build#0' "$LANE/run3.log" || { echo "FAIL: ste
 grep -q 'skip (durably finished): Build#1' "$LANE/run3.log" || { echo "FAIL: step 1 not skipped"; exit 1; }
 grep -q 'completed: success' "$LANE/run3.log" || { echo "FAIL: resume did not complete"; cat "$LANE/run3.log"; exit 1; }
 
+echo "=== isRestartedRun: the Recovery stage ran on the RESUMED attempt only ==="
+grep -q '^recovered$' "$MARKERS" || { echo "FAIL: recovery stage never ran on resume"; exit 1; }
+
 echo "=== integrity: each effect exactly once ==="
 sort "$MARKERS" | uniq -c | sed 's/^/  /'
-for m in one two three; do
+for m in one two three recovered; do
   [ "$(grep -c "^$m\$" "$MARKERS")" -eq 1 ] || { echo "FAIL: marker '$m' not exactly-once"; exit 1; }
 done
 

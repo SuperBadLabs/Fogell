@@ -21,6 +21,10 @@ type Record =
     /// commit). Everything before it is durable.
     | StageCommitted of stage: string
     | BuildFinished of status: BuildStatus
+    /// FG-112. The sha256 of the pipeline definition this journal belongs to.
+    /// A resume against a CHANGED definition would hybrid-execute two
+    /// pipelines against one key space — the digest lets it refuse by name.
+    | ScriptDigest of sha256: string
 
 module Record =
 
@@ -33,6 +37,7 @@ module Record =
         | StepFinished(stage, i, status) -> $"step-finished\t{stage}\t{i}\t{BuildStatus.toWireString status}"
         | StageCommitted stage -> $"stage-committed\t{stage}"
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
+        | ScriptDigest d -> $"script-digest\t{d}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -46,4 +51,5 @@ module Record =
             | _ -> None
         | [| "stage-committed"; stage |] -> Some(StageCommitted stage)
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished
+        | [| "script-digest"; d |] -> Some(ScriptDigest d)
         | _ -> None

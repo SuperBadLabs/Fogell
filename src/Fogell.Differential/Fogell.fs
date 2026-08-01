@@ -264,7 +264,10 @@ module FogellSide =
                 WalkerStep.runStepInner runCtx envForWith workspace artifactRoot jobName
 
             // FG-105: when-evaluation lives in WalkerWhen.
-            let evalWhen = WalkerWhen.evalWhen envForWith
+            let evalWhen =
+                WalkerWhen.evalWhen
+                    (persistence |> Option.map (fun h -> h.IsRestartedRun) |> Option.defaultValue false)
+                    envForWith
 
             let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
 
