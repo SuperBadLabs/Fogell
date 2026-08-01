@@ -1,12 +1,12 @@
-# Differential receipt — git-step-deletedir.b2.Jenkinsfile
+# Differential receipt — checkout-scm-timeout-env.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8c75dddf811a249354034603ae3b428e5ca59100212626f60697917c45bc12f5
+seal:         e5ae5ef85ec1c034a6c97e2fd38e8af5300d2dcda4aeea936e6330ac1330e1e2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Output pairs compared canonically — inherited env (1)
-  line 8 compared canonically: > git --version # '${GITVERSION}'
+  line 9 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract
   compared: terminal result
@@ -51,8 +51,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
-  output (21 lines):
+  workspace-hash: 852c5ae317f1f3ace4b408d25a8427954110606babaaaf3b80030d6cd520ce5e
+  output (27 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
     | Selected Git installation does not exist. Using Default
     | The recommended git tool is: NONE
     | No credentials specified
@@ -66,23 +67,30 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
     | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
     | Avoid second fetch
-    | > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
-    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/main)
+    | > git rev-parse refs/remotes/origin/case/checkout-scm-timeout-env^{commit} # timeout=10
+    | Checking out Revision 14f3e4036d4b2e6dd6711642f96a865dcd67180d (refs/remotes/origin/case/checkout-scm-timeout-env)
     | > git config core.sparsecheckout # timeout=10
-    | > git checkout -f 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
-    | > git branch -a -v --no-abbrev # timeout=10
-    | > git checkout -b main 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
-    | Commit message: "seed: second commit for changelog"
-    | > git rev-list --no-walk 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | > git checkout -f 14f3e4036d4b2e6dd6711642f96a865dcd67180d # timeout=10
+    | Commit message: "sync: checkout-scm-timeout-env"
+    | First time build. Skipping changelog.
+    | Timeout set to expire in 2 min 0 sec
+    | + echo commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | + echo branch=origin/case/checkout-scm-timeout-env
+    | branch=origin/case/checkout-scm-timeout-env
+    | + echo url=git://100.105.179.51/repo.git
+    | url=git://100.105.179.51/repo.git
   workspace:
+    8ff3d5df4856  Jenkinsfile
     959ee89d1972  README.md
     b6a98d9ce9a2  src/a.txt
     f2c82decdd71  src/b.txt
 
 ## Fogell
   result:         success
-  workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
-  output (21 lines):
+  workspace-hash: 852c5ae317f1f3ace4b408d25a8427954110606babaaaf3b80030d6cd520ce5e
+  output (27 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
     | Selected Git installation does not exist. Using Default
     | The recommended git tool is: NONE
     | No credentials specified
@@ -96,15 +104,21 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
     | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
     | Avoid second fetch
-    | > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
-    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/main)
+    | > git rev-parse refs/remotes/origin/case/checkout-scm-timeout-env^{commit} # timeout=10
+    | Checking out Revision 14f3e4036d4b2e6dd6711642f96a865dcd67180d (refs/remotes/origin/case/checkout-scm-timeout-env)
     | > git config core.sparsecheckout # timeout=10
-    | > git checkout -f 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
-    | > git branch -a -v --no-abbrev # timeout=10
-    | > git checkout -b main 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
-    | Commit message: "seed: second commit for changelog"
-    | > git rev-list --no-walk 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | > git checkout -f 14f3e4036d4b2e6dd6711642f96a865dcd67180d # timeout=10
+    | Commit message: "sync: checkout-scm-timeout-env"
+    | First time build. Skipping changelog.
+    | Timeout set to expire in 2 min 0 sec
+    | + echo commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | commit=14f3e4036d4b2e6dd6711642f96a865dcd67180d
+    | + echo branch=origin/case/checkout-scm-timeout-env
+    | branch=origin/case/checkout-scm-timeout-env
+    | + echo url=git://100.105.179.51/repo.git
+    | url=git://100.105.179.51/repo.git
   workspace:
+    8ff3d5df4856  Jenkinsfile
     959ee89d1972  README.md
     b6a98d9ce9a2  src/a.txt
     f2c82decdd71  src/b.txt

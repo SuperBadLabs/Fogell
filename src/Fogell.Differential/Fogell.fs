@@ -91,6 +91,7 @@ module FogellSide =
         (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
+        (scm: ScmSpec option)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -101,6 +102,7 @@ module FogellSide =
             // These rebinds keep call sites unchanged.
             let runCtx = WalkerCtx.create ()
             let emit = runCtx.Emit
+            let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
 
             let workspace = Path.Combine(workspaceRoot, jobName)
@@ -140,9 +142,116 @@ module FogellSide =
                   "NODE_NAME", "built-in" ]
 
             // FG-105: env resolution and argument rendering live in WalkerArgs.
-            let envForWith = WalkerArgs.envForWith jenkinsProvided pipeline
+            let root =
+                { Interrupt = None
+                  Failed = ref false
+                  Sink = bump
+                  EnvOverlay = []
+                  Secrets = []
+                  SiblingFailedAt = ref -1L }
 
-            let bump = runCtx.Bump
+            let mutable scmWrapperEnv: (string * string) list = []
+
+            match scm with
+            | Some spec when not root.Failed.Value ->
+                // MEASURED only for `agent any` at pipeline level (receipt
+                // `checkout-scm-basic`: one up-front auto-checkout). Under
+                // `agent none`/stage agents Jenkins places the default checkout
+                // at each applicable stage-agent entry instead — UNPROVEN here,
+                // so that shape refuses by name rather than checking out where
+                // Jenkins would not (FG-103).
+                let stageAgents =
+                    pipeline.Stages
+                    |> Pipeline.flattenStages
+                    |> List.exists (fun st -> st.Agent.IsSome)
+
+                if pipeline.Agent <> AgentAny || stageAgents then
+                    emit
+                        "ERROR: an SCM-defined pipeline without a top-level `agent any` (or with stage-level agents) is not modelled — default-checkout placement differs and is unmeasured"
+
+                    root.Failed.Value <- true
+                    bump BuildStatus.Failure
+            | _ -> ()
+
+            match scm with
+            | Some spec when not root.Failed.Value ->
+                emit $"Obtained Jenkinsfile from git {spec.Url}"
+
+                // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
+                // (a check that rode along with the auto-checkout vanished
+                // exactly when skipDefaultCheckout did): the bytes this engine
+                // was handed must be the bytes the SCM serves, because Jenkins
+                // executes the latter. Read them from the SCM itself.
+                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                // the subprocess reader trims trailing whitespace, so compare
+                // TRIMMED on both sides (a trailing newline is not a different
+                // script) with line endings normalised
+                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
+                    failwith (
+                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                    )
+                | Ok _ -> ()
+
+                // `options { skipDefaultCheckout() }` suppresses the Declarative
+                // auto-checkout; the Obtained line still prints (the definition
+                // was still loaded from SCM). A positional `false` RE-ENABLES it
+                // — the option's argument decides, not its presence.
+                // Receipt: `checkout-scm-skip-default`.
+                let skipDefault =
+                    pipeline.Options
+                    |> List.exists (fun o ->
+                        o.Name = "skipDefaultCheckout"
+                        && (o.Positional.IsEmpty || o.Positional.Head.Trim() <> "false"))
+
+                if not skipDefault then
+
+                    // Jenkins-provided env ONLY: the auto-checkout runs BEFORE
+                    // the withEnv wrapper (measured order — the Obtained line
+                    // precedes everything), so pipeline `environment {}` must
+                    // not reach it. The top-level timeout does NOT bound it and
+                    // its banner prints AFTER the checkout — MEASURED (receipt
+                    // `checkout-scm-timeout-env`) — hence deadline None here
+                    // and the deadline computation BELOW this block.
+                    let sha =
+                        WalkerGit.runCheckout
+                            runCtx
+                            root
+                            workspace
+                            None
+                            jenkinsProvided
+                            artifactRoot
+                            jobName
+                            buildNumber
+                            spec
+
+                    if root.Failed.Value then
+                        bump BuildStatus.Failure
+                    else
+                        // The wrapper env the checkout returns — MEASURED values
+                        // (receipt `checkout-scm-timeout-env`): full sha,
+                        // origin/-prefixed branch, the remote url — overlaid on
+                        // every user stage and the pipeline post, exactly the
+                        // withEnv wrapper Jenkins inserts.
+                        scmWrapperEnv <-
+                            match sha with
+                            | Some s ->
+                                [ "GIT_COMMIT", s
+                                  "GIT_BRANCH", $"origin/{spec.Branch}"
+                                  "GIT_URL", spec.Url ]
+                            | None -> []
+            | _ -> ()
+
+            // The SCM wrapper values sit at the BASE layer — after the
+            // Jenkins-provided variables, BEFORE pipeline/stage declarations —
+            // so a declared GIT_COMMIT overrides the wrapper (measured
+            // semantics: declarations apply INSIDE the wrapper) and `when`
+            // conditions see the wrapper values like any other env.
+            let envForWith =
+                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv) pipeline
+
 
 
             // FG-105: the cancellation model lives in WalkerCancellation.
@@ -172,15 +281,8 @@ module FogellSide =
                       JobName = jobName
                       Credentials = credentialStore
                       PreviousBuild = previousBuild
-                      BuildNumber = buildNumber }
-
-            let root =
-                { Interrupt = None
-                  Failed = ref false
-                  Sink = bump
-                  EnvOverlay = []
-                  Secrets = []
-                  SiblingFailedAt = ref -1L }
+                      BuildNumber = buildNumber
+                      Scm = scm }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
@@ -196,6 +298,10 @@ module FogellSide =
             // point it is first observed to have aborted work — after the stages
             // when a stage died to it, or after the pipeline post when the post did
             // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+            // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
+            // FIRST, then Declarative auto-inserts a checkout stage before any
+            // user stage (measured — the stage annotations are excluded from
+            // comparison; the checkout narration inside it is compared).
             let mutable exceededAnnounced = false
 
             // ONE announcement, after the pipeline post: the post runs under the
@@ -291,7 +397,22 @@ module FogellSide =
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true script
+            runWith envReplacements workspaceRoot jobName 1 None true None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
+    /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
+    /// is what `checkout scm` checks out.
+    let runScm
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scm: ScmSpec)
+        (script: string)
+        =
+        try
+            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) script
         with ex ->
             Result.Error ex.Message
 
@@ -334,6 +455,7 @@ module FogellSide =
                                 (List.length acc + 1)
                                 previous
                                 (List.isEmpty acc)
+                                None
                                 script
                         with ex ->
                             Result.Error ex.Message

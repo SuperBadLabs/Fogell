@@ -253,20 +253,64 @@ let main argv =
                     use p = Diagnostics.Process.Start psi
                     p.WaitForExit 30_000 |> ignore
 
-                let scripts = buildSeparator.Split script |> Array.toList
+                // FG-052. A case whose FIRST LINE is `//// SCM JOB ////` runs as an
+                // SCM-DEFINED job: the sync script pushed its body to the fixture
+                // repo branch `case/<stem>` (scripts/sync-scm-cases.bb), the Jenkins
+                // job points at that SCM, and the Fogell side receives the same
+                // bytes plus the ScmSpec `checkout scm` resolves against.
+                let scmMarker = "//// SCM JOB ////"
+                let isScmCase = script.StartsWith scmMarker
 
-                // A malformed sequence (leading/trailing/doubled separator) must
-                // fail NAMED, not as an opaque parse error on an empty pipeline.
+                let scripts =
+                    if isScmCase then
+                        match script.IndexOf '\n' with
+                        | -1 -> [ "" ] // marker-only: caught as malformed below, by name
+                        | i -> [ script.Substring(i + 1) ]
+                    else
+                        buildSeparator.Split script |> Array.toList
+
+                // A malformed case must fail NAMED, not as an opaque parse error:
+                // empty sequence segments, a marker with no body, or an SCM case
+                // that also declares NEXT BUILD separators (SCM sequences are not
+                // wired — FogellSide.runMany passes Scm = None deliberately).
                 let malformed =
-                    List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace
+                    (List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace)
+                    || (isScmCase
+                        && (String.IsNullOrWhiteSpace scripts.Head
+                            || buildSeparator.IsMatch scripts.Head))
+
+                let scmSpec =
+                    if isScmCase then
+                        let url =
+                            match Environment.GetEnvironmentVariable "FOGELL_SCM_URL" with
+                            | null
+                            | "" -> "git://100.105.179.51/repo.git"
+                            | u -> u
+
+                        Some
+                            { Url = url
+                              Branch = $"case/{Path.GetFileNameWithoutExtension name}" }
+                    else
+                        None
 
                 let jenkinsRuns, fogellRuns =
                     if malformed then
-                        let e = Result.Error "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                        let e =
+                            Result.Error (
+                                if isScmCase then
+                                    "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
+                                else
+                                    "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                            )
                         scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
                     else
-                        Jenkins.runMany cfg envReplacementsAll job scripts,
-                        FogellSide.runMany envReplacementsAll fogellRoot job scripts
+                        match scmSpec with
+                        | Some spec ->
+                            Jenkins.runMany cfg envReplacementsAll job [ FromScm spec ],
+                            [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
+                        | None ->
+                            Jenkins.runMany cfg envReplacementsAll job (scripts |> List.map Inline),
+                            FogellSide.runMany envReplacementsAll fogellRoot job scripts
 
                 let solo = List.length scripts = 1
 

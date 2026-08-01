@@ -30,6 +30,13 @@ type JenkinsConfig =
       /// local hash, so neither side gets a different definition of "workspace".
       WorkspaceCollector: string option }
 
+/// FG-052. What defines a build's pipeline on the Jenkins side: an inline
+/// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
+/// (CpsScmFlowDefinition — `checkout scm` has meaning only here).
+type JobDefinition =
+    | Inline of script: string
+    | FromScm of ScmSpec
+
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
@@ -60,6 +67,28 @@ module Jenkins =
         + $"<script>{xmlEscape script}</script><sandbox>true</sandbox></definition>"
         + "<triggers/><disabled>false</disabled></flow-definition>"
 
+    /// CpsScmFlowDefinition: the job POINTS AT the SCM; Jenkins obtains the
+    /// Jenkinsfile from it (lightweight) and Declarative auto-checks-out.
+    let private scmJobXml (spec: ScmSpec) =
+        "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
+        + "<properties>"
+        + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + "<hint>PERFORMANCE_OPTIMIZED</hint>"
+        + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + "</properties>"
+        + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition\" plugin=\"workflow-cps\">"
+        + "<scm class=\"hudson.plugins.git.GitSCM\" plugin=\"git\"><configVersion>2</configVersion>"
+        + "<userRemoteConfigs><hudson.plugins.git.UserRemoteConfig>"
+        + $"<url>{xmlEscape spec.Url}</url>"
+        + "</hudson.plugins.git.UserRemoteConfig></userRemoteConfigs>"
+        + "<branches><hudson.plugins.git.BranchSpec>"
+        + $"<name>*/{xmlEscape spec.Branch}</name>"
+        + "</hudson.plugins.git.BranchSpec></branches>"
+        + "<doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>"
+        + "<submoduleCfg class=\"empty-list\"/><extensions/></scm>"
+        + "<scriptPath>Jenkinsfile</scriptPath><lightweight>true</lightweight>"
+        + "</definition><triggers/><disabled>false</disabled></flow-definition>"
+
     /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
     /// build. The job is created once, its definition UPDATED between builds
     /// (a sequence's scripts may differ), and deleted only at the end, so
@@ -71,7 +100,7 @@ module Jenkins =
         (cfg: JenkinsConfig)
         (envReplacements: (string * string) list)
         (jobName: string)
-        (scripts: string list)
+        (builds: JobDefinition list)
         : Result<Trace, string> list =
         try
             let field, value = crumb cfg
@@ -85,9 +114,14 @@ module Jenkins =
 
             post $"/job/{jobName}/doDelete" None |> ignore
 
-            let runOneInner (buildNumber: int) (script: string) : Result<Trace, string> =
+            let runOneInner (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
                 let xml () =
-                    new StringContent(jobXml script, Encoding.UTF8, "application/xml")
+                    let body =
+                        match definition with
+                        | Inline script -> jobXml script
+                        | FromScm spec -> scmJobXml spec
+
+                    new StringContent(body, Encoding.UTF8, "application/xml")
 
                 let ready =
                     if buildNumber = 1 then
@@ -176,20 +210,20 @@ module Jenkins =
             // remote workspace collector) is build k's OWN error — it must not
             // reach the outer handler and replace builds 1..k-1's already-collected
             // evidence with a misattributed message.
-            let runOne (buildNumber: int) (script: string) : Result<Trace, string> =
+            let runOne (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
                 try
-                    runOneInner buildNumber script
+                    runOneInner buildNumber definition
                 with ex ->
                     Error ex.Message
 
             let results =
-                scripts
+                builds
                 |> List.fold
-                    (fun (acc, halted) script ->
+                    (fun (acc, halted) definition ->
                         match halted with
                         | Some why -> (Error $"sequence halted: {why}" :: acc, halted)
                         | None ->
-                            let r = runOne (List.length acc + 1) script
+                            let r = runOne (List.length acc + 1) definition
 
                             match r with
                             | Ok _ -> (r :: acc, None)
@@ -209,10 +243,10 @@ module Jenkins =
         with ex ->
             // one entry PER REQUESTED BUILD, so a caller zipping against the
             // fogell side cannot misalign a sequence on a harness exception
-            scripts |> List.map (fun _ -> Error ex.Message)
+            builds |> List.map (fun _ -> Error ex.Message)
 
     /// Run one Jenkinsfile under a disposable job name — the pre-FG-110 contract.
     let run (cfg: JenkinsConfig) (envReplacements: (string * string) list) (jobName: string) (script: string) =
-        match runMany cfg envReplacements jobName [ script ] with
+        match runMany cfg envReplacements jobName [ Inline script ] with
         | [ r ] -> r
         | _ -> Error "single-build run returned an unexpected shape"

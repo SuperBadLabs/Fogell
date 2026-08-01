@@ -2,9 +2,9 @@
   <PropertyGroup><OutputType>Library</OutputType></PropertyGroup>
   <ItemGroup>
     <Compile Include="Trace.fs" />
+    <Compile Include="WalkerRules.fs" />
     <Compile Include="Jenkins.fs" />
     <Compile Include="GString.fs" />
-    <Compile Include="WalkerRules.fs" />
     <Compile Include="WalkerCtx.fs" />
     <Compile Include="WalkerCancellation.fs" />
     <Compile Include="WalkerArgs.fs" />

@@ -26,7 +26,11 @@ type OrchestrationDeps =
       /// FG-110. This build's number within its job — 1 for every single-build
       /// case. Scopes per-BUILD state (stashes) so a sequence cannot read a
       /// prior build's leftovers where Jenkins would say the stash is missing.
-      BuildNumber: int }
+      BuildNumber: int
+      /// FG-052. The job's SCM, when the job is SCM-defined — what
+      /// `checkout scm` checks out. None for inline-script jobs, where
+      /// `checkout scm` REFUSES exactly as Jenkins errors there.
+      Scm: ScmSpec option }
 
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
@@ -728,6 +732,38 @@ module WalkerOrchestration =
                         | c -> outcome <- c
 
                     applyCancellation ctx "input" deadline outcome
+
+            // FG-052. `checkout scm` — the bare `scm` positional is a binding
+            // OBJECT, never rendered (rendering would raise unknown-name). The
+            // job's SCM comes from OrchestrationDeps; an inline-script job has
+            // none and Jenkins errors there too. Explicit checkout([...]) maps
+            // (8 corpus files) are not modelled yet — refused by name.
+            | "checkout", [ "scm" ] when step.Named.IsEmpty ->
+                match deps.Scm with
+                | Some spec ->
+                    // an EXPLICIT `checkout scm` does not re-wrap later stages
+                    // in GIT_* env (only the Declarative auto-checkout does) —
+                    // the returned sha is deliberately dropped
+                    WalkerGit.runCheckout
+                        runCtx
+                        ctx
+                        cwd
+                        deadline
+                        (envForWith ctx.EnvOverlay stage)
+                        artifactRoot
+                        jobName
+                        deps.BuildNumber
+                        spec
+                    |> ignore
+                | None ->
+                    emit "ERROR: checkout scm is only available when the pipeline came from SCM"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+
+            | "checkout", _ ->
+                emit "ERROR: checkout with an explicit SCM configuration is not modelled (only `checkout scm`)"
+                ctx.Failed.Value <- true
+                ctx.Sink BuildStatus.Failure
 
             // FG-111/FG-052. The `git` step — a real clone/fetch plus the git
             // plugin's measured narration, in WalkerGit. An absent `branch`

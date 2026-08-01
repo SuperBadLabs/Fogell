@@ -21,6 +21,10 @@ type Cancellation =
 /// site is by construction the scope whose bound actually fired.
 type Deadline = { AtMs: int64; Token: int }
 
+/// FG-052. The SCM an SCM-defined job carries (CpsScmFlowDefinition): what
+/// `checkout scm` checks out, and where the harness pushed the Jenkinsfile.
+type ScmSpec = { Url: string; Branch: string }
+
 type BranchCtx =
     { /// Polled while a shell step runs; true means a failFast sibling failed.
       Interrupt: (unit -> bool) option
