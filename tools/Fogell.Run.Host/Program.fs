@@ -27,6 +27,16 @@ let main argv =
         // a relative journal path would hand Journal.ensure an empty directory
         // name and fail the first append — normalise before anything reads it
         let journalPath = Path.GetFullPath journalArg
+
+        // a journal INSIDE the workspace would be unlinked by the fresh-attempt
+        // wipe — every record then lands on an unlinked inode and resume reads
+        // an empty file. Refused by name; the journal is controller-side state.
+        let workspaceFull = Path.GetFullPath(Path.Combine(workspaceRoot, jobName))
+
+        if journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar) then
+            eprintfn $"journal path is inside the workspace ({workspaceFull}) — the fresh-attempt wipe would unlink it; keep it controller-side"
+            exit 2
+
         let script = File.ReadAllText jenkinsfile
 
         let digest =

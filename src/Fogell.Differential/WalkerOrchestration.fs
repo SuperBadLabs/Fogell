@@ -185,6 +185,23 @@ module WalkerOrchestration =
                     // Receipt: `when-conditions`.
                     emit $"Stage \"{stage.Name}\" skipped due to when conditional"
 
+                    // FG-112: a restart-sensitive gate (isRestartedRun and kin)
+                    // can evaluate DIFFERENTLY on the resumed attempt — but a
+                    // status this stage durably RECORDED already happened, and
+                    // when-skipping the stage must not skip the consequence.
+                    match persistence with
+                    | Some hooks ->
+                        stage.Steps
+                        |> List.iteri (fun i _ ->
+                            match hooks.SkippedStatus stage.Name i with
+                            | Some st ->
+                                ctx.Sink st
+
+                                if st = BuildStatus.Failure || st = BuildStatus.Aborted then
+                                    ctx.Failed.Value <- true
+                            | None -> ())
+                    | None -> ()
+
                 | None ->
                     // Cannot decide. Fail closed with a named reason rather
                     // than pick a direction: guessing wrong either runs a

@@ -60,9 +60,11 @@ done
 grep -q '^two$' "$MARKERS" || { echo "FAIL: step 2 never started"; exit 1; }
 kill -9 "$PID"
 wait "$PID" 2>/dev/null || true
-# the WALKER must actually be dead: no lingering host process, and the
-# first run's log must never reach completion
-pgrep -f "Fogell.Run.Host.*$JOB" >/dev/null && { echo "FAIL: host survived the SIGKILL"; exit 1; }
+# the WALKER must actually be dead: no lingering host process (anchored to
+# the binary path — an unanchored two-substring pattern once false-matched a
+# transient unrelated cmdline), and the first run's log must never complete
+for _ in 1 2 3 4; do pgrep -f "^${HOST_BIN} " >/dev/null || break; sleep 0.5; done
+pgrep -f "^${HOST_BIN} " >/dev/null && { echo "FAIL: host survived the SIGKILL"; pgrep -af "^${HOST_BIN} "; exit 1; }
 grep -q '^completed:' "$LANE/run1.log" && { echo "FAIL: run 1 completed despite the kill"; exit 1; }
 echo "killed host mid-step (verified dead); journal now:"
 sed 's/^/  | /' "$JOURNAL"
