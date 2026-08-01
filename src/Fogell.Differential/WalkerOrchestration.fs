@@ -212,6 +212,11 @@ module WalkerOrchestration =
                         // REVERSED: flattenStages is preorder, so replaying in
                         // its order ran a parent's post before its children's —
                         // Jenkins finishes the inner stage (and its post) first.
+                        // A replayed child's POST can fail; its container's arm
+                        // must see that, so descendant outcomes accumulate as
+                        // the reversed (children-first) walk proceeds.
+                        let mutable descendantWorst = BuildStatus.Success
+
                         for st in List.rev (Pipeline.flattenStages [ stage ]) do
                             let mutable entered = false
                             let mutable replayed = BuildStatus.Success
@@ -239,9 +244,19 @@ module WalkerOrchestration =
 
                             if (entered || committed) && not (List.isEmpty st.Post) then
                                 let postCtx = { ctx with Failed = ref false }
-                                let status = if entered then replayed else subtreeStatus st
+
+                                let status =
+                                    BuildStatus.worstOf
+                                        (if entered then replayed else subtreeStatus st)
+                                        descendantWorst
+
                                 runPostWithDeadline postCtx cwd st status previousBuild inherited
-                                if postCtx.Failed.Value then ctx.Failed.Value <- true
+
+                                if postCtx.Failed.Value then
+                                    ctx.Failed.Value <- true
+                                    descendantWorst <- BuildStatus.worstOf descendantWorst BuildStatus.Failure
+                            elif entered then
+                                descendantWorst <- BuildStatus.worstOf descendantWorst replayed
                     | None -> ()
 
                 | None ->

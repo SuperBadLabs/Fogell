@@ -33,48 +33,59 @@ let main argv =
         // intermediate link is invisible if only the deepest component is
         // examined and that component is not itself a link.
         let resolve (p: string) =
-            let rooted = Path.GetFullPath p
+            // A real realpath: after substituting a link target the path is
+            // DIFFERENT and its own components may be links, so resolution
+            // restarts from the beginning. (Resolving each component once left
+            // `/safe/link -> /safe/hop/sub` with `/safe/hop -> /srv` pointing
+            // at a location the kernel would never use.) LinkTarget rather than
+            // ResolveLinkTarget so DANGLING links are followed too; bounded, so
+            // a cycle refuses instead of spinning.
+            let mutable current = Path.GetFullPath p
+            let mutable rounds = 0
+            let mutable settled = false
 
-            let parts =
-                rooted.Split([| Path.DirectorySeparatorChar |], StringSplitOptions.RemoveEmptyEntries)
+            while not settled && rounds < 64 do
+                rounds <- rounds + 1
+                let parts = current.Split([| Path.DirectorySeparatorChar |], StringSplitOptions.RemoveEmptyEntries)
+                let mutable acc = string Path.DirectorySeparatorChar
+                let mutable i = 0
+                let mutable substituted = false
 
-            let mutable acc = string Path.DirectorySeparatorChar
+                while not substituted && i < parts.Length do
+                    let candidate = Path.Combine(acc, parts[i])
 
-            for part in parts do
-                let candidate = Path.Combine(acc, part)
+                    match (FileInfo candidate).LinkTarget with
+                    | null ->
+                        acc <- candidate
+                        i <- i + 1
+                    | target ->
+                        let resolvedHead =
+                            if Path.IsPathRooted target then
+                                Path.GetFullPath target
+                            else
+                                Path.GetFullPath(Path.Combine(acc, target))
 
-                // LinkTarget (not ResolveLinkTarget) so a DANGLING link is
-                // still followed: a journal symlink whose target does not exist
-                // yet would otherwise look like an ordinary path and escape
-                // both containment checks, then be created inside the workspace.
-                // Follow the WHOLE chain: a link pointing at another link left
-                // the earlier one-hop version resolving to a path that was
-                // itself a link, and containment then compared a location the
-                // kernel would never touch. Bounded — a cycle must terminate.
-                let mutable current = candidate
-                let mutable hops = 0
+                        let rest = parts[i + 1 ..] |> String.concat (string Path.DirectorySeparatorChar)
+                        current <- if rest = "" then resolvedHead else Path.Combine(resolvedHead, rest)
+                        substituted <- true
 
-                while hops < 64 && not (isNull (FileInfo current).LinkTarget) do
-                    let target = (FileInfo current).LinkTarget
+                if not substituted then
+                    current <- acc
+                    settled <- true
 
-                    current <-
-                        if Path.IsPathRooted target then
-                            Path.GetFullPath target
-                        else
-                            Path.GetFullPath(Path.Combine(Path.GetDirectoryName current, target))
+            if not settled then
+                eprintfn $"symlink resolution did not settle for {p} (cycle?) — refusing"
+                exit 2
 
-                    hops <- hops + 1
-
-                if hops >= 64 then
-                    eprintfn $"symlink chain too deep at {candidate} — refusing"
-                    exit 2
-
-                acc <- current
-
-            acc
+            current
 
         let trimSep (p: string) =
             p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        // Identity components are length-prefixed: a resolved path may contain
+        // '|', and plain concatenation made distinct tuples compare equal.
+        let encodeIdentity (r: string) (w: string) (a: string) =
+            $"{r.Length}:{r}|{w.Length}:{w}|{a.Length}:{a}"
 
         // a relative journal path would hand Journal.ensure an empty directory
         // name and fail the first append — normalise before anything reads it
@@ -90,6 +101,11 @@ let main argv =
         let workspaceFull = trimSep (Path.GetFullPath(Path.Combine(workspaceRoot, jobName)))
         let realWorkspace = trimSep (resolve workspaceFull)
         let realRoot = trimSep (resolve workspaceRoot)
+
+        // the ARTIFACT root too: stashes, archived artifacts and SCM records
+        // live under it, and it can be retargeted independently of the
+        // workspace (a symlink of its own)
+        let artifactsResolved = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
 
         if not (realWorkspace.StartsWith(realRoot + string Path.DirectorySeparatorChar)) then
             eprintfn $"job-name resolves outside the workspace root ({realWorkspace} vs {realRoot}) — the wipe would delete an unrelated directory; refusing"
@@ -115,7 +131,7 @@ let main argv =
         // the RESOLVED values are what get journaled: a clean lexical root can
         // resolve through a symlink into a target carrying a delimiter
         if
-            [ workspaceRoot; jobName; realWorkspace; realRoot ]
+            [ workspaceRoot; jobName; realWorkspace; realRoot; artifactsResolved ]
             |> List.exists (fun v -> v.Contains '\t' || v.Contains '\n' || v.Contains '\r')
         then
             eprintfn "workspace path or job-name contains tab/newline/carriage-return (after symlink resolution) — unjournalable; refusing"
@@ -171,11 +187,9 @@ let main argv =
         // attempt records is computed after the wipe (below), because the wipe
         // can replace a workspace SYMLINK with a real directory and change the
         // physical target under us.
-        // the ARTIFACT root too: stashes, archived artifacts and SCM records
-        // live under it, and it can be retargeted independently of the
-        // workspace (a symlink of its own)
-        let artifactsResolved = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
-        let identity = $"{realRoot}|{realWorkspace}|{artifactsResolved}"
+        // LENGTH-PREFIXED: a resolved path may legitimately contain '|', and
+        // plain concatenation let distinct tuples collide into one string.
+        let identity = encodeIdentity realRoot realWorkspace artifactsResolved
 
         match plan.WorkspaceIdentity with
         | Some(w, j) when w <> identity || j <> jobName ->
@@ -227,10 +241,10 @@ let main argv =
             // recomputed post-wipe: the fresh path may have replaced a symlink
             // with a real directory, making the pre-wipe resolution stale
             let identityNow =
-                let r = trimSep (resolve workspaceRoot)
-                let w = trimSep (resolve workspaceFull)
-                let a = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
-                $"{r}|{w}|{a}"
+                encodeIdentity
+                    (trimSep (resolve workspaceRoot))
+                    (trimSep (resolve workspaceFull))
+                    (trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts"))))
             journal.Append(WorkspaceIdentity(identityNow, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
