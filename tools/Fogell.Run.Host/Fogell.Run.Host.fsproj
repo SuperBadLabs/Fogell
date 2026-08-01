@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Fogell.Run.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fogell.Differential/Fogell.Differential.fsproj" />
+    <ProjectReference Include="../../src/Fogell.Journal/Fogell.Journal.fsproj" />
+  </ItemGroup>
+</Project>

@@ -6,6 +6,23 @@ open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
 
+/// FG-112. Durability hooks for a persisted run. The unit of durability is the
+/// TOP-LEVEL step of a stage: a wrapper (retry/timeout/withEnv) journals as one
+/// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
+/// stated rather than implied. None (the differential path) journals nothing.
+type PersistenceHooks =
+    { /// stage -> stepIndex -> run it? False = durably finished in a prior
+      /// attempt: the step is skipped SILENTLY (its output already happened;
+      /// replaying narration would double it).
+      ShouldExecute: string -> int -> bool
+      /// stage -> stepIndex -> stepName. Written (and made durable) BEFORE the
+      /// step runs.
+      OnStepStarted: string -> int -> string -> unit
+      /// stage -> stepIndex -> the step's worst sunk status.
+      OnStepFinished: string -> int -> BuildStatus -> unit
+      /// The stage boundary — the journal's group-commit point.
+      OnStageCommitted: string -> unit }
+
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
 type OrchestrationDeps =
@@ -30,7 +47,9 @@ type OrchestrationDeps =
       /// FG-052. The job's SCM, when the job is SCM-defined — what
       /// `checkout scm` checks out. None for inline-script jobs, where
       /// `checkout scm` REFUSES exactly as Jenkins errors there.
-      Scm: ScmSpec option }
+      Scm: ScmSpec option
+      /// FG-112. Durability hooks; None journals nothing (the differential path).
+      Persistence: PersistenceHooks option }
 
 /// FG-105. Stage/post orchestration and wrapper/block dispatch — the walker's
 /// recursive core, moved WHOLE so the mutual recursion (stage -> steps ->
@@ -63,6 +82,7 @@ module WalkerOrchestration =
         let jobName = deps.JobName
         let credentialStore = deps.Credentials
         let previousBuild = deps.PreviousBuild
+        let persistence = deps.Persistence
         // Jenkins scopes a stash to the BUILD that saved it — receipt
         // `stash-not-carried`: build 2's unstash of build 1's stash FAILS.
         let stashKey = $"{deps.JobName}#build-{deps.BuildNumber}"
@@ -935,9 +955,32 @@ module WalkerOrchestration =
             | _ -> runStepInner ctx stage cwd step deadline
 
         and runStageBody (ctx: BranchCtx) (cwd: string) (deadline: Deadline option) (stage: Stage) =
-                for step in stage.Steps do
+                stage.Steps
+                |> List.iteri (fun i step ->
                     if not (halted ctx) then
-                        runStepDispatch ctx cwd stage step deadline
+                        match persistence with
+                        | None -> runStepDispatch ctx cwd stage step deadline
+                        | Some hooks ->
+                            if hooks.ShouldExecute stage.Name i then
+                                hooks.OnStepStarted stage.Name i step.Name
+
+                                // observe THIS step's worst sunk status without
+                                // disturbing the branch's own sink
+                                let observed = ref BuildStatus.Success
+
+                                let observing =
+                                    { ctx with
+                                        Sink =
+                                            fun st ->
+                                                observed.Value <- BuildStatus.worstOf observed.Value st
+                                                ctx.Sink st }
+
+                                runStepDispatch observing cwd stage step deadline
+                                hooks.OnStepFinished stage.Name i observed.Value)
+
+                match persistence with
+                | Some hooks when not (halted ctx) -> hooks.OnStageCommitted stage.Name
+                | _ -> ()
 
                 if stage.IsParallel && not (List.isEmpty stage.Nested) then
                     // JB-FAIL-006/007. Branches run concurrently and, by

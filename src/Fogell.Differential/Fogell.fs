@@ -92,6 +92,7 @@ module FogellSide =
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
         (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -282,7 +283,8 @@ module FogellSide =
                       Credentials = credentialStore
                       PreviousBuild = previousBuild
                       BuildNumber = buildNumber
-                      Scm = scm }
+                      Scm = scm
+                      Persistence = persistence }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
@@ -397,7 +399,22 @@ module FogellSide =
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true None script
+            runWith envReplacements workspaceRoot jobName 1 None true None None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// FG-112. Run one build with durability hooks — the restart lane's entry.
+    /// Same walker, same semantics; the hooks journal top-level steps.
+    let runPersisted
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (freshWorkspace: bool)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        try
+            runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
         with ex ->
             Result.Error ex.Message
 
@@ -412,7 +429,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) script
+            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) None script
         with ex ->
             Result.Error ex.Message
 
@@ -455,6 +472,7 @@ module FogellSide =
                                 (List.length acc + 1)
                                 previous
                                 (List.isEmpty acc)
+                                None
                                 None
                                 script
                         with ex ->
