@@ -110,18 +110,24 @@ let main argv =
         // workspace (a symlink of its own)
         let artifactsResolved = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
 
-        // Controller-side state must NOT live inside the workspace: `stash`
-        // stores under artifactRoot/_stash, and the fresh-attempt wipe would
-        // destroy stashes a resume is entitled to restore. Both directions —
-        // a job literally named _artifacts, or an artifact symlink pointing
-        // into the job tree.
-        if
-            artifactsResolved = realWorkspace
-            || artifactsResolved.StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            || realWorkspace.StartsWith(artifactsResolved + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
-        then
-            eprintfn $"the artifact store ({artifactsResolved}) overlaps the workspace ({realWorkspace}) — the wipe would destroy controller-side state; refusing"
-            exit 2
+        // Controller-side state must NOT live inside the workspace: stashes and
+        // SCM records live under _artifacts, credential material under
+        // _secrets, and the fresh-attempt wipe would destroy state a resume is
+        // entitled to (or another job's secrets). EVERY controller root is
+        // checked, both directions — a job named after one, or a symlinked
+        // store pointing into the job tree.
+        let controllerRoots =
+            [ "_artifacts", artifactsResolved
+              "_secrets", trimSep (resolve (Path.Combine(workspaceRoot, "_secrets"))) ]
+
+        for name, path in controllerRoots do
+            if
+                path = realWorkspace
+                || path.StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || realWorkspace.StartsWith(path + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            then
+                eprintfn $"the {name} store ({path}) overlaps the workspace ({realWorkspace}) — the wipe would destroy controller-side state; refusing"
+                exit 2
 
         // ORDINAL: the default StartsWith is culture-sensitive and can treat
         // ignorable characters (a soft hyphen, say) as absent, authorising a
@@ -238,8 +244,17 @@ let main argv =
         // order, metadata-present always implies workspace-prepared — and a
         // kill after the wipe but before metadata just wipes again, idempotent.
         if not resuming then
-            if Directory.Exists workspaceFull then
-                Directory.Delete(workspaceFull, true)
+            // Delete the path that was VALIDATED, physically: resolving and then
+            // deleting the lexical path is a check/use race — a component
+            // swapped between the two would redirect the recursive delete. The
+            // final component must not be a link either, or the wipe would
+            // follow it rather than remove the workspace.
+            if not (isNull (FileInfo workspaceFull).LinkTarget) then
+                eprintfn $"workspace path {workspaceFull} is a symlink — refusing to wipe through it"
+                exit 2
+
+            if Directory.Exists realWorkspace then
+                Directory.Delete(realWorkspace, true)
 
             Directory.CreateDirectory workspaceFull |> ignore
             // mirror runWith's fresh path: a new job has no SCM build history
