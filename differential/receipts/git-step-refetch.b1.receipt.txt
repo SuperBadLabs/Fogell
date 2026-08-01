@@ -1,12 +1,12 @@
 # Differential receipt — git-step-refetch.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e09fcad8c520efdb3791c283bcd6ca26a4ab76c48e2b825efc6d7b7481bafde3
+seal:         2d8d1ec2dbe889e07bfa2004628ffa6cc1ac3a478e3204c44a0f9f0074a1c772
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Output pairs compared canonically — inherited env (1)
-  line 7 compared canonically: > git --version # '${GITVERSION}'
+  line 8 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract
   compared: terminal result
@@ -52,7 +52,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
-  output (20 lines):
+  output (21 lines):
+    | Selected Git installation does not exist. Using Default
     | The recommended git tool is: NONE
     | No credentials specified
     | Cloning the remote Git repository
@@ -81,7 +82,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         success
   workspace-hash: ee2e29be4293f4cb8f9727c720e5d4fa84b0c6805fbe78fd790b256ce5a52e3e
-  output (20 lines):
+  output (21 lines):
+    | Selected Git installation does not exist. Using Default
     | The recommended git tool is: NONE
     | No credentials specified
     | Cloning the remote Git repository

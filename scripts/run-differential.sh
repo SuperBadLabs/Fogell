@@ -43,6 +43,9 @@ if ! timeout 15 git ls-remote "$FOGELL_SCM_URL" >/dev/null 2>&1; then
 fi
 export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
+# FG-052: SCM-marked cases live in the fixture repo — sync before running
+bb scripts/sync-scm-cases.bb || { echo "scm case sync failed"; exit 1; }
+
 dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 exec dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" "$FOGELL_JENKINS_CORE" differential/receipts differential/cases/*.Jenkinsfile

@@ -91,6 +91,7 @@ module FogellSide =
         (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
+        (scm: ScmSpec option)
         (script: string)
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
@@ -172,7 +173,8 @@ module FogellSide =
                       JobName = jobName
                       Credentials = credentialStore
                       PreviousBuild = previousBuild
-                      BuildNumber = buildNumber }
+                      BuildNumber = buildNumber
+                      Scm = scm }
 
             let root =
                 { Interrupt = None
@@ -196,6 +198,42 @@ module FogellSide =
             // point it is first observed to have aborted work — after the stages
             // when a stage died to it, or after the pipeline post when the post did
             // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+            // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
+            // FIRST, then Declarative auto-inserts a checkout stage before any
+            // user stage (measured — the stage annotations are excluded from
+            // comparison; the checkout narration inside it is compared).
+            match scm with
+            | Some spec when not root.Failed.Value ->
+                emit $"Obtained Jenkinsfile from git {spec.Url}"
+
+                let syntheticStage =
+                    { Name = "Declarative: Checkout SCM"
+                      Agent = None
+                      Environment = []
+                      EnvironmentLiteralNames = Set.empty
+                      Steps = []
+                      Options = []
+                      When = None
+                      Post = []
+                      Nested = []
+                      IsParallel = false
+                      FailFast = false
+                      Position = { Line = 0L; Column = 0L } }
+
+                WalkerGit.runCheckout
+                    runCtx
+                    root
+                    workspace
+                    pipelineDeadline
+                    (envForWith [] syntheticStage)
+                    artifactRoot
+                    jobName
+                    buildNumber
+                    spec
+
+                if root.Failed.Value then bump BuildStatus.Failure
+            | _ -> ()
+
             let mutable exceededAnnounced = false
 
             // ONE announcement, after the pipeline post: the post runs under the
@@ -291,7 +329,22 @@ module FogellSide =
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try
-            runWith envReplacements workspaceRoot jobName 1 None true script
+            runWith envReplacements workspaceRoot jobName 1 None true None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
+    /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
+    /// is what `checkout scm` checks out.
+    let runScm
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scm: ScmSpec)
+        (script: string)
+        =
+        try
+            runWith envReplacements workspaceRoot jobName 1 None true (Some scm) script
         with ex ->
             Result.Error ex.Message
 
@@ -334,6 +387,7 @@ module FogellSide =
                                 (List.length acc + 1)
                                 previous
                                 (List.isEmpty acc)
+                                None
                                 script
                         with ex ->
                             Result.Error ex.Message

@@ -152,6 +152,21 @@ module WalkerGit =
             Directory.CreateDirectory dir |> ignore
             File.WriteAllText(Path.Combine(dir, $"{key}@{buildNumber}.revision"), sha))
 
+    /// FG-052: the changelog TAIL (First-time / rev-list) narrates ONCE per
+    /// build for GitSCM checkouts — the build's first checkout says it, later
+    /// checkouts stop after "Commit message" (measured: the explicit
+    /// `checkout scm` after the Declarative auto-stage has NO tail).
+    let private tailMarker (artifactRoot: string) (jobKey: string) (buildNumber: int) =
+        Path.Combine(scmDir artifactRoot jobKey, $"changelog-narrated@{buildNumber}")
+
+    let private tailAlreadyNarrated (artifactRoot: string) (jobKey: string) (buildNumber: int) =
+        lock recordLock (fun () -> File.Exists(tailMarker artifactRoot jobKey buildNumber))
+
+    let private markTailNarrated (artifactRoot: string) (jobKey: string) (buildNumber: int) =
+        lock recordLock (fun () ->
+            Directory.CreateDirectory(scmDir artifactRoot jobKey) |> ignore
+            File.WriteAllText(tailMarker artifactRoot jobKey buildNumber, ""))
+
     /// Forget a job's SCM history — called when the harness creates the job
     /// fresh, mirroring Jenkins' doDelete (history dies with the job).
     let resetHistory (artifactRoot: string) (jobKey: string) =
@@ -159,10 +174,21 @@ module WalkerGit =
             let dir = scmDir artifactRoot jobKey
             if Directory.Exists dir then Directory.Delete(dir, true))
 
+    /// The two checkout dialects, both measured:
+    ///  * GitStep — the `git` step: re-branches (branch -a / branch -D /
+    ///    checkout -b) and always narrates the changelog tail;
+    ///  * GitScm — `checkout scm` and the Declarative auto-stage: leaves a
+    ///    DETACHED head (no re-branch cluster) and narrates the tail once per
+    ///    build (receipts `checkout-scm-*`).
+    type Style =
+        | GitStep
+        | GitScm
+
     /// Execute the step. First failure wins: later commands are skipped and the
     /// branch fails with the failing command named (fail closed — carrying on
     /// with a half-initialised repo is the silent-loss shape).
-    let runStep
+    let runWithStyle
+        (style: Style)
         (runCtx: WalkerCtx)
         (ctx: BranchCtx)
         (cwd: string)
@@ -254,6 +280,13 @@ module WalkerGit =
         let prevSha = readPriorRevision artifactRoot jobKey key buildNumber
 
         if failure.IsNone then
+            // Dialect-INDEPENDENT since the lab's git-tool descriptor was first
+            // exercised (measured post-restart 2026-08-01: both the git step
+            // and checkout scm print it; the pre-initialization state the first
+            // git-step receipts captured no longer exists and they are
+            // re-sealed against the restart-stable lab).
+            emit "Selected Git installation does not exist. Using Default"
+
             emit "The recommended git tool is: NONE"
             emit "No credentials specified"
 
@@ -330,35 +363,45 @@ module WalkerGit =
                 step (Some $"> git checkout -f {sha} # timeout=10") "git checkout -f" [ "checkout"; "-f"; sha ]
                 |> ignore
 
-                step
-                    (Some "> git branch -a -v --no-abbrev # timeout=10")
-                    "git branch -a"
-                    [ "branch"; "-a"; "-v"; "--no-abbrev" ]
-                |> ignore
-
-                if not fresh then
-                    step (Some $"> git branch -D {branch} # timeout=10") "git branch -D" [ "branch"; "-D"; branch ]
+                if style = GitStep then
+                    step
+                        (Some "> git branch -a -v --no-abbrev # timeout=10")
+                        "git branch -a"
+                        [ "branch"; "-a"; "-v"; "--no-abbrev" ]
                     |> ignore
 
-                step
-                    (Some $"> git checkout -b {branch} {sha} # timeout=10")
-                    "git checkout -b"
-                    [ "checkout"; "-b"; branch; sha ]
-                |> ignore
+                    if not fresh then
+                        step (Some $"> git branch -D {branch} # timeout=10") "git branch -D" [ "branch"; "-D"; branch ]
+                        |> ignore
+
+                    step
+                        (Some $"> git checkout -b {branch} {sha} # timeout=10")
+                        "git checkout -b"
+                        [ "checkout"; "-b"; branch; sha ]
+                    |> ignore
 
                 step None "git log -1" [ "log"; "-1"; "--pretty=%s" ]
                 |> Option.iter (fun subject ->
                     emit $"Commit message: \"{subject}\""
 
-                    // the TAIL is history-keyed, not workspace-keyed
-                    match prevSha with
-                    | None -> emit "First time build. Skipping changelog."
-                    | Some prev ->
-                        step
-                            (Some $"> git rev-list --no-walk {prev} # timeout=10")
-                            "git rev-list"
-                            [ "rev-list"; "--no-walk"; prev ]
-                        |> ignore
+                    // the TAIL is history-keyed, not workspace-keyed — and for
+                    // GitScm it narrates only on the build's FIRST checkout
+                    let narrateTail =
+                        style = GitStep
+                        || not (tailAlreadyNarrated artifactRoot jobKey buildNumber)
+
+                    if narrateTail then
+                        match prevSha with
+                        | None -> emit "First time build. Skipping changelog."
+                        | Some prev ->
+                            step
+                                (Some $"> git rev-list --no-walk {prev} # timeout=10")
+                                "git rev-list"
+                                [ "rev-list"; "--no-walk"; prev ]
+                            |> ignore
+
+                        if style = GitScm then
+                            markTailNarrated artifactRoot jobKey buildNumber
 
                     if failure.IsNone && not cancelled then
                         writeRevision artifactRoot jobKey key buildNumber sha)
@@ -371,3 +414,11 @@ module WalkerGit =
                 emit $"ERROR: git step failed at: {why}"
                 ctx.Failed.Value <- true
                 ctx.Sink BuildStatus.Failure
+
+    /// The `git` step's public face — unchanged contract.
+    let runStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch =
+        runWithStyle GitStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch
+
+    /// FG-052. `checkout scm` and the Declarative auto-checkout stage.
+    let runCheckout runCtx ctx cwd deadline env artifactRoot jobKey buildNumber (scm: ScmSpec) =
+        runWithStyle GitScm runCtx ctx cwd deadline env artifactRoot jobKey buildNumber scm.Url scm.Branch
