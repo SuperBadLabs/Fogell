@@ -763,7 +763,17 @@ module WalkerOrchestration =
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 | Some u, None ->
-                    WalkerGit.runStep runCtx ctx cwd deadline (envForWith ctx.EnvOverlay stage) artifactRoot jobName u branch
+                    WalkerGit.runStep
+                        runCtx
+                        ctx
+                        cwd
+                        deadline
+                        (envForWith ctx.EnvOverlay stage)
+                        artifactRoot
+                        jobName
+                        deps.BuildNumber
+                        u
+                        branch
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive

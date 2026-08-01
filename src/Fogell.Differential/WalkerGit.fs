@@ -105,14 +105,51 @@ module WalkerGit =
     /// gets the full CLONE shape but ends `git rev-list --no-walk <prior sha>`,
     /// NOT "First time build" — shape is workspace-keyed, the TAIL is
     /// history-keyed, and they are independent.
-    let private revisionRecord (artifactRoot: string) (jobKey: string) =
-        Path.Combine(artifactRoot, "_scm", $"{jobKey}.revision")
+    ///
+    /// Keyed per (url, branch) AND per build number: a build with several git
+    /// steps must not read one checkout's sha as another repo's history, and a
+    /// same-build re-checkout must see the PREVIOUS build's revision, not its
+    /// own write from minutes ago — Jenkins' build data is frozen at build
+    /// start. Reads take the newest record from an EARLIER build; writes stamp
+    /// this build's number.
+    let private scmKey (url: string) (branch: string) =
+        use h = Security.Cryptography.SHA256.Create()
+
+        Text.Encoding.UTF8.GetBytes $"{url}|{branch}"
+        |> h.ComputeHash
+        |> Convert.ToHexString
+        |> fun x -> x.Substring(0, 16).ToLowerInvariant()
+
+    let private scmDir (artifactRoot: string) (jobKey: string) =
+        Path.Combine(artifactRoot, "_scm", jobKey)
+
+    let private readPriorRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) =
+        let dir = scmDir artifactRoot jobKey
+
+        if not (Directory.Exists dir) then
+            None
+        else
+            Directory.GetFiles(dir, $"{key}@*.revision")
+            |> Array.choose (fun f ->
+                let name = Path.GetFileNameWithoutExtension f
+
+                match Int32.TryParse(name.Substring(key.Length + 1)) with
+                | true, n when n < buildNumber -> Some(n, f)
+                | _ -> None)
+            |> Array.sortByDescending fst
+            |> Array.tryHead
+            |> Option.map (fun (_, f) -> (File.ReadAllText f).Trim())
+
+    let private writeRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) (sha: string) =
+        let dir = scmDir artifactRoot jobKey
+        Directory.CreateDirectory dir |> ignore
+        File.WriteAllText(Path.Combine(dir, $"{key}@{buildNumber}.revision"), sha)
 
     /// Forget a job's SCM history — called when the harness creates the job
     /// fresh, mirroring Jenkins' doDelete (history dies with the job).
     let resetHistory (artifactRoot: string) (jobKey: string) =
-        let f = revisionRecord artifactRoot jobKey
-        if File.Exists f then File.Delete f
+        let dir = scmDir artifactRoot jobKey
+        if Directory.Exists dir then Directory.Delete(dir, true)
 
     /// Execute the step. First failure wins: later commands are skipped and the
     /// branch fails with the failing command named (fail closed — carrying on
@@ -125,6 +162,7 @@ module WalkerGit =
         (env: (string * string) list)
         (artifactRoot: string)
         (jobKey: string)
+        (buildNumber: int)
         (url: string)
         (branch: string)
         : unit =
@@ -194,9 +232,8 @@ module WalkerGit =
         // deleteDir() exactly as Jenkins' build data does. (In the
         // same-workspace re-fetch, the record equals the pre-fetch HEAD the
         // measurement showed — receipt `git-step-refetch.b2`.)
-        let prevSha =
-            let f = revisionRecord artifactRoot jobKey
-            if File.Exists f then Some((File.ReadAllText f).Trim()) else None
+        let key = scmKey url branch
+        let prevSha = readPriorRevision artifactRoot jobKey key buildNumber
 
         if failure.IsNone then
             emit "The recommended git tool is: NONE"
@@ -303,9 +340,7 @@ module WalkerGit =
                         |> ignore
 
                     if failure.IsNone && not cancelled then
-                        let f = revisionRecord artifactRoot jobKey
-                        Directory.CreateDirectory(Path.GetDirectoryName f) |> ignore
-                        File.WriteAllText(f, sha))
+                        writeRevision artifactRoot jobKey key buildNumber sha)
 
         // a cancellation already narrated and sank through the model
         if not cancelled then
