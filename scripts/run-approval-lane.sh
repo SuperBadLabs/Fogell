@@ -21,7 +21,7 @@
 #      instead of inheriting the first build's approval;
 #   E. with NO inbox there is no approver, and an un-timed prompt fails closed
 #      by name instead of waiting forever for a human who cannot answer;
-#   F. a half-written answer is not an answer.
+#   F. neither a half-written answer nor an ambiguous two-line one is an answer.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -76,8 +76,16 @@ ID=$(await_pending "$AINBOX") || { echo "FAIL: the prompt was never published to
 echo "prompt published as $ID:"
 sed 's/^/  | /' "$AINBOX/$ID.pending"
 kill -9 "$PID"; wait "$PID" 2>/dev/null || true
-for _ in 1 2 3 4; do pgrep -f "^${HOST_BIN} " >/dev/null || break; sleep 0.5; done
-pgrep -f "^${HOST_BIN} " >/dev/null && { echo "FAIL: host survived the SIGKILL"; exit 1; }
+# BOTH checks, because they answer different questions. `kill -0` is exact and
+# says this process is gone; the pattern scan says no OTHER host survived it —
+# the case the restart lane exists for, where a driver process is SIGKILLed and
+# the real walker lives on underneath it. The pattern is REGEX-QUOTED: the
+# binary name contains dots, and an unescaped `.` matches any character, so the
+# strict check was quietly a loose one.
+HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') "
+kill -0 "$PID" 2>/dev/null && { echo "FAIL: the killed host is still alive"; exit 1; }
+for _ in 1 2 3 4; do pgrep -f "$HOST_RE" >/dev/null || break; sleep 0.5; done
+pgrep -f "$HOST_RE" >/dev/null && { echo "FAIL: a host process survived the SIGKILL"; pgrep -af "$HOST_RE"; exit 1; }
 grep -q '^completed:' "$A/run1.log" && { echo "FAIL: run 1 completed despite the kill"; exit 1; }
 grep -q '^input-decision' "$AJ" && { echo "FAIL: an answer was journaled that nobody gave"; exit 1; }
 
@@ -200,7 +208,7 @@ grep -q 'completed: failure' "$E/run.log" || { echo "FAIL: did not fail closed";
 echo "failed closed at the prompt, exit $RC — no hang"
 
 # ---------------------------------------------------------------- scenario F
-echo "=== F: a half-written answer is not an answer ==="
+echo "=== F: neither a fragment nor an ambiguous two-line answer counts ==="
 F="$LANE/f"; mkdir -p "$F/approvals"
 printf '%s\n' "$JF" > "$F/Jenkinsfile"
 "$HOST_BIN" "$F/Jenkinsfile" "$F/ws" gate "$F/build.journal" "$F/approvals" > "$F/run.log" 2>&1 &
@@ -210,12 +218,18 @@ printf 'approve' > "$F/approvals/$FID.decision"     # verdict only, no submitter
 sleep 3
 grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a fragment was accepted as an answer"; exit 1; }
 kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a fragment"; cat "$F/run.log"; exit 1; }
+# two complete lines — two approvers, or automation appending. Ambiguous is not
+# an answer: read with a two-field split it approved as "alice reject bob".
+printf 'approve alice\nreject bob\n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: an ambiguous two-line answer was accepted"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on an ambiguous answer"; cat "$F/run.log"; exit 1; }
 printf 'approve frank\n' > "$F/approvals/$FID.decision"   # the completed write
 set +e; wait "$PID"; RC=$?; set -e
 [ "$RC" -eq 0 ] || { echo "FAIL: the completed answer was not honoured (rc=$RC)"; cat "$F/run.log"; exit 1; }
 grep -q $'^input-decision\tGate\t1\tapproved\tfrank$' "$F/build.journal" || {
   echo "FAIL: the submitter was not recorded from the completed write"; sed 's/^/  | /' "$F/build.journal"; exit 1; }
-echo "waited through the fragment, then took the completed answer with its submitter intact"
+echo "waited through the fragment AND the ambiguous pair, then took the completed answer with its submitter intact"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

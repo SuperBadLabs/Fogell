@@ -22,8 +22,9 @@ open Fogell.Journal
 /// FG-046b adds the APPROVALS inbox (optional fifth argument): a controller-side
 /// directory where a pending `input` publishes `<id>.pending` and an approver
 /// answers with `<id>.decision` containing exactly `approve <who>` or
-/// `reject <who>`, NEWLINE-TERMINATED — both fields are required and the
-/// terminator is how a half-written file is told from a finished one. The answer
+/// `reject <who>` — ONE line, NEWLINE-TERMINATED. Both fields are required, the
+/// terminator is how a half-written file is told from a finished one, and a
+/// second line makes the file ambiguous rather than an answer. The answer
 /// is journaled before the build acts on it, so it survives the kill, and both
 /// files are deleted once it is durable.
 ///
@@ -222,14 +223,20 @@ let main argv =
 
             // An answer is observed while it is being WRITTEN (an operator's
             // `echo` is not atomic), so completeness has to be established, not
-            // assumed. Two requirements, and the first one was learned the hard
-            // way: `approve alice` seen after only `approve` had landed parsed as
-            // a perfectly valid approval by an unnamed submitter, journaled it,
-            // and never re-read the file — a scheduling accident silently erasing
-            // the only audit content the record carries.
-            //   1. the content must be NEWLINE-TERMINATED — the terminator is the
-            //      writer's statement that it finished;
-            //   2. both fields must be present — a verdict alone is not an answer.
+            // assumed. Three requirements, and each one is a defect that got
+            // past a previous version of this function:
+            //   1. NEWLINE-TERMINATED — the terminator is the writer's statement
+            //      that it finished. Without it, `approve alice` seen after only
+            //      `approve` had landed parsed as a perfectly valid approval by
+            //      an unnamed submitter, was journaled, and the file was never
+            //      re-read: a scheduling accident silently erasing the only
+            //      audit content the record carries.
+            //   2. EXACTLY ONE LINE. With a two-field split and no line check,
+            //      `approve alice\nreject bob\n` — two approvers, or automation
+            //      appending — read as an approval by "alice reject bob". An
+            //      ambiguous file is not an answer; it is two answers, or a
+            //      mistake, and either way nobody said what to do.
+            //   3. BOTH FIELDS. A verdict alone is not an answer.
             let contents =
                 try
                     File.ReadAllText path
@@ -246,21 +253,25 @@ let main argv =
                 Some(Error $"{path} is not newline-terminated ({contents.Length} chars) — an answer must end with a newline")
             else
 
-            let raw = contents.Trim()
+            // only the TERMINATOR is stripped; an interior newline survives to be
+            // rejected below rather than being trimmed into invisibility
+            let body = contents.Replace("\r\n", "\n").TrimEnd '\n'
 
-            if raw = "" then
+            if body.Trim() = "" then
                 None
+            elif body.Contains '\n' then
+                Some(Error $"{path} has more than one line — an answer is exactly '<approve|reject> <who>'")
             else
 
-            match raw.Split([| ' '; '\t'; '\n' |], 2, StringSplitOptions.RemoveEmptyEntries) with
+            match body.Split([| ' '; '\t' |], 2, StringSplitOptions.RemoveEmptyEntries) with
             | [| v; w |] when w.Trim() <> "" ->
                 match v.Trim().ToLowerInvariant() with
                 | "approve"
                 | "approved" -> Some(Ok(true, w.Trim()))
                 | "reject"
                 | "rejected" -> Some(Ok(false, w.Trim()))
-                | _ -> Some(Error $"{path} does not say approve or reject (got {raw.Length} chars)")
-            | _ -> Some(Error $"{path} must say '<approve|reject> <who>' on one line (got {raw.Length} chars)")
+                | _ -> Some(Error $"{path} does not say approve or reject (got {body.Length} chars)")
+            | _ -> Some(Error $"{path} must say '<approve|reject> <who>' on one line (got {body.Length} chars)")
 
         // An answer is CONSUMED once it is durable. Both files go: the prompt is
         // no longer outstanding, and a decision left lying in the inbox is an
@@ -471,6 +482,15 @@ let main argv =
         for KeyValue((stage, i), (approved, who)) in plan.InputDecisions do
             answered[(stage, i)] <- (if approved then InputApproved who else InputRejected who)
 
+            // Consumed HERE, not on the poll that returns the seeded answer. A
+            // kill between the record's sync and its consume leaves both inbox
+            // files behind; the next process answers that prompt from the seed
+            // and never touches the inbox, so an already-answered prompt would
+            // stay advertised as outstanding forever — and the terminal cleanup
+            // could not find it either, since nothing was published in THIS
+            // process. Doing it at seed time covers every later path at once.
+            approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i)
+
         // Written once per prompt (the file's existence is the marker), and once
         // per distinct malformed answer — a 250 ms poll loop would otherwise
         // print thousands of identical lines and bury the one that matters.
@@ -494,10 +514,18 @@ let main argv =
                         if publishedPending.TryAdd((stage, index), true) then
                             Directory.CreateDirectory dir |> ignore
                             // named in full so a human answering has to guess
-                            // nothing: which prompt, in which stage, at which step
+                            // nothing: which prompt, in which stage, at which
+                            // step. The PROMPT is author-written text and may
+                            // legitimately contain newlines or tabs, which would
+                            // tear this line-per-field file the same way an
+                            // unsanitised submitter tears the journal — so the
+                            // separators become spaces here too.
+                            let oneLine (s: string) =
+                                if isNull s then "" else s.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ')
+
                             File.WriteAllText(
                                 Path.Combine(dir, actionId stage index + ".pending"),
-                                $"stage\t{stage}\nstep\t{index}\nprompt\t{prompt}\n"
+                                $"stage\t{oneLine stage}\nstep\t{index}\nprompt\t{oneLine prompt}\n"
                             )
 
                         None

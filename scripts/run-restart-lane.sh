@@ -63,8 +63,15 @@ wait "$PID" 2>/dev/null || true
 # the WALKER must actually be dead: no lingering host process (anchored to
 # the binary path — an unanchored two-substring pattern once false-matched a
 # transient unrelated cmdline), and the first run's log must never complete
-for _ in 1 2 3 4; do pgrep -f "^${HOST_BIN} " >/dev/null || break; sleep 0.5; done
-pgrep -f "^${HOST_BIN} " >/dev/null && { echo "FAIL: host survived the SIGKILL"; pgrep -af "^${HOST_BIN} "; exit 1; }
+# REGEX-QUOTED (FG-046b review): the binary name contains dots and `pgrep -f`
+# takes a regex, so an unescaped `.` matches any character — the anchored,
+# strict-looking check was quietly a loose one. `kill -0` joins it because the
+# two answer different questions: this process is gone, and no OTHER host
+# survived (the interposed-driver case this anchoring exists for).
+HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') "
+kill -0 "$PID" 2>/dev/null && { echo "FAIL: the killed host is still alive"; exit 1; }
+for _ in 1 2 3 4; do pgrep -f "$HOST_RE" >/dev/null || break; sleep 0.5; done
+pgrep -f "$HOST_RE" >/dev/null && { echo "FAIL: a host process survived the SIGKILL"; pgrep -af "$HOST_RE"; exit 1; }
 grep -q '^completed:' "$LANE/run1.log" && { echo "FAIL: run 1 completed despite the kill"; exit 1; }
 echo "killed host mid-step (verified dead); journal now:"
 sed 's/^/  | /' "$JOURNAL"
