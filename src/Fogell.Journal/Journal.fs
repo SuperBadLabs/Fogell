@@ -37,6 +37,23 @@ type Journal(path: string, policy: FsyncPolicy) =
         | Some s -> s
         | None ->
             Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+
+            // FG-112: a kill mid-write leaves a torn final line. `read` ignores
+            // it — but APPENDING onto it would weld the next record to the
+            // fragment and lose BOTH. Terminate the fragment first so it stays
+            // an ignorable garbage line and every later record starts clean.
+            if File.Exists path then
+                use probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+
+                if probe.Length > 0L then
+                    probe.Seek(-1L, SeekOrigin.End) |> ignore
+
+                    if probe.ReadByte() <> int '\n' then
+                        probe.Close()
+                        use repair = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)
+                        repair.WriteByte(byte '\n')
+                        repair.Flush true
+
             let s = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)
             stream <- Some s
             s

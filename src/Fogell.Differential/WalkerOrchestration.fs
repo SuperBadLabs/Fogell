@@ -187,19 +187,24 @@ module WalkerOrchestration =
 
                     // FG-112: a restart-sensitive gate (isRestartedRun and kin)
                     // can evaluate DIFFERENTLY on the resumed attempt — but a
-                    // status this stage durably RECORDED already happened, and
-                    // when-skipping the stage must not skip the consequence.
+                    // status this stage (or ANY nested child — parallel branch,
+                    // sequential group) durably RECORDED already happened, and
+                    // when-skipping the parent must not skip the consequence.
                     match persistence with
                     | Some hooks ->
-                        stage.Steps
-                        |> List.iteri (fun i _ ->
-                            match hooks.SkippedStatus stage.Name i with
-                            | Some st ->
-                                ctx.Sink st
+                        for st in Pipeline.flattenStages [ stage ] do
+                            st.Steps
+                            |> List.iteri (fun i _ ->
+                                match hooks.SkippedStatus st.Name i with
+                                | Some recorded ->
+                                    ctx.Sink recorded
 
-                                if st = BuildStatus.Failure || st = BuildStatus.Aborted then
-                                    ctx.Failed.Value <- true
-                            | None -> ())
+                                    if
+                                        recorded = BuildStatus.Failure
+                                        || recorded = BuildStatus.Aborted
+                                    then
+                                        ctx.Failed.Value <- true
+                                | None -> ())
                     | None -> ()
 
                 | None ->
