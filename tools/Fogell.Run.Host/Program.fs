@@ -64,7 +64,11 @@ let main argv =
             3
         else
 
-        let resuming = not (Map.isEmpty plan.Steps)
+        // a digest-only journal (died after the first sync, before any step)
+        // is STILL a second attempt: the digest is written by an attempt, so
+        // its presence in the plan proves one existed — without this, the
+        // workspace of a real prior attempt is wiped and isRestartedRun lies
+        let resuming = plan.ScriptDigest.IsSome || not (Map.isEmpty plan.Steps)
         // the first attempt starts clean; a RESUME must keep the workspace —
         // that is the state the finished steps produced
         let freshWorkspace = not resuming
@@ -106,6 +110,12 @@ let main argv =
 
         match FogellSide.runPersisted [] workspaceRoot jobName freshWorkspace hooks script with
         | Result.Error e ->
+            // The attempt is OVER and failed — steps may already be durably
+            // finished (the leak guard, for one, refuses AFTER they ran), and
+            // leaving no terminal record would let a later invocation resume
+            // into a finished run. Terminal failure is the honest state.
+            journal.Append(BuildFinished BuildStatus.Failure)
+            journal.Close()
             eprintfn $"run failed: {e}"
             2
         | Ok trace ->

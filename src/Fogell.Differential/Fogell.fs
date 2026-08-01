@@ -438,6 +438,21 @@ module FogellSide =
                         + String.concat ", " dupes
                     )
 
+                // the journal's wire format delimits with tabs and newlines; a
+                // stage name carrying either would TEAR the record and truncate
+                // every later read — refused by name, not escaped around
+                let unsafe =
+                    p.Stages
+                    |> Pipeline.flattenStages
+                    |> List.filter (fun st -> st.Name.Contains '\t' || st.Name.Contains '\n')
+                    |> List.map (fun st -> st.Name.Replace("\t", "\\t").Replace("\n", "\\n"))
+
+                if not (List.isEmpty unsafe) then
+                    failwith (
+                        "persisted runs cannot journal stage names containing tabs or newlines: "
+                        + String.concat ", " unsafe
+                    )
+
             runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
         with ex ->
             Result.Error ex.Message
