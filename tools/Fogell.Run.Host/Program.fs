@@ -54,7 +54,12 @@ let main argv =
         use journal = Journal.openAt journalPath EveryStep
 
         let hooks =
-            { ShouldExecute =
+            { SkippedStatus =
+                fun stage i ->
+                    match Resume.dispositionOf plan stage i with
+                    | AlreadyFinished st -> Some st
+                    | _ -> None
+              ShouldExecute =
                 fun stage i ->
                     let run = Resume.shouldExecute plan stage i
 

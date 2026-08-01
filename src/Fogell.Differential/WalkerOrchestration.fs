@@ -10,11 +10,21 @@ open Fogell.Ir
 /// TOP-LEVEL step of a stage: a wrapper (retry/timeout/withEnv) journals as one
 /// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
 /// stated rather than implied. None (the differential path) journals nothing.
+///
+/// STATED LIMIT: `post` steps are NOT journaled and re-run on every resume —
+/// at-least-once for post effects. Closing that needs post-scoped keys and a
+/// re-selection story (the arms select against a status resume must
+/// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
 type PersistenceHooks =
     { /// stage -> stepIndex -> run it? False = durably finished in a prior
       /// attempt: the step is skipped SILENTLY (its output already happened;
       /// replaying narration would double it).
       ShouldExecute: string -> int -> bool
+      /// stage -> stepIndex -> the status a durably finished step RECORDED, so
+      /// the skip path can replay it — without this, a resume after
+      /// `step-finished failure` (but before BuildFinished) flips the build to
+      /// success and runs stages the failure should have halted.
+      SkippedStatus: string -> int -> BuildStatus option
       /// stage -> stepIndex -> stepName. Written (and made durable) BEFORE the
       /// step runs.
       OnStepStarted: string -> int -> string -> unit
@@ -961,7 +971,17 @@ module WalkerOrchestration =
                         match persistence with
                         | None -> runStepDispatch ctx cwd stage step deadline
                         | Some hooks ->
-                            if hooks.ShouldExecute stage.Name i then
+                            if not (hooks.ShouldExecute stage.Name i) then
+                                // replay the recorded outcome: skipping the
+                                // EXECUTION must not skip the CONSEQUENCE
+                                match hooks.SkippedStatus stage.Name i with
+                                | Some st ->
+                                    ctx.Sink st
+
+                                    if st = BuildStatus.Failure || st = BuildStatus.Aborted then
+                                        ctx.Failed.Value <- true
+                                | None -> ()
+                            else
                                 hooks.OnStepStarted stage.Name i step.Name
 
                                 // observe THIS step's worst sunk status without
@@ -978,9 +998,7 @@ module WalkerOrchestration =
                                 runStepDispatch observing cwd stage step deadline
                                 hooks.OnStepFinished stage.Name i observed.Value)
 
-                match persistence with
-                | Some hooks when not (halted ctx) -> hooks.OnStageCommitted stage.Name
-                | _ -> ()
+
 
                 if stage.IsParallel && not (List.isEmpty stage.Nested) then
                     // JB-FAIL-006/007. Branches run concurrently and, by
@@ -1080,4 +1098,11 @@ module WalkerOrchestration =
                 else
                     for nested in stage.Nested do
                         runStage ctx cwd deadline nested
+
+                // the group-commit boundary — AFTER nested/parallel content, so
+                // "everything before it is durable" is actually true of it
+                match persistence with
+                | Some hooks when not (halted ctx) -> hooks.OnStageCommitted stage.Name
+                | _ -> ()
+
         runStage, runPostWithDeadline

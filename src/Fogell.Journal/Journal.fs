@@ -26,6 +26,12 @@ type Journal(path: string, policy: FsyncPolicy) =
 
     let mutable stream: FileStream option = None
 
+    // FG-112: hooks fire from parallel BRANCH threads. Interleaved partial
+    // writes tear a line, and Journal.read truncates at the first undecodable
+    // line — resume would then forget durable steps and re-run them, the
+    // at-least-once outcome this design exists to reject.
+    let writeLock = obj ()
+
     let ensure () =
         match stream with
         | Some s -> s
@@ -41,32 +47,35 @@ type Journal(path: string, policy: FsyncPolicy) =
     /// have to know which, only that a StepFinished is durable before the next
     /// step begins under EveryStep.
     member _.Append(record: Record) =
-        let s = ensure ()
-        let bytes = Text.Encoding.UTF8.GetBytes(Record.encode record + "\n")
-        s.Write(bytes, 0, bytes.Length)
-        s.Flush()
+        lock writeLock (fun () ->
+            let s = ensure ()
+            let bytes = Text.Encoding.UTF8.GetBytes(Record.encode record + "\n")
+            s.Write(bytes, 0, bytes.Length)
+            s.Flush()
 
-        match policy, record with
-        | EveryStep, _ -> s.Flush true
-        | EveryStage, StageCommitted _ -> s.Flush true
-        | EveryStage, BuildFinished _ -> s.Flush true
-        | EveryStage, _ -> ()
-        | Never, _ -> ()
+            match policy, record with
+            | EveryStep, _ -> s.Flush true
+            | EveryStage, StageCommitted _ -> s.Flush true
+            | EveryStage, BuildFinished _ -> s.Flush true
+            | EveryStage, _ -> ()
+            | Never, _ -> ())
 
     /// Force whatever is buffered. Called before a controller hands an attempt
     /// away, so nothing in flight depends on a later flush.
     member _.Sync() =
-        match stream with
-        | Some s -> s.Flush true
-        | None -> ()
+        lock writeLock (fun () ->
+            match stream with
+            | Some s -> s.Flush true
+            | None -> ())
 
     member _.Close() =
-        match stream with
-        | Some s ->
-            s.Flush true
-            s.Dispose()
-            stream <- None
-        | None -> ()
+        lock writeLock (fun () ->
+            match stream with
+            | Some s ->
+                s.Flush true
+                s.Dispose()
+                stream <- None
+            | None -> ())
 
     interface IDisposable with
         member this.Dispose() = this.Close()

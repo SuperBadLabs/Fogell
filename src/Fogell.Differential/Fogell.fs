@@ -414,6 +414,27 @@ module FogellSide =
         (script: string)
         =
         try
+            // The journal key is (stage name, step index) — a flat map. Two
+            // stages sharing a name (top-level, nested, or parallel branches)
+            // would collide, and a collision records a never-run step as
+            // durably done. REFUSED by name up front (FG-103), not keyed
+            // around: unique names are the corpus norm and the stated limit.
+            match Fogell.Pipeline.Parser.Parser.parse script with
+            | Result.Error _ -> () // the run itself reports parse errors
+            | Ok p ->
+                let dupes =
+                    p.Stages
+                    |> Pipeline.flattenStages
+                    |> List.countBy (fun st -> st.Name)
+                    |> List.filter (fun (_, n) -> n > 1)
+                    |> List.map fst
+
+                if not (List.isEmpty dupes) then
+                    failwith (
+                        "persisted runs require globally unique stage names; duplicated: "
+                        + String.concat ", " dupes
+                    )
+
             runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
         with ex ->
             Result.Error ex.Message

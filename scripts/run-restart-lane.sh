@@ -13,7 +13,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 LANE=$(mktemp -d /tmp/fogell-restart-lane.XXXXXX)
-trap 'rm -rf "$LANE"' EXIT
+# evidence survives failure: the transcript IS the lane's proof
+trap '[ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2' EXIT
 JOURNAL="$LANE/build.journal"
 WSROOT="$LANE/ws"
 JOB="restart-lane"
@@ -35,7 +36,12 @@ pipeline {
 JF
 
 dotnet build -c Release --nologo >/dev/null
-HOST=(dotnet run --project tools/Fogell.Run.Host -c Release --no-build --)
+# the BUILT apphost, invoked directly: `dotnet run` interposes a driver
+# process, and SIGKILLing the driver leaves the actual walker alive —
+# every assertion could then pass without the walker ever dying
+HOST_BIN=$(find tools/Fogell.Run.Host/bin/Release -name Fogell.Run.Host -type f | head -1)
+[ -x "$HOST_BIN" ] || { echo "FAIL: host binary not found"; exit 1; }
+HOST=("$HOST_BIN")
 
 echo "=== attempt 1: SIGKILL mid-step ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run1.log" 2>&1 &
@@ -48,7 +54,11 @@ done
 grep -q '^two$' "$MARKERS" || { echo "FAIL: step 2 never started"; exit 1; }
 kill -9 "$PID"
 wait "$PID" 2>/dev/null || true
-echo "killed host mid-step; journal now:"
+# the WALKER must actually be dead: no lingering host process, and the
+# first run's log must never reach completion
+pgrep -f "Fogell.Run.Host.*$JOB" >/dev/null && { echo "FAIL: host survived the SIGKILL"; exit 1; }
+grep -q '^completed:' "$LANE/run1.log" && { echo "FAIL: run 1 completed despite the kill"; exit 1; }
+echo "killed host mid-step (verified dead); journal now:"
 sed 's/^/  | /' "$JOURNAL"
 
 echo "=== attempt 2: resume must REFUSE (interrupted step, exit 3) ==="
@@ -58,7 +68,7 @@ RC=$?
 set -e
 [ "$RC" -eq 3 ] || { echo "FAIL: expected refusal exit 3, got $RC"; cat "$LANE/run2.log"; exit 1; }
 grep -q 'needs-reconciliation: Build#1' "$LANE/run2.log" || { echo "FAIL: refusal did not name Build#1"; exit 1; }
-echo "refused, step named: $(rg -o 'needs-reconciliation.*' "$LANE/run2.log")"
+echo "refused, step named: $(grep -o 'needs-reconciliation.*' "$LANE/run2.log")"
 
 echo "=== operator reconciliation: the marker shows the effect landed ==="
 grep -q '^two$' "$MARKERS"
@@ -82,4 +92,5 @@ echo "=== attempt 4: terminal journal is a no-op ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run4.log" 2>&1
 grep -q 'already-terminal: success' "$LANE/run4.log" || { echo "FAIL: not already-terminal"; exit 1; }
 
+LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"
