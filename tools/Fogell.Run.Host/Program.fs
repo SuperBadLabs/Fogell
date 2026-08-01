@@ -110,7 +110,23 @@ let main argv =
         // workspace (a symlink of its own)
         let artifactsResolved = trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts")))
 
-        if not (realWorkspace.StartsWith(realRoot + string Path.DirectorySeparatorChar)) then
+        // Controller-side state must NOT live inside the workspace: `stash`
+        // stores under artifactRoot/_stash, and the fresh-attempt wipe would
+        // destroy stashes a resume is entitled to restore. Both directions —
+        // a job literally named _artifacts, or an artifact symlink pointing
+        // into the job tree.
+        if
+            artifactsResolved = realWorkspace
+            || artifactsResolved.StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || realWorkspace.StartsWith(artifactsResolved + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        then
+            eprintfn $"the artifact store ({artifactsResolved}) overlaps the workspace ({realWorkspace}) — the wipe would destroy controller-side state; refusing"
+            exit 2
+
+        // ORDINAL: the default StartsWith is culture-sensitive and can treat
+        // ignorable characters (a soft hyphen, say) as absent, authorising a
+        // sibling directory that is not actually beneath the root.
+        if not (realWorkspace.StartsWith(realRoot + string Path.DirectorySeparatorChar, StringComparison.Ordinal)) then
             eprintfn $"job-name resolves outside the workspace root ({realWorkspace} vs {realRoot}) — the wipe would delete an unrelated directory; refusing"
             exit 2
 
@@ -123,8 +139,8 @@ let main argv =
         // one catches a journal that IS a symlink sitting inside the workspace
         // (its target is controller-side, but the wipe removes the link itself)
         if
-            (resolve journalPath).StartsWith(realWorkspace + string Path.DirectorySeparatorChar)
-            || journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar)
+            (resolve journalPath).StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || journalPath.StartsWith(workspaceFull + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
         then
             eprintfn $"journal path is inside the workspace ({realWorkspace}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2

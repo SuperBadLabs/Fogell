@@ -241,8 +241,17 @@ module WalkerOrchestration =
                             // A container stage has NO direct steps: its
                             // durable evidence of having run is its committed
                             // boundary, not a step record.
+                            // A container's evidence of having run is its own
+                            // commit OR any durable record in its subtree: a
+                            // child can finish a step and the process die before
+                            // the parent's StageCommitted is written.
                             let committed =
-                                List.isEmpty st.Steps && hooks.StageWasCommitted st.Name
+                                List.isEmpty st.Steps
+                                && (hooks.StageWasCommitted st.Name
+                                    || Pipeline.flattenStages [ st ]
+                                       |> List.exists (fun d ->
+                                           d.Steps |> List.mapi (fun i _ -> i) |> List.exists (fun i ->
+                                               (hooks.SkippedStatus d.Name i).IsSome)))
 
                             let childrenWorst =
                                 st.Nested
