@@ -102,6 +102,7 @@ module FogellSide =
             // These rebinds keep call sites unchanged.
             let runCtx = WalkerCtx.create ()
             let emit = runCtx.Emit
+            let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
 
             let workspace = Path.Combine(workspaceRoot, jobName)
@@ -141,41 +142,6 @@ module FogellSide =
                   "NODE_NAME", "built-in" ]
 
             // FG-105: env resolution and argument rendering live in WalkerArgs.
-            let envForWith = WalkerArgs.envForWith jenkinsProvided pipeline
-
-            let bump = runCtx.Bump
-
-
-            // FG-105: the cancellation model lives in WalkerCancellation.
-
-
-            let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
-            // FG-105: step execution lives in WalkerStep.
-            let runStepInner =
-                WalkerStep.runStepInner runCtx envForWith workspace artifactRoot jobName
-
-            // FG-105: when-evaluation lives in WalkerWhen.
-            let evalWhen = WalkerWhen.evalWhen envForWith
-
-            let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
-
-            // FG-105: stage/post orchestration and wrapper dispatch live in
-            // WalkerOrchestration; run() is the conductor wiring the units.
-            let runStage, runPostWithDeadline =
-                WalkerOrchestration.makeRunners
-                    { RunCtx = runCtx
-                      EnvForWith = envForWith
-                      RunStepInner = runStepInner
-                      EvalWhen = evalWhen
-                      AlwaysFailFast = alwaysFailFast
-                      WorkspaceRoot = workspaceRoot
-                      ArtifactRoot = artifactRoot
-                      JobName = jobName
-                      Credentials = credentialStore
-                      PreviousBuild = previousBuild
-                      BuildNumber = buildNumber
-                      Scm = scm }
-
             let root =
                 { Interrupt = None
                   Failed = ref false
@@ -278,6 +244,46 @@ module FogellSide =
                             | None -> []
             | _ -> ()
 
+            // The SCM wrapper values sit at the BASE layer — after the
+            // Jenkins-provided variables, BEFORE pipeline/stage declarations —
+            // so a declared GIT_COMMIT overrides the wrapper (measured
+            // semantics: declarations apply INSIDE the wrapper) and `when`
+            // conditions see the wrapper values like any other env.
+            let envForWith =
+                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv) pipeline
+
+
+
+            // FG-105: the cancellation model lives in WalkerCancellation.
+
+
+            let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
+            // FG-105: step execution lives in WalkerStep.
+            let runStepInner =
+                WalkerStep.runStepInner runCtx envForWith workspace artifactRoot jobName
+
+            // FG-105: when-evaluation lives in WalkerWhen.
+            let evalWhen = WalkerWhen.evalWhen envForWith
+
+            let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
+
+            // FG-105: stage/post orchestration and wrapper dispatch live in
+            // WalkerOrchestration; run() is the conductor wiring the units.
+            let runStage, runPostWithDeadline =
+                WalkerOrchestration.makeRunners
+                    { RunCtx = runCtx
+                      EnvForWith = envForWith
+                      RunStepInner = runStepInner
+                      EvalWhen = evalWhen
+                      AlwaysFailFast = alwaysFailFast
+                      WorkspaceRoot = workspaceRoot
+                      ArtifactRoot = artifactRoot
+                      JobName = jobName
+                      Credentials = credentialStore
+                      PreviousBuild = previousBuild
+                      BuildNumber = buildNumber
+                      Scm = scm }
+
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
             let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
 
@@ -317,7 +323,7 @@ module FogellSide =
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
                     emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
-                    runStage { root with EnvOverlay = scmWrapperEnv } workspace pipelineDeadline stage
+                    runStage root workspace pipelineDeadline stage
 
             // Pipeline-level `post` is selected against the BUILD result, so it
             // runs after every stage. Modelled as a synthetic stage carrying only
@@ -342,10 +348,7 @@ module FogellSide =
                 // runStage but NOT the pipeline-level post, so a slow `post { always }`
                 // ran unbounded past a timeout Jenkins enforces around it. Same
                 // "one path was missed" shape as FG-002e.
-                let postRoot =
-                    { root with
-                        Failed = ref false
-                        EnvOverlay = scmWrapperEnv }
+                let postRoot = { root with Failed = ref false }
                 runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
                 if postRoot.Failed.Value then root.Failed.Value <- true
 
