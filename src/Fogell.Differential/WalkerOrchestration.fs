@@ -261,8 +261,22 @@ module WalkerOrchestration =
                             let mutable outcome = status
 
                             if (entered || committed) && not (List.isEmpty st.Post) then
-                                let postCtx = { ctx with Failed = ref false }
+                                // observe what the POST itself sinks: `junit` can
+                                // sink Unstable without failing, and a container's
+                                // arm must see that too — the failure flag alone
+                                // is not the post's outcome.
+                                let postObserved = ref BuildStatus.Success
+
+                                let postCtx =
+                                    { ctx with
+                                        Failed = ref false
+                                        Sink =
+                                            fun st ->
+                                                postObserved.Value <- BuildStatus.worstOf postObserved.Value st
+                                                ctx.Sink st }
+
                                 runPostWithDeadline postCtx cwd st status previousBuild inherited
+                                outcome <- BuildStatus.worstOf outcome postObserved.Value
 
                                 if postCtx.Failed.Value then
                                     ctx.Failed.Value <- true

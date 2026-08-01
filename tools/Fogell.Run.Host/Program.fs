@@ -84,8 +84,11 @@ let main argv =
 
         // Identity components are length-prefixed: a resolved path may contain
         // '|', and plain concatenation made distinct tuples compare equal.
-        let encodeIdentity (r: string) (w: string) (a: string) =
-            $"{r.Length}:{r}|{w.Length}:{w}|{a.Length}:{a}"
+        // The LEXICAL root joins the resolved triple: the walker exposes the
+        // raw root to the build (WORKSPACE and friends derive from it), so two
+        // spellings that resolve to one tree are still different builds.
+        let encodeIdentity (lexical: string) (r: string) (w: string) (a: string) =
+            $"{lexical.Length}:{lexical}|{r.Length}:{r}|{w.Length}:{w}|{a.Length}:{a}"
 
         // a relative journal path would hand Journal.ensure an empty directory
         // name and fail the first append — normalise before anything reads it
@@ -189,7 +192,7 @@ let main argv =
         // physical target under us.
         // LENGTH-PREFIXED: a resolved path may legitimately contain '|', and
         // plain concatenation let distinct tuples collide into one string.
-        let identity = encodeIdentity realRoot realWorkspace artifactsResolved
+        let identity = encodeIdentity (trimSep (Path.GetFullPath workspaceRoot)) realRoot realWorkspace artifactsResolved
 
         match plan.WorkspaceIdentity with
         | Some(w, j) when w <> identity || j <> jobName ->
@@ -242,6 +245,7 @@ let main argv =
             // with a real directory, making the pre-wipe resolution stale
             let identityNow =
                 encodeIdentity
+                    (trimSep (Path.GetFullPath workspaceRoot))
                     (trimSep (resolve workspaceRoot))
                     (trimSep (resolve workspaceFull))
                     (trimSep (resolve (Path.Combine(workspaceRoot, "_artifacts"))))
