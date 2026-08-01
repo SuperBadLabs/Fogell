@@ -1,9 +1,10 @@
 # Differential receipt — stash-unstash.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         54d6d1f8342902d800e42c7f2651988f5d8ebd85706788bb8ae8585040c5d341
+seal:         fc9ffbe6de23a89f32acf808792e0084d716b857668ed296f66402fb7545a5fe
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 3: jenkins=+ + ls out fogell=+ ls out
 
 ## Comparison contract
   compared: terminal result
@@ -53,8 +54,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | + mkdir -p out
     | + echo artifact-body
     | Stashed 1 file(s)
-    | + ls out
-    | + wc -l
+    | + + ls out
+    | wc -l
     | + cat out/thing.txt
   workspace:
     9a271f2a916b  before.txt

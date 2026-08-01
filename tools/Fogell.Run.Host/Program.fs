@@ -43,13 +43,25 @@ let main argv =
             for part in parts do
                 let candidate = Path.Combine(acc, part)
 
+                // LinkTarget (not ResolveLinkTarget) so a DANGLING link is
+                // still followed: a journal symlink whose target does not exist
+                // yet would otherwise look like an ordinary path and escape
+                // both containment checks, then be created inside the workspace.
+                let info = FileInfo candidate
+
                 acc <-
-                    if Directory.Exists candidate || File.Exists candidate then
-                        match Directory.ResolveLinkTarget(candidate, true) with
-                        | null -> candidate
-                        | real -> real.FullName
-                    else
-                        candidate
+                    match info.LinkTarget with
+                    | null -> candidate
+                    | target ->
+                        let resolved =
+                            if Path.IsPathRooted target then
+                                target
+                            else
+                                Path.Combine(acc, target)
+
+                        // one hop per component, then normalise: a link chain
+                        // deeper than the path is pathological, not expected
+                        Path.GetFullPath resolved
 
             acc
 
@@ -147,6 +159,10 @@ let main argv =
         // Root AND workspace: two different roots can reach one physical job
         // directory through symlinks while the walker derives controller state
         // (artifacts, stashes, SCM records) from the ROOT — which would differ.
+        // Compared against what the PREVIOUS attempt recorded; the value this
+        // attempt records is computed after the wipe (below), because the wipe
+        // can replace a workspace SYMLINK with a real directory and change the
+        // physical target under us.
         let identity = $"{realRoot}|{realWorkspace}"
 
         match plan.WorkspaceIdentity with
@@ -196,7 +212,10 @@ let main argv =
             journal.Append(ScriptDigest digest)
 
         if plan.WorkspaceIdentity.IsNone then
-            journal.Append(WorkspaceIdentity(identity, jobName))
+            // recomputed post-wipe: the fresh path may have replaced a symlink
+            // with a real directory, making the pre-wipe resolution stale
+            let identityNow = $"{trimSep (resolve workspaceRoot)}|{trimSep (resolve workspaceFull)}"
+            journal.Append(WorkspaceIdentity(identityNow, jobName))
 
         if plan.ScriptDigest.IsNone || plan.WorkspaceIdentity.IsNone then
             journal.Sync()
