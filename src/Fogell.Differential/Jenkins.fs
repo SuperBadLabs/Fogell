@@ -85,7 +85,7 @@ module Jenkins =
 
             post $"/job/{jobName}/doDelete" None |> ignore
 
-            let runOne (buildNumber: int) (script: string) : Result<Trace, string> =
+            let runOneInner (buildNumber: int) (script: string) : Result<Trace, string> =
                 let xml () =
                     new StringContent(jobXml script, Encoding.UTF8, "application/xml")
 
@@ -106,7 +106,13 @@ module Jenkins =
                 | Error e -> Error e
                 | Ok() ->
 
-                post $"/job/{jobName}/build" None |> ignore
+                // FG-103: the trigger's status propagates — a stale crumb or a 409
+                // otherwise means five minutes of blind polling for a build that
+                // never exists, blamed on "did not reach a terminal state".
+                match post $"/job/{jobName}/build" None with
+                | 200
+                | 201 -> ()
+                | other -> failwith $"build trigger returned HTTP {other}"
 
                 // poll THIS build number to a terminal state
                 let mutable result = None
@@ -166,6 +172,16 @@ module Jenkins =
 
                     Ok trace
 
+            // TOTAL per build: a throw while collecting build k (console fetch,
+            // remote workspace collector) is build k's OWN error — it must not
+            // reach the outer handler and replace builds 1..k-1's already-collected
+            // evidence with a misattributed message.
+            let runOne (buildNumber: int) (script: string) : Result<Trace, string> =
+                try
+                    runOneInner buildNumber script
+                with ex ->
+                    Error ex.Message
+
             let results =
                 scripts
                 |> List.fold
@@ -181,7 +197,14 @@ module Jenkins =
                     ([], false)
                 |> fun (acc, _) -> List.rev acc
 
-            post $"/job/{jobName}/doDelete" None |> ignore
+            // Best-effort cleanup AFTER the evidence is safe: a delete failure
+            // must not replace collected traces (the next run of this case
+            // deletes the job first anyway).
+            (try
+                post $"/job/{jobName}/doDelete" None |> ignore
+             with _ ->
+                 ())
+
             results
         with ex ->
             // one entry PER REQUESTED BUILD, so a caller zipping against the

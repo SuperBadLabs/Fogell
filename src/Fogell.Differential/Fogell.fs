@@ -88,6 +88,7 @@ module FogellSide =
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
         (script: string)
@@ -122,9 +123,11 @@ module FogellSide =
             /// a stage Jenkins runs. Declarative overrides still win, as they do on
             /// Jenkins — hence these go first.
             let jenkinsProvided =
-                [ "BUILD_NUMBER", "1"
-                  "BUILD_ID", "1"
-                  "BUILD_DISPLAY_NAME", "#1"
+                // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
+                // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
+                [ "BUILD_NUMBER", string buildNumber
+                  "BUILD_ID", string buildNumber
+                  "BUILD_DISPLAY_NAME", $"#{buildNumber}"
                   "JOB_NAME", jobName
                   "JOB_BASE_NAME", jobName
                   "WORKSPACE", Path.Combine(workspaceRoot, jobName)
@@ -281,7 +284,10 @@ module FogellSide =
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
-        runWith envReplacements workspaceRoot jobName None true script
+        try
+            runWith envReplacements workspaceRoot jobName 1 None true script
+        with ex ->
+            Result.Error ex.Message
 
     /// FG-110. Run a SEQUENCE of builds of one job: the workspace persists
     /// across builds (build 1 starts clean) and each build's terminal result is
@@ -295,25 +301,42 @@ module FogellSide =
         (jobName: string)
         (scripts: string list)
         : Result<Trace, string> list =
-        let statusOf (t: Trace) =
+        // FG-103: an unmappable terminal result must HALT the sequence by name,
+        // never quietly become None — None means "no history" (build-#1
+        // semantics: changed fires, fixed/regression cannot), which is exactly
+        // the wrong thing to invent for build k+1.
+        let statusOf (t: Trace) : Result<BuildStatus, string> =
             match t.Result with
-            | "success" -> Some BuildStatus.Success
-            | "failure" -> Some BuildStatus.Failure
-            | "unstable" -> Some BuildStatus.Unstable
-            | "aborted" -> Some BuildStatus.Aborted
-            | _ -> None
+            | "success" -> Ok BuildStatus.Success
+            | "failure" -> Ok BuildStatus.Failure
+            | "unstable" -> Ok BuildStatus.Unstable
+            | "aborted" -> Ok BuildStatus.Aborted
+            | other -> Result.Error $"build produced a result this sequence cannot carry forward: '{other}'"
 
         scripts
         |> List.fold
             (fun (acc, previous, halted) script ->
-                if halted then
-                    (Result.Error "a prior build in this sequence failed to run" :: acc, previous, true)
-                else
+                match halted with
+                | Some why -> (Result.Error $"sequence halted: {why}" :: acc, previous, halted)
+                | None ->
                     let r =
-                        runWith envReplacements workspaceRoot jobName previous (List.isEmpty acc) script
+                        try
+                            runWith
+                                envReplacements
+                                workspaceRoot
+                                jobName
+                                (List.length acc + 1)
+                                previous
+                                (List.isEmpty acc)
+                                script
+                        with ex ->
+                            Result.Error ex.Message
 
                     match r with
-                    | Result.Ok t -> (r :: acc, statusOf t, false)
-                    | Result.Error _ -> (r :: acc, previous, true))
-            ([], None, false)
+                    | Result.Ok t ->
+                        match statusOf t with
+                        | Ok st -> (r :: acc, Some st, None)
+                        | Result.Error why -> (r :: acc, previous, Some why)
+                    | Result.Error why -> (r :: acc, previous, Some $"a prior build failed to run ({why})"))
+            ([], None, None)
         |> fun (acc, _, _) -> List.rev acc

@@ -1,7 +1,7 @@
-# Differential receipt — parallel-failfast.Jenkinsfile
+# Differential receipt — sequence-carries-state.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7758d05cd762fbc11def1ccd61d91e67de4db04493cf660d26d46f9ecef1a4c8
+seal:         91b395fb0798fada92bf3671cc948f6aefd3342b73e9405736320ce45f86b4a3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -45,42 +45,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + sleep 1
-    | + echo started
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: d566a22cec3b3cf51fbda9a9ff0d882eecfbbd585d0e07879dadcb0725f06062
+  output (4 lines):
+    | + cat carried.txt
+    | carried-from-one
+    | + echo build=2
+    | build=2
   workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    59cc51d417e1  carried.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + echo started
-    | + sleep 45
-    | + sleep 1
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: d566a22cec3b3cf51fbda9a9ff0d882eecfbbd585d0e07879dadcb0725f06062
+  output (4 lines):
+    | + cat carried.txt
+    | carried-from-one
+    | + echo build=2
+    | build=2
   workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    59cc51d417e1  carried.txt

@@ -172,8 +172,19 @@ let main argv =
 
                 let scripts = buildSeparator.Split script |> Array.toList
 
-                let jenkinsRuns = Jenkins.runMany cfg envReplacements job scripts
-                let fogellRuns = FogellSide.runMany envReplacements fogellRoot job scripts
+                // A malformed sequence (leading/trailing/doubled separator) must
+                // fail NAMED, not as an opaque parse error on an empty pipeline.
+                let malformed =
+                    List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace
+
+                let jenkinsRuns, fogellRuns =
+                    if malformed then
+                        let e = Result.Error "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                        scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
+                    else
+                        Jenkins.runMany cfg envReplacements job scripts,
+                        FogellSide.runMany envReplacements fogellRoot job scripts
+
                 let solo = List.length scripts = 1
 
                 List.zip jenkinsRuns fogellRuns
@@ -181,8 +192,14 @@ let main argv =
                     let caseName =
                         if solo then
                             name
-                        else
+                        // suffix INSERTED before the extension so each build's
+                        // receipt path is distinct even for a file that does not
+                        // end in .Jenkinsfile (Replace would then no-op and every
+                        // build would seal over the same receipt)
+                        elif name.EndsWith ".Jenkinsfile" then
                             name.Replace(".Jenkinsfile", $".b{bi + 1}.Jenkinsfile")
+                        else
+                            $"{name}.b{bi + 1}"
 
                     let r = Compare.receipt caseName core envReplacements jenkins fogell
                     let path = Compare.seal receiptDir r
