@@ -1,7 +1,7 @@
-# Differential receipt — parallel-failfast.Jenkinsfile
+# Differential receipt — stash-not-carried.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         608321a51ee944fa30de8260b4ac8ad878c382c9bfde256598cc30dcc7e235e1
+seal:         13716e8f0733d8d074de56c5681f35eac7f32aac72e2a19ba0ddc587d7e533b6
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -45,42 +45,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
   result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + sleep 1
-    | + echo started
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  workspace-hash: 3b23c38d46f6330b34c6e689afcab2dd04b8ae6ae53b3bbaab9bb77be02cca42
+  output (0 lines):
   workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    d4e4877bac97  stashed.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + sleep 1
-    | + echo started
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  workspace-hash: 3b23c38d46f6330b34c6e689afcab2dd04b8ae6ae53b3bbaab9bb77be02cca42
+  output (0 lines):
   workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    d4e4877bac97  stashed.txt

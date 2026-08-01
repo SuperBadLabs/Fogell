@@ -186,15 +186,15 @@ module Jenkins =
                 scripts
                 |> List.fold
                     (fun (acc, halted) script ->
-                        if halted then
-                            (Error "a prior build in this sequence failed to run" :: acc, true)
-                        else
+                        match halted with
+                        | Some why -> (Error $"sequence halted: {why}" :: acc, halted)
+                        | None ->
                             let r = runOne (List.length acc + 1) script
 
                             match r with
-                            | Ok _ -> (r :: acc, false)
-                            | Error _ -> (r :: acc, true))
-                    ([], false)
+                            | Ok _ -> (r :: acc, None)
+                            | Error why -> (r :: acc, Some $"a prior build failed to run ({why})"))
+                    ([], None)
                 |> fun (acc, _) -> List.rev acc
 
             // Best-effort cleanup AFTER the evidence is safe: a delete failure

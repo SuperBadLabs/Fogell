@@ -166,7 +166,8 @@ module FogellSide =
                       ArtifactRoot = artifactRoot
                       JobName = jobName
                       Credentials = credentialStore
-                      PreviousBuild = previousBuild }
+                      PreviousBuild = previousBuild
+                      BuildNumber = buildNumber }
 
             let root =
                 { Interrupt = None

@@ -143,6 +143,11 @@ let main argv =
         let buildSeparator =
             Text.RegularExpressions.Regex(@"(?m)^//// NEXT BUILD ////\s*$")
 
+        // A synthesized sequence name is also a VALID input filename, so two
+        // sources can map to one receipt path. Silent overwrite would count both
+        // while keeping one; a collision is a configuration error, said so.
+        let sealedPaths = System.Collections.Generic.HashSet<string>()
+
         let receipts =
             files
             |> List.collect (fun file ->
@@ -192,17 +197,21 @@ let main argv =
                     let caseName =
                         if solo then
                             name
-                        // suffix INSERTED before the extension so each build's
-                        // receipt path is distinct even for a file that does not
-                        // end in .Jenkinsfile (Replace would then no-op and every
-                        // build would seal over the same receipt)
-                        elif name.EndsWith ".Jenkinsfile" then
-                            name.Replace(".Jenkinsfile", $".b{bi + 1}.Jenkinsfile")
                         else
-                            $"{name}.b{bi + 1}"
+                            // suffix inserted before the FINAL extension (never
+                            // string-Replace, which rewrites every occurrence and
+                            // no-ops on other extensions, sealing N builds over
+                            // one receipt)
+                            let stem = Path.GetFileNameWithoutExtension name
+                            let ext = Path.GetExtension name
+                            $"{stem}.b{bi + 1}{ext}"
 
                     let r = Compare.receipt caseName core envReplacements jenkins fogell
                     let path = Compare.seal receiptDir r
+
+                    if not (sealedPaths.Add path) then
+                        failwith
+                            $"receipt path collision: {path} was already sealed this run — a sequence's synthesized .b<N> name and a real case file resolve to the same receipt"
 
                     let workspaceCompared =
                         match r.Jenkins, r.Fogell with
