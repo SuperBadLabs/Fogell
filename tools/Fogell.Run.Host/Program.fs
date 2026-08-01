@@ -263,6 +263,9 @@ let main argv =
         if resuming then
             printfn "resuming: one recovery event for this build"
 
+            printfn
+                "note: build-scoped Groovy bindings assigned by skipped steps are NOT restored (step outcomes are journaled, interpreter state is not) — a later step referencing one fails by name"
+
         use journal = Journal.openAt journalPath EveryStep
 
         // first attempt records what definition this journal belongs to

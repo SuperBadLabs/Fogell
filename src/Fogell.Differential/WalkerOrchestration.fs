@@ -11,6 +11,16 @@ open Fogell.Ir
 /// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
 /// stated rather than implied. None (the differential path) journals nothing.
 ///
+/// STATED LIMIT: build-scoped Groovy BINDINGS assigned by a durably finished
+/// step are NOT restored on resume. Jenkins serialises its whole CPS
+/// continuation and keeps them (receipt `gstring-binding-across-steps`); this
+/// journal records step OUTCOMES, not interpreter state, so a resumed attempt
+/// starts with a fresh ScriptBinding. A later step referencing such a variable
+/// therefore FAILS BY NAME (strict-vars raises MissingProperty) rather than
+/// resolving to something else — fail-visible, never silently different.
+/// Closing it means durably serialising interpreter values, which is its own
+/// ticket; the host warns on every resume so the operator is not surprised.
+///
 /// STATED LIMIT: `post` steps are NOT journaled and re-run on every resume —
 /// at-least-once for post effects. Closing that needs post-scoped keys and a
 /// re-selection story (the arms select against a status resume must
