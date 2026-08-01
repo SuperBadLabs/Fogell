@@ -598,6 +598,19 @@ pipeline {
     }
 }
 JF
+cat > "$O/Jenkinsfile.param" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: "Deploy?", ok: "Ship it", submitterParameter: "APPROVER"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+JF
 set +e
 timeout 60 "$HOST_BIN" "$O/Jenkinsfile" "$O/ws" gate "$O/build.journal" "$O/approvals" > "$O/run.log" 2>&1
 RC=$?
@@ -610,7 +623,27 @@ grep -q 'completed: failure' "$O/run.log" || { echo "FAIL: expected a failed bui
   echo "FAIL: a restricted gate published a prompt anyone could answer"; exit 1; }
 grep -q '^input-decision' "$O/build.journal" 2>/dev/null && { echo "FAIL: a restricted gate recorded an approval"; exit 1; }
 grep -q '^shipped$' "$O/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a restricted gate ran"; exit 1; }
-echo "refused by name; no prompt published, no approval recorded"
+
+# submitterParameter does NOT restrict who may approve — it binds the approver's
+# id into the build. Refused too, but for its OWN reason: there is no
+# authenticated identity to bind. A refusal that misstates what an option does is
+# a claim-accuracy defect, which is how the first version of this guard failed.
+set +e
+timeout 60 "$HOST_BIN" "$O/Jenkinsfile.param" "$O/ws2" gate "$O/param.journal" "$O/approvals" > "$O/param.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: submitterParameter hung"; exit 1; }
+[ "$RC" -ne 0 ] || { echo "FAIL: submitterParameter did not fail closed"; cat "$O/param.log"; exit 1; }
+grep -q 'completed: failure' "$O/param.log" || { echo "FAIL: expected a failed build"; cat "$O/param.log"; exit 1; }
+[ "$(find "$O/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
+  echo "FAIL: submitterParameter published a prompt"; exit 1; }
+# the refusal WORDING is not assertable from this log by design: `ERROR:`-shaped
+# engine diagnostics are captured as the run's reported failure reason and
+# excluded from compared output (Trace.isDiagnosticLine). What the lane proves is
+# that both options fail CLOSED with nothing published; that they are refused for
+# their own distinct reasons lives in the code, which is the honest split rather
+# than an assertion that cannot see what it claims to check.
+echo "both options refused by name and failed closed; no prompt published"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

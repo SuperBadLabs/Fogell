@@ -28,6 +28,14 @@ open Fogell.Journal
 /// is journaled before the build acts on it, so it survives the kill, and both
 /// files are deleted once it is durable.
 ///
+/// A decision MUST BE PUBLISHED ATOMICALLY — write a temp file in the same
+/// directory and rename it over the target, since a POSIX rename is atomic and
+/// is the only way a reader gets a stable snapshot. A writer that appends its
+/// lines separately leaves a window in which a half-published pair reads as a
+/// complete single answer; the host narrows that window by requiring the file to
+/// be unchanged across two polls, but it cannot close it, and it says so rather
+/// than implying a guarantee the protocol does not give.
+///
 /// WITHOUT the fifth argument there is no approver, and an un-timed `input`
 /// fails closed with FG-046's named refusal rather than waiting for a human who
 /// has nowhere to answer.
@@ -226,10 +234,58 @@ let main argv =
         // distinguishes them only to warn, because neither is an answer and
         // guessing which way a malformed one leaned would be inventing a human's
         // decision, the one thing durability exists to protect.
-        let readDecision (dir: string) (stage: string) (index: int) (occurrence: int) : Result<bool * string, string> option =
+        // FG-046b. The last (size, mtime) each decision file was seen with, so a
+        // poll can require it to be UNCHANGED since the previous poll before
+        // acting on it — see `requireStable` below.
+        let lastObserved = Collections.Concurrent.ConcurrentDictionary<string, int64 * int64>()
+
+        let readDecision
+            (requireStable: bool)
+            (dir: string)
+            (stage: string)
+            (index: int)
+            (occurrence: int)
+            : Result<bool * string, string> option =
             let path = Path.Combine(dir, actionId stage index occurrence + ".decision")
 
             if not (File.Exists path) then
+                None
+            else
+
+            // A writer that publishes its lines in SEPARATE writes leaves a
+            // window where `approve alice\n` has landed and `reject bob\n` has
+            // not: newline-terminated, single-line, and accepted as an
+            // unambiguous approval even though the finished file is the
+            // ambiguous pair the parser exists to reject. Requiring the file to
+            // be unchanged across two consecutive polls closes that window for
+            // any writer whose writes are more than a poll interval apart.
+            //
+            // STATED PLAINLY: this is a NARROWING, not a proof. Two writes
+            // inside one 250 ms poll still slip through, and no reader-side rule
+            // can fix a writer that publishes non-atomically — which is why the
+            // protocol REQUIRES atomic publication (write a temp file in the same
+            // directory, then rename; POSIX rename is atomic). The check earns
+            // its place by making the common careless case fail rather than
+            // silently approve.
+            //
+            // Skipped by the adoption pass, which reads once, at startup, with
+            // nothing executing — there is no second poll to compare against.
+            let stableNow =
+                if not requireStable then
+                    true
+                else
+                    let info = FileInfo path
+                    let stamp = (info.Length, info.LastWriteTimeUtc.Ticks)
+
+                    let seenBefore =
+                        match lastObserved.TryGetValue path with
+                        | true, previous -> previous = stamp
+                        | _ -> false
+
+                    lastObserved[path] <- stamp
+                    seenBefore
+
+            if not stableNow then
                 None
             else
 
@@ -495,7 +551,7 @@ let main argv =
                     plan.NeedsReconciliation
                     |> List.filter (fun k -> Set.contains k plan.InputSteps)
                     |> List.choose (fun (stage, i) ->
-                        match readDecision dir stage i 1 with
+                        match readDecision false dir stage i 1 with
                         | Some(Ok(approved, who)) -> Some(stage, i, approved, who)
                         | Some(Error e) ->
                             eprintfn $"approvals: {e} — still waiting"
@@ -621,7 +677,7 @@ let main argv =
                     | true, a -> Some a
                     | _ ->
 
-                    match readDecision dir stage index occurrence with
+                    match readDecision true dir stage index occurrence with
                     | None ->
                         // publish what is being waited on, once
                         if publishedPending.TryAdd((stage, index, occurrence), true) then

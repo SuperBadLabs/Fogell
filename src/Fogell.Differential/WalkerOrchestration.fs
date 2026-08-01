@@ -973,14 +973,32 @@ module WalkerOrchestration =
                 // otherwise be accepted — an unattended `timeout` run reaches its
                 // deadline exactly as it does on Jenkins for anyone unauthorised,
                 // so that path is left alone.
-                let restrictedTo =
+                // Two DIFFERENT options, refused for two different reasons — the
+                // first version of this guard lumped them together and refused a
+                // pipeline Jenkins allows. `submitter` RESTRICTS who may approve.
+                // `submitterParameter` does not restrict anything: it names the
+                // variable that receives the approving user's id. Both are
+                // refused here, but a refusal that misstates what an option does
+                // is a claim-accuracy defect in its own right.
+                let unsupportedOption =
                     step.Named
                     |> List.tryPick (fun (k, _) ->
-                        if k = "submitter" || k = "submitterParameter" then Some k else None)
+                        if k = "submitter" then
+                            Some(
+                                k,
+                                "restricts approval to named users and this engine cannot authenticate a submitter — the approval protocol takes a self-declared name, so honouring the restriction would widen it to anyone who can answer"
+                            )
+                        elif k = "submitterParameter" then
+                            Some(
+                                k,
+                                "binds the approving user's id into the build and this engine has no authenticated identity to bind — a self-declared name recorded as one would be a lie the pipeline goes on to use"
+                            )
+                        else
+                            None)
 
-                match approver, restrictedTo with
-                | Some _, Some option ->
-                    emit $"ERROR: input restricts approval with `{option}` and this engine cannot authenticate a submitter; it will not accept an unauthenticated approval"
+                match approver, unsupportedOption with
+                | Some _, Some(option, why) ->
+                    emit $"ERROR: input `{option}` {why}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 | _ ->
@@ -1090,7 +1108,16 @@ module WalkerOrchestration =
                     // an inbox showing both is an invitation to answer the dead
                     // one. An answered prompt needs no withdrawal — the approver
                     // consumed it when it recorded the answer.
-                    | None when approverFaulted -> withdraw ()
+                    // NOT withdrawn on a fault, deliberately. The approver can
+                    // fault AFTER reading a valid answer — a journal append or
+                    // fsync throwing — and withdrawal deletes the decision file,
+                    // which at that instant holds the human's only answer, not
+                    // yet durable anywhere. Destroying it to tidy up is the exact
+                    // loss this ticket exists to prevent. The build fails closed;
+                    // the answer stays for a later attempt to adopt, and the
+                    // stale marker is swept when the build reaches a terminal
+                    // record.
+                    | None when approverFaulted -> ()
                     | None ->
                         withdraw ()
                         applyCancellation ctx "input" deadline outcome
