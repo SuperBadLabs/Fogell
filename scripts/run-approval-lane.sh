@@ -88,7 +88,7 @@ cleanup() {
   # it and the explicit kill, it outlives the test and keeps rewriting a retained
   # directory — leaking a process and poisoning later runs, which is exactly how
   # an orphaned host process failed a lane earlier in this session.
-  [ -n "${CHURN:-}" ] && kill -9 "$CHURN" 2>/dev/null || true
+  [ -n "${CHURN:-}" ] && { kill -9 "$CHURN" 2>/dev/null; CHURN=""; } || true
   [ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2
 }
 trap cleanup EXIT
@@ -997,6 +997,11 @@ timeout 120 "$HOST_BIN" "$V/Jenkinsfile" "$V/ws" gate "$V/build.journal" "$V/app
 RC=$?
 set -e
 kill "$CHURN" 2>/dev/null; wait "$CHURN" 2>/dev/null || true
+# CLEARED, because the trap kills whatever this holds at EXIT and the pid has
+# just been reaped — the kernel is free to hand that number to something else,
+# and this lane spawns enough processes to make that a real possibility rather
+# than a theoretical one. A stale pid in a kill list is a loaded gun.
+CHURN=""
 [ "$RC" -ne 124 ] || { echo "FAIL: the churning adoption hung"; exit 1; }
 [ "$RC" -eq 3 ] || { echo "FAIL: a still-changing decision file was adopted (exit $RC)"; cat "$V/run2.log"; exit 1; }
 grep -q '^input-decision' "$V/build.journal" && {
