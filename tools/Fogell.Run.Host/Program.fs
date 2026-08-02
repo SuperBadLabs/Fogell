@@ -558,7 +558,7 @@ let main argv =
                     // next attempt, under a deadline that starts fresh. Refused
                     // instead: the operator decides. See FG-046c.
                     |> List.filter (fun (stage, i) ->
-                        if Set.contains (stage, i, 1) plan.BoundedPrompts then
+                        if Set.contains (stage, i, 1) plan.CancellablePrompts then
                             eprintfn $"approvals: {stage}#{i} was waiting under a deadline; an answer given while nothing was running cannot be shown to have beaten it, so it is not adopted"
                             false
                         else
@@ -680,12 +680,6 @@ let main argv =
         // FG-046b: the bounded marker is journaled once per prompt, on its first
         // poll — the walker knows the deadline, the host only learns of it here
         let notedBounded = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
-        // and which answers this process actually wrote PROVISIONALLY, so a
-        // promotion only ever promotes something provisional. An answer served
-        // from the journal seed is already actionable; committing it again
-        // appended a second, identical decision — harmless to read back, but a
-        // journal that repeats itself costs an incident reader time.
-        let awaitingPromotion = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
         let warnedAbout = Collections.Concurrent.ConcurrentDictionary<string, bool>()
 
         // `None` when no inbox was given: there is then no approver at all, and
@@ -694,12 +688,12 @@ let main argv =
         let pollInputAnswer =
             approvalsDir
             |> Option.map (fun dir ->
-                fun (stage: string) (index: int) (occurrence: int) (bounded: bool) (prompt: string) ->
+                fun (stage: string) (index: int) (occurrence: int) (cancellable: bool) (prompt: string) ->
                     // recorded BEFORE any answer can be read for it, so a crash
                     // can never leave an adoptable answer for a gate the journal
                     // does not say was bounded
-                    if bounded && notedBounded.TryAdd((stage, index, occurrence), true) then
-                        journal.Append(InputPromptBounded(stage, index, occurrence))
+                    if cancellable && notedBounded.TryAdd((stage, index, occurrence), true) then
+                        journal.Append(InputPromptCancellable(stage, index, occurrence))
                         journal.Sync()
 
                     match answered.TryGetValue((stage, index, occurrence)) with
@@ -757,8 +751,10 @@ let main argv =
                         // rules on eligibility afterwards and promotes it (see
                         // CommitInputAnswer). Unbounded prompts cannot receive a
                         // late answer, so theirs is actionable immediately.
-                        if bounded then
-                            awaitingPromotion[(stage, index, occurrence)] <- true
+                        // a cancellable prompt's answer is NEVER promoted — see
+                        // Record.InputPromptCancellable for why no ordering of
+                        // check and write can make it safe to replay
+                        if cancellable then
                             journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
                         else
                             journal.Append(InputDecision(stage, index, occurrence, approved, who))
@@ -804,26 +800,6 @@ let main argv =
                     // both files: the prompt is gone, and an answer left for it
                     // is an answer to a question nobody is asking any more
                     approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ)
-              CommitInputAnswer =
-                fun stage i occ ->
-                    // Only what this process wrote provisionally. The answer is
-                    // in the cache either way — the poll puts it there — but a
-                    // seeded one arrived from the journal ALREADY actionable, and
-                    // promoting it again just appends a duplicate.
-                    match awaitingPromotion.TryRemove((stage, i, occ)) with
-                    | false, _ -> ()
-                    | true, _ ->
-
-                    match answered.TryGetValue((stage, i, occ)) with
-                    | true, a ->
-                        let approved, who =
-                            match a with
-                            | InputApproved w -> true, w
-                            | InputRejected w -> false, w
-
-                        journal.Append(InputDecision(stage, i, occ, approved, who))
-                        journal.Sync()
-                    | _ -> ()
               OnInputAnswerVoided =
                 fun stage i occ ->
                     // durable FIRST — the caller applies the cancellation the

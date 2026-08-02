@@ -88,19 +88,24 @@ type Record =
     /// rules on it against the deadline, and only then is it promoted to an
     /// actionable [InputDecision]. An UNBOUNDED prompt skips all of this: with no
     /// deadline an answer cannot be late, so it is actionable when written.
-    /// FG-046b. This prompt was waiting under a DEADLINE. Written the first time
-    /// a bounded prompt polls, so a later attempt can tell that the gate had a
-    /// safety bound on it — which the journal otherwise does not say.
+    /// FG-046b. This prompt could be CANCELLED while it waited — it had a
+    /// deadline, or a failFast sibling that could interrupt it. Written the
+    /// first time such a prompt polls, because the journal otherwise cannot tell
+    /// a gate that could expire from one that could only ever be answered.
     ///
-    /// It exists for the OFFLINE answer: a host killed while a bounded prompt is
-    /// pending, an answer written to the inbox afterwards, and startup adopting
-    /// it as actionable. The resumed walker then builds a FRESH deadline and
-    /// honours it immediately, so an answer that arrived long after the original
-    /// bound expired opens the gate anyway. Eligibility cannot be established
-    /// after the fact — the original deadline died with the attempt that set it
-    /// (see FG-046c) — so a bounded prompt is simply not adoptable, and this
-    /// record is how startup knows.
-    | InputPromptBounded of stage: string * stepIndex: int * occurrence: int
+    /// An answer to a cancellable prompt is actionable ONLY inside the attempt
+    /// that read it, and this record is what enforces that afterwards. The
+    /// reason is not a missing check, it is arithmetic: eligibility depends on
+    /// TIME, making an answer actionable is a durable write, and time passes
+    /// during the write. Check-then-write and write-then-check both leave a
+    /// window, and so does voiding afterwards — that chase produced four
+    /// findings before the shape became clear. So a cancellable prompt's answer
+    /// is never promoted at all: it stays [InputAnswerProvisional] for the audit
+    /// trail, no later attempt may act on it, and adoption refuses it. Closing
+    /// that honestly needs an ABSOLUTE deadline on record so a resumed attempt
+    /// can re-judge eligibility itself — FG-046c, which starts with a
+    /// measurement.
+    | InputPromptCancellable of stage: string * stepIndex: int * occurrence: int
     | InputAnswerProvisional of
         stage: string *
         stepIndex: int *
@@ -139,7 +144,7 @@ module Record =
             let verdict = if approved then "approved" else "rejected"
             $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
         | InputDecisionVoided(stage, i, occurrence) -> $"input-decision-voided\t{oneLine stage}\t{i}\t{occurrence}"
-        | InputPromptBounded(stage, i, occurrence) -> $"input-prompt-bounded\t{oneLine stage}\t{i}\t{occurrence}"
+        | InputPromptCancellable(stage, i, occurrence) -> $"input-prompt-cancellable\t{oneLine stage}\t{i}\t{occurrence}"
         | InputAnswerProvisional(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
             $"input-answer-provisional\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
@@ -163,9 +168,9 @@ module Record =
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with
             | (true, idx), (true, occ) -> Some(InputDecisionVoided(stage, idx, occ))
             | _ -> None
-        | [| "input-prompt-bounded"; stage; i; occurrence |] ->
+        | [| "input-prompt-cancellable"; stage; i; occurrence |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with
-            | (true, idx), (true, occ) -> Some(InputPromptBounded(stage, idx, occ))
+            | (true, idx), (true, occ) -> Some(InputPromptCancellable(stage, idx, occ))
             | _ -> None
         | [| "input-answer-provisional"; stage; i; occurrence; verdict; who |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with

@@ -92,10 +92,13 @@ type PersistenceHooks =
       /// alone. The measurement is `scripts/probe-input.bb` against
       /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
       /// `scripts/run-approval-lane.sh`, which runs in the gate.
-      /// The `bounded` flag says this prompt has a DEADLINE, so an answer must
-      /// not become actionable until the caller has ruled it eligible — see
-      /// CommitInputAnswer. An unbounded prompt cannot receive a late answer, so
-      /// its answer is actionable the moment it is durable.
+      /// The `cancellable` flag says this prompt can be STOPPED while it waits —
+      /// a deadline, or a failFast sibling. Its answer must never become
+      /// actionable beyond the attempt that read it: eligibility depends on time,
+      /// making an answer actionable is a durable write, and time passes during
+      /// the write, so no ordering of check and write closes the gap. A prompt
+      /// that cannot be cancelled has no such question and its answer is
+      /// actionable the moment it is durable.
       PollInputAnswer: (string -> int -> int -> bool -> string -> InputAnswer option) option
       /// FG-046b. stage -> stepIndex -> occurrence -> this prompt has stopped
       /// waiting WITHOUT an answer (a deadline, a failFast sibling, a faulted
@@ -115,11 +118,7 @@ type PersistenceHooks =
       /// recorded lets a resumed attempt — with a fresh deadline — honour it and
       /// walk through the gate the timeout had already closed.
       OnInputAnswerVoided: string -> int -> int -> unit
-      /// FG-046b. stage -> stepIndex -> occurrence -> the answer read for this
-      /// BOUNDED prompt beat its deadline and may now be acted on. Makes it
-      /// durably actionable, and must return before the caller proceeds past the
-      /// gate: that ordering is what makes an approval survive a crash at all.
-      CommitInputAnswer: string -> int -> int -> unit }
+      }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -975,7 +974,14 @@ module WalkerOrchestration =
 
                             // BOUNDED: an answer to a deadlined prompt stays
                             // provisional until the recheck below rules on it
-                            let bounded = deadline.IsSome
+                            // CANCELLABLE covers both ways this prompt can be
+                            // stopped while it waits. A deadline was the obvious
+                            // one; a failFast SIBLING is the other, and treating
+                            // only the deadline as cancellable left an unbounded
+                            // prompt in a failFast branch writing an immediately
+                            // actionable answer that a crash could replay after
+                            // the sibling had already failed.
+                            let cancellable = deadline.IsSome || ctx.Interrupt.IsSome
 
                             // MASKED before it leaves the engine. The console
                             // copy is masked by Emit; this one is written to a
@@ -984,10 +990,9 @@ module WalkerOrchestration =
                             // is not output. Same run-scoped set either way.
                             let publishedPrompt = runCtx.MaskSecrets renderedMessage
 
-                            (fun () -> poll stageKey stepIndex occurrence bounded publishedPrompt),
+                            (fun () -> poll stageKey stepIndex occurrence cancellable publishedPrompt),
                             (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence),
-                            (fun () -> hooks.OnInputAnswerVoided stageKey stepIndex occurrence),
-                            (fun () -> hooks.CommitInputAnswer stageKey stepIndex occurrence))
+                            (fun () -> hooks.OnInputAnswerVoided stageKey stepIndex occurrence))
                     | _ -> None
 
                 // FG-046b (Codex P1). `submitter: 'release-team'` restricts WHO may
@@ -1037,7 +1042,7 @@ module WalkerOrchestration =
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some(poll, withdraw, voidAnswer, commitAnswer), _ ->
+                | Some(poll, withdraw, voidAnswer), _ ->
                     // Wait for the answer, the deadline, or a failFast sibling —
                     // whichever comes first. With no deadline this waits
                     // indefinitely, which is what Jenkins does and what an
@@ -1100,20 +1105,18 @@ module WalkerOrchestration =
                                 // and a `timeout` still wins its ties.
                                 match cancellationOf ctx deadline with
                                 | Cancellation.Running ->
-                                    // PROMOTED here, and only here. For a bounded
-                                    // prompt the poll wrote the answer
-                                    // provisionally, because eligibility cannot be
-                                    // decided before the write — the inbox read,
-                                    // the append and the fsync can all straddle
-                                    // the deadline, and an answer written as
-                                    // actionable and voided afterwards leaves a
-                                    // crash window in which the expired gate opens
-                                    // on resume. This ruling closes it: nothing is
-                                    // actionable until the deadline has been
-                                    // checked AFTER the write, and the promotion
-                                    // is durable before the build moves on.
-                                    if deadline.IsSome then commitAnswer ()
-
+                                    // ACCEPTED for THIS attempt, and nothing is
+                                    // written to make it actionable for another
+                                    // one. Promotion used to happen here, and a
+                                    // promotion is itself a durable write that can
+                                    // straddle the very deadline it rules on —
+                                    // rechecking after it only moves the window,
+                                    // which is the chase that produced four
+                                    // findings. A cancellable prompt's answer
+                                    // stays provisional in the journal: usable
+                                    // now, never replayable later. FG-046c is what
+                                    // would restore the resume, by recording an
+                                    // ABSOLUTE deadline a later attempt can judge.
                                     answer <- Some a
                                 | c ->
                                     // VOIDED durably before the cancellation is

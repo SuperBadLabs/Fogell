@@ -49,9 +49,10 @@
 #      enforcing a restriction on a self-declared name is theatre;
 #   P. an answer refused for arriving LATE is durably voided, so a crash cannot
 #      replay it into a resumed attempt under a fresh deadline;
-#   Q. and a DEADLINE-BOUND answer is only provisional until the walker rules on
-#      it, because the write itself can straddle the deadline — a crash before
-#      the ruling must leave nothing actionable;
+#   Q. a CANCELLABLE prompt's answer (deadline, or a failFast sibling) is
+#      provisional and STAYS provisional — usable in the attempt that read it,
+#      never replayable by another, because promotion is itself a durable write
+#      that can straddle the deadline it rules on;
 #   R. an OFFLINE answer to a bounded gate — written while no host was running —
 #      is not adopted at all: its eligibility cannot be established against a
 #      deadline that died with the attempt that set it (FG-046c);
@@ -410,8 +411,16 @@ set +e; wait "$PID"; RC=$?; set -e
 grep -q 'completed: aborted' "$H/run.log" || { echo "FAIL: the second gate's rejection did not abort"; cat "$H/run.log"; exit 1; }
 grep -q '^app$' "$H/ws/gate/markers.txt" || { echo "FAIL: the step past the FIRST gate did not run"; exit 1; }
 grep -q '^db$' "$H/ws/gate/markers.txt" && { echo "FAIL: the step past a REJECTED gate ran"; exit 1; }
+# these prompts sit inside a `timeout`, so they are CANCELLABLE and their
+# answers stay provisional — two of them, one per occurrence, separately answered
+[ "$(grep -c '^input-answer-provisional' "$H/build.journal")" -eq 2 ] || {
+  echo "FAIL: expected one recorded answer per gate"; sed 's/^/  | /' "$H/build.journal"; exit 1; }
+grep -q $'^input-answer-provisional\tGate\t0\t1\tapproved\theidi$' "$H/build.journal" || {
+  echo "FAIL: the first gate's approval is not recorded against occurrence 1"; exit 1; }
+grep -q $'^input-answer-provisional\tGate\t0\t2\trejected\theidi$' "$H/build.journal" || {
+  echo "FAIL: the second gate's rejection is not recorded against occurrence 2"; exit 1; }
 echo "two prompts, two ids, two answers; journal:"
-rg '^input-decision' "$H/build.journal" | sed 's/^/  | /'
+rg '^input-(answer|prompt)' "$H/build.journal" | sed 's/^/  | /'
 
 # ---------------------------------------------------------------- scenario J
 echo "=== J: an unwritable inbox fails the build, it does not ship unapproved ==="
@@ -737,17 +746,17 @@ QID=$(await_pending "$Q/approvals") || { echo "FAIL: no prompt published"; cat "
 printf 'approve quinn\n' > "$Q/approvals/$QID.decision"
 set +e; wait "$PID"; set -e
 grep -q 'completed: success' "$Q/run1.log" || { echo "FAIL: the bounded prompt did not complete"; cat "$Q/run1.log"; exit 1; }
-# the answer went through BOTH states: written provisionally, then promoted
+# the answer is provisional and STAYS provisional: usable in the attempt that
+# read it, never actionable for another one
 grep -q $'^input-answer-provisional\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {
-  echo "FAIL: a bounded prompt did not record its answer provisionally"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
-grep -q $'^input-decision\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {
-  echo "FAIL: the eligible answer was never promoted"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
+  echo "FAIL: a cancellable prompt did not record its answer provisionally"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
+grep -q '^input-decision' "$Q/build.journal" && {
+  echo "FAIL: a cancellable prompt's answer was made actionable"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
 
-# the crash state: provisional written, nothing promoted. Resume must NOT act.
+# and the crash state — everything after the answer stripped — must not act
 grep -vP '^(build-finished|stage-committed)\t' "$Q/build.journal" \
   | grep -vP '^step-(started|finished)\tGate\t2\t' \
-  | grep -vP '^step-finished\tGate\t1\t' \
-  | grep -vP '^input-decision\t' > "$Q/provisional.journal"
+  | grep -vP '^step-finished\tGate\t1\t' > "$Q/provisional.journal"
 grep -q '^input-answer-provisional' "$Q/provisional.journal" || { echo "FAIL: the rewind dropped the provisional"; exit 1; }
 set +e
 timeout 120 "$HOST_BIN" "$Q/Jenkinsfile" "$Q/ws" gate "$Q/provisional.journal" "$Q/approvals" > "$Q/run2.log" 2>&1
@@ -757,7 +766,7 @@ set -e
 [ "$RC" -eq 3 ] || { echo "FAIL: a provisional answer was actionable (exit $RC)"; cat "$Q/run2.log"; exit 1; }
 grep -q 'needs-reconciliation: Gate#1' "$Q/run2.log" || {
   echo "FAIL: the provisional input was not sent for reconciliation"; cat "$Q/run2.log"; exit 1; }
-echo "written provisionally, promoted when eligible; the un-promoted state refuses"
+echo "provisional only, never actionable; the crash state refuses"
 
 # ---------------------------------------------------------------- scenario R
 echo "=== R: an OFFLINE answer to a bounded gate is not adopted ==="
@@ -784,8 +793,8 @@ JF
 PID=$!
 RID=$(await_pending "$R/approvals") || { echo "FAIL: no prompt published"; cat "$R/run1.log"; exit 1; }
 kill -9 "$PID"; wait "$PID" 2>/dev/null || true
-grep -q $'^input-prompt-bounded\tGate\t1\t1$' "$R/build.journal" || {
-  echo "FAIL: the bounded prompt was not recorded as bounded"; sed 's/^/  | /' "$R/build.journal"; exit 1; }
+grep -q $'^input-prompt-cancellable\tGate\t1\t1$' "$R/build.journal" || {
+  echo "FAIL: the cancellable prompt was not recorded as cancellable"; sed 's/^/  | /' "$R/build.journal"; exit 1; }
 # the answer arrives with nothing running — an offline approval
 printf 'approve rita\n' > "$R/approvals/$RID.decision"
 set +e
