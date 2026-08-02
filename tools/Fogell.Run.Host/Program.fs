@@ -680,6 +680,12 @@ let main argv =
         // FG-046b: the bounded marker is journaled once per prompt, on its first
         // poll — the walker knows the deadline, the host only learns of it here
         let notedBounded = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
+        // and which answers this process actually wrote PROVISIONALLY, so a
+        // promotion only ever promotes something provisional. An answer served
+        // from the journal seed is already actionable; committing it again
+        // appended a second, identical decision — harmless to read back, but a
+        // journal that repeats itself costs an incident reader time.
+        let awaitingPromotion = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
         let warnedAbout = Collections.Concurrent.ConcurrentDictionary<string, bool>()
 
         // `None` when no inbox was given: there is then no approver at all, and
@@ -752,6 +758,7 @@ let main argv =
                         // CommitInputAnswer). Unbounded prompts cannot receive a
                         // late answer, so theirs is actionable immediately.
                         if bounded then
+                            awaitingPromotion[(stage, index, occurrence)] <- true
                             journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
                         else
                             journal.Append(InputDecision(stage, index, occurrence, approved, who))
@@ -799,9 +806,14 @@ let main argv =
                     approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ)
               CommitInputAnswer =
                 fun stage i occ ->
-                    // the answer is already in this process's cache — the poll
-                    // put it there — so the promotion is a journal write, not a
-                    // re-read of an inbox file that has since been consumed
+                    // Only what this process wrote provisionally. The answer is
+                    // in the cache either way — the poll puts it there — but a
+                    // seeded one arrived from the journal ALREADY actionable, and
+                    // promoting it again just appends a duplicate.
+                    match awaitingPromotion.TryRemove((stage, i, occ)) with
+                    | false, _ -> ()
+                    | true, _ ->
+
                     match answered.TryGetValue((stage, i, occ)) with
                     | true, a ->
                         let approved, who =
