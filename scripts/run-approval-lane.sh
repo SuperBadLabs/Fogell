@@ -23,9 +23,11 @@
 #      by name instead of waiting forever for a human who cannot answer;
 #   F. neither a half-written answer nor an ambiguous two-line one is an answer
 #      (by either separator — a bare CR is a line break too);
-#   G. the same physical journal reached through a symlink alias resolves to the
-#      same action id, so an answer published under one spelling is found under
-#      the other instead of the human being asked again;
+#   G. the same physical journal reached through a symlink alias yields the same
+#      action id, so an answer published under one spelling is found under the
+#      other instead of the human being asked again. NOT because the path is
+#      resolved — that was the round-2 mechanism and it could never cover a hard
+#      link — but because the identity is CARRIED BY the journal (see I);
 #   H. two prompts inside one wrapper are two GATES: they share a durability key
 #      and must not share an answer;
 #   I. a HARD LINK to the journal is the same build — no path resolution can
@@ -302,6 +304,8 @@ echo "waited through the fragment AND the ambiguous pair, then took the complete
 
 # ---------------------------------------------------------------- scenario G
 echo "=== G: the same journal through a symlink alias finds the same answer ==="
+# the id comes from the `build-identity` record INSIDE the journal, so which name
+# was used to open it never enters the calculation
 G="$LANE/g"; mkdir -p "$G/approvals"
 printf '%s\n' "$JF" > "$G/Jenkinsfile"
 "$HOST_BIN" "$G/Jenkinsfile" "$G/ws" gate "$G/build.journal" "$G/approvals" > "$G/run1.log" 2>&1 &
@@ -319,7 +323,7 @@ grep -q 'needs-reconciliation' "$G/run2.log" && { echo "FAIL: an answered prompt
 grep -q 'completed: success' "$G/run2.log" || { echo "FAIL: aliased resume not successful"; cat "$G/run2.log"; exit 1; }
 grep -q $'^input-decision\tGate\t1\t1\tapproved\tgrace$' "$G/build.journal" || {
   echo "FAIL: the answer was not journaled under the alias"; sed 's/^/  | /' "$G/build.journal"; exit 1; }
-echo "the alias resolved to the same action id; nobody was asked twice"
+echo "same journal, same recorded identity, same action id; nobody was asked twice"
 
 echo "=== G2: a terminal journal sweeps a marker its build left behind ==="
 # the state a kill between the terminal record's sync and the in-process cleanup
