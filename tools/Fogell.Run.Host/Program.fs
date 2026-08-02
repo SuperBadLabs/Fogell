@@ -613,10 +613,22 @@ let main argv =
                     j.Sync()
                     j.Close()
 
+                    // durable NOW — and `journaledAnswers` was seeded from the
+                    // plan as it stood BEFORE this pass, so without saying so
+                    // `consumeAnswer` would keep the inbox copy of an answer it
+                    // just made durable, leaving it exposed in a directory the
+                    // design allows to be shared
                     for stage, i, _, _ in adopted do
+                        journaledAnswers[(stage, i, 1)] <- true
                         consumeAnswer dir stage i 1
 
-                    Resume.plan (Journal.read journalPath)
+                    let adoptedPlan = Resume.plan (Journal.read journalPath)
+                    // and re-seed wholesale, so any later path that learns to
+                    // append here inherits the rule instead of restating it
+                    for key in adoptedPlan.AnsweredKeys do
+                        journaledAnswers[key] <- true
+
+                    adoptedPlan
 
         if not (List.isEmpty plan.NeedsReconciliation) then
             let named =

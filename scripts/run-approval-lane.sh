@@ -172,6 +172,9 @@ grep -q '| Ship it or Abort' "$A/run3.log" || { echo "FAIL: the ok label was not
 grep -qiE '\| .*(approved|approval|alice)' "$A/run3.log" && { echo "FAIL: approval narrated something Jenkins does not"; exit 1; }
 grep -q $'^input-decision\tGate\t1\t1\tapproved\talice$' "$AJ" || { echo "FAIL: the answer was not journaled"; sed 's/^/  | /' "$AJ"; exit 1; }
 [ -f "$AINBOX/$ID.pending" ] && { echo "FAIL: an answered prompt is still listed as pending"; exit 1; }
+# and the ANSWER is consumed too: it is durable in the journal now, so leaving
+# the inbox copy exposes a human's decision in a directory that may be shared
+[ -f "$AINBOX/$ID.decision" ] && { echo "FAIL: a durable answer was left in the inbox"; exit 1; }
 [ "$(grep -c '^two$' "$AMARK")" -eq 1 ] || { echo "FAIL: the step after the prompt did not run exactly once"; exit 1; }
 [ "$(grep -c '^one$' "$AMARK")" -eq 1 ] || { echo "FAIL: the durable step before the prompt re-ran"; exit 1; }
 echo "answered, proceeded silently, journal:"
