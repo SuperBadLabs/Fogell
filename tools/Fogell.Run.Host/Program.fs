@@ -241,6 +241,12 @@ let main argv =
         // file still being written could be adopted as an answer.
         let lastObserved = Collections.Concurrent.ConcurrentDictionary<string, int64 * int64>()
 
+        // How long the one-shot adoption pass waits between its two observations.
+        // Named because it is part of a SAFETY rule, not a tuning knob: it must
+        // stay comfortably above the live loop's 250 ms poll so that a writer
+        // mid-burst is seen changing by both readers rather than only by one.
+        let adoptionSettleMs = 400
+
         let readDecision
             (dir: string)
             (stage: string)
@@ -289,17 +295,31 @@ let main argv =
             // The answer is not to exempt the one-shot caller but to make it
             // poll twice: adoption primes, waits, and reads again, so both paths
             // enforce the same rule.
+            // The stat can FAIL even though File.Exists just succeeded — the file
+            // can be withdrawn, replaced or made unreadable in between, and
+            // `FileInfo.Length` throws rather than returning a sentinel. An
+            // exception escaping here would fault the approver and fail the
+            // build over a file that merely went away. A vanished or unreadable
+            // file is simply not an answer, so it reads as "not stable yet" and
+            // the prompt keeps waiting.
+            let stamp =
+                try
+                    let info = FileInfo path
+                    Some(info.Length, info.LastWriteTimeUtc.Ticks)
+                with _ ->
+                    None
+
             let stableNow =
-                let info = FileInfo path
-                let stamp = (info.Length, info.LastWriteTimeUtc.Ticks)
+                match stamp with
+                | None -> false
+                | Some stamp ->
+                    let seenBefore =
+                        match lastObserved.TryGetValue path with
+                        | true, previous -> previous = stamp
+                        | _ -> false
 
-                let seenBefore =
-                    match lastObserved.TryGetValue path with
-                    | true, previous -> previous = stamp
-                    | _ -> false
-
-                lastObserved[path] <- stamp
-                seenBefore
+                    lastObserved[path] <- stamp
+                    seenBefore
 
             if not stableNow then
                 None
@@ -617,7 +637,7 @@ let main argv =
                     for stage, i in candidates do
                         readDecision dir stage i 1 |> ignore
 
-                    System.Threading.Thread.Sleep 400
+                    System.Threading.Thread.Sleep adoptionSettleMs
 
                 let adopted =
                     candidates
