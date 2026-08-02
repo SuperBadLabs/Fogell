@@ -746,14 +746,13 @@ let main argv =
                         // so appending after the fact would lose the human's
                         // answer to a kill in between and ask them again.
                         //
-                        // PROVISIONAL when the prompt is deadline-bound: this
-                        // write can itself straddle the deadline, so the walker
-                        // rules on eligibility afterwards and promotes it (see
-                        // CommitInputAnswer). Unbounded prompts cannot receive a
-                        // late answer, so theirs is actionable immediately.
-                        // a cancellable prompt's answer is NEVER promoted — see
+                        // PROVISIONAL when the prompt is CANCELLABLE — a deadline
+                        // or a failFast sibling — and it stays that way. There is
+                        // no promotion step to reach: see
                         // Record.InputPromptCancellable for why no ordering of
-                        // check and write can make it safe to replay
+                        // check and write can make such an answer safe to replay.
+                        // A prompt that cannot be cancelled has no eligibility
+                        // question, so its answer is actionable immediately.
                         if cancellable then
                             journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
                         else
