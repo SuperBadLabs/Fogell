@@ -63,7 +63,9 @@
 #      written — the console copy was masked while the file on disk was not;
 #   U. cleanup deletes a marker always but an ANSWER only when the journal
 #      records one, so an answer that never became durable survives a restart
-#      into the already-terminal path.
+#      into the already-terminal path;
+#   V. ADOPTION enforces the same stability rule as the live poll — a decision
+#      file still being written is not an answer, whichever path reads it.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -927,6 +929,83 @@ grep -q 'already-terminal' "$U/run2.log" || { echo "FAIL: expected already-termi
 # and the answered prompt's own files are gone, because that one IS durable
 [ -f "$U/approvals/$UID1.decision" ] && { echo "FAIL: a durable answer was left in the inbox"; exit 1; }
 echo "marker swept, unrecorded answer preserved, durable answer consumed"
+
+# ---------------------------------------------------------------- scenario V
+echo "=== V: adoption will not take a decision file that is still changing ==="
+# the adoption pass used to read the inbox ONCE, justified by "nothing is
+# executing at startup". Wrong actor: the operator or automation WRITING the
+# answer is not this process, and can be mid-write when the host starts. A
+# non-atomic writer's transient `approve alice` — which becomes the ambiguous
+# `approve alice/reject bob` pair the parser rejects — could be adopted as an
+# approval. Adoption now polls twice, like the live path.
+V="$LANE/v"; mkdir -p "$V/approvals"
+printf '%s\n' "$JF" > "$V/Jenkinsfile"
+"$HOST_BIN" "$V/Jenkinsfile" "$V/ws" gate "$V/build.journal" "$V/approvals" > "$V/run1.log" 2>&1 &
+PID=$!
+VID=$(await_pending "$V/approvals") || { echo "FAIL: no prompt published"; cat "$V/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+
+# A churning writer whose every state is a VALID answer. This shape is
+# deliberate and the first version of this scenario got it wrong: it alternated
+# valid and INVALID content, so the old one-read path could simply read during
+# the invalid half, refuse, and satisfy every assertion below WITHOUT the fix —
+# a test that passes while the thing it names is broken. Caught in review.
+#
+# With both states valid, the old path adopts whichever it reads and the build
+# SUCCEEDS; only the two-observation rule sees the mutation and refuses. The
+# assertions below therefore discriminate.
+# ATOMIC writes — temp file plus rename — and that is the third correction to
+# this one writer. Plain `>` TRUNCATES before writing, so the file passes through
+# a zero-length state; a one-read path reading during that window sees no answer,
+# refuses, and satisfies every assertion below without the fix. The reviewer did
+# not argue this, it measured it (seen_empty=1). With rename, every observable
+# state is a complete valid answer and MUTATION is the only signal left — which
+# is exactly what the two-observation rule is for.
+( while :; do
+    printf 'approve val\n' > "$V/approvals/.churn.tmp"
+    mv -f "$V/approvals/.churn.tmp" "$V/approvals/$VID.decision"
+    sleep 0.05
+    printf 'approve valerie\n' > "$V/approvals/.churn.tmp"
+    mv -f "$V/approvals/.churn.tmp" "$V/approvals/$VID.decision"
+    sleep 0.05
+  done ) &
+CHURN=$!
+
+# WAIT until the churn is genuinely under way: the file must exist AND have been
+# observed in two distinct states. Without this the host can start before the
+# writer has created anything, read no decision at all, and exit 3 for the wrong
+# reason — satisfying every assertion below without ever meeting an unstable
+# file. That is a second false-pass route in this one scenario, found in review
+# after the first was fixed.
+CHURN_A=""; CHURN_B=""
+for _ in $(seq 1 200); do
+  [ -f "$V/approvals/$VID.decision" ] || { sleep 0.05; continue; }
+  SZ=$(stat -c %s "$V/approvals/$VID.decision" 2>/dev/null || echo 0)
+  [ -z "$CHURN_A" ] && CHURN_A="$SZ"
+  if [ -n "$CHURN_A" ] && [ "$SZ" != "$CHURN_A" ]; then CHURN_B="$SZ"; break; fi
+  sleep 0.02
+done
+[ -n "$CHURN_B" ] || { kill "$CHURN" 2>/dev/null; echo "FAIL: the churning writer never produced two distinct states"; exit 1; }
+
+set +e
+timeout 120 "$HOST_BIN" "$V/Jenkinsfile" "$V/ws" gate "$V/build.journal" "$V/approvals" > "$V/run2.log" 2>&1
+RC=$?
+set -e
+kill "$CHURN" 2>/dev/null; wait "$CHURN" 2>/dev/null || true
+[ "$RC" -ne 124 ] || { echo "FAIL: the churning adoption hung"; exit 1; }
+[ "$RC" -eq 3 ] || { echo "FAIL: a still-changing decision file was adopted (exit $RC)"; cat "$V/run2.log"; exit 1; }
+grep -q '^input-decision' "$V/build.journal" && {
+  echo "FAIL: an unstable answer was journaled"; sed 's/^/  | /' "$V/build.journal"; exit 1; }
+
+# and once the writer stops, the same file IS adopted — the rule delays, it does
+# not refuse forever
+printf 'approve val\n' > "$V/approvals/$VID.decision"
+timeout 120 "$HOST_BIN" "$V/Jenkinsfile" "$V/ws" gate "$V/build.journal" "$V/approvals" > "$V/run3.log" 2>&1 || {
+  echo "FAIL: a settled answer was not adopted"; cat "$V/run3.log"; exit 1; }
+grep -q 'completed: success' "$V/run3.log" || { echo "FAIL: settled resume did not complete"; cat "$V/run3.log"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tval$' "$V/build.journal" || {
+  echo "FAIL: the settled answer was not journaled"; sed 's/^/  | /' "$V/build.journal"; exit 1; }
+echo "refused while changing, adopted once settled"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
