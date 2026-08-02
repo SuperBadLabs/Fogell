@@ -54,7 +54,10 @@
 #      the ruling must leave nothing actionable;
 #   R. an OFFLINE answer to a bounded gate — written while no host was running —
 #      is not adopted at all: its eligibility cannot be established against a
-#      deadline that died with the attempt that set it (FG-046c).
+#      deadline that died with the attempt that set it (FG-046c);
+#   S. a branch that FAULTS interrupts its failFast siblings — the signal comes
+#      from the branch, because the join awaits branches in order and would not
+#      even observe the fault in time.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -793,6 +796,49 @@ grep -q 'not adopted' "$R/run2.log" || { echo "FAIL: the refusal was not named";
 grep -q '^input-decision' "$R/build.journal" && { echo "FAIL: an actionable decision was recorded for a bounded gate"; exit 1; }
 grep -q '^two$' "$R/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step past the gate ran"; exit 1; }
 echo "bounded gate, offline answer: refused for reconciliation, nothing actionable recorded"
+
+# ---------------------------------------------------------------- scenario S
+echo "=== S: a FAULTING branch interrupts its failFast siblings ==="
+# the fault path skipped the epilogue that stamps and cancels, and the join
+# cannot stand in for it: the waiter awaits branches IN ORDER, so a fault in one
+# is not even observed while another is still running the very steps failFast
+# exists to interrupt.
+S="$LANE/s"; mkdir -p "$S"
+printf 'not a directory\n' > "$S/approvals"
+cat > "$S/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            failFast true
+            parallel {
+                stage("ask") {
+                    steps {
+                        input message: "Deploy?", ok: "Ship it"
+                    }
+                }
+                stage("slow") {
+                    steps {
+                        sh "echo started >> markers.txt; sleep 20; echo late >> markers.txt"
+                    }
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+timeout 90 "$HOST_BIN" "$S/Jenkinsfile" "$S/ws" gate "$S/build.journal" "$S/approvals" > "$S/run.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the faulting parallel hung"; exit 1; }
+[ "$RC" -ne 0 ] || { echo "FAIL: a faulting branch produced a successful build"; cat "$S/run.log"; exit 1; }
+grep -q '^started$' "$S/ws/gate/markers.txt" || { echo "FAIL: the sibling never ran"; exit 1; }
+# the whole point: the sibling was INTERRUPTED, so its post-sleep effect never landed
+grep -q '^late$' "$S/ws/gate/markers.txt" && {
+  echo "FAIL: a failFast sibling ran to completion after its peer faulted"; cat "$S/run.log"; exit 1; }
+grep -q '| Failed in branch ask' "$S/run.log" || { echo "FAIL: the faulting branch was not named"; cat "$S/run.log"; exit 1; }
+echo "fault signalled from the branch itself; the sibling stopped before its next effect"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

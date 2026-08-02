@@ -1520,7 +1520,36 @@ module WalkerOrchestration =
 
                             branchCtx,
                             System.Threading.Tasks.Task.Run(fun () ->
-                                runStage branchCtx cwd deadline branch
+                                // FG-046b (Codex P1). A branch that THROWS skips the
+                                // epilogue below, so under failFast it never stamped
+                                // the instant nor cancelled the token — and the join
+                                // cannot stand in for that, because the waiter awaits
+                                // branches IN ORDER: a fault in the second branch is
+                                // not even observed while the first is still running
+                                // the side-effecting steps failFast exists to
+                                // interrupt. The signal has to come from the branch
+                                // itself, at the moment it dies.
+                                //
+                                // The failure is marked here too, so `bc.Failed` is
+                                // true by the time any sibling polls it; the exception
+                                // still propagates, and the waiter still names it.
+                                try
+                                    runStage branchCtx cwd deadline branch
+                                with _ ->
+                                    branchCtx.Failed.Value <- true
+                                    // named exactly as the ordinary failure path
+                                    // names it — a reader wants to know WHICH
+                                    // branch died either way
+                                    emit $"Failed in branch {branch.Name}"
+
+                                    if failFast then
+                                        System.Threading.Interlocked.CompareExchange(
+                                            siblingFailedAt, runClock.ElapsedMilliseconds, -1L)
+                                        |> ignore
+
+                                        siblingFailed.Cancel()
+
+                                    reraise ()
 
                                 if branchCtx.Failed.Value then
                                     // Jenkins names the branch that failed. EMITTING it
