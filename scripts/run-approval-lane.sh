@@ -19,8 +19,8 @@
 #      prompt does not run;
 #   D. an answer is CONSUMED — a second build sharing the inbox asks again
 #      instead of inheriting the first build's approval;
-#   E. with NO inbox there is no approver, and an un-timed prompt fails closed
-#      by name instead of waiting forever for a human who cannot answer;
+#   E. with NO inbox there is no approver, and an un-timed prompt fails CLOSED
+#      instead of waiting forever for a human who cannot answer;
 #   F. neither a half-written answer nor an ambiguous two-line one is an answer
 #      (by either separator — a bare CR is a line break too);
 #   G. the same physical journal reached through a symlink alias yields the same
@@ -71,7 +71,14 @@
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
 # after only `approve` had landed. A lane that cannot see a defect does not
 # cover it.
-# Everything is asserted; the transcript is the lane's evidence.
+# Everything the scenario headings claim is asserted. Two things they used to
+# claim are NOT assertable from here and no longer appear: the WORDING of the
+# engine's refusal in E and O. `ERROR:`-shaped diagnostics are consumed by
+# Trace.isDiagnosticLine, which keeps only a ReportedFailureReason BOOLEAN, so
+# the text never reaches this log or the journal. The lane proves those two fail
+# closed; it cannot see WHY, and said otherwise until a reviewer checked.
+# FG-114 makes the reason durable so these can be tightened.
+# The transcript is the lane's evidence — for exactly what it asserts.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -89,6 +96,8 @@ cleanup() {
   # directory — leaking a process and poisoning later runs, which is exactly how
   # an orphaned host process failed a lane earlier in this session.
   [ -n "${CHURN:-}" ] && { kill -9 "$CHURN" 2>/dev/null; CHURN=""; } || true
+  # same argument for the inbox watcher: it blocks forever by design
+  [ -n "${WATCHER:-}" ] && { kill -9 "$WATCHER" 2>/dev/null; WATCHER=""; } || true
   [ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2
 }
 trap cleanup EXIT
@@ -96,6 +105,9 @@ trap cleanup EXIT
 dotnet build -c Release --nologo >/dev/null
 HOST_BIN=$(find tools/Fogell.Run.Host/bin/Release -name Fogell.Run.Host -type f | head -1)
 [ -x "$HOST_BIN" ] || { echo "FAIL: host binary not found"; exit 1; }
+WATCH_BIN=$(find tools/Fogell.Watch.Inbox/bin/Release -name Fogell.Watch.Inbox -type f | head -1)
+[ -x "$WATCH_BIN" ] || { echo "FAIL: inbox watcher not found"; exit 1; }
+WATCH_BIN=$(realpath "$WATCH_BIN")
 # `pgrep -f` takes a REGEX: both of these appear in patterns below and contain
 # characters (dots, most of all) that would otherwise match anything
 requote() { printf '%s' "$1" | sed 's/[.[\*^$()+?{}|\\]/\\&/g'; }
@@ -269,13 +281,16 @@ set -e
 [ "$RC" -ne 124 ] || { echo "FAIL: an un-timed prompt with no approver HUNG (silently, since output is buffered)"; exit 1; }
 [ "$RC" -eq 1 ] || { echo "FAIL: expected a failed build (exit 1), got $RC"; cat "$E/run.log"; exit 1; }
 grep -q 'completed: failure' "$E/run.log" || { echo "FAIL: did not fail closed"; cat "$E/run.log"; exit 1; }
-# the REASON is not asserted from this log by design: `ERROR:`-shaped engine
-# diagnostics are captured as the run's reported failure reason and excluded
-# from compared output (Trace.isDiagnosticLine), so the console shows the
-# prompt and then stops. What matters here is that it STOPS.
+# the REASON is NOT asserted, and this scenario no longer claims it is.
+# `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine, which
+# retains a ReportedFailureReason BOOLEAN and discards the text, so the wording
+# reaches neither this log nor the journal. A regression that genericised the
+# diagnostic would still pass every line below. What IS proven: it stops, it
+# stops at the prompt, and it stops with a failure. FG-114 is what would let
+# this assert the reason itself.
 [ "$(tail -1 "$E/run.log")" = "| Ship it or Abort" ] || {
   echo "FAIL: something ran after the unanswerable prompt"; cat "$E/run.log"; exit 1; }
-echo "failed closed at the prompt, exit $RC — no hang"
+echo "failed closed at the prompt, exit $RC — no hang (the reason is unasserted; FG-114)"
 
 # ---------------------------------------------------------------- scenario F
 echo "=== F: neither a fragment nor an ambiguous two-line answer counts ==="
@@ -580,6 +595,19 @@ echo "=== N: a timed-out prompt is withdrawn before the retry publishes ==="
 # retry starts the next occurrence the instant the timeout aborts the last one.
 # If the dead marker lingers, the inbox advertises two prompts and the operator
 # will reach for the one that appeared first — whose answer nothing reads.
+#
+# This SAMPLED the inbox every 0.2s until a reviewer pointed out that sampling
+# cannot see the very ordering the scenario is named for: publish the successor
+# first, tidy up inside a sample gap, and the fixture passes while two prompts
+# were genuinely live. A fixture that can pass while its property is broken is
+# the one shape the operating contract forbids.
+#
+# It now records CREATE/DELETE EVENTS (FG-046e, tools/Fogell.Watch.Inbox) and
+# replays them, so the assertion is about ordering rather than about timing. The
+# watcher is itself proven by scripts/prove-approval-watcher.sh, which plants the
+# overlap it must catch — including the atomic-rename spelling of it — and the
+# two ways the watcher can be blind (it saw nothing; the runtime dropped events).
+# Both of those exit 3, CANNOT PROVE, never 0.
 N="$LANE/n"; mkdir -p "$N/approvals"
 cat > "$N/Jenkinsfile" <<'JF'
 pipeline {
@@ -597,26 +625,35 @@ pipeline {
     }
 }
 JF
+# the watcher starts BEFORE the host and the lane blocks on READY: a watcher
+# racing the first publish misses the CREATE, and a missed CREATE makes a breach
+# look compliant — the failure mode the sampler had, reintroduced by a race.
+: > "$N/events"
+"$WATCH_BIN" watch "$N/approvals" "$N/events" >/dev/null 2>&1 &
+WATCHER=$!
+for _ in $(seq 1 300); do grep -q READY "$N/events" 2>/dev/null && break; sleep 0.05; done
+grep -q READY "$N/events" || { echo "FAIL: the inbox watcher never registered"; exit 1; }
+
 timeout 120 "$HOST_BIN" "$N/Jenkinsfile" "$N/ws" gate "$N/build.journal" "$N/approvals" > "$N/run.log" 2>&1 &
 PID=$!
 N1=$(await_pending "$N/approvals") || { echo "FAIL: no prompt published"; cat "$N/run.log"; exit 1; }
-# sample the inbox across the whole run: it must NEVER show two prompts at once
-MAXSEEN=0
-for _ in $(seq 1 100); do
-  C=$(find "$N/approvals" -maxdepth 1 -name '*.pending' | wc -l)
-  [ "$C" -gt "$MAXSEEN" ] && MAXSEEN=$C
-  kill -0 "$PID" 2>/dev/null || break
-  sleep 0.2
-done
 set +e; wait "$PID"; RC=$?; set -e
-[ "$MAXSEEN" -le 1 ] || { echo "FAIL: the inbox advertised $MAXSEEN prompts at once — a dead one was still listed"; exit 1; }
+sleep 0.5   # let the last withdrawal reach the watcher before it is torn down
+# `|| true` on both, for the reason the cleanup trap already documents: `wait`
+# on a process this line just killed returns 143, and under `set -e` that ends
+# the lane with every assertion passed and no message saying why.
+kill "$WATCHER" 2>/dev/null || true
+wait "$WATCHER" 2>/dev/null || true
+WATCHER=""
+"$WATCH_BIN" report "$N/events" || {
+  echo "FAIL: the inbox advertised a dead prompt alongside its successor"; cat "$N/run.log"; exit 1; }
 grep -q 'completed: aborted' "$N/run.log" || { echo "FAIL: the exhausted retry did not abort"; cat "$N/run.log"; exit 1; }
 # both occurrences ran (the timeout is retried — receipt retry-timeout-retries)
 [ "$(grep -c '| Deploy?' "$N/run.log")" -eq 2 ] || {
   echo "FAIL: expected two prompts across two attempts"; cat "$N/run.log"; exit 1; }
 [ "$(find "$N/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
   echo "FAIL: a prompt is still advertised against a finished build"; exit 1; }
-echo "never more than one live prompt; both attempts asked, neither lingered"
+echo "never more than one live prompt (by event order); both attempts asked, neither lingered"
 
 # ---------------------------------------------------------------- scenario O
 echo "=== O: a submitter-restricted gate is refused, not approved by anyone ==="
@@ -664,9 +701,9 @@ grep -q '^input-decision' "$O/build.journal" 2>/dev/null && { echo "FAIL: a rest
 grep -q '^shipped$' "$O/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step after a restricted gate ran"; exit 1; }
 
 # submitterParameter does NOT restrict who may approve — it binds the approver's
-# id into the build. Refused too, but for its OWN reason: there is no
-# authenticated identity to bind. A refusal that misstates what an option does is
-# a claim-accuracy defect, which is how the first version of this guard failed.
+# id into the build. It is refused too, and the code refuses it for its OWN
+# reason: there is no authenticated identity to bind. That distinction is real
+# but it is NOT what this scenario proves — see below.
 set +e
 timeout 60 "$HOST_BIN" "$O/Jenkinsfile.param" "$O/ws2" gate "$O/param.journal" "$O/approvals" > "$O/param.log" 2>&1
 RC=$?
@@ -676,13 +713,14 @@ set -e
 grep -q 'completed: failure' "$O/param.log" || { echo "FAIL: expected a failed build"; cat "$O/param.log"; exit 1; }
 [ "$(find "$O/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
   echo "FAIL: submitterParameter published a prompt"; exit 1; }
-# the refusal WORDING is not assertable from this log by design: `ERROR:`-shaped
-# engine diagnostics are captured as the run's reported failure reason and
-# excluded from compared output (Trace.isDiagnosticLine). What the lane proves is
-# that both options fail CLOSED with nothing published; that they are refused for
-# their own distinct reasons lives in the code, which is the honest split rather
-# than an assertion that cannot see what it claims to check.
-echo "both options refused by name and failed closed; no prompt published"
+# the refusal WORDING is not assertable here, and the line below no longer says
+# it is. `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine,
+# which keeps a ReportedFailureReason BOOLEAN and drops the text. An engine that
+# refused BOTH options with the SAME wording — or the wrong one — would pass
+# every assertion above while this scenario printed "refused by name". Saying so
+# was the defect; a transcript is evidence, and evidence that overstates is worse
+# than none. FG-114 makes the reason durable so this can assert it.
+echo "both options failed closed, nothing published (the distinct reasons are unasserted; FG-114)"
 
 # ---------------------------------------------------------------- scenario P
 echo "=== P: a VOIDED answer is not replayed by a resumed attempt ==="
