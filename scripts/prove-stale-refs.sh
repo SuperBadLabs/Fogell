@@ -80,6 +80,9 @@ prove_form "default this.name"        "default this.StaleGateValue = 1" StaleGat
 # never.
 prove_form "let name' (apostrophe)"   "let staleGateValue' = 1" "staleGateValue'"
 prove_form "let name'' (two)"         "let staleGateValue'' = 1" "staleGateValue''"
+prove_form "and Name (recursive type)" "and StaleGateValue = { A: int }" StaleGateValue
+prove_form "and name (recursive fn)"  "and staleGateValue x = x" staleGateValue
+prove_form "and private name"         "and private staleGateValue x = x" staleGateValue
 
 # The surviving comment REPEATS the binding keyword. Every fixture above names
 # the identifier bare, so none of them could catch a comment being mistaken for
@@ -269,5 +272,22 @@ else
   note "short identifier (by design)" "UNEXPECTEDLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
-[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and the length floor holds" \
+# LOWERCASE RECORD LABELS are out of scope, pinned like the length floor. Every
+# label in this codebase is PascalCase (measured: zero lowercase across src/ and
+# tools/), and widening the field arm would collect `mutable cache:` and friends
+# as field names — false positives to cover a form nothing here writes.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { staleGateValue: string\n      Keep: int }\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { Keep: int }\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "lowercase field (by design)" "not tracked (exit 0) — OK"
+else
+  note "lowercase field (by design)" "UNEXPECTEDLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and both scope boundaries hold" \
                   || { echo "STALE-REF PROOF FAILED"; exit 1; }

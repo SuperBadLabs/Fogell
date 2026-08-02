@@ -990,13 +990,31 @@ TID=$(await_pending "$T/approvals") || { echo "FAIL: no prompt published"; cat "
 # the assertion that matters: the secret is NOT on disk
 grep -q "$SECRET" "$T/approvals/$TID.pending" && {
   echo "FAIL: the credential was written verbatim to the approvals inbox"; sed 's/^/  | /' "$T/approvals/$TID.pending"; exit 1; }
+# ABSENCE IS NOT MASKING. Asserting only that the raw secret is missing passes
+# for a prompt that never interpolated it, one rendered as a literal `${TOKEN}`,
+# and one that dropped the message entirely — none of which is the property
+# named. The marker must carry the prompt AS MASKED: `Deploy with ****?`.
 grep -q 'prompt' "$T/approvals/$TID.pending" || { echo "FAIL: no prompt line in the marker"; exit 1; }
+grep -qF 'Deploy with ****?' "$T/approvals/$TID.pending" || {
+  echo "FAIL: the marker does not carry the masked prompt — absence of the secret is not proof it was masked"
+  sed 's/^/  | /' "$T/approvals/$TID.pending"; exit 1; }
+grep -qF '${TOKEN}' "$T/approvals/$TID.pending" && {
+  echo "FAIL: the marker carries the literal \${TOKEN} — the value was never interpolated, so masking was never tested"
+  exit 1; }
 printf 'approve tess\n' > "$T/approvals/$TID.decision"
-set +e; wait "$PID"; set -e
+# the host's EXIT STATUS was discarded here, so a build that failed after the
+# approval — or crashed — still reached the leak assertions below and passed
+# them, because a run that never got far enough cannot leak.
+set +e; wait "$PID"; TRC=$?; set -e
+[ "$TRC" -eq 0 ] || { echo "FAIL: the masked-prompt build did not succeed (exit $TRC)"; cat "$T/run.log"; exit 1; }
+grep -q 'completed: success' "$T/run.log" || {
+  echo "FAIL: no successful completion — the leak checks below would pass vacuously"; cat "$T/run.log"; exit 1; }
+grep -qF 'Deploy with ****?' "$T/run.log" || {
+  echo "FAIL: the console does not carry the masked prompt either"; cat "$T/run.log"; exit 1; }
 grep -q "$SECRET" "$T/run.log" && { echo "FAIL: the credential leaked to the console"; exit 1; }
 grep -rq "$SECRET" "$T/approvals" 2>/dev/null && { echo "FAIL: the credential is somewhere in the inbox"; exit 1; }
 grep -q "$SECRET" "$T/build.journal" && { echo "FAIL: the credential leaked into the journal"; exit 1; }
-echo "masked on the console, on disk, and in the journal"
+echo "masked (as ****) on the console, on disk and in the journal; build succeeded"
 
 # ---------------------------------------------------------------- scenario U
 echo "=== U: cleanup keeps an answer the journal never recorded ==="

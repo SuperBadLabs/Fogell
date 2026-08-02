@@ -37,10 +37,13 @@ fi
 # `audit-claims.bb` asks a different question (does a MEASURED claim name a
 # receipt) that a stale identifier passes trivially.
 #
-# Scope, stated exactly because a vaguer version of this sentence was itself a
-# finding: identifiers of FOUR OR MORE characters, in line comments and nested
-# `(* ... *)` blocks. Short names are deliberately out — `x`, `id`, `ctx` occur
-# in ordinary English and a checker that fires on prose gets switched off.
+# Scope, stated exactly because vaguer versions of this sentence have been a
+# finding TWICE: F# BINDINGS of four or more characters — let/member/type/
+# override/default/and declarations and PascalCase record fields — named in comments
+# or nested `(* ... *)` blocks. Short names are deliberately out (`x`, `id`,
+# `ctx` occur in ordinary English and a checker that fires on prose gets
+# switched off), and non-F# symbols are not extracted at all: a deleted shell
+# function or bb def can leave a stale comment this audit will not see.
 #
 # Proven to fail before being trusted, and the proof runs first: 16 binding
 # forms, a comment repeating the keyword, a record field on the brace line and

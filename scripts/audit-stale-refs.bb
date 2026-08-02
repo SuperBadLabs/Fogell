@@ -12,9 +12,19 @@
 ;; names a receipt — a different question entirely, and one a stale identifier
 ;; passes trivially.
 ;;
-;; The check: for every identifier of FOUR OR MORE characters this diff DELETED,
-;; is it still named in a comment that survived? Line comments and NESTED
-;; `(* ... *)` blocks both.
+;; The check: for every F# BINDING of four or more characters this diff DELETED
+;; — `let`/`member`/`type`/`override`/`default`/`and` declarations and
+;; PascalCase record fields — is it still named in a comment that survived? Line comments and
+;; NESTED `(* ... *)` blocks both.
+;;
+;; F# BINDINGS, not identifiers in general, and the header said the looser thing
+;; until a reviewer read it against the extractor. A deleted shell function, a
+;; `bb` def, a YAML key or a step name in a lane script is NOT extracted, so a
+;; comment naming one survives this audit silently. Comments in those files ARE
+;; searched — the gap is what gets collected from the diff, not where it looks.
+;; Widening it means a fixture per language, which is worth doing the day one of
+;; those defects lands; asserting it in prose before then is how a checker comes
+;; to be trusted for work it does not do.
 ;;
 ;; The length floor is a real limit, stated because the header said "every
 ;; identifier" until a reviewer deleted `let foo` and watched the audit report
@@ -95,6 +105,13 @@
   ;; modifiers that PRECEDE the keyword, the keyword, modifiers that FOLLOW it,
   ;; and an optional `receiver.` — everything between the line start and the name.
   ;;
+  ;; `and` is a KEYWORD here, not only a prefix. F# recursive declarations begin
+  ;; a line with it — `and CallTarget =`, `and private evalProp st recv = ...` —
+  ;; and this repository has 17 of them across src/. Allowing `and` only BEFORE
+  ;; another keyword meant deleting one added nothing to `removed`, so a comment
+  ;; naming it passed a blocking audit. Found by a reviewer who went and counted
+  ;; them in the tree rather than reasoning about the grammar.
+  ;;
   ;; EVERY GROUP IS NON-CAPTURING, and the first version of this shared
   ;; definition was not. The extractor keeps all capture groups, so `member`,
   ;; `let` and the modifiers were themselves collected as deleted identifiers:
@@ -102,7 +119,7 @@
   ;; rotation notes`, and the audit failed the build on the word "member". A
   ;; false positive that BLOCKS pushes, introduced by the refactor that was
   ;; supposed to make this safer.
-  "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default)\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
+  "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default|and)\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
 (def ^:private field-lead
   ;; a record field, which this codebase writes both indented and on the brace
   ;; line (`{ Root: string }`)
@@ -152,6 +169,17 @@
                    ;; documentation could fail the build while nothing was
                    ;; actually removed. After the `-`, a comment marker precedes
                    ;; the keyword and no longer matches.
+                   ;;
+                   ;; The field arm is PASCALCASE ONLY, which is a real limit and
+                   ;; is stated rather than implied: `{ staleGateValue: string }`
+                   ;; deleted with its comment left behind passes silently. Every
+                   ;; record label in this codebase is PascalCase (measured: zero
+                   ;; lowercase labels across src/ and tools/), and widening the
+                   ;; arm to lowercase would collect things like `mutable cache:`
+                   ;; as field names — false positives, which block pushes, to
+                   ;; cover a form nothing here uses. Pinned by a fixture so the
+                   ;; day someone writes a lowercase label, widening it is a
+                   ;; decision.
                    ;;
                    ;; The record-field arm allows an optional `{`: this codebase
                    ;; routinely writes the first field on the brace line
