@@ -550,6 +550,19 @@ let main argv =
                 let adopted =
                     plan.NeedsReconciliation
                     |> List.filter (fun k -> Set.contains k plan.InputSteps)
+                    // NOT a bounded prompt. An answer written to the inbox while
+                    // no host was running has no timestamp this engine trusts,
+                    // and the deadline it would have to beat died with the
+                    // attempt that set it. Adopting it would let an answer given
+                    // hours after a two-minute gate expired open that gate on the
+                    // next attempt, under a deadline that starts fresh. Refused
+                    // instead: the operator decides. See FG-046c.
+                    |> List.filter (fun (stage, i) ->
+                        if Set.contains (stage, i, 1) plan.BoundedPrompts then
+                            eprintfn $"approvals: {stage}#{i} was waiting under a deadline; an answer given while nothing was running cannot be shown to have beaten it, so it is not adopted"
+                            false
+                        else
+                            true)
                     |> List.choose (fun (stage, i) ->
                         match readDecision false dir stage i 1 with
                         | Some(Ok(approved, who)) -> Some(stage, i, approved, who)
@@ -664,6 +677,9 @@ let main argv =
         // per distinct malformed answer — a 250 ms poll loop would otherwise
         // print thousands of identical lines and bury the one that matters.
         let publishedPending = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
+        // FG-046b: the bounded marker is journaled once per prompt, on its first
+        // poll — the walker knows the deadline, the host only learns of it here
+        let notedBounded = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
         let warnedAbout = Collections.Concurrent.ConcurrentDictionary<string, bool>()
 
         // `None` when no inbox was given: there is then no approver at all, and
@@ -673,6 +689,13 @@ let main argv =
             approvalsDir
             |> Option.map (fun dir ->
                 fun (stage: string) (index: int) (occurrence: int) (bounded: bool) (prompt: string) ->
+                    // recorded BEFORE any answer can be read for it, so a crash
+                    // can never leave an adoptable answer for a gate the journal
+                    // does not say was bounded
+                    if bounded && notedBounded.TryAdd((stage, index, occurrence), true) then
+                        journal.Append(InputPromptBounded(stage, index, occurrence))
+                        journal.Sync()
+
                     match answered.TryGetValue((stage, index, occurrence)) with
                     | true, a -> Some a
                     | _ ->

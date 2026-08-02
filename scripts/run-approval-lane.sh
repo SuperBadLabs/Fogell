@@ -49,7 +49,10 @@
 #      replay it into a resumed attempt under a fresh deadline;
 #   Q. and a DEADLINE-BOUND answer is only provisional until the walker rules on
 #      it, because the write itself can straddle the deadline — a crash before
-#      the ruling must leave nothing actionable.
+#      the ruling must leave nothing actionable;
+#   R. an OFFLINE answer to a bounded gate — written while no host was running —
+#      is not adopted at all: its eligibility cannot be established against a
+#      deadline that died with the attempt that set it (FG-046c).
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -746,6 +749,46 @@ set -e
 grep -q 'needs-reconciliation: Gate#1' "$Q/run2.log" || {
   echo "FAIL: the provisional input was not sent for reconciliation"; cat "$Q/run2.log"; exit 1; }
 echo "written provisionally, promoted when eligible; the un-promoted state refuses"
+
+# ---------------------------------------------------------------- scenario R
+echo "=== R: an OFFLINE answer to a bounded gate is not adopted ==="
+# host killed while a bounded prompt waits; the answer is written afterwards,
+# with nothing running. Its timestamp is not trusted and the deadline it would
+# have to beat died with the attempt that set it, so adoption must refuse.
+R="$LANE/r"; mkdir -p "$R/approvals"
+cat > "$R/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    options { timeout(time: 30, unit: 'SECONDS') }
+    stages {
+        stage("Gate") {
+            steps {
+                sh "echo one >> markers.txt"
+                input message: "Deploy?", ok: "Ship it"
+                sh "echo two >> markers.txt"
+            }
+        }
+    }
+}
+JF
+"$HOST_BIN" "$R/Jenkinsfile" "$R/ws" gate "$R/build.journal" "$R/approvals" > "$R/run1.log" 2>&1 &
+PID=$!
+RID=$(await_pending "$R/approvals") || { echo "FAIL: no prompt published"; cat "$R/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+grep -q $'^input-prompt-bounded\tGate\t1\t1$' "$R/build.journal" || {
+  echo "FAIL: the bounded prompt was not recorded as bounded"; sed 's/^/  | /' "$R/build.journal"; exit 1; }
+# the answer arrives with nothing running — an offline approval
+printf 'approve rita\n' > "$R/approvals/$RID.decision"
+set +e
+timeout 120 "$HOST_BIN" "$R/Jenkinsfile" "$R/ws" gate "$R/build.journal" "$R/approvals" > "$R/run2.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the resume hung"; exit 1; }
+[ "$RC" -eq 3 ] || { echo "FAIL: an offline answer to a bounded gate was adopted (exit $RC)"; cat "$R/run2.log"; exit 1; }
+grep -q 'not adopted' "$R/run2.log" || { echo "FAIL: the refusal was not named"; cat "$R/run2.log"; exit 1; }
+grep -q '^input-decision' "$R/build.journal" && { echo "FAIL: an actionable decision was recorded for a bounded gate"; exit 1; }
+grep -q '^two$' "$R/ws/gate/markers.txt" 2>/dev/null && { echo "FAIL: the step past the gate ran"; exit 1; }
+echo "bounded gate, offline answer: refused for reconciliation, nothing actionable recorded"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

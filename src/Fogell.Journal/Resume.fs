@@ -34,6 +34,11 @@ type ResumePlan =
       /// occurrence separates prompts sharing one durability key — two `input`s
       /// in a `timeout` block are two gates, not one.
       InputDecisions: Map<string * int * int, bool * string>
+      /// FG-046b. Prompts that were waiting under a DEADLINE. An answer for one
+      /// of these cannot be adopted from the inbox at startup: eligibility would
+      /// have to be judged against a deadline that died with the attempt that
+      /// set it, so the honest answer is to refuse and let an operator decide.
+      BoundedPrompts: Set<string * int * int>
       /// FG-046b. Steps a prior attempt started as `input`. Needed because a
       /// disposition alone does not say WHICH step was interrupted, and the
       /// re-run rule below applies to `input` and to nothing else.
@@ -64,7 +69,8 @@ module Resume =
                     | BuildIdentity _
                     | InputDecision _
                     | InputDecisionVoided _
-                    | InputAnswerProvisional _ -> acc)
+                    | InputAnswerProvisional _
+                    | InputPromptBounded _ -> acc)
                 Map.empty
 
         let inputSteps =
@@ -93,6 +99,12 @@ module Resume =
                 Map.empty
 
         { Steps = steps
+          BoundedPrompts =
+            records
+            |> List.choose (function
+                | InputPromptBounded(stage, i, occ) -> Some(stage, i, occ)
+                | _ -> None)
+            |> Set.ofList
           InputDecisions = inputDecisions
           InputSteps = inputSteps
           CommittedStages =
