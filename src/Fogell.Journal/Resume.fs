@@ -62,7 +62,8 @@ module Resume =
                     | ScriptDigest _
                     | WorkspaceIdentity _
                     | BuildIdentity _
-                    | InputDecision _ -> acc)
+                    | InputDecision _
+                    | InputDecisionVoided _ -> acc)
                 Map.empty
 
         let inputSteps =
@@ -80,6 +81,10 @@ module Resume =
                 (fun acc r ->
                     match r with
                     | InputDecision(stage, i, occ, approved, who) -> Map.add (stage, i, occ) (approved, who) acc
+                    // a VOID removes it: the answer exists in the audit trail but
+                    // is not actionable, and leaving it in this map is how a
+                    // refused-as-late approval gets replayed by a resumed attempt
+                    | InputDecisionVoided(stage, i, occ) -> Map.remove (stage, i, occ) acc
                     | _ -> acc)
                 Map.empty
 

@@ -44,7 +44,9 @@
 #      next one, so the inbox never advertises a gate nothing is listening to;
 #   O. a `submitter:`-restricted gate is REFUSED rather than approved by whoever
 #      can write to the inbox — this engine cannot authenticate a submitter, and
-#      enforcing a restriction on a self-declared name is theatre.
+#      enforcing a restriction on a self-declared name is theatre;
+#   P. an answer refused for arriving LATE is durably voided, so a crash cannot
+#      replay it into a resumed attempt under a fresh deadline.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -644,6 +646,53 @@ grep -q 'completed: failure' "$O/param.log" || { echo "FAIL: expected a failed b
 # their own distinct reasons lives in the code, which is the honest split rather
 # than an assertion that cannot see what it claims to check.
 echo "both options refused by name and failed closed; no prompt published"
+
+# ---------------------------------------------------------------- scenario P
+echo "=== P: a VOIDED answer is not replayed by a resumed attempt ==="
+# the crash window is microseconds wide (between refusing a late answer and
+# recording the abort), so the state is CONSTRUCTED, as scenario B is: a journal
+# holding a started input, a decision, and the void. Resume must refuse rather
+# than honour the decision under a fresh deadline.
+P="$LANE/p"; mkdir -p "$P/approvals"
+printf '%s\n' "$JF" > "$P/Jenkinsfile"
+"$HOST_BIN" "$P/Jenkinsfile" "$P/ws" gate "$P/build.journal" "$P/approvals" > "$P/run1.log" 2>&1 &
+PID=$!
+PID1=$(await_pending "$P/approvals") || { echo "FAIL: no prompt published"; cat "$P/run1.log"; exit 1; }
+kill -9 "$PID"; wait "$PID" 2>/dev/null || true
+printf 'approve peggy\n' > "$P/approvals/$PID1.decision"
+# resume once so the answer becomes durable, then rewind to the pre-finish state
+timeout 120 "$HOST_BIN" "$P/Jenkinsfile" "$P/ws" gate "$P/build.journal" "$P/approvals" > "$P/run2.log" 2>&1 || {
+  echo "FAIL: the answered resume did not complete"; cat "$P/run2.log"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tpeggy$' "$P/build.journal" || {
+  echo "FAIL: no durable answer to void"; sed 's/^/  | /' "$P/build.journal"; exit 1; }
+
+# an immutable snapshot of the pre-finish state; each run gets its own copy,
+# because a run APPENDS to the journal it is given
+grep -vP '^(build-finished|stage-committed)\t' "$P/build.journal" \
+  | grep -vP '^step-(started|finished)\tGate\t2\t' \
+  | grep -vP '^step-finished\tGate\t1\t' > "$P/base.journal"
+
+# WITHOUT a void, the exemption fires and the answer is honoured — the baseline.
+# The inbox is passed and is EMPTY (run2 consumed the decision), so a success
+# here can only come from the journal.
+cp "$P/base.journal" "$P/live.journal"
+timeout 120 "$HOST_BIN" "$P/Jenkinsfile" "$P/ws" gate "$P/live.journal" "$P/approvals" > "$P/run3.log" 2>&1 || {
+  echo "FAIL: baseline rewind did not complete — the exemption should still fire"; cat "$P/run3.log"; exit 1; }
+grep -q 'completed: success' "$P/run3.log" || { echo "FAIL: baseline not successful"; cat "$P/run3.log"; exit 1; }
+
+# WITH the void appended, the same state must refuse instead
+cp "$P/base.journal" "$P/voided.journal"
+printf 'input-decision-voided\tGate\t1\t1\n' >> "$P/voided.journal"
+set +e
+timeout 120 "$HOST_BIN" "$P/Jenkinsfile" "$P/ws" gate "$P/voided.journal" "$P/approvals" > "$P/run4.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the voided resume hung"; exit 1; }
+[ "$RC" -eq 3 ] || { echo "FAIL: a voided answer was still actionable (exit $RC)"; cat "$P/run4.log"; exit 1; }
+grep -q 'needs-reconciliation: Gate#1' "$P/run4.log" || {
+  echo "FAIL: the voided input was not sent for reconciliation"; cat "$P/run4.log"; exit 1; }
+grep -q 'completed:' "$P/run4.log" && { echo "FAIL: a voided answer let the build run"; cat "$P/run4.log"; exit 1; }
+echo "same state, one void record apart: honoured without it, refused with it"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

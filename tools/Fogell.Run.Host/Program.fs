@@ -763,6 +763,17 @@ let main argv =
                 fun stage i occ ->
                     // both files: the prompt is gone, and an answer left for it
                     // is an answer to a question nobody is asking any more
+                    approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ)
+              OnInputAnswerVoided =
+                fun stage i occ ->
+                    // durable FIRST — the caller applies the cancellation the
+                    // moment this returns, and everything after that point is a
+                    // crash window in which an unmarked answer is replayable
+                    journal.Append(InputDecisionVoided(stage, i, occ))
+                    journal.Sync()
+                    // and out of this process's cache, so a later poll under the
+                    // same key cannot hand it back
+                    answered.TryRemove((stage, i, occ)) |> ignore
                     approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ) }
 
         // A prompt can stop being outstanding without being ANSWERED — a deadline

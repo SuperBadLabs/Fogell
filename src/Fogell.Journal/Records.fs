@@ -61,6 +61,19 @@ type Record =
         occurrence: int *
         approved: bool *
         submitter: string
+    /// FG-046b. An answer that arrived but was REFUSED — it was first observed
+    /// after the prompt's deadline had already passed, or after a failFast
+    /// sibling had already failed. The decision record stays (a human really did
+    /// answer, and the audit trail should say so); this says it was not acted on
+    /// and must never be.
+    ///
+    /// Durable because the alternative replays it. A refused-as-late answer that
+    /// is durable but unmarked survives a kill in the window before the abort is
+    /// recorded, and the resumed attempt — with a FRESH deadline — finds it on
+    /// record, honours it, and walks past the gate the timeout had already
+    /// closed. The safety bound is then defeated by a crash rather than by an
+    /// approval.
+    | InputDecisionVoided of stage: string * stepIndex: int * occurrence: int
 
 module Record =
 
@@ -92,6 +105,7 @@ module Record =
         | InputDecision(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
             $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
+        | InputDecisionVoided(stage, i, occurrence) -> $"input-decision-voided\t{oneLine stage}\t{i}\t{occurrence}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -108,6 +122,10 @@ module Record =
         | [| "script-digest"; d |] -> Some(ScriptDigest d)
         | [| "workspace-identity"; r; j |] -> Some(WorkspaceIdentity(r, j))
         | [| "build-identity"; id |] when id <> "" -> Some(BuildIdentity id)
+        | [| "input-decision-voided"; stage; i; occurrence |] ->
+            match System.Int32.TryParse i, System.Int32.TryParse occurrence with
+            | (true, idx), (true, occ) -> Some(InputDecisionVoided(stage, idx, occ))
+            | _ -> None
         | [| "input-decision"; stage; i; occurrence; verdict; who |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with
             | (true, idx), (true, occ), "approved" -> Some(InputDecision(stage, idx, occ, true, who))

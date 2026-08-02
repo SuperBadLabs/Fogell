@@ -103,7 +103,14 @@ type PersistenceHooks =
       /// and the live one side by side, and an operator answering the expired id
       /// — the natural one to reach for, it was there first — had their decision
       /// silently discarded while the real gate went on waiting.
-      OnInputClosed: string -> int -> int -> unit }
+      OnInputClosed: string -> int -> int -> unit
+      /// FG-046b. stage -> stepIndex -> occurrence -> an answer was read but
+      /// REFUSED because the prompt had already been cancelled when it arrived.
+      /// Must be made DURABLE before the caller acts on the cancellation: an
+      /// unmarked late answer stays on record, and a crash before the abort is
+      /// recorded lets a resumed attempt — with a fresh deadline — honour it and
+      /// walk through the gate the timeout had already closed.
+      OnInputAnswerVoided: string -> int -> int -> unit }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -958,7 +965,8 @@ module WalkerOrchestration =
                             let occurrence = runCtx.NextInputOccurrence(stageKey, stepIndex)
 
                             (fun () -> poll stageKey stepIndex occurrence renderedMessage),
-                            (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence))
+                            (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence),
+                            (fun () -> hooks.OnInputAnswerVoided stageKey stepIndex occurrence))
                     | _ -> None
 
                 // FG-046b (Codex P1). `submitter: 'release-team'` restricts WHO may
@@ -1008,7 +1016,7 @@ module WalkerOrchestration =
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some(poll, withdraw), _ ->
+                | Some(poll, withdraw, voidAnswer), _ ->
                     // Wait for the answer, the deadline, or a failFast sibling —
                     // whichever comes first. With no deadline this waits
                     // indefinitely, which is what Jenkins does and what an
@@ -1071,7 +1079,20 @@ module WalkerOrchestration =
                                 // and a `timeout` still wins its ties.
                                 match cancellationOf ctx deadline with
                                 | Cancellation.Running -> answer <- Some a
-                                | c -> outcome <- c
+                                | c ->
+                                    // VOIDED durably before the cancellation is
+                                    // applied. The answer is already on record —
+                                    // the approver journals it as it reads it —
+                                    // so refusing it in memory alone leaves a
+                                    // usable approval behind: a kill before the
+                                    // abort is recorded, and the resumed attempt
+                                    // finds it, honours it under a FRESH
+                                    // deadline, and the gate the timeout closed
+                                    // opens anyway. The record stays for the
+                                    // audit trail; the void says it was never
+                                    // acted on.
+                                    voidAnswer ()
+                                    outcome <- c
                             | Ok None ->
                                 let left = defaultArg (remainingMs deadline) 250L
                                 System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
