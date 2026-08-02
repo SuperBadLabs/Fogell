@@ -149,7 +149,11 @@ module FogellSide =
                   Sink = bump
                   EnvOverlay = []
                   Secrets = []
-                  SiblingFailedAt = ref -1L }
+                  SiblingFailedAt = ref -1L
+                  // set per top-level step by runStageBody; nothing outside a
+                  // stage's step list is journaled, so the root carries none
+                  DurabilityKey = None
+                  HumanRejected = ref false }
 
             let mutable scmWrapperEnv: (string * string) list = []
 

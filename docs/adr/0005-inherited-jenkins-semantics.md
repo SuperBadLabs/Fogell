@@ -95,7 +95,23 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   bound `post`. (Proven: `cancellation-selects-post-arm`, `options-timeout-wraps-post`.)
 - A `stash` is stored with the **build**, not in the workspace, which is what makes it
   survive `deleteDir()`. (Proven: `stash-unstash`.)
-- Approval/`input` state survives a controller restart.
+- Approval/`input` state survives a controller restart — and the pending action's
+  IDENTITY survives with it, so an approval addressed to the pre-restart id still
+  lands. (**Measured** 2026-08-01 on 2.568.1: a build paused on an un-timed `input`
+  was restarted with `podman restart`; `wfapi/nextPendingInputAction` returned the
+  *same* hex id afterwards, `input/<id>/proceedEmpty` returned 200, and the build
+  finished SUCCESS. The console carries `Pausing (shutting down)` / `Resuming build
+  at … after Jenkins restart` — clean-shutdown narration Fogell's SIGKILL lane
+  cannot produce, and its log is per-attempt rather than one continuous build log,
+  so those three lines are not claimed as matched.)
+- **Approving prints NOTHING** — no "Approved by …" line; the console goes straight
+  from the prompt to the next step. A human **abort** ends the build ABORTED with
+  `Rejected`, followed by an `ErrorAction$ErrorId: <uuid>` line naming a Java class
+  — and both land at END of build, after the pipeline teardown, not at the step.
+  (**Measured** 2026-08-01, both directions, through the REST input API; rerun with
+  `scripts/probe-input.bb approve|reject|restart`.) Fogell emits `Rejected` at the
+  step and deliberately does not emit the `ErrorId` line — engine-internal mimicry
+  and a placement no receipt can compare, stated as residuals rather than guessed at.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a
   46 s network partition cost **zero** log lines.
 - `stash` storage is controller-side and survives `deleteDir()`.

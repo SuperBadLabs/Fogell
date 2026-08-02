@@ -38,4 +38,10 @@ fi
 echo "=== restart lane (FG-112, blocking) ==="
 ./scripts/run-restart-lane.sh || { echo "RESTART LANE FAILED"; exit 1; }
 
+# FG-046b: same argument for durable APPROVAL — a human's answer surviving a
+# kill is the one guarantee no receipt can cover (the differential harness has
+# no approver on either side), so its only proof is this lane.
+echo "=== approval lane (FG-046b, blocking) ==="
+./scripts/run-approval-lane.sh || { echo "APPROVAL LANE FAILED"; exit 1; }
+
 echo "OK"

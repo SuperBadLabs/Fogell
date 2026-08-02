@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — retry-timeout-retries.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ec8beeb229f0c11517096a671cec61adbb57b6fa21a125d840e0626e8a66b30b
+seal:         670623625a9f920c8f16fa11d547143552685f6b486bce148648402b16a04418
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -45,40 +45,63 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
-    | + exit 3
-    | Failed in branch quick-fail
+  result:         aborted
+  workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
+  output (23 lines):
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
-    | Failed in branch interrupted
+    | Timeout has been exceeded
+    | Retrying
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
+    | Retrying
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
+  workspace:
+    a3b4240ea304  attempts.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
-    | + exit 3
-    | Failed in branch quick-fail
+  result:         aborted
+  workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
+  output (23 lines):
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
-    | Failed in branch interrupted
+    | Timeout has been exceeded
+    | Retrying
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
+    | Retrying
+    | Timeout set to expire in 3 sec
+    | + echo attempt
+    | + sleep 30
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
+  workspace:
+    a3b4240ea304  attempts.txt

@@ -77,7 +77,51 @@ type WalkerCtx =
       /// Groovy's script Binding for THIS build: a placeholder's assignment
       /// outlives its step (receipt `gstring-binding-across-steps`). One per
       /// run — a fresh build starts with a fresh Binding, exactly as Jenkins.
-      ScriptBinding: GString.ScriptBinding }
+      ScriptBinding: GString.ScriptBinding
+      /// FG-046b. Mask a string against every secret bound so far — the SAME
+      /// run-scoped set `Emit` uses, for the same reason: a value does not become
+      /// safe when its `withCredentials` block closes.
+      ///
+      /// It is exposed because build output is not the only place a secret can
+      /// escape to. An `input` prompt interpolating a bound value is masked on
+      /// the console and was then written VERBATIM to the controller-side
+      /// `.pending` file — a file on disk, in an inbox that may be shared across
+      /// builds, and one the output leak-guard never inspects because it is not
+      /// output. Anything leaving the engine with author-supplied text in it has
+      /// to come through here.
+      MaskSecrets: string -> string
+      /// FG-046b. The next occurrence ordinal for an `input` under a given
+      /// durability key, counting from 1. The key alone is the TOP-LEVEL step,
+      /// so `timeout { input 'deploy prod?'; input 'and the database?' }` gives
+      /// both prompts the same key — and one human's answer, cached, then
+      /// silently answered the second gate nobody reviewed. The ordinal
+      /// separates them.
+      ///
+      /// Derived rather than stored, and that is what makes it survive: a
+      /// resumed attempt re-runs the wrapper body from the start and counts the
+      /// same prompts in the same order, so occurrence N names the same gate it
+      /// named before the crash. Sequential by construction — parallel branches
+      /// run nested STAGES, which carry their own keys.
+      ///
+      /// STATED LIMIT, and its bound. Derivation-by-re-execution assumes the
+      /// path to a prompt is the same on both attempts. A wrapper body that
+      /// reaches a DIFFERENT set of prompts on a resumed run — the shape to
+      /// picture is a conditional on `isRestartedRun()` that adds a prompt ahead
+      /// of an existing one — would renumber them, and occurrence 1 would then
+      /// name a gate the recorded answer was never given to.
+      ///
+      /// That is unreachable as this engine stands, and the reason is worth
+      /// stating rather than trusting: a recorded answer is only ever consulted
+      /// by a RE-RUN, and the only step a resumed attempt re-runs to consult one
+      /// is the reconciliation exemption in Resume.inputAnswered — which
+      /// requires the journaled step name to be `input`, i.e. a BARE top-level
+      /// prompt, which has exactly one occurrence. A WRAPPED prompt's step is
+      /// interrupted, so the resume refuses it (or an operator reconciles it and
+      /// the whole wrapper is skipped); either way its recorded answers are
+      /// never re-matched by a fresh count. Widening that exemption to wrappers
+      /// makes this limit live, and must not be done without replacing the
+      /// derived ordinal with a durable one.
+      NextInputOccurrence: string * int -> int }
 
 module WalkerCtx =
 
@@ -90,6 +134,9 @@ module WalkerCtx =
         let outputLock = obj ()
 
         let firedDeadlines = System.Collections.Generic.HashSet<int>()
+
+        // FG-046b: how many `input` prompts have run under each durability key
+        let inputOccurrences = System.Collections.Generic.Dictionary<string * int, int>()
         let nextDeadlineToken = ref 0
 
         /// Every secret bound anywhere in this run, each with the output index
@@ -158,4 +205,24 @@ module WalkerCtx =
           EngineNotes = fun () -> lock outputLock (fun () -> List.ofSeq engineNotes)
           AddDurableId = fun i -> lock outputLock (fun () -> durableIds.Add i)
           DurableIds = fun () -> lock outputLock (fun () -> List.ofSeq durableIds)
-          ScriptBinding = GString.ScriptBinding() }
+          ScriptBinding = GString.ScriptBinding()
+          MaskSecrets =
+            fun line ->
+                lock outputLock (fun () ->
+                    if boundSecrets.Count = 0 then
+                        line
+                    else
+                        Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line)
+          NextInputOccurrence =
+            // its own lock: this orders nothing against output or status, and
+            // borrowing outputLock would make an approval wait behind a
+            // parallel branch's logging for no reason
+            fun key ->
+                lock inputOccurrences (fun () ->
+                    let next =
+                        match inputOccurrences.TryGetValue key with
+                        | true, n -> n + 1
+                        | _ -> 1
+
+                    inputOccurrences[key] <- next
+                    next) }

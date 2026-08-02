@@ -6,6 +6,16 @@ open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
 
+/// FG-046b. A human's answer to an `input` prompt. Deliberately NOT a bool: the
+/// two outcomes narrate and terminate differently (MEASURED on Jenkins 2.568.1 —
+/// an approval prints NOTHING and the build carries on; a rejection prints
+/// `Rejected` and the build ends ABORTED), and a bool at this boundary is how a
+/// caller ends up defaulting one of them. UNPROVEN BY RECEIPT — measured by
+/// `scripts/probe-input.bb`, asserted by `scripts/run-approval-lane.sh`.
+type InputAnswer =
+    | InputApproved of submitter: string
+    | InputRejected of submitter: string
+
 /// FG-112. Durability hooks for a persisted run. The unit of durability is the
 /// TOP-LEVEL step of a stage: a wrapper (retry/timeout/withEnv) journals as one
 /// unit, so resume skips or re-runs it whole — coarse-grained exactly-once,
@@ -48,7 +58,67 @@ type PersistenceHooks =
       /// stage -> stepIndex -> the step's worst sunk status.
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
-      OnStageCommitted: string -> unit }
+      OnStageCommitted: string -> unit
+      /// FG-046b. stage -> stepIndex -> occurrence -> prompt -> the answer, if
+      /// one has been given. Polled while an `input` waits, and expected to be
+      /// CHEAP: it is called on every poll of the wait loop.
+      ///
+      /// The OCCURRENCE is part of the identity, not decoration: the durability
+      /// key names a top-level step, so every prompt inside one wrapper shares
+      /// it, and an implementation that caches by key alone hands the first
+      /// human's answer to the next gate untouched.
+      ///
+      /// `None` — the whole field — means THERE IS NO APPROVER, and an un-timed
+      /// prompt then fails closed with FG-046's named refusal rather than
+      /// waiting for a human who cannot arrive. That distinction has to live in
+      /// the type: inferring "journaled, therefore answerable" made a host
+      /// started without an inbox hang silently and forever on a prompt nobody
+      /// could see (the host buffers console output until the build ends), which
+      /// is precisely the silent outcome FG-046 refuses.
+      ///
+      /// When present, the implementor owns two things the walker deliberately
+      /// does not know about: where an answer comes from (a file, an API) and
+      /// making it DURABLE before returning it. The walker acts on the answer
+      /// the instant it sees one, so an answer returned but not yet recorded is
+      /// an answer that can be lost — the one failure this ticket exists to
+      /// prevent. Returning None from the FUNCTION forever is legitimate: it
+      /// means nobody has answered yet, and the prompt waits exactly as Jenkins'
+      /// does (MEASURED: a pending input survives a controller restart with the
+      /// same action id and is still approvable afterwards).
+      ///
+      /// UNPROVEN BY RECEIPT, and unprovable by one: a receipt is a differential
+      /// against real Jenkins, and the harness has no approver on EITHER side —
+      /// an answered prompt cannot be driven in both engines from a Jenkinsfile
+      /// alone. The measurement is `scripts/probe-input.bb` against
+      /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
+      /// `scripts/run-approval-lane.sh`, which runs in the gate.
+      /// The `cancellable` flag says this prompt can be STOPPED while it waits —
+      /// a deadline, or a failFast sibling. Its answer must never become
+      /// actionable beyond the attempt that read it: eligibility depends on time,
+      /// making an answer actionable is a durable write, and time passes during
+      /// the write, so no ordering of check and write closes the gap. A prompt
+      /// that cannot be cancelled has no such question and its answer is
+      /// actionable the moment it is durable.
+      PollInputAnswer: (string -> int -> int -> bool -> string -> InputAnswer option) option
+      /// FG-046b. stage -> stepIndex -> occurrence -> this prompt has stopped
+      /// waiting WITHOUT an answer (a deadline, a failFast sibling, a faulted
+      /// approver), so withdraw it from wherever it was advertised.
+      ///
+      /// Called at the moment the prompt dies rather than at the end of the
+      /// build, because `retry { timeout { input … } }` starts the NEXT
+      /// occurrence immediately: the inbox otherwise showed the expired prompt
+      /// and the live one side by side, and an operator answering the expired id
+      /// — the natural one to reach for, it was there first — had their decision
+      /// silently discarded while the real gate went on waiting.
+      OnInputClosed: string -> int -> int -> unit
+      /// FG-046b. stage -> stepIndex -> occurrence -> an answer was read but
+      /// REFUSED because the prompt had already been cancelled when it arrived.
+      /// Must be made DURABLE before the caller acts on the cancellation: an
+      /// unmarked late answer stays on record, and a crash before the abort is
+      /// recorded lets a resumed attempt — with a fresh deadline — honour it and
+      /// walk through the gate the timeout had already closed.
+      OnInputAnswerVoided: string -> int -> int -> unit
+      }
 
 /// FG-105. What the orchestration cluster needs from the run, stated as data.
 /// A new dependency is a new field — visible in review — not a new capture.
@@ -468,6 +538,9 @@ module WalkerOrchestration =
                     let attemptCtx =
                         { ctx with
                             Failed = ref false
+                            // fresh per attempt, like Failed: this attempt's own
+                            // rejection, not one inherited from an earlier one
+                            HumanRejected = ref false
                             Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
 
                     for inner in step.Block do
@@ -478,6 +551,40 @@ module WalkerOrchestration =
                         // A retried body may still have gone unstable; that is
                         // not a retryable failure, so it must reach the build.
                         ctx.Sink attemptStatus.Value
+                        settled <- true
+                    elif attemptCtx.HumanRejected.Value then
+                        // FG-046b. A human who REJECTED a deployment gate was
+                        // asked again by the next attempt, and an approval there
+                        // could carry the whole build to success. The person said
+                        // no; that is not a retryable failure.
+                        //
+                        // Tested on the REJECTION, not on the aborted status, and
+                        // the difference is measured rather than reasoned: a
+                        // nested `timeout` expiring also aborts the attempt, and
+                        // Jenkins RETRIES that one — three attempts, two
+                        // `Retrying` lines (receipt `retry-timeout-retries`).
+                        // Reading the status stopped both, silently costing every
+                        // `retry { timeout { … } }` pipeline its remaining
+                        // attempts. That regression was mine, introduced by
+                        // asserting Jenkins' behaviour instead of measuring it.
+                        //
+                        // A failFast SIBLING needs no case here — it signals
+                        // through the interrupt predicate, so `halted` stops each
+                        // attempt before any inner step runs and nothing is
+                        // re-executed. A rejection has no such predicate, which is
+                        // why it re-ran the body.
+                        ctx.Sink attemptStatus.Value
+                        ctx.Failed.Value <- true
+                        // PROPAGATED, and this line is the whole nested case:
+                        // the attempt's ref is fresh precisely so one attempt's
+                        // rejection does not leak into the next, but that also
+                        // severs it from an ENCLOSING retry. Without this,
+                        // `retry(3) { retry(2) { input … } }` had the outer scope
+                        // see an ordinary failed attempt, print `Retrying`, and
+                        // put the prompt back in front of someone who had already
+                        // declined it. A parallel branch needs no equivalent — it
+                        // INHERITS the ref rather than minting one.
+                        ctx.HumanRejected.Value <- true
                         settled <- true
                     elif attempt < attempts then
                         // Jenkins prints this between attempts, with no delay:
@@ -846,12 +953,235 @@ module WalkerOrchestration =
                 emit renderedMessage
                 emit $"""{renderedOk} or Abort"""
 
-                match deadline with
-                | None ->
+                // FG-046b. An approver requires all three: a JOURNALED run, a
+                // durability key for this step to answer against, and a hook that
+                // actually has somewhere to take an answer FROM. A host started
+                // without an approvals inbox satisfies the first two and still has
+                // no approver — inferring one from the first two alone made such a
+                // run wait forever on a prompt no human could see. The
+                // differential path has none of the three and keeps the refusal.
+                let approver =
+                    match persistence, ctx.DurabilityKey with
+                    | Some hooks, Some(stageKey, stepIndex) ->
+                        hooks.PollInputAnswer
+                        |> Option.map (fun poll ->
+                            // taken ONCE, here, and reused for every poll: this
+                            // prompt's identity within its durability key. Drawn
+                            // at the moment the prompt is reached, so a resumed
+                            // attempt re-running the same body reaches it in the
+                            // same order and draws the same ordinal.
+                            let occurrence = runCtx.NextInputOccurrence(stageKey, stepIndex)
+
+                            // BOUNDED: an answer to a deadlined prompt stays
+                            // provisional until the recheck below rules on it
+                            // CANCELLABLE covers both ways this prompt can be
+                            // stopped while it waits. A deadline was the obvious
+                            // one; a failFast SIBLING is the other, and treating
+                            // only the deadline as cancellable left an unbounded
+                            // prompt in a failFast branch writing an immediately
+                            // actionable answer that a crash could replay after
+                            // the sibling had already failed.
+                            let cancellable = deadline.IsSome || ctx.Interrupt.IsSome
+
+                            // MASKED before it leaves the engine. The console
+                            // copy is masked by Emit; this one is written to a
+                            // FILE in an inbox that may be shared across builds,
+                            // and the output leak-guard cannot see it because it
+                            // is not output. Same run-scoped set either way.
+                            let publishedPrompt = runCtx.MaskSecrets renderedMessage
+
+                            (fun () -> poll stageKey stepIndex occurrence cancellable publishedPrompt),
+                            (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence),
+                            (fun () -> hooks.OnInputAnswerVoided stageKey stepIndex occurrence))
+                    | _ -> None
+
+                // FG-046b (Codex P1). `submitter: 'release-team'` restricts WHO may
+                // approve, and this engine cannot authenticate anyone: the inbox
+                // protocol takes a self-declared `<who>`, so honouring the option
+                // would mean anyone able to write to the inbox could pass a gate
+                // Jenkins reserves for a named user or group. Enforcing it on a
+                // name the approver chose for themselves is not enforcement, it
+                // is theatre with an audit trail.
+                //
+                // So it fails closed BY NAME, and only where an answer could
+                // otherwise be accepted — an unattended `timeout` run reaches its
+                // deadline exactly as it does on Jenkins for anyone unauthorised,
+                // so that path is left alone.
+                // Two DIFFERENT options, refused for two different reasons — the
+                // first version of this guard lumped them together and refused a
+                // pipeline Jenkins allows. `submitter` RESTRICTS who may approve.
+                // `submitterParameter` does not restrict anything: it names the
+                // variable that receives the approving user's id. Both are
+                // refused here, but a refusal that misstates what an option does
+                // is a claim-accuracy defect in its own right.
+                let unsupportedOption =
+                    step.Named
+                    |> List.tryPick (fun (k, _) ->
+                        if k = "submitter" then
+                            Some(
+                                k,
+                                "restricts approval to named users and this engine cannot authenticate a submitter — the approval protocol takes a self-declared name, so honouring the restriction would widen it to anyone who can answer"
+                            )
+                        elif k = "submitterParameter" then
+                            Some(
+                                k,
+                                "binds the approving user's id into the build and this engine has no authenticated identity to bind — a self-declared name recorded as one would be a lie the pipeline goes on to use"
+                            )
+                        else
+                            None)
+
+                match approver, unsupportedOption with
+                | Some _, Some(option, why) ->
+                    emit $"ERROR: input `{option}` {why}"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | _ ->
+
+                match approver, deadline with
+                | None, None ->
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                | Some _ ->
+                | Some(poll, withdraw, voidAnswer), _ ->
+                    // Wait for the answer, the deadline, or a failFast sibling —
+                    // whichever comes first. With no deadline this waits
+                    // indefinitely, which is what Jenkins does and what an
+                    // approver makes safe to reproduce.
+                    let mutable outcome = Cancellation.Running
+                    let mutable answer = None
+                    // reported at its own site; it must NOT be routed through
+                    // applyCancellation, which would name a failFast sibling
+                    // that does not exist — the collateral-outranks-cause
+                    // misclassification this walker has fought five times
+                    let mutable approverFaulted = false
+
+                    while outcome = Cancellation.Running && answer.IsNone && not approverFaulted do
+                        // CANCELLATION IS CHECKED FIRST, both kinds, and an
+                        // answer first OBSERVED after it is refused.
+                        //
+                        // The earlier version preferred an answer over an
+                        // expired deadline, reasoning that a human who answered
+                        // before expiry had answered. Nothing here can know
+                        // that: the poll observes a FILE, the sleep can overshoot
+                        // the deadline by its own interval, and an answer written
+                        // in that window is indistinguishable from one written
+                        // before. That is the same defect as every claim this
+                        // project has had to retract — a comment asserting more
+                        // than the code can establish — and here it would let a
+                        // late approval defeat the safety bound the pipeline
+                        // author wrote down. A `timeout` wins its ties; the human
+                        // can answer the next build.
+                        match cancellationOf ctx deadline with
+                        | Cancellation.Running ->
+                            // An approver that FAULTS is not an approver, and a
+                            // fault here used to escape the step entirely: inside
+                            // a parallel branch it faulted the branch task, which
+                            // was swallowed, and the build could finish
+                            // successfully having never been approved. It is a
+                            // named failure now — the one thing a gate must never
+                            // do is let the build past without an answer.
+                            let polled =
+                                try
+                                    Ok(poll ())
+                                with ex ->
+                                    Result.Error ex
+
+                            match polled with
+                            | Result.Error ex ->
+                                emit $"ERROR: input approver failed: {ex.GetType().Name}: {ex.Message}"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Failure
+                                approverFaulted <- true
+                            | Ok(Some a) ->
+                                // RECHECKED, because a poll is not
+                                // instantaneous: it reads the inbox, appends the
+                                // answer to the journal and FSYNCS it, so on slow
+                                // or stalled storage a poll that began inside the
+                                // deadline can return outside it. Checking only
+                                // BEFORE the poll left exactly the hole the
+                                // pre-poll fix was meant to close, one layer down.
+                                // The human's answer is durable either way — it is
+                                // on record, it is simply too late for this build,
+                                // and a `timeout` still wins its ties.
+                                match cancellationOf ctx deadline with
+                                | Cancellation.Running ->
+                                    // ACCEPTED for THIS attempt, and nothing is
+                                    // written to make it actionable for another
+                                    // one. Promotion used to happen here, and a
+                                    // promotion is itself a durable write that can
+                                    // straddle the very deadline it rules on —
+                                    // rechecking after it only moves the window,
+                                    // which is the chase that produced four
+                                    // findings. A cancellable prompt's answer
+                                    // stays provisional in the journal: usable
+                                    // now, never replayable later. FG-046c is what
+                                    // would restore the resume, by recording an
+                                    // ABSOLUTE deadline a later attempt can judge.
+                                    answer <- Some a
+                                | c ->
+                                    // VOIDED durably before the cancellation is
+                                    // applied. The answer is already on record —
+                                    // the approver journals it as it reads it —
+                                    // so refusing it in memory alone leaves a
+                                    // usable approval behind: a kill before the
+                                    // abort is recorded, and the resumed attempt
+                                    // finds it, honours it under a FRESH
+                                    // deadline, and the gate the timeout closed
+                                    // opens anyway. The record stays for the
+                                    // audit trail; the void says it was never
+                                    // acted on.
+                                    voidAnswer ()
+                                    outcome <- c
+                            | Ok None ->
+                                let left = defaultArg (remainingMs deadline) 250L
+                                System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(float (min 250L (max 10L left))))
+                        | c -> outcome <- c
+
+                    match answer with
+                    | Some(InputApproved _) ->
+                        // MEASURED on Jenkins 2.568.1: approving prints NOTHING —
+                        // the console goes straight from the prompt to the next
+                        // step, with no "Approved by ..." line. Emitting one here
+                        // would be a divergence invented out of politeness.
+                        // UNPROVEN BY RECEIPT (the harness cannot answer a prompt
+                        // on the Jenkins side): measured by probe, asserted by
+                        // scripts/run-approval-lane.sh.
+                        ()
+                    | Some(InputRejected _) ->
+                        // MEASURED: a human abort ends the build ABORTED with
+                        // `Rejected` as the reason line. Two stated residuals, both
+                        // visible in the probe's console: Jenkins follows it with an
+                        // `ErrorAction$ErrorId: <uuid>` line naming a Java class,
+                        // which is engine-internal mimicry and is NOT emitted; and
+                        // Jenkins prints both at END of build, after the pipeline
+                        // teardown, whereas this emits at the step. Neither is
+                        // observable in a receipt (the harness has no approver), so
+                        // both are recorded rather than matched by guesswork.
+                        // UNPROVEN BY RECEIPT, same reason as the approval path;
+                        // asserted by scripts/run-approval-lane.sh.
+                        emit "Rejected"
+                        ctx.Failed.Value <- true
+                        ctx.HumanRejected.Value <- true
+                        ctx.Sink BuildStatus.Aborted
+                    // WITHDRAWN the moment it dies, not at the end of the
+                    // build: a retry starts the next occurrence immediately, and
+                    // an inbox showing both is an invitation to answer the dead
+                    // one. An answered prompt needs no withdrawal — the approver
+                    // consumed it when it recorded the answer.
+                    // NOT withdrawn on a fault, deliberately. The approver can
+                    // fault AFTER reading a valid answer — a journal append or
+                    // fsync throwing — and withdrawal deletes the decision file,
+                    // which at that instant holds the human's only answer, not
+                    // yet durable anywhere. Destroying it to tidy up is the exact
+                    // loss this ticket exists to prevent. The build fails closed;
+                    // the answer stays for a later attempt to adopt, and the
+                    // stale marker is swept when the build reaches a terminal
+                    // record.
+                    | None when approverFaulted -> ()
+                    | None ->
+                        withdraw ()
+                        applyCancellation ctx "input" deadline outcome
+                | None, Some _ ->
                     // Wait out the deadline exactly as an unanswered prompt would.
                     //
                     // REVIEW FIX (both reviewers, PR #17): the loop exited on EITHER
@@ -1115,7 +1445,14 @@ module WalkerOrchestration =
                                         Sink =
                                             fun st ->
                                                 observed.Value <- BuildStatus.worstOf observed.Value st
-                                                ctx.Sink st }
+                                                ctx.Sink st
+                                        // FG-046b: the key this step's durable
+                                        // records are written under, so a step
+                                        // that needs to consult them (`input`)
+                                        // can name itself without the walker
+                                        // threading an index through every
+                                        // wrapper body it may be nested in
+                                        DurabilityKey = Some(stage.Name, i) }
 
                                 runStepDispatch observing cwd stage step deadline
                                 hooks.OnStepFinished stage.Name i observed.Value)
@@ -1177,11 +1514,52 @@ module WalkerOrchestration =
                                     if failFast then
                                         Some(fun () -> siblingFailed.IsCancellationRequested)
                                     else
-                                        ctx.Interrupt }
+                                        ctx.Interrupt
+                                  // FG-046b: NOT inherited. The branch is about to
+                                  // run its own stage body, which sets the key for
+                                  // each step it executes; carrying the parent's
+                                  // key in would name the PARALLEL step that owns
+                                  // the branches, so an `input` inside two branches
+                                  // would answer to one shared key.
+                                  DurabilityKey = None
+                                  // INHERITED, unlike the key: a human declining a
+                                  // gate in any branch is a rejection of the
+                                  // enclosing attempt, and an enclosing `retry`
+                                  // must see it rather than ask them again.
+                                  HumanRejected = ctx.HumanRejected }
 
                             branchCtx,
                             System.Threading.Tasks.Task.Run(fun () ->
-                                runStage branchCtx cwd deadline branch
+                                // FG-046b (Codex P1). A branch that THROWS skips the
+                                // epilogue below, so under failFast it never stamped
+                                // the instant nor cancelled the token — and the join
+                                // cannot stand in for that, because the waiter awaits
+                                // branches IN ORDER: a fault in the second branch is
+                                // not even observed while the first is still running
+                                // the side-effecting steps failFast exists to
+                                // interrupt. The signal has to come from the branch
+                                // itself, at the moment it dies.
+                                //
+                                // The failure is marked here too, so `bc.Failed` is
+                                // true by the time any sibling polls it; the exception
+                                // still propagates, and the waiter still names it.
+                                try
+                                    runStage branchCtx cwd deadline branch
+                                with _ ->
+                                    branchCtx.Failed.Value <- true
+                                    // named exactly as the ordinary failure path
+                                    // names it — a reader wants to know WHICH
+                                    // branch died either way
+                                    emit $"Failed in branch {branch.Name}"
+
+                                    if failFast then
+                                        System.Threading.Interlocked.CompareExchange(
+                                            siblingFailedAt, runClock.ElapsedMilliseconds, -1L)
+                                        |> ignore
+
+                                        siblingFailed.Cancel()
+
+                                    reraise ()
 
                                 if branchCtx.Failed.Value then
                                     // Jenkins names the branch that failed. EMITTING it
@@ -1209,11 +1587,33 @@ module WalkerOrchestration =
                     // interrupted branch still has a process group to reap,
                     // and abandoning it is how orphans happen (FG-032).
                     branches
-                    |> List.iter (fun (_, t) ->
+                    |> List.iter (fun (bc, t) ->
                         try
                             t.Wait()
-                        with _ ->
-                            ())
+                        with ex ->
+                            // FG-046b (Codex P1). This used to swallow the
+                            // exception and move on, while the ONLY failure
+                            // signal read below is `bc.Failed` — which a fault
+                            // never sets. So a branch that threw vanished: the
+                            // build could report SUCCESS having silently skipped
+                            // whatever that branch was doing, and for an `input`
+                            // branch that means shipping without the approval.
+                            //
+                            // A branch's ordinary failure never arrives here (it
+                            // is recorded through Failed/Sink), so anything that
+                            // does is an ENGINE fault, and the honest response to
+                            // one is to fail the build by name.
+                            let root =
+                                match ex with
+                                | :? AggregateException as agg ->
+                                    agg.Flatten().InnerExceptions
+                                    |> Seq.tryHead
+                                    |> Option.defaultValue ex
+                                | _ -> ex
+
+                            emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"
+                            bc.Failed.Value <- true
+                            bc.Sink BuildStatus.Failure)
 
                     if branches |> List.exists (fun (bc, _) -> bc.Failed.Value) then
                         ctx.Failed.Value <- true
