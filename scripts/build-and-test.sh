@@ -42,7 +42,8 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # the proof runs FIRST and in scratch repositories: a checker nobody has watched
 # fail is a claim, and this one has twice been wrong about its own job
 ./scripts/prove-stale-refs.sh || { echo "STALE-REF PROOF FAILED"; exit 1; }
-./scripts/audit-stale-refs.bb --strict || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
+./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
+  || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
 
 # FG-112: the restart lane is self-contained (dotnet + bash + a SIGKILL) and
 # is the ONLY automated coverage of PersistenceHooks/resume — it runs in the

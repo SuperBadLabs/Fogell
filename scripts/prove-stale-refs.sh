@@ -70,6 +70,11 @@ prove_form "static member name"       "static member StaleGateValue = 1" StaleGa
 prove_form "override this.name"       "override this.StaleGateValue = 1" StaleGateValue
 prove_form "abstract member name"     "abstract member StaleGateValue : int" StaleGateValue
 prove_form "default this.name"        "default this.StaleGateValue = 1" StaleGateValue
+# F# identifiers may end in `'`, which is not a word character — so the `\b` the
+# comment search used could never close against one. Extracted fine, reported
+# never.
+prove_form "let name' (apostrophe)"   "let staleGateValue' = 1" "staleGateValue'"
+prove_form "let name'' (two)"         "let staleGateValue'' = 1" "staleGateValue''"
 
 echo "=== the checker's own failure modes ==="
 out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
@@ -79,11 +84,36 @@ else
   note "unresolvable base" "DID NOT REFUSE — exit $rc"; FAIL=1
 fi
 
-out=$(bb "$AUDIT" --strict 2>&1); rc=$?
+# HERMETIC, and it was not: this ran the audit against THIS repository with the
+# default base, so it inherited whatever remotes the host happened to have. It
+# passed on a developer box with `origin/main` and failed in CI's shallow
+# single-ref checkout, where that ref does not exist — the audit refusing
+# correctly, the proof reading it as a false positive. A proof that depends on
+# the ambient environment is testing the environment.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src && printf 'let staleGateValue = 1\n// staleGateValue is explained here\n' > src/F.fs \
+  && git add -A && git commit -qm base ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ] && grep -q "no surviving comment" <<<"$out"; then
   note "clean tree" "silent (exit 0) — OK"
 else
   note "clean tree" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A search tool that ERRORS must not read as "found nothing". Forced with a stub
+# `rg` on PATH that exits 2 — the same shape as an unreadable tree or a missing
+# binary, and previously indistinguishable from a clean result.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src bin && printf 'let staleGateValue = 1\n// staleGateValue is explained here\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs \
+  && printf '#!/bin/sh\necho "stub rg failure" >&2\nexit 2\n' > bin/rg && chmod +x bin/rg ) >/dev/null 2>&1
+out=$( cd "$d" && PATH="$d/bin:$PATH" bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 2 ] && grep -q "rg failed while" <<<"$out"; then
+  note "search tool errors" "refused (exit 2) — OK"
+else
+  note "search tool errors" "DID NOT REFUSE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
 [ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should" \

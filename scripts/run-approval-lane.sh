@@ -639,14 +639,34 @@ PID=$!
 N1=$(await_pending "$N/approvals") || { echo "FAIL: no prompt published"; cat "$N/run.log"; exit 1; }
 set +e; wait "$PID"; RC=$?; set -e
 sleep 0.5   # let the last withdrawal reach the watcher before it is torn down
+# THE WATCHER MUST STILL BE ALIVE. If it died mid-run — a write that threw, an
+# unexpected exit — the log is a PARTIAL capture: non-empty, overflow-free, and
+# therefore accepted by `report`, which would clear scenario N without ever
+# observing the successor publication whose ordering it exists to check. The
+# watcher's own "I saw nothing" guard cannot catch this, because it saw
+# something; it just stopped watching. Checked BEFORE the intentional kill,
+# since afterwards the two are indistinguishable.
+kill -0 "$WATCHER" 2>/dev/null || {
+  echo "FAIL: the inbox watcher exited before teardown — the event log is a partial capture and proves nothing"
+  cat "$N/events"; cat "$N/run.log"; exit 1; }
 # `|| true` on both, for the reason the cleanup trap already documents: `wait`
 # on a process this line just killed returns 143, and under `set -e` that ends
 # the lane with every assertion passed and no message saying why.
 kill "$WATCHER" 2>/dev/null || true
 wait "$WATCHER" 2>/dev/null || true
 WATCHER=""
-"$WATCH_BIN" report "$N/events" || {
-  echo "FAIL: the inbox advertised a dead prompt alongside its successor"; cat "$N/run.log"; exit 1; }
+# `report` is THREE-valued and `|| { breach }` flattened that: exit 3 means
+# CANNOT PROVE — an empty log, or dropped events — and announcing it as a
+# breach is a misdiagnosis in the direction of alarm, where the earlier
+# mistakes all ran in the direction of false comfort. Both are wrong.
+set +e; "$WATCH_BIN" report "$N/events" > "$N/watch.out" 2>&1; WRC=$?; set -e
+cat "$N/watch.out"
+case "$WRC" in
+  0) ;;
+  1) echo "FAIL: the inbox advertised a dead prompt alongside its successor"; cat "$N/run.log"; exit 1;;
+  *) echo "FAIL: the inbox watcher could not prove anything (exit $WRC) — treat as unproven, not as a pass"
+     cat "$N/run.log"; exit 1;;
+esac
 grep -q 'completed: aborted' "$N/run.log" || { echo "FAIL: the exhausted retry did not abort"; cat "$N/run.log"; exit 1; }
 # both occurrences ran (the timeout is retried — receipt retry-timeout-retries)
 [ "$(grep -c '| Deploy?' "$N/run.log")" -eq 2 ] || {

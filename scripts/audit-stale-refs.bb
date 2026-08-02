@@ -29,6 +29,16 @@
 ;; the failure this project named a corollary about (a checker must NAME ITS
 ;; TARGET, never inherit or assume it), committed inside the checker meant to
 ;; enforce it. Caught in review before it merged.
+;; An F# identifier may END in `'` (`state'`, `loop''`), which `\b` cannot close
+;; against: `'` is not a word character, so there is no boundary between it and a
+;; following space. The extractor allowed `'` from the start, so `let state' = ...`
+;; was captured, reported as gone, and then silently failed to match its own
+;; surviving comment — the audit exiting 0 while the defect it names sat in the
+;; tree. Found by the pre-push reviewer, who reproduced it in a scratch repo
+;; rather than asserting it. Rust's regex engine has no lookaround, so the
+;; boundary is an explicit class plus end-of-line.
+(def fsharp-boundary "($|[^A-Za-z0-9_'])")
+
 (let [args *command-line-args*
       strict? (some #{"--strict"} args)
       base (or (first (remove #{"--strict"} args)) "origin/main")
@@ -80,21 +90,35 @@
       ;; only the roots that EXIST — a scratch tree (or a repo mid-restructure)
       ;; otherwise fills the report with rg errors that can hide a real one
       roots (filterv #(.isDirectory (java.io.File. %)) ["src" "tools" "scripts" "tests"])
+      ;; rg exits 0 on a match, 1 on none, and >1 on a REAL ERROR (bad pattern,
+      ;; unreadable path, missing binary). Ignoring the code made every error
+      ;; read as "no match" — an unreadable tree would have reported every
+      ;; identifier gone, and a bad pattern would have reported none, both
+      ;; while exiting 0/1 as though the audit had run. A blocking checker that
+      ;; cannot search must say CANNOT PROVE, which is the same lesson the base
+      ;; ref taught two rounds earlier.
+      rg! (fn [what args]
+            (let [r (apply shell {:out :string :err :string :continue true} "rg" args)]
+              (when (> (:exit r) 1)
+                (println (format "stale-reference audit: rg failed while %s (exit %d): %s"
+                                 what (:exit r) (str/trim (or (:err r) ""))))
+                (System/exit 2))
+              (:out r)))
       still-defined? (fn [id]
-                       (let [r (apply shell {:out :string :err :string :continue true}
-                                      "rg" "-l" (format "(let|member|type|override|default)\\s+((private|internal|public|mutable|rec|inline|new|val)\\s+)*([A-Za-z_][A-Za-z0-9_']*\\.)?%s\\b|^\\s+%s\\s*:" id id)
-                                      (remove #{"scripts"} roots))]
-                         (not (str/blank? (:out r)))))
+                       (not (str/blank?
+                             (rg! (str "searching for a surviving definition of " id)
+                                  (concat ["-l" (format "(let|member|type|override|default)\\s+((private|internal|public|mutable|rec|inline|new|val)\\s+)*([A-Za-z_][A-Za-z0-9_']*\\.)?%s%s|^\\s+%s\\s*:" id fsharp-boundary id)]
+                                          (remove #{"scripts"} roots))))))
 
       gone (remove still-defined? removed)
 
       ;; ...but still named in a surviving COMMENT.
       hits (for [id gone
-                 :let [r (apply shell {:out :string :err :string :continue true}
-                                "rg" "-n" "--no-heading"
-                                (format "(//|///|;;|#).*\\b%s\\b" id)
-                                roots)]
-                 line (remove str/blank? (str/split-lines (or (:out r) "")))]
+                 :let [out (rg! (str "searching for comments naming " id)
+                                (concat ["-n" "--no-heading"
+                                         (format "(//|///|;;|#).*\\b%s%s" id fsharp-boundary)]
+                                        roots))]
+                 line (remove str/blank? (str/split-lines (or out "")))]
              [id line])]
 
   (println (format "stale-reference audit: %d identifier(s) removed vs %s, %d fully gone"

@@ -34,6 +34,21 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The stale-reference audit compares against a base ref. checkout's
+          # default is a shallow, single-ref clone in which `origin/main` does
+          # not exist — the audit then refuses (exit 2) and the blocking gate
+          # fails before the lanes run. That is the audit behaving correctly:
+          # it will not report a clean tree it never compared against. Giving
+          # it the ref is the workflow's job.
+          fetch-depth: 0
+
+      - name: name the audit's comparison ref
+        # NAMED here rather than defaulted in the script: on a pull request the
+        # base is whatever the PR targets, which is not always `main`, and a
+        # checker that guesses its own target is the defect this audit exists
+        # to catch.
+        run: echo "FOGELL_STALE_REF_BASE=origin/${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}" >> "$GITHUB_ENV"
 
       - uses: actions/setup-dotnet@v4
         with:
