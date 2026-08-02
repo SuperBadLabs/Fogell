@@ -234,13 +234,20 @@ let main argv =
         // distinguishes them only to warn, because neither is an answer and
         // guessing which way a malformed one leaned would be inventing a human's
         // decision, the one thing durability exists to protect.
-        // FG-046b. The last (size, mtime) each decision file was seen with, so a
-        // poll can require it to be UNCHANGED since the previous poll before
-        // acting on it — see `requireStable` below.
+        // FG-046b. The last (size, mtime) each decision file was seen with. Every
+        // read requires it to be UNCHANGED since the previous one before acting —
+        // unconditionally, with no way for a caller to opt out. There WAS an
+        // opt-out once and the adoption pass used it, which is how a decision
+        // file still being written could be adopted as an answer.
         let lastObserved = Collections.Concurrent.ConcurrentDictionary<string, int64 * int64>()
 
+        // How long the one-shot adoption pass waits between its two observations.
+        // Named because it is part of a SAFETY rule, not a tuning knob: it must
+        // stay comfortably above the live loop's 250 ms poll so that a writer
+        // mid-burst is seen changing by both readers rather than only by one.
+        let adoptionSettleMs = 400
+
         let readDecision
-            (requireStable: bool)
             (dir: string)
             (stage: string)
             (index: int)
@@ -256,27 +263,58 @@ let main argv =
             // window where `approve alice\n` has landed and `reject bob\n` has
             // not: newline-terminated, single-line, and accepted as an
             // unambiguous approval even though the finished file is the
-            // ambiguous pair the parser exists to reject. Requiring the file to
-            // be unchanged across two consecutive polls closes that window for
-            // any writer whose writes are more than a poll interval apart.
+            // ambiguous pair the parser exists to reject.
             //
-            // STATED PLAINLY: this is a NARROWING, not a proof. Two writes
-            // inside one 250 ms poll still slip through, and no reader-side rule
-            // can fix a writer that publishes non-atomically — which is why the
-            // protocol REQUIRES atomic publication (write a temp file in the same
-            // directory, then rename; POSIX rename is atomic). The check earns
-            // its place by making the common careless case fail rather than
-            // silently approve.
+            // WHAT THE TWO-OBSERVATION RULE ACTUALLY CATCHES, stated correctly
+            // after a review caught this comment saying the opposite: it rejects
+            // a file that CHANGES BETWEEN the two observations. A writer that
+            // pauses longer than the gap is NOT caught — both looks see the same
+            // partial content, it is accepted, and the later append arrives too
+            // late to matter. So the rule catches the writer who is mid-burst and
+            // misses the writer who is slow, which is the reverse of what this
+            // comment used to claim.
             //
-            // Skipped by the adoption pass, which reads once, at startup, with
-            // nothing executing — there is no second poll to compare against.
-            let stableNow =
-                if not requireStable then
-                    true
-                else
+            // It is therefore a NARROWING and nothing more. No reader-side rule
+            // can fix a writer that publishes non-atomically, which is why the
+            // protocol REQUIRES atomic publication: write a temp file in the same
+            // directory and rename it over the target, since POSIX rename is
+            // atomic and is the only construction that gives a reader a snapshot
+            // at all.
+            //
+            // NO CALLER MAY OPT OUT, and that used to be a flag the adoption pass
+            // set to false. Its justification was that adoption "reads once, at
+            // startup, with nothing executing — there is no second poll to
+            // compare against". That reasoning is wrong, and gpt-5.5 caught it:
+            // "nothing executing" means no BUILD is running, but the operator or
+            // automation writing the decision file is a different actor entirely
+            // and can be mid-write at the moment the host starts. Adoption could
+            // therefore accept a transient `approve alice\n` that, once
+            // finished, is the ambiguous `approve alice\nreject bob\n` this
+            // parser exists to reject — and journal it as an approval.
+            //
+            // The answer is not to exempt the one-shot caller but to make it
+            // poll twice: adoption primes, waits, and reads again, so both paths
+            // enforce the same rule.
+            // The stat can FAIL even though File.Exists just succeeded — the file
+            // can be withdrawn, replaced or made unreadable in between, and
+            // `FileInfo.Length` throws rather than returning a sentinel. An
+            // exception escaping here would fault the approver and fail the
+            // build over a file that merely went away. A vanished or unreadable
+            // file is simply not an answer, so it reads as "not stable yet" and
+            // the prompt keeps waiting.
+            let stampNow () =
+                try
                     let info = FileInfo path
-                    let stamp = (info.Length, info.LastWriteTimeUtc.Ticks)
+                    Some(info.Length, info.LastWriteTimeUtc.Ticks)
+                with _ ->
+                    None
 
+            let observed = stampNow ()
+
+            let stableNow =
+                match observed with
+                | None -> false
+                | Some stamp ->
                     let seenBefore =
                         match lastObserved.TryGetValue path with
                         | true, previous -> previous = stamp
@@ -326,6 +364,17 @@ let main argv =
             match contents with
             | Result.Error e -> Some(Error e)
             | Ok contents ->
+
+            // THE BYTES MUST BELONG TO THE FILE THAT WAS VALIDATED. The stamps
+            // above describe metadata read BEFORE this content read, so a writer
+            // that replaces the file in between leaves both stamps describing the
+            // old file while we parse and journal a new version nobody ever
+            // observed stable — the exact case the rule exists to reject,
+            // reintroduced in the gap between checking and reading. Re-stat after
+            // the read: if it moved, this is not a settled answer.
+            if stampNow () <> observed then
+                None
+            else
 
             if contents = "" then
                 None
@@ -576,7 +625,7 @@ let main argv =
                 // exemption is a BARE top-level `input`, which asks exactly one
                 // prompt. Adopting a later occurrence would mean guessing which
                 // of a wrapper's several gates an answer belonged to.
-                let adopted =
+                let candidates =
                     plan.NeedsReconciliation
                     |> List.filter (fun k -> Set.contains k plan.InputSteps)
                     // NOT a bounded prompt. An answer written to the inbox while
@@ -592,8 +641,21 @@ let main argv =
                             false
                         else
                             true)
+
+                // PRIME, then decide. The stability rule needs two observations,
+                // and this pass only has one moment — so it makes a second. The
+                // wait is paid once for every candidate, at startup, and only
+                // when there is something to adopt at all.
+                if not (List.isEmpty candidates) then
+                    for stage, i in candidates do
+                        readDecision dir stage i 1 |> ignore
+
+                    System.Threading.Thread.Sleep adoptionSettleMs
+
+                let adopted =
+                    candidates
                     |> List.choose (fun (stage, i) ->
-                        match readDecision false dir stage i 1 with
+                        match readDecision dir stage i 1 with
                         | Some(Ok(approved, who)) -> Some(stage, i, approved, who)
                         | Some(Error e) ->
                             eprintfn $"approvals: {e} — still waiting"
@@ -741,7 +803,7 @@ let main argv =
                     | true, a -> Some a
                     | _ ->
 
-                    match readDecision true dir stage index occurrence with
+                    match readDecision dir stage index occurrence with
                     | None ->
                         // publish what is being waited on, once
                         if publishedPending.TryAdd((stage, index, occurrence), true) then
