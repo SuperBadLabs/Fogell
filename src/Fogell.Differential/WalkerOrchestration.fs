@@ -977,7 +977,14 @@ module WalkerOrchestration =
                             // provisional until the recheck below rules on it
                             let bounded = deadline.IsSome
 
-                            (fun () -> poll stageKey stepIndex occurrence bounded renderedMessage),
+                            // MASKED before it leaves the engine. The console
+                            // copy is masked by Emit; this one is written to a
+                            // FILE in an inbox that may be shared across builds,
+                            // and the output leak-guard cannot see it because it
+                            // is not output. Same run-scoped set either way.
+                            let publishedPrompt = runCtx.MaskSecrets renderedMessage
+
+                            (fun () -> poll stageKey stepIndex occurrence bounded publishedPrompt),
                             (fun () -> hooks.OnInputClosed stageKey stepIndex occurrence),
                             (fun () -> hooks.OnInputAnswerVoided stageKey stepIndex occurrence),
                             (fun () -> hooks.CommitInputAnswer stageKey stepIndex occurrence))

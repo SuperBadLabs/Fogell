@@ -57,7 +57,9 @@
 #      deadline that died with the attempt that set it (FG-046c);
 #   S. a branch that FAULTS interrupts its failFast siblings — the signal comes
 #      from the branch, because the join awaits branches in order and would not
-#      even observe the fault in time.
+#      even observe the fault in time;
+#   T. a credential interpolated into a prompt is MASKED before the marker is
+#      written — the console copy was masked while the file on disk was not.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -839,6 +841,42 @@ grep -q '^late$' "$S/ws/gate/markers.txt" && {
   echo "FAIL: a failFast sibling ran to completion after its peer faulted"; cat "$S/run.log"; exit 1; }
 grep -q '| Failed in branch ask' "$S/run.log" || { echo "FAIL: the faulting branch was not named"; cat "$S/run.log"; exit 1; }
 echo "fault signalled from the branch itself; the sibling stopped before its next effect"
+
+# ---------------------------------------------------------------- scenario T
+echo "=== T: a secret in the prompt is masked BEFORE it reaches the inbox ==="
+# the console copy is masked by Emit. The marker is a FILE, in an inbox that may
+# be shared across builds, and the output leak-guard never inspects it because it
+# is not output — so the raw value went to disk while the console looked clean.
+T="$LANE/t"; mkdir -p "$T/approvals"
+SECRET="s3cr3t-$(date -u +%s)"
+printf 'deploy-token\ttext\t%s\n' "$(printf '%s' "$SECRET" | base64 -w0)" > "$T/creds.tsv"
+cat > "$T/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                withCredentials([string(credentialsId: 'deploy-token', variable: 'TOKEN')]) {
+                    input message: "Deploy with ${TOKEN}?", ok: "Ship it"
+                }
+            }
+        }
+    }
+}
+JF
+FOGELL_CREDENTIALS_FILE="$T/creds.tsv" "$HOST_BIN" "$T/Jenkinsfile" "$T/ws" gate "$T/build.journal" "$T/approvals" > "$T/run.log" 2>&1 &
+PID=$!
+TID=$(await_pending "$T/approvals") || { echo "FAIL: no prompt published"; cat "$T/run.log"; exit 1; }
+# the assertion that matters: the secret is NOT on disk
+grep -q "$SECRET" "$T/approvals/$TID.pending" && {
+  echo "FAIL: the credential was written verbatim to the approvals inbox"; sed 's/^/  | /' "$T/approvals/$TID.pending"; exit 1; }
+grep -q 'prompt' "$T/approvals/$TID.pending" || { echo "FAIL: no prompt line in the marker"; exit 1; }
+printf 'approve tess\n' > "$T/approvals/$TID.decision"
+set +e; wait "$PID"; set -e
+grep -q "$SECRET" "$T/run.log" && { echo "FAIL: the credential leaked to the console"; exit 1; }
+grep -rq "$SECRET" "$T/approvals" 2>/dev/null && { echo "FAIL: the credential is somewhere in the inbox"; exit 1; }
+grep -q "$SECRET" "$T/build.journal" && { echo "FAIL: the credential leaked into the journal"; exit 1; }
+echo "masked on the console, on disk, and in the journal"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
