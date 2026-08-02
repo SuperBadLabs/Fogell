@@ -370,13 +370,17 @@ let main argv =
                 | _ -> Some(Error $"{path} does not say approve or reject (got {body.Length} chars)")
             | _ -> Some(Error $"{path} must say '<approve|reject> <who>' on one line (got {body.Length} chars)")
 
-        // FG-046b. Prompts whose answer was READ but whose journal write FAILED.
-        // The walker deliberately does not withdraw on a fault, because at that
-        // instant the `.decision` file holds the human's only answer — and then
-        // the terminal sweep found the marker at build end and deleted both
-        // files anyway, so one guarantee undid the other. Every deletion path
-        // goes through `consumeAnswer`, so the guard lives there.
-        let unjournaledAnswers = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
+        // FG-046b. Prompts whose answer IS written down somewhere durable —
+        // actionable, provisional or voided — seeded from the journal and added
+        // to as this process records more.
+        //
+        // A POSITIVE test, and the previous attempt at this was a negative one:
+        // "did the write fault in THIS process". That dictionary was empty in
+        // the next invocation, which then took the already-terminal path and
+        // swept away the human's only answer — the guarantee lasted exactly as
+        // long as the process did. Asking instead whether the answer is durable
+        // is a question the journal can answer after any number of restarts.
+        let journaledAnswers = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
 
         // An answer is CONSUMED once it is durable. Both files go: the prompt is
         // no longer outstanding, and a decision left lying in the inbox is an
@@ -384,14 +388,20 @@ let main argv =
         // Called only AFTER the record is journaled and synced — in the other
         // order a kill in between would destroy the only copy of the answer.
         let consumeAnswer (dir: string) (stage: string) (index: int) (occurrence: int) =
-            // never for an answer that failed to become durable: the file IS the
-            // answer at that point, and tidying up would destroy the one thing
-            // the fault path exists to keep
-            if unjournaledAnswers.ContainsKey((stage, index, occurrence)) then
-                ()
-            else
+            // The MARKER always goes: the prompt is over either way, and a
+            // pending file for a finished gate is just a lie to the approver.
+            //
+            // The ANSWER goes only if it is durable. If the journal holds no
+            // record of it, that file is the human's only copy — the case the
+            // fault path exists for — and tidying up would destroy exactly what
+            // was preserved.
+            let deletable =
+                if journaledAnswers.ContainsKey((stage, index, occurrence)) then
+                    [ ".pending"; ".decision" ]
+                else
+                    [ ".pending" ]
 
-            for suffix in [ ".pending"; ".decision" ] do
+            for suffix in deletable do
                 try
                     let p = Path.Combine(dir, actionId stage index occurrence + suffix)
                     if File.Exists p then File.Delete p
@@ -453,6 +463,10 @@ let main argv =
 
         let plan = Resume.plan (Journal.read journalPath)
         buildIdentity <- defaultArg plan.BuildIdentity ""
+
+        // what the journal already says is written down — see consumeAnswer
+        for key in plan.AnsweredKeys do
+            journaledAnswers[key] <- true
 
         // the terminal no-op must not depend on the Jenkinsfile still existing
         // (a completed build queried after rotation) — check BEFORE reading it
@@ -772,16 +786,14 @@ let main argv =
                         // the key is recorded BEFORE the exception leaves: after
                         // this point nothing may delete the file that holds the
                         // answer, including the sweep at build end
-                        try
-                            if cancellable then
-                                journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
-                            else
-                                journal.Append(InputDecision(stage, index, occurrence, approved, who))
+                        if cancellable then
+                            journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
+                        else
+                            journal.Append(InputDecision(stage, index, occurrence, approved, who))
 
-                            journal.Sync()
-                        with _ ->
-                            unjournaledAnswers[(stage, index, occurrence)] <- true
-                            reraise ()
+                        journal.Sync()
+                        // durable NOW, and only now may the inbox copy be removed
+                        journaledAnswers[(stage, index, occurrence)] <- true
 
                         let answer = if approved then InputApproved who else InputRejected who
                         answered[(stage, index, occurrence)] <- answer
@@ -829,6 +841,7 @@ let main argv =
                     // crash window in which an unmarked answer is replayable
                     journal.Append(InputDecisionVoided(stage, i, occ))
                     journal.Sync()
+                    journaledAnswers[(stage, i, occ)] <- true
                     // and out of this process's cache, so a later poll under the
                     // same key cannot hand it back
                     answered.TryRemove((stage, i, occ)) |> ignore

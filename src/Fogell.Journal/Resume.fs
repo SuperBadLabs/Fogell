@@ -40,6 +40,12 @@ type ResumePlan =
       /// adopted; an operator decides instead. See Record.InputPromptCancellable
       /// for why this cannot be fixed with another check.
       CancellablePrompts: Set<string * int * int>
+      /// FG-046b. Prompts the journal holds ANY answer record for — actionable,
+      /// provisional, or voided. The question it answers is narrow and physical:
+      /// is this human's answer written down anywhere durable? An inbox
+      /// `.decision` file whose key is absent here is the ONLY copy of it, and
+      /// nothing may delete it.
+      AnsweredKeys: Set<string * int * int>
       /// FG-046b. Steps a prior attempt started as `input`. Needed because a
       /// disposition alone does not say WHICH step was interrupted, and the
       /// re-run rule below applies to `input` and to nothing else.
@@ -100,6 +106,14 @@ module Resume =
                 Map.empty
 
         { Steps = steps
+          AnsweredKeys =
+            records
+            |> List.choose (function
+                | InputDecision(stage, i, occ, _, _) -> Some(stage, i, occ)
+                | InputAnswerProvisional(stage, i, occ, _, _) -> Some(stage, i, occ)
+                | InputDecisionVoided(stage, i, occ) -> Some(stage, i, occ)
+                | _ -> None)
+            |> Set.ofList
           CancellablePrompts =
             records
             |> List.choose (function

@@ -60,7 +60,10 @@
 #      from the branch, because the join awaits branches in order and would not
 #      even observe the fault in time;
 #   T. a credential interpolated into a prompt is MASKED before the marker is
-#      written — the console copy was masked while the file on disk was not.
+#      written — the console copy was masked while the file on disk was not;
+#   U. cleanup deletes a marker always but an ANSWER only when the journal
+#      records one, so an answer that never became durable survives a restart
+#      into the already-terminal path.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -886,6 +889,41 @@ grep -q "$SECRET" "$T/run.log" && { echo "FAIL: the credential leaked to the con
 grep -rq "$SECRET" "$T/approvals" 2>/dev/null && { echo "FAIL: the credential is somewhere in the inbox"; exit 1; }
 grep -q "$SECRET" "$T/build.journal" && { echo "FAIL: the credential leaked into the journal"; exit 1; }
 echo "masked on the console, on disk, and in the journal"
+
+# ---------------------------------------------------------------- scenario U
+echo "=== U: cleanup keeps an answer the journal never recorded ==="
+# the fault path preserves the `.decision` because it is the human's only copy.
+# A PROCESS-LOCAL guard could not: the next invocation took the already-terminal
+# path with an empty dictionary and swept it away. The rule is now a positive
+# durability test the journal itself answers, so it survives the process.
+U="$LANE/u"; mkdir -p "$U/approvals"
+printf '%s\n' "$JF" > "$U/Jenkinsfile"
+"$HOST_BIN" "$U/Jenkinsfile" "$U/ws" gate "$U/build.journal" "$U/approvals" > "$U/run1.log" 2>&1 &
+PID=$!
+UID1=$(await_pending "$U/approvals") || { echo "FAIL: no prompt published"; cat "$U/run1.log"; exit 1; }
+printf 'approve uma\n' > "$U/approvals/$UID1.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$U/run1.log" || { echo "FAIL: build did not complete"; cat "$U/run1.log"; exit 1; }
+
+# now the state the fault leaves: an inbox pair for a prompt the journal holds NO
+# answer for. Occurrence 2 was never asked, so nothing recorded it.
+IDENT=$(rg -N '^build-identity\t' "$U/build.journal" | cut -f2)
+[ -n "$IDENT" ] || { echo "FAIL: no build identity in the journal"; exit 1; }
+UID2=$(printf '%s' "${#IDENT}:$IDENT|4:Gate|1|2" | sha256sum | cut -d' ' -f1)
+printf 'stage\tGate\nstep\t1\nprompt#\t2\nprompt\tDeploy?\n' > "$U/approvals/$UID2.pending"
+printf 'approve unrecorded\n' > "$U/approvals/$UID2.decision"
+grep -q "^input-answer-provisional\|^input-decision.*\t2\t" "$U/build.journal" && {
+  echo "FAIL: the journal already holds an answer for occurrence 2 — the fixture is wrong"; exit 1; }
+
+# a fresh process, already-terminal path, empty in-memory state
+"$HOST_BIN" "$U/Jenkinsfile" "$U/ws" gate "$U/build.journal" "$U/approvals" > "$U/run2.log" 2>&1
+grep -q 'already-terminal' "$U/run2.log" || { echo "FAIL: expected already-terminal"; cat "$U/run2.log"; exit 1; }
+[ -f "$U/approvals/$UID2.pending" ] && { echo "FAIL: the stale marker was not swept"; exit 1; }
+[ -f "$U/approvals/$UID2.decision" ] || {
+  echo "FAIL: an answer the journal never recorded was DELETED — its only copy is gone"; exit 1; }
+# and the answered prompt's own files are gone, because that one IS durable
+[ -f "$U/approvals/$UID1.decision" ] && { echo "FAIL: a durable answer was left in the inbox"; exit 1; }
+echo "marker swept, unrecorded answer preserved, durable answer consumed"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
