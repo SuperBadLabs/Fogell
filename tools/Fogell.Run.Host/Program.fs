@@ -370,12 +370,27 @@ let main argv =
                 | _ -> Some(Error $"{path} does not say approve or reject (got {body.Length} chars)")
             | _ -> Some(Error $"{path} must say '<approve|reject> <who>' on one line (got {body.Length} chars)")
 
+        // FG-046b. Prompts whose answer was READ but whose journal write FAILED.
+        // The walker deliberately does not withdraw on a fault, because at that
+        // instant the `.decision` file holds the human's only answer — and then
+        // the terminal sweep found the marker at build end and deleted both
+        // files anyway, so one guarantee undid the other. Every deletion path
+        // goes through `consumeAnswer`, so the guard lives there.
+        let unjournaledAnswers = Collections.Concurrent.ConcurrentDictionary<string * int * int, bool>()
+
         // An answer is CONSUMED once it is durable. Both files go: the prompt is
         // no longer outstanding, and a decision left lying in the inbox is an
         // answer waiting to be re-read by something it was never given to.
         // Called only AFTER the record is journaled and synced — in the other
         // order a kill in between would destroy the only copy of the answer.
         let consumeAnswer (dir: string) (stage: string) (index: int) (occurrence: int) =
+            // never for an answer that failed to become durable: the file IS the
+            // answer at that point, and tidying up would destroy the one thing
+            // the fault path exists to keep
+            if unjournaledAnswers.ContainsKey((stage, index, occurrence)) then
+                ()
+            else
+
             for suffix in [ ".pending"; ".decision" ] do
                 try
                     let p = Path.Combine(dir, actionId stage index occurrence + suffix)
@@ -753,12 +768,20 @@ let main argv =
                         // check and write can make such an answer safe to replay.
                         // A prompt that cannot be cancelled has no eligibility
                         // question, so its answer is actionable immediately.
-                        if cancellable then
-                            journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
-                        else
-                            journal.Append(InputDecision(stage, index, occurrence, approved, who))
+                        // a failure here is what the preservation rule is for, so
+                        // the key is recorded BEFORE the exception leaves: after
+                        // this point nothing may delete the file that holds the
+                        // answer, including the sweep at build end
+                        try
+                            if cancellable then
+                                journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
+                            else
+                                journal.Append(InputDecision(stage, index, occurrence, approved, who))
 
-                        journal.Sync()
+                            journal.Sync()
+                        with _ ->
+                            unjournaledAnswers[(stage, index, occurrence)] <- true
+                            reraise ()
 
                         let answer = if approved then InputApproved who else InputRejected who
                         answered[(stage, index, occurrence)] <- answer
