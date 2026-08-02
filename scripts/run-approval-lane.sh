@@ -84,6 +84,11 @@ cleanup() {
   # trap died there, taking the script's exit code to 1 with every assertion
   # passed. A cleanup step must never be able to fail the thing it cleans up.
   [ -n "${HOST_RE_BIN:-}" ] && pkill -9 -f "^${HOST_RE_BIN} .*${LANE_RE}" 2>/dev/null || true
+  # the churn writer is an INFINITE subshell. If the lane dies between launching
+  # it and the explicit kill, it outlives the test and keeps rewriting a retained
+  # directory — leaking a process and poisoning later runs, which is exactly how
+  # an orphaned host process failed a lane earlier in this session.
+  [ -n "${CHURN:-}" ] && kill -9 "$CHURN" 2>/dev/null || true
   [ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2
 }
 trap cleanup EXIT

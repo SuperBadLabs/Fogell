@@ -302,15 +302,17 @@ let main argv =
             // build over a file that merely went away. A vanished or unreadable
             // file is simply not an answer, so it reads as "not stable yet" and
             // the prompt keeps waiting.
-            let stamp =
+            let stampNow () =
                 try
                     let info = FileInfo path
                     Some(info.Length, info.LastWriteTimeUtc.Ticks)
                 with _ ->
                     None
 
+            let observed = stampNow ()
+
             let stableNow =
-                match stamp with
+                match observed with
                 | None -> false
                 | Some stamp ->
                     let seenBefore =
@@ -362,6 +364,17 @@ let main argv =
             match contents with
             | Result.Error e -> Some(Error e)
             | Ok contents ->
+
+            // THE BYTES MUST BELONG TO THE FILE THAT WAS VALIDATED. The stamps
+            // above describe metadata read BEFORE this content read, so a writer
+            // that replaces the file in between leaves both stamps describing the
+            // old file while we parse and journal a new version nobody ever
+            // observed stable — the exact case the rule exists to reject,
+            // reintroduced in the gap between checking and reading. Re-stat after
+            // the read: if it moved, this is not a settled answer.
+            if stampNow () <> observed then
+                None
+            else
 
             if contents = "" then
                 None
