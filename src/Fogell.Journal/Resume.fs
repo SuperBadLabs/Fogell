@@ -63,7 +63,8 @@ module Resume =
                     | WorkspaceIdentity _
                     | BuildIdentity _
                     | InputDecision _
-                    | InputDecisionVoided _ -> acc)
+                    | InputDecisionVoided _
+                    | InputAnswerProvisional _ -> acc)
                 Map.empty
 
         let inputSteps =
@@ -85,6 +86,9 @@ module Resume =
                     // is not actionable, and leaving it in this map is how a
                     // refused-as-late approval gets replayed by a resumed attempt
                     | InputDecisionVoided(stage, i, occ) -> Map.remove (stage, i, occ) acc
+                    // a PROVISIONAL answer is deliberately absent from this map:
+                    // it records that a human answered, not that the answer may
+                    // be acted on. Only a promotion to InputDecision does that.
                     | _ -> acc)
                 Map.empty
 

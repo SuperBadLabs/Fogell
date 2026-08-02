@@ -46,7 +46,10 @@
 #      can write to the inbox — this engine cannot authenticate a submitter, and
 #      enforcing a restriction on a self-declared name is theatre;
 #   P. an answer refused for arriving LATE is durably voided, so a crash cannot
-#      replay it into a resumed attempt under a fresh deadline.
+#      replay it into a resumed attempt under a fresh deadline;
+#   Q. and a DEADLINE-BOUND answer is only provisional until the walker rules on
+#      it, because the write itself can straddle the deadline — a crash before
+#      the ruling must leave nothing actionable.
 # D, E and F exist because a pre-push review found all three as live defects:
 # a reusable answer file that auto-approved every later build, a silent
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
@@ -693,6 +696,56 @@ grep -q 'needs-reconciliation: Gate#1' "$P/run4.log" || {
   echo "FAIL: the voided input was not sent for reconciliation"; cat "$P/run4.log"; exit 1; }
 grep -q 'completed:' "$P/run4.log" && { echo "FAIL: a voided answer let the build run"; cat "$P/run4.log"; exit 1; }
 echo "same state, one void record apart: honoured without it, refused with it"
+
+# ---------------------------------------------------------------- scenario Q
+echo "=== Q: a PROVISIONAL answer is not actionable on resume ==="
+# round 14 voided a late answer AFTER the poll returned, leaving a window: crash
+# between the decision fsync and the void and the resumed attempt finds a usable
+# approval for a gate that had already closed. A deadline-bound prompt now writes
+# its answer PROVISIONALLY; only the walker ruling on the deadline promotes it.
+Q="$LANE/q"; mkdir -p "$Q/approvals"
+cat > "$Q/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    options { timeout(time: 30, unit: 'SECONDS') }
+    stages {
+        stage("Gate") {
+            steps {
+                sh "echo one >> markers.txt"
+                input message: "Deploy?", ok: "Ship it"
+                sh "echo two >> markers.txt"
+            }
+        }
+    }
+}
+JF
+"$HOST_BIN" "$Q/Jenkinsfile" "$Q/ws" gate "$Q/build.journal" "$Q/approvals" > "$Q/run1.log" 2>&1 &
+PID=$!
+QID=$(await_pending "$Q/approvals") || { echo "FAIL: no prompt published"; cat "$Q/run1.log"; exit 1; }
+printf 'approve quinn\n' > "$Q/approvals/$QID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Q/run1.log" || { echo "FAIL: the bounded prompt did not complete"; cat "$Q/run1.log"; exit 1; }
+# the answer went through BOTH states: written provisionally, then promoted
+grep -q $'^input-answer-provisional\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {
+  echo "FAIL: a bounded prompt did not record its answer provisionally"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
+grep -q $'^input-decision\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {
+  echo "FAIL: the eligible answer was never promoted"; sed 's/^/  | /' "$Q/build.journal"; exit 1; }
+
+# the crash state: provisional written, nothing promoted. Resume must NOT act.
+grep -vP '^(build-finished|stage-committed)\t' "$Q/build.journal" \
+  | grep -vP '^step-(started|finished)\tGate\t2\t' \
+  | grep -vP '^step-finished\tGate\t1\t' \
+  | grep -vP '^input-decision\t' > "$Q/provisional.journal"
+grep -q '^input-answer-provisional' "$Q/provisional.journal" || { echo "FAIL: the rewind dropped the provisional"; exit 1; }
+set +e
+timeout 120 "$HOST_BIN" "$Q/Jenkinsfile" "$Q/ws" gate "$Q/provisional.journal" "$Q/approvals" > "$Q/run2.log" 2>&1
+RC=$?
+set -e
+[ "$RC" -ne 124 ] || { echo "FAIL: the provisional resume hung"; exit 1; }
+[ "$RC" -eq 3 ] || { echo "FAIL: a provisional answer was actionable (exit $RC)"; cat "$Q/run2.log"; exit 1; }
+grep -q 'needs-reconciliation: Gate#1' "$Q/run2.log" || {
+  echo "FAIL: the provisional input was not sent for reconciliation"; cat "$Q/run2.log"; exit 1; }
+echo "written provisionally, promoted when eligible; the un-promoted state refuses"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

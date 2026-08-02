@@ -74,6 +74,26 @@ type Record =
     /// closed. The safety bound is then defeated by a crash rather than by an
     /// approval.
     | InputDecisionVoided of stage: string * stepIndex: int * occurrence: int
+    /// FG-046b. An answer that has been READ but not yet ruled eligible. It says
+    /// a human answered — it is not lost, and an operator can see it — but it is
+    /// NOT actionable, so resume will not act on it.
+    ///
+    /// It exists because eligibility cannot be decided before the write. A
+    /// deadline-bound prompt must refuse an answer first observed after expiry,
+    /// and the read itself takes time: the inbox read, the append and the FSYNC
+    /// can all straddle the deadline. Recording the answer as actionable and
+    /// voiding it afterwards leaves a window — crash between the two and the
+    /// resumed attempt finds a usable approval for a gate that had already
+    /// closed. So a bounded prompt records the answer provisionally, the walker
+    /// rules on it against the deadline, and only then is it promoted to an
+    /// actionable [InputDecision]. An UNBOUNDED prompt skips all of this: with no
+    /// deadline an answer cannot be late, so it is actionable when written.
+    | InputAnswerProvisional of
+        stage: string *
+        stepIndex: int *
+        occurrence: int *
+        approved: bool *
+        submitter: string
 
 module Record =
 
@@ -106,6 +126,9 @@ module Record =
             let verdict = if approved then "approved" else "rejected"
             $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
         | InputDecisionVoided(stage, i, occurrence) -> $"input-decision-voided\t{oneLine stage}\t{i}\t{occurrence}"
+        | InputAnswerProvisional(stage, i, occurrence, approved, who) ->
+            let verdict = if approved then "approved" else "rejected"
+            $"input-answer-provisional\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
 
     let decode (line: string) : Record option =
         match line.Split '\t' with
@@ -125,6 +148,11 @@ module Record =
         | [| "input-decision-voided"; stage; i; occurrence |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with
             | (true, idx), (true, occ) -> Some(InputDecisionVoided(stage, idx, occ))
+            | _ -> None
+        | [| "input-answer-provisional"; stage; i; occurrence; verdict; who |] ->
+            match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with
+            | (true, idx), (true, occ), "approved" -> Some(InputAnswerProvisional(stage, idx, occ, true, who))
+            | (true, idx), (true, occ), "rejected" -> Some(InputAnswerProvisional(stage, idx, occ, false, who))
             | _ -> None
         | [| "input-decision"; stage; i; occurrence; verdict; who |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence, verdict with

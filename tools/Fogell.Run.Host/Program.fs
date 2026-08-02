@@ -672,7 +672,7 @@ let main argv =
         let pollInputAnswer =
             approvalsDir
             |> Option.map (fun dir ->
-                fun (stage: string) (index: int) (occurrence: int) (prompt: string) ->
+                fun (stage: string) (index: int) (occurrence: int) (bounded: bool) (prompt: string) ->
                     match answered.TryGetValue((stage, index, occurrence)) with
                     | true, a -> Some a
                     | _ ->
@@ -722,7 +722,17 @@ let main argv =
                         // ordering: the walker proceeds the instant this returns,
                         // so appending after the fact would lose the human's
                         // answer to a kill in between and ask them again.
-                        journal.Append(InputDecision(stage, index, occurrence, approved, who))
+                        //
+                        // PROVISIONAL when the prompt is deadline-bound: this
+                        // write can itself straddle the deadline, so the walker
+                        // rules on eligibility afterwards and promotes it (see
+                        // CommitInputAnswer). Unbounded prompts cannot receive a
+                        // late answer, so theirs is actionable immediately.
+                        if bounded then
+                            journal.Append(InputAnswerProvisional(stage, index, occurrence, approved, who))
+                        else
+                            journal.Append(InputDecision(stage, index, occurrence, approved, who))
+
                         journal.Sync()
 
                         let answer = if approved then InputApproved who else InputRejected who
@@ -764,6 +774,21 @@ let main argv =
                     // both files: the prompt is gone, and an answer left for it
                     // is an answer to a question nobody is asking any more
                     approvalsDir |> Option.iter (fun dir -> consumeAnswer dir stage i occ)
+              CommitInputAnswer =
+                fun stage i occ ->
+                    // the answer is already in this process's cache — the poll
+                    // put it there — so the promotion is a journal write, not a
+                    // re-read of an inbox file that has since been consumed
+                    match answered.TryGetValue((stage, i, occ)) with
+                    | true, a ->
+                        let approved, who =
+                            match a with
+                            | InputApproved w -> true, w
+                            | InputRejected w -> false, w
+
+                        journal.Append(InputDecision(stage, i, occ, approved, who))
+                        journal.Sync()
+                    | _ -> ()
               OnInputAnswerVoided =
                 fun stage i occ ->
                     // durable FIRST — the caller applies the cancellation the
