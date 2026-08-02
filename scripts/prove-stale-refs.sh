@@ -46,7 +46,12 @@ prove_form() {
   local out
   out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 )
   local rc=$?
-  if [ "$rc" -ne 0 ] && grep -q "name an identifier this diff deleted" <<<"$out"; then
+  # THE EXPECTED IDENTIFIER, not merely "some report happened". These cases
+  # checked only the generic phrase, so a run that reported the wrong thing —
+  # the audit briefly collected the word `member` as a deleted identifier —
+  # passed for the wrong reason while missing the real one.
+  if [ "$rc" -ne 0 ] && grep -q "name an identifier this diff deleted" <<<"$out" \
+     && grep -qF -- "$id" <<<"$out"; then
     note "$label" "reported (exit $rc) — OK"
   else
     note "$label" "MISSED — exit $rc"
@@ -75,6 +80,138 @@ prove_form "default this.name"        "default this.StaleGateValue = 1" StaleGat
 # never.
 prove_form "let name' (apostrophe)"   "let staleGateValue' = 1" "staleGateValue'"
 prove_form "let name'' (two)"         "let staleGateValue'' = 1" "staleGateValue''"
+
+# The surviving comment REPEATS the binding keyword. Every fixture above names
+# the identifier bare, so none of them could catch a comment being mistaken for
+# a surviving definition — which is how `member OldHook` deleted, plus
+# `// member OldHook used to ...` left behind, exited clean. Caught in review,
+# not by this proof, which is why it is now in this proof.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    member _.staleGateValue = 1\n// member staleGateValue used to publish the gate\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
+  note "comment repeats the keyword" "reported (exit $rc) — OK"
+else
+  note "comment repeats the keyword" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A record field written on the BRACE line, deleted on its own — not the
+# enclosing type. `{ Root: string }` is how this codebase writes single-field
+# records, and the extractor required `-` then whitespace then the name.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { StaleGateValue: string\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
+  note "record field on the brace line" "reported (exit $rc) — OK"
+else
+  note "record field on the brace line" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# An F# BLOCK comment. Its interior lines carry no marker, so the previous
+# line-prefix scan could not see this class even in principle — and the checker
+# exited 0 on the exact thing it advertises. Nested, because F# block comments
+# nest and a depth counter that cannot count is not a depth counter.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let staleGateValue = 1\n(* the gate hook\n   (* nested aside *)\n   staleGateValue is explained here *)\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
+  note "nested (* block comment *)" "reported (exit $rc) — OK"
+else
+  note "nested (* block comment *)" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A surviving STRING that merely looks like a definition. Unanchored,
+# `let keep = "let StaleGateValue"` convinced the audit the binding was still
+# defined, so the stale comment went unreported and --strict exited 0. The
+# whole-line comment filter cannot help here: the line IS code.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let StaleGateValue = 1\nlet keep = "let StaleGateValue"\n// StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
+  note "string that looks like a def" "reported (exit $rc) — OK"
+else
+  note "string that looks like a def" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# THE FIRST FALSE-POSITIVE FIXTURE. Every case above asks whether the checker
+# stays silent when it should speak; this asks whether it speaks when it should
+# stay silent, which is the failure that makes people stop reading a gate.
+# Deleting a COMMENT containing binding syntax removes no binding, so tidying
+# stale documentation must not fail the build.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let keep = 1\n// let GhostGateValue = old docs only\n// GhostGateValue was once described here\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "deleting a comment is not a deletion" "silent (exit 0) — OK"
+else
+  note "deleting a comment is not a deletion" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A record field named on an INTERIOR block-comment line. That line carries no
+# marker at all, so a prefix test read it as a surviving definition and the
+# deleted field never reached the stale-comment check — the definition scan and
+# the comment scan disagreeing at exactly the edge one of them was built for.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { StaleGateValue: string\n      Keep: int }\n(* the old shape was\n   StaleGateValue: string\n*)\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { Keep: int }\n(* the old shape was\n   StaleGateValue: string\n*)\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
+  note "field named inside a block comment" "reported (exit $rc) — OK"
+else
+  note "field named inside a block comment" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A field that SURVIVES by moving onto the brace line. The extractor had learned
+# that shape and the surviving-definition check had not, so the field read as
+# deleted and an honest comment about it failed the build. False positives are
+# how a gate earns the reputation that gets it switched off.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { Keep: int\n      StaleGateValue: string }\n// StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { StaleGateValue: string }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "field moved onto the brace line" "silent (exit 0) — OK"
+else
+  note "field moved onto the brace line" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# UNRELATED KEYWORD PROSE. The words `member`, `let` and `type` occur in
+# ordinary English, and for one commit the extractor collected them as deleted
+# identifiers — failing the build on a comment about team rotation. A checker
+# that blocks pushes over prose is worse than no checker.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    member _.staleGateValue = 1\n// team member rotation notes\n// let the record show, this type of thing\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if grep -qE "^  (member|let|type)\\b" <<<"$out"; then
+  note "keyword prose is not an identifier" "FALSE POSITIVE on a keyword"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+else
+  note "keyword prose is not an identifier" "not reported — OK"
+fi
 
 echo "=== the checker's own failure modes ==="
 out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
@@ -116,5 +253,21 @@ else
   note "search tool errors" "DID NOT REFUSE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
-[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should" \
+# THE LENGTH FLOOR, pinned as a deliberate boundary rather than left implicit.
+# Identifiers under four characters are not tracked: `x`, `i`, `id`, `ctx` occur
+# inside ordinary English, and a checker that fires on prose is one nobody
+# leaves switched on. If someone widens the extractor later, this case fails and
+# they have to decide rather than discover.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src && printf 'let foo = 1\n// foo is still documented\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "short identifier (by design)" "not tracked (exit 0) — OK"
+else
+  note "short identifier (by design)" "UNEXPECTEDLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and the length floor holds" \
                   || { echo "STALE-REF PROOF FAILED"; exit 1; }

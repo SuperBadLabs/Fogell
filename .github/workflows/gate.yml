@@ -48,7 +48,46 @@ jobs:
         # base is whatever the PR targets, which is not always `main`, and a
         # checker that guesses its own target is the defect this audit exists
         # to catch.
-        run: echo "FOGELL_STALE_REF_BASE=origin/${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}" >> "$GITHUB_ENV"
+        #
+        # A PUSH TO THE DEFAULT BRANCH needs a different base. `origin/main` has
+        # already moved to the commit being tested, so the diff is empty and the
+        # audit reports a clean tree on every direct push or merge to main —
+        # green, blind, and precisely where a stale reference reaches everyone.
+        # The push event's pre-push SHA is the right comparison there; it is
+        # verified to exist rather than assumed, because a force-push can leave
+        # it unreachable and a base that does not resolve must be a refusal, not
+        # a silent fallback to something that proves nothing.
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PR_BASE" ]; then
+            BASE="origin/$PR_BASE"
+          elif [ "${GITHUB_REF_NAME:-}" = "$DEFAULT_BRANCH" ]; then
+            # On the default branch `origin/$DEFAULT_BRANCH` has already moved to
+            # the commit under test, so it is never a usable base here.
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              # branch creation: there IS no prior state to compare against.
+              echo "default branch created — no prior commit to compare against"
+              BASE="HEAD"
+            elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              BASE="$BEFORE"
+            else
+              # The comment above promises a refusal here, and an earlier draft
+              # fell back to `origin/$DEFAULT_BRANCH` instead — which on this
+              # branch IS the commit under test, so the audit would have compared
+              # it to itself and gone blind green. A gate whose comment and whose
+              # code disagree is the exact defect this gate audits for.
+              echo "::error::pre-push commit $BEFORE does not resolve (force-push?); refusing to audit against a base that would compare this commit to itself"
+              exit 1
+            fi
+          else
+            BASE="origin/$DEFAULT_BRANCH"
+          fi
+          echo "comparison ref: $BASE"
+          echo "FOGELL_STALE_REF_BASE=$BASE" >> "$GITHUB_ENV"
 
       - uses: actions/setup-dotnet@v4
         with:

@@ -2,10 +2,14 @@
 # FG-046e. The proof for the inbox watcher, because scenario N is only worth
 # more than the sampler it replaced if this thing is PROVEN to report a breach.
 #
-# Three of the five cases below are failure modes of the WATCHER, not of the
-# inbox. That ratio is deliberate: on this gate's other checker every defect but
-# one lived at the checker's own edges, and each was found by planting the case
-# rather than by reading the code again.
+# Five of the eight cases below are about the WATCHER rather than the inbox —
+# its two blind spots, and the two count cases that stop "no overlap" being
+# accepted as "both prompts happened". That ratio is deliberate: on this gate's
+# other checker nearly every defect lived at the checker's own edges, and each
+# was found by planting the case rather than by reading the code again.
+#
+# (This header said "three of the five" until the count cases landed. A stale
+# claim inside the proof of the stale-claim checker is not a joke worth keeping.)
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 WATCH="tools/Fogell.Watch.Inbox/bin/Release/net10.0/Fogell.Watch.Inbox"
@@ -35,13 +39,13 @@ start_watch() {
 stop_watch() { sleep 0.5; kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; WPID=""; }
 
 run_case() {
-  local label=$1 want=$2 body=$3
+  local label=$1 want=$2 body=$3 expect=${4:-}
   local d log
   d=$(mktemp -d /tmp/approval-watch.XXXXXX); log="$d/events"; : > "$log"
   if ! start_watch "$d" "$log"; then note "$label" "WATCHER NEVER REGISTERED"; FAIL=1; return; fi
   ( cd "$d" && eval "$body" )
   stop_watch
-  "$WATCH" report "$log" >"$d/out" 2>&1; local rc=$?
+  "$WATCH" report "$log" $expect >"$d/out" 2>&1; local rc=$?
   if [ "$rc" -eq "$want" ]; then
     note "$label" "exit $rc — OK"
   else
@@ -74,6 +78,27 @@ run_case "withdraw-then-publish (compliant)" 0 '
   touch b.pending
   rm -f b.pending'
 
+# The expected-publish COUNT. Without it, "no overlap" was accepted as proof
+# that both retry occurrences advertised a prompt — two different claims, and a
+# regression that logged the second prompt without publishing a marker cleared
+# the scenario.
+run_case "two published when two expected" 0 '
+  touch a.pending; rm -f a.pending
+  touch b.pending; rm -f b.pending' 2
+
+run_case "only one published, two expected" 1 '
+  touch a.pending
+  rm -f a.pending' 2
+
+# The SAME prompt published twice is one prompt. Counting raw events let this
+# satisfy "expected 2" while only one marker was ever advertised — and scenario
+# N exists precisely to check that the retry occurrence published its OWN.
+run_case "same prompt twice, two expected" 1 '
+  touch a.pending
+  rm -f a.pending
+  touch a.pending
+  rm -f a.pending' 2
+
 echo "=== the watcher's own failure modes ==="
 # A watcher that died, or subscribed too late, leaves an empty log — whose peak
 # is 0, which sails straight through a `<= 1` assertion.
@@ -95,5 +120,5 @@ else
   note "runtime dropped events" "DID NOT REFUSE — exit $rc"; sed 's/^/      /' "$d/out"; FAIL=1
 fi
 
-[ "$FAIL" -eq 0 ] && echo "APPROVAL-WATCH PROOF: it catches the breach, clears the compliant case, and refuses both blind spots" \
+[ "$FAIL" -eq 0 ] && echo "APPROVAL-WATCH PROOF: it catches the breach and the miscount, clears the compliant case, and refuses both blind spots" \
                   || { echo "APPROVAL-WATCH PROOF FAILED"; exit 1; }

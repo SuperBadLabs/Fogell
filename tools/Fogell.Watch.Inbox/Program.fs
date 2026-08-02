@@ -16,8 +16,9 @@
 // backed on Linux, dotnet is already the gate's primary dependency, and F# is
 // the language everything else here is written in.
 //
-//   watch  <dir> <log>   record creates/deletes until killed
-//   report <log>         replay, print the peak, exit non-zero on a breach
+//   watch  <dir> <log>            record creates/deletes until killed
+//   report <log> [expected-count]  replay, print the peak, exit non-zero on a
+//                                  breach — or on the wrong number of publishes
 //
 // `report` is THREE-valued on purpose: 0 proven-good, 1 proven-bad, 3 CANNOT
 // PROVE. Folding 3 into 0 is precisely how the sampler was wrong — a watcher
@@ -69,7 +70,12 @@ let private watch (dir: string) (log: string) =
         Thread.Sleep Timeout.Infinite
         0
 
-let private report (log: string) =
+// `expected` is not optional decoration. Without it `report` cleared any
+// non-overlapping stream with AT LEAST ONE publish — so a regression where the
+// retry occurrence logged its prompt but never published an inbox marker passed
+// scenario N, which exists to check exactly that second publication. "No overlap"
+// and "both prompts happened" are different claims and the scenario needs both.
+let private report (log: string) (expected: int option) =
     let lines =
         if File.Exists log then File.ReadAllLines log else [||]
         |> Array.filter (fun l -> not (String.IsNullOrWhiteSpace l) && l <> "READY")
@@ -85,7 +91,18 @@ let private report (log: string) =
                 | [| kind; name |] when name.EndsWith ".pending" -> Some(kind, name)
                 | _ -> None)
 
-        let creates = steps |> Array.filter (fst >> (=) "CREATE") |> Array.length
+        // DISTINCT prompt names, not raw CREATE events. `retry` mints a new
+        // occurrence id per attempt, so two publishes means two names; counting
+        // events let a log with `CREATE one.pending` twice satisfy "expected 2"
+        // while only one marker was ever advertised. A duplicate event for a
+        // name is tolerated rather than treated as a breach — FileSystemWatcher
+        // is allowed to repeat itself — but it can no longer inflate the count.
+        let distinct =
+            steps
+            |> Array.filter (fst >> (=) "CREATE")
+            |> Array.map snd
+            |> Array.distinct
+        let creates = distinct.Length
         if creates = 0 then
             printfn "approval-watch: no prompt was ever observed being published — the watcher saw nothing, which is not the same as seeing nothing wrong"
             3
@@ -98,16 +115,27 @@ let private report (log: string) =
                         live, max peak live.Count)
                     (Set.empty, 0)
 
-            printfn "approval-watch: %d publish event(s), peak %d live prompt(s)" creates peak
-            if peak > 1 then
-                printfn "the inbox advertised more than one live prompt — a dead gate was listed alongside its successor"
+            printfn "approval-watch: %d distinct prompt(s), peak %d live prompt(s)" creates peak
+            match expected with
+            | Some n when n <> creates ->
+                printfn "expected %d distinct prompt(s), observed %d — a prompt that was never advertised cannot have been answered" n creates
                 1
-            else
-                0
+            | _ ->
+                if peak > 1 then
+                    printfn "the inbox advertised more than one live prompt — a dead gate was listed alongside its successor"
+                    1
+                else
+                    0
 
 [<EntryPoint>]
 let main argv =
     match argv with
     | [| "watch"; dir; log |] -> watch dir log
-    | [| "report"; log |] -> report log
+    | [| "report"; log |] -> report log None
+    | [| "report"; log; expected |] ->
+        match Int32.TryParse expected with
+        | true, n -> report log (Some n)
+        | _ ->
+            eprintfn "watch-inbox: expected-publish-count must be an integer, got %s" expected
+            2
     | _ -> usage ()

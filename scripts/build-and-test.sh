@@ -35,9 +35,18 @@ fi
 # FG-104b: a comment naming a mechanism the code no longer has. Three of those
 # landed in one day and every one was caught by a reviewer rather than a check —
 # `audit-claims.bb` asks a different question (does a MEASURED claim name a
-# receipt) that a stale identifier passes trivially. Proven to fail before being
-# trusted: with a definition deleted and its comment left behind it reports the
-# line; on a clean tree it is silent.
+# receipt) that a stale identifier passes trivially.
+#
+# Scope, stated exactly because a vaguer version of this sentence was itself a
+# finding: identifiers of FOUR OR MORE characters, in line comments and nested
+# `(* ... *)` blocks. Short names are deliberately out — `x`, `id`, `ctx` occur
+# in ordinary English and a checker that fires on prose gets switched off.
+#
+# Proven to fail before being trusted, and the proof runs first: 16 binding
+# forms, a comment repeating the keyword, a record field on the brace line and
+# one named inside a block comment, a string that merely looks like a
+# definition, two false-positive cases, and four of the checker's own failure
+# modes.
 echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # the proof runs FIRST and in scratch repositories: a checker nobody has watched
 # fail is a claim, and this one has twice been wrong about its own job

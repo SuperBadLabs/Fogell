@@ -47,10 +47,14 @@
 #   O. a `submitter:`-restricted gate is REFUSED rather than approved by whoever
 #      can write to the inbox — this engine cannot authenticate a submitter, and
 #      enforcing a restriction on a self-declared name is theatre;
-#   P. an answer refused for arriving LATE is durably voided, so a crash cannot
-#      replay it into a resumed attempt under a fresh deadline;
-#   Q. a CANCELLABLE prompt's answer (deadline, or a failFast sibling) is
-#      provisional and STAYS provisional — usable in the attempt that read it,
+#   P. a VOIDED answer is not replayed into a resumed attempt. Note the two
+#      things P does NOT prove: it hand-appends the void record, so it covers
+#      replay refusal GIVEN one rather than the engine writing one for a
+#      genuinely late answer; and it runs the UNBOUNDED Jenkinsfile, so it says
+#      nothing about a fresh deadline. FG-115;
+#   Q. a DEADLINE-BOUND prompt's answer is provisional and STAYS provisional
+#      (the failFast-sibling spelling of cancellable is NOT covered: Q binds a
+#      timeout and S never answers an interruptible sibling — FG-116) — usable in the attempt that read it,
 #      never replayable by another, because promotion is itself a durable write
 #      that can straddle the deadline it rules on;
 #   R. an OFFLINE answer to a bounded gate — written while no host was running —
@@ -659,7 +663,11 @@ WATCHER=""
 # CANNOT PROVE — an empty log, or dropped events — and announcing it as a
 # breach is a misdiagnosis in the direction of alarm, where the earlier
 # mistakes all ran in the direction of false comfort. Both are wrong.
-set +e; "$WATCH_BIN" report "$N/events" > "$N/watch.out" 2>&1; WRC=$?; set -e
+# TWO publishes expected: this Jenkinsfile is `retry(2)` around a timeout, so
+# both occurrences must advertise their own prompt. Without the count, a
+# regression where the retry logged `| Deploy?` but never published an inbox
+# marker cleared this scenario — "no overlap" is not "both prompts happened".
+set +e; "$WATCH_BIN" report "$N/events" 2 > "$N/watch.out" 2>&1; WRC=$?; set -e
 cat "$N/watch.out"
 case "$WRC" in
   0) ;;
@@ -733,6 +741,14 @@ set -e
 grep -q 'completed: failure' "$O/param.log" || { echo "FAIL: expected a failed build"; cat "$O/param.log"; exit 1; }
 [ "$(find "$O/approvals" -maxdepth 1 -name '*.pending' | wc -l)" -eq 0 ] || {
   echo "FAIL: submitterParameter published a prompt"; exit 1; }
+# MIRRORED from the submitter: subcase above, which had them and this one did
+# not — so this half could have passed with the engine recording an approval and
+# running the guarded step, while the transcript reported both options refused.
+# Two sibling checks are worth nothing if only one of them looks.
+grep -q '^input-decision' "$O/param.journal" 2>/dev/null && {
+  echo "FAIL: submitterParameter recorded an approval"; exit 1; }
+grep -q '^shipped$' "$O/ws2/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step after a submitterParameter gate ran"; exit 1; }
 # the refusal WORDING is not assertable here, and the line below no longer says
 # it is. `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine,
 # which keeps a ReportedFailureReason BOOLEAN and drops the text. An engine that
@@ -747,7 +763,13 @@ echo "=== P: a VOIDED answer is not replayed by a resumed attempt ==="
 # the crash window is microseconds wide (between refusing a late answer and
 # recording the abort), so the state is CONSTRUCTED, as scenario B is: a journal
 # holding a started input, a decision, and the void. Resume must refuse rather
-# than honour the decision under a fresh deadline.
+# than honour the decision.
+#
+# NOT "under a fresh deadline": this scenario writes the UNBOUNDED Jenkinsfile
+# and never runs a deadline-shaped gate, so deadline-bound replay refusal could
+# be broken and P would still pass. The claim said otherwise until the pre-push
+# reviewer read the body against the words. FG-115 carries both gaps — the
+# engine emitting the void record, and a bounded-prompt replay case.
 P="$LANE/p"; mkdir -p "$P/approvals"
 printf '%s\n' "$JF" > "$P/Jenkinsfile"
 "$HOST_BIN" "$P/Jenkinsfile" "$P/ws" gate "$P/build.journal" "$P/approvals" > "$P/run1.log" 2>&1 &
@@ -916,9 +938,27 @@ set -e
 [ "$RC" -ne 124 ] || { echo "FAIL: the faulting parallel hung"; exit 1; }
 [ "$RC" -ne 0 ] || { echo "FAIL: a faulting branch produced a successful build"; cat "$S/run.log"; exit 1; }
 grep -q '^started$' "$S/ws/gate/markers.txt" || { echo "FAIL: the sibling never ran"; exit 1; }
-# the whole point: the sibling was INTERRUPTED, so its post-sleep effect never landed
+# the whole point: the sibling was INTERRUPTED, so its post-sleep effect never
+# landed. Checked TWICE, and the second check is the one that means something:
+# reading `markers.txt` the instant the host exits cannot distinguish "the
+# sibling was killed" from "the host stopped waiting and left it running", and
+# only the first is failFast. A detached `sleep 20` would append `late` well
+# after this script had congratulated itself. So: assert now, then outlive the
+# sibling's natural sleep and assert again.
 grep -q '^late$' "$S/ws/gate/markers.txt" && {
   echo "FAIL: a failFast sibling ran to completion after its peer faulted"; cat "$S/run.log"; exit 1; }
+SLEPT=$(rg -o 'sleep [0-9]+' "$S/Jenkinsfile" | rg -o '[0-9]+' | head -1)
+sleep "$(( ${SLEPT:-20} + 3 ))"
+grep -q '^late$' "$S/ws/gate/markers.txt" && {
+  echo "FAIL: the sibling was never interrupted — it merely outlived the host and finished ${SLEPT}s later"
+  cat "$S/run.log"; exit 1; }
+# NO `pgrep -f "sleep N"` here, though it is the obvious next assertion: the
+# pattern matches the command line of the very shell running pgrep, so it
+# reports a live sibling on every invocation. This lane already documents that
+# trap for `pkill -f` two hundred lines up, and it caught me again. The timed
+# recheck above is the sound version of the same claim — an uninterrupted
+# sibling appends `late`, so its absence after the sleep has elapsed IS the
+# proof that nothing was left running.
 grep -q '| Failed in branch ask' "$S/run.log" || { echo "FAIL: the faulting branch was not named"; cat "$S/run.log"; exit 1; }
 echo "fault signalled from the branch itself; the sibling stopped before its next effect"
 
@@ -980,8 +1020,38 @@ IDENT=$(rg -N '^build-identity\t' "$U/build.journal" | cut -f2)
 UID2=$(printf '%s' "${#IDENT}:$IDENT|4:Gate|1|2" | sha256sum | cut -d' ' -f1)
 printf 'stage\tGate\nstep\t1\nprompt#\t2\nprompt\tDeploy?\n' > "$U/approvals/$UID2.pending"
 printf 'approve unrecorded\n' > "$U/approvals/$UID2.decision"
-grep -q "^input-answer-provisional\|^input-decision.*\t2\t" "$U/build.journal" && {
+# rg, not grep. GNU grep reads `\t` in a BRE as a literal `t`, so this guard
+# matched nothing under CI's grep and scenario U could have tested a RECORDED
+# answer while believing it was unrecorded — the fixture silently not being the
+# fixture. Every other tab-matching line in this lane uses `$'...\t...'` (real
+# tabs, via ANSI-C quoting) or `grep -P`; this one had been left behind.
+#
+# It also could not be caught by running it here: the `grep` on this developer
+# box is ugrep, which DOES interpret `\t`, so the dead guard passed locally and
+# would have failed to guard in CI. /usr/bin/grep (GNU 3.11) does not match.
+# That is the second defect on this branch whose cause was "my machine is not
+# the machine that runs it".
+rg -qN "^(input-answer-provisional|input-decision)\tGate\t1\t2\t" "$U/build.journal" && {
   echo "FAIL: the journal already holds an answer for occurrence 2 — the fixture is wrong"; exit 1; }
+
+# A RECORDED answer must be present for the sweep to have anything to sweep.
+# `$UID1.decision` was consumed by the first run, so without this the scenario
+# asserted only that an UNRECORDED answer survives — and would have passed with
+# terminal cleanup preserving every recorded `.decision` there is. The claim is
+# about BOTH halves, so both halves have to be in the inbox when it runs.
+#
+# BOTH FILES, and the first attempt planted only the `.decision`: the sweep is
+# MARKER-driven by construction — it reads each `.pending`, hashes its fields
+# back to its own filename, and consumes the pair only when they agree. That is
+# what stops it deleting another build's files, and its stated limit is that a
+# file it cannot identify is left alone. A bare orphan decision has nothing to
+# verify against, so the engine correctly leaves it and the fixture was asserting
+# against a state the engine never produces. The realistic state — a kill after
+# journaling and before the sweep — has both.
+printf 'stage\tGate\nstep\t1\nprompt#\t1\nprompt\tDeploy?\n' > "$U/approvals/$UID1.pending"
+printf 'approve alice\n' > "$U/approvals/$UID1.decision"
+rg -qN "^input-decision\tGate\t1\t1\t" "$U/build.journal" || {
+  echo "FAIL: occurrence 1 is not journal-recorded — the fixture is wrong"; exit 1; }
 
 # a fresh process, already-terminal path, empty in-memory state
 "$HOST_BIN" "$U/Jenkinsfile" "$U/ws" gate "$U/build.journal" "$U/approvals" > "$U/run2.log" 2>&1
@@ -990,8 +1060,9 @@ grep -q 'already-terminal' "$U/run2.log" || { echo "FAIL: expected already-termi
 [ -f "$U/approvals/$UID2.decision" ] || {
   echo "FAIL: an answer the journal never recorded was DELETED — its only copy is gone"; exit 1; }
 # and the answered prompt's own files are gone, because that one IS durable
+[ -f "$U/approvals/$UID1.pending" ] && { echo "FAIL: a durable prompt's marker was left in the inbox"; exit 1; }
 [ -f "$U/approvals/$UID1.decision" ] && { echo "FAIL: a durable answer was left in the inbox"; exit 1; }
-echo "marker swept, unrecorded answer preserved, durable answer consumed"
+echo "marker swept, unrecorded answer preserved, RE-PLANTED durable answer consumed"
 
 # ---------------------------------------------------------------- scenario V
 echo "=== V: adoption will not take a decision file that is still changing ==="
