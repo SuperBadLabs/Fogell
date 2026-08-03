@@ -22,6 +22,11 @@
 ;; `bb` def, a YAML key or a step name in a lane script is NOT extracted, so a
 ;; comment naming one survives this audit silently. Comments in those files ARE
 ;; searched — the gap is what gets collected from the diff, not where it looks.
+;;
+;; That sentence was true of the INTENT and false of the code until the
+;; extraction was restricted to `.fs`/`.fsi`/`.fsx`: the field arm had been
+;; collecting `StageName:` out of shell scripts and failing the gate on them.
+;; A scope comment that no mechanism enforces is a wish.
 ;; Widening it means a fixture per language, which is worth doing the day one of
 ;; those defects lands; asserting it in prose before then is how a checker comes
 ;; to be trusted for work it does not do.
@@ -52,29 +57,68 @@
 ;; Over-approximating is deliberate: `https://x` inside a string reads as a
 ;; comment here. This checker's errors should fall on the side of asking a human
 ;; to look, never on the side of silence.
+(defn- scan-line
+  "[comment-start-index depth-after] for one line, given the block depth it
+   begins with. nil start means the line holds no comment.
+
+   A CHARACTER SCAN, not a token count. Counting `(*` and `*)` occurrences
+   treats them as comment delimiters wherever they appear — so `let syntax =
+   \"(*\"` opened a block comment that never closed, every later line in the file
+   read as comment text, and surviving declarations below it were filtered out of
+   the definition scan while ordinary code entered the comment index. One inert
+   token in a string could make the blocking gate fail on unrelated code."
+  [^String l depth]
+  (let [n (.length l)]
+    (loop [i 0, d depth, in-str false, start (when (pos? depth) 0)]
+      (if (>= i n)
+        [start d]
+        (let [c (.charAt l i)
+              c2 (when (< (inc i) n) (.charAt l (inc i)))]
+          (cond
+            ;; inside a block comment: only its own delimiters matter, and F#
+            ;; block comments NEST
+            (pos? d)
+            (cond
+              (and (= c \*) (= c2 \))) (recur (+ i 2) (dec d) false (or start i))
+              (and (= c \() (= c2 \*)) (recur (+ i 2) (inc d) false (or start i))
+              :else (recur (inc i) d false (or start i)))
+
+            ;; inside a string: nothing is a delimiter until it closes. Strings
+            ;; are treated as line-local, which is right for the single-line F#
+            ;; literals this scan cares about and bounds the damage of an odd
+            ;; quote in a shell script to its own line.
+            in-str
+            (cond
+              (and (= c \\) c2) (recur (+ i 2) d true start)
+              (= c \") (recur (inc i) d false start)
+              :else (recur (inc i) d true start))
+
+            :else
+            (cond
+              (= c \") (recur (inc i) d true start)
+              (and (= c \/) (= c2 \/)) [(or start i) d]
+              (and (= c \;) (= c2 \;)) [(or start i) d]
+              (= c \#) [(or start i) d]
+              (and (= c \() (= c2 \*)) (recur (+ i 2) (inc d) false (or start i))
+              :else (recur (inc i) d false start))))))))
+
 (defn- comment-spans
-  "[[line-no text] ...] for every line that is, or begins, a comment."
+  "[[line-no text whole?] ...] for every line that is, or begins, a comment."
   [lines]
   (loop [[l & more] lines, n 1, depth 0, acc []]
     (if (nil? l)
       acc
-      (let [opens (count (re-seq #"\(\*" l))
-            closes (count (re-seq #"\*\)" l))
-            inside? (pos? depth)
-            starts (keep identity (cons (str/index-of l "(*")
-                                        (map #(str/index-of l %) ["//" ";;" "#"])))
-            idx (when (seq starts) (apply min starts))
-            trimmed (str/triml l)
+      (let [inside? (pos? depth)
+            [idx depth'] (scan-line l depth)
             ;; ENTIRELY a comment — as opposed to code with a trailing one.
             ;; The distinction matters for the definition scan: `let x = 1 // n`
             ;; is a definition, while an interior block-comment line is not,
             ;; even when it happens to be shaped like `Field: string`.
             whole? (or inside?
-                       (boolean (some #(str/starts-with? trimmed %) ["//" "(*" ";;" "#"])))
-            text (cond inside? l
-                       idx (subs l idx)
-                       :else nil)]
-        (recur more (inc n) (max 0 (+ depth opens (- closes)))
+                       (and (some? idx)
+                            (str/blank? (subs l 0 idx))))
+            text (when (some? idx) (subs l idx))]
+        (recur more (inc n) depth'
                (if text (conj acc [n text whole?]) acc))))))
 
 ;; THE BASE MUST RESOLVE, and this script shipped without checking it: `git diff`
@@ -121,9 +165,13 @@
   ;; supposed to make this safer.
   "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default|and)\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
 (def ^:private field-lead
-  ;; a record field, which this codebase writes both indented and on the brace
-  ;; line (`{ Root: string }`)
-  "\\{?\\s*")
+  ;; a record field, which this codebase writes indented, on the brace line
+  ;; (`{ Root: string }`), carrying an attribute
+  ;; (`[<JsonPropertyName "node_id">] NodeId: string`, Contracts.fs) or `mutable`
+  ;; (`{ mutable Steps: int`, Interpreter.fs). The first three shapes were
+  ;; handled and the last two were not, so deleting either contributed nothing
+  ;; to `removed` and a comment naming it passed the blocking audit clean.
+  "\\{?\\s*(?:\\[<[^>]*>\\]\\s*)?(?:mutable\\s+)?")
 
 (let [args *command-line-args*
       strict? (some #{"--strict"} args)
@@ -142,8 +190,31 @@
       ;; identifiers on REMOVED lines: F# let/member/type bindings and the
       ;; record fields this codebase uses as its hook surface. Deliberately not
       ;; a general symbol extractor — a broad net here reports the whole diff.
+      ;; EXTRACTION IS F#-ONLY, and the scope comment said so while the code did
+      ;; not: the diff covers scripts/, and the PascalCase field arm matches a
+      ;; YAML-ish `StageName: old script step` in a shell script perfectly well.
+      ;; Deleting one with a surviving `# StageName is documented here` FAILED
+      ;; the blocking gate — a false positive outside the documented scope,
+      ;; guarded by a sentence that described the intent rather than the code.
+      ;;
+      ;; The old path (`--- a/...`) is what the removed lines belong to, so a
+      ;; wholly deleted .fs file is still read; `+++` would be /dev/null there.
+      ;; Comments in scripts are still SEARCHED — only collection is narrowed.
       removed (->> (str/split-lines (or diff ""))
-                   (filter #(and (str/starts-with? % "-") (not (str/starts-with? % "---"))))
+                   (reduce (fn [{:keys [file acc]} l]
+                             (cond
+                               (str/starts-with? l "--- ")
+                               {:file (str/replace (subs l 4) #"^a/" "") :acc acc}
+
+                               (and (str/starts-with? l "-")
+                                    (not (str/starts-with? l "---"))
+                                    file
+                                    (re-find #"\.(fs|fsi|fsx)$" file))
+                               {:file file :acc (conj acc l)}
+
+                               :else {:file file :acc acc}))
+                           {:file nil :acc []})
+                   :acc
                    ;; F# puts MODIFIERS between the keyword and the name, and the
                    ;; first draft allowed only `private` — so `let mutable OldGate`
                    ;; captured "mutable" and `let rec` was missed entirely, while

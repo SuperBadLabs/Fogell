@@ -216,6 +216,75 @@ else
   note "keyword prose is not an identifier" "not reported — OK"
 fi
 
+# AN INERT `(*` IN A STRING, aimed at the half of the bug that actually bites.
+# Counting delimiter tokens rather than scanning characters let `let syntax =
+# "(*"` open a block comment that never closed, so every LATER line in the file
+# read as comment text. The damage is on the DEFINITION side: a binding that
+# merely MOVED within the file is masked as comment text, `still-defined?`
+# concludes it is gone, and the surviving comment naming it fails the blocking
+# gate. A false positive on code that is entirely correct.
+#
+# (The first two fixtures written for this finding asserted the comment-side
+# behaviour instead, and passed identically with the bug present and absent —
+# decoration, not proof. Kept only after watching this one flip.)
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let syntax = "(*"\nlet staleGateValue = 1\nlet keeper = 2\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'let syntax = "(*"\nlet keeper = 2\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "inert (* does not mask a real def" "silent (exit 0) — OK"
+else
+  note "inert (* does not mask a real def" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# an ATTRIBUTED record field (Contracts.fs writes these)
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { [<JsonPropertyName "gate">] StaleGateValue: string\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
+  note "attributed record field" "reported (exit $rc) — OK"
+else
+  note "attributed record field" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# a MUTABLE record field (Interpreter.fs writes these)
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'type T =\n    { mutable StaleGateValue: int\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
+  note "mutable record field" "reported (exit $rc) — OK"
+else
+  note "mutable record field" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A NON-F# FILE IS OUT OF SCOPE FOR EXTRACTION, and was not: the field arm
+# matched `StageName: old script step` in a shell script and failed the blocking
+# gate over a `# StageName is documented here` comment. The scope sentence
+# claimed otherwise, which made it a wish rather than a rule.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src scripts \
+  && printf 'let keeper = 1\n' > src/F.fs \
+  && printf 'StageName: old script step\n# StageName is documented here\n' > scripts/lane.sh \
+  && git add -A && git commit -qm base && sed -i '1d' scripts/lane.sh ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "non-F# deletion (out of scope)" "not extracted (exit 0) — OK"
+else
+  note "non-F# deletion (out of scope)" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
 echo "=== the checker's own failure modes ==="
 out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && grep -q "does not resolve" <<<"$out"; then
