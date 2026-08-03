@@ -198,6 +198,10 @@
 ;; The same shape of half-fix hit block comments one commit earlier. Two regexes
 ;; describing one grammar will diverge; sharing the pieces makes it structural
 ;; rather than a thing to remember.
+(def ^:private pre-kw "static|abstract|override|default|and")
+(def ^:private kw "let|member|type|override|default|and|use")
+(def ^:private mods "private|internal|public|mutable|rec|inline|new|val")
+
 (def ^:private binding-core
   ;; modifiers that PRECEDE the keyword, the keyword, modifiers that FOLLOW it,
   ;; and an optional `receiver.` — everything between the line start and the name.
@@ -216,7 +220,7 @@
   ;; rotation notes`, and the audit failed the build on the word "member". A
   ;; false positive that BLOCKS pushes, introduced by the refactor that was
   ;; supposed to make this safer.
-  "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default|and|use)!?\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
+  (str "(?:(?:" pre-kw ")\\s+)*(?:" kw ")!?\\s+(?:(?:" mods ")\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?"))
 (def ^:private field-lead
   ;; a record field, which this codebase writes indented, on the brace line
   ;; (`{ Root: string }`), carrying an attribute
@@ -253,7 +257,7 @@
       ;; The old path (`--- a/...`) is what the removed lines belong to, so a
       ;; wholly deleted .fs file is still read; `+++` would be /dev/null there.
       ;; Comments in scripts are still SEARCHED — only collection is narrowed.
-      removed (->> (str/split-lines (or diff ""))
+      fsharp-removed (->> (str/split-lines (or diff ""))
                    (reduce (fn [{:keys [file acc]} l]
                              (cond
                                (str/starts-with? l "--- ")
@@ -267,7 +271,8 @@
 
                                :else {:file file :acc acc}))
                            {:file nil :acc []})
-                   :acc
+                   :acc)
+      removed (->> fsharp-removed
                    ;; F# puts MODIFIERS between the keyword and the name, and the
                    ;; first draft allowed only `private` — so `let mutable OldGate`
                    ;; captured "mutable" and `let rec` was missed entirely, while
@@ -377,8 +382,22 @@
       still-defined? (fn [id]
                        (->> (rg! (str "searching for a surviving definition of " id)
                                  (concat ["-n" "--no-heading"
-                                          (format "^\\s*%s%s%s|^\\s*%s%s\\s*:"
-                                                  binding-core id fsharp-boundary field-lead id)]
+                                          ;; THREE arms, one grammar. The third is
+                                          ;; a DESTRUCTURING pattern, and leaving
+                                          ;; it out is the same asymmetry that hit
+                                          ;; the brace-line field arm: extraction
+                                          ;; learned a form and the survivor check
+                                          ;; did not, so a destructured binding
+                                          ;; that merely MOVED or had its value
+                                          ;; edited read as deleted and failed the
+                                          ;; blocking gate over an honest comment.
+                                          ;; Fourth time on this branch. Built
+                                          ;; from `binding-core` so it cannot
+                                          ;; drift from the extractor again.
+                                          (format "^\\s*%s%s%s|^\\s*%s%s\\s*:|^\\s*%s\\([^=]*%s%s"
+                                                  binding-core id fsharp-boundary
+                                                  field-lead id
+                                                  binding-core id fsharp-boundary)]
                                          (remove #{"scripts"} roots)))
                             str/split-lines
                             (remove str/blank?)
@@ -390,6 +409,92 @@
                                       (contains? (get whole-comment path #{}) n)))
                             seq
                             boolean))
+
+      ;; DESTRUCTURING PATTERNS. The arms above want a NAME straight after the
+      ;; keyword, so `let (verdict, folds), j, f =` — live at Compare.fs:194 —
+      ;; contributed nothing, and a comment naming `verdict` or `folds` passed
+      ;; the blocking audit while the header claimed to cover four-or-more
+      ;; character let bindings.
+      ;;
+      ;; DELIBERATELY only untyped parenthesised tuples. A pattern containing `:`
+      ;; is skipped whole, because `let (a: string, b) =` would otherwise collect
+      ;; `string` as a deleted identifier — searched for as a definition, not
+      ;; found, and then matched against every comment in the tree that happens
+      ;; to say "string". That is a false positive that blocks pushes, which is
+      ;; the failure this audit has been taught four separate times to fear more
+      ;; than a miss. Nested and typed patterns stay uncovered and the fixture
+      ;; below pins that, so widening is a decision rather than a discovery.
+      ;; Nested patterns are skipped for the same reason: a boundary that holds
+      ;; only sometimes is not a boundary. CONSTRUCTORS are a narrower statement
+      ;; than "skipped", and the earlier wording overstated it: inside a pattern
+      ;; an UPPERCASE token is a union case or literal and is not collected, but
+      ;; the lowercase binders beside it are — `let (Some staleGateValue, other)`
+      ;; genuinely binds `staleGateValue`, so tracking it is correct and only
+      ;; `Some` must be left alone.
+      ;; THE WHOLE PATTERN, not just the first parenthesised group. Reading only
+      ;; `([^)]*)` left `let (keptGate, foldedGate), staleOuterGate = ...` with
+      ;; its trailing binder untracked entirely, and the fixture could not catch
+      ;; that because its own trailing binder was `j` — one character, below the
+      ;; four-character floor. A fixture whose uncovered slot is invisible to
+      ;; the checker cannot fail for the reason it exists.
+      max-depth (fn [t]
+                  (->> t
+                       (reduce (fn [[d mx] c]
+                                 (case c
+                                   \( (let [d (inc d)] [d (max mx d)])
+                                   \) [(max 0 (dec d)) mx]
+                                   [d mx]))
+                               [0 0])
+                       second))
+      destructured (->> fsharp-removed
+                        (keep #(second (re-find (re-pattern (str "^\\-\\s*" binding-core "(\\(.*?)=")) %)))
+                        ;; depth > 1 is a NESTED pattern and stays uncovered —
+                        ;; consistently. An earlier version tested for a `(`
+                        ;; SUBSTRING, which worked only while the capture stopped
+                        ;; at the first `)`; now that it spans the whole pattern
+                        ;; every capture starts with one, so depth is the only
+                        ;; test that still distinguishes `(a, b), c` from
+                        ;; `((a), b)`. Uncovered means uncovered — partial and
+                        ;; inconsistent coverage is worse than none, because the
+                        ;; stated boundary stops being true.
+                        (remove #(> (max-depth %) 1))
+                        ;; A pattern holding a STRING OR CHARACTER LITERAL is
+                        ;; skipped whole. F# patterns may match on literals, and
+                        ;; the token scan below cannot tell `let ("staleGate",
+                        ;; other) =` — where the text is data — from a binder.
+                        ;; Skipping is the conservative direction and matches how
+                        ;; the typed and nested boundaries are drawn: a pattern
+                        ;; this cannot read confidently contributes nothing,
+                        ;; rather than contributing a guess that fails the gate.
+                        ;; A quote-bearing pattern is skipped, but `'` alone is
+                        ;; NOT a literal marker: F# identifiers end in one
+                        ;; (`state'`, `loop''`), and this proof already covers
+                        ;; that form elsewhere. Skipping every apostrophe dropped
+                        ;; `let (staleGateValue', folded) =` entirely while the
+                        ;; comment claimed untyped tuples were covered. Reuse the
+                        ;; char-literal recogniser rather than a substring test —
+                        ;; it is the same question, already answered once.
+                        (remove (fn [t]
+                                  (or (str/includes? t "\"")
+                                      (boolean (some #(char-literal-len t % (count t))
+                                                     (range (count t)))))))
+                        (remove #(str/includes? % ":"))
+                        ;; LOWERCASE INITIAL ONLY. The precise statement — the
+                        ;; earlier one overclaimed — is that inside a pattern an
+                        ;; UPPERCASE identifier is a union case or literal and
+                        ;; therefore never a binder, so skipping it is F#
+                        ;; semantics. The converse is weaker: a lowercase TOKEN
+                        ;; is a binder only if it is an identifier at all, which
+                        ;; is why patterns containing literals are dropped above
+                        ;; rather than scanned. `let (Some staleGateValue, other) = ...`
+                        ;; binds `staleGateValue`; `Some` is a constructor, and
+                        ;; collecting it reported the word "Some" as a deleted
+                        ;; identifier — a false positive against any comment in
+                        ;; the tree that mentions it.
+                        (mapcat #(map second (re-seq #"([a-z][A-Za-z0-9_']{3,})" %)))
+                        set)
+
+      removed (into removed destructured)
 
       gone (remove still-defined? removed)
 

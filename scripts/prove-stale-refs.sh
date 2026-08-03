@@ -330,6 +330,35 @@ else
   note "char literal holding a quote" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
+# A DESTRUCTURING LET. `let (verdict, folds), j, f =` is live at
+# src/Fogell.Differential/Compare.fs:194, and the name-after-keyword arms saw
+# nothing in it.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (staleGateValue, foldedGate), staleOuterGate = (1, 2), 3\nlet keeper = 1\n// staleGateValue and foldedGate and staleOuterGate are the gate hooks\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+# BOTH names, because a regression that extracted only the FIRST tuple binder
+# would have passed a single-name assertion while missing the `folds` case the
+# audit's own comment cites from Compare.fs:194.
+#
+# ANCHORED ON THE IDENTIFIER COLUMN. The report prints `  <id>  <comment line>`,
+# and the planted comment names both identifiers — so an unanchored grep matched
+# the ECHOED COMMENT TEXT and passed with the second binder never extracted at
+# all. Caught by running it against a copy that keeps only the first binder.
+# THREE names, and the trailing one is OUTSIDE the first parenthesised group and
+# four characters long. It was `j` — one character, below the floor — so the
+# whole-pattern miss was invisible to this fixture by construction.
+if [ "$rc" -ne 0 ] \
+   && grep -qE "^  staleGateValue[[:space:]]" <<<"$out" \
+   && grep -qE "^  foldedGate[[:space:]]" <<<"$out" \
+   && grep -qE "^  staleOuterGate[[:space:]]" <<<"$out"; then
+  note "destructuring let (all three)" "reported (exit $rc) — OK"
+else
+  note "destructuring let (all three)" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
 echo "=== the checker's own failure modes ==="
 out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && grep -q "does not resolve" <<<"$out"; then
@@ -403,5 +432,110 @@ else
   note "lowercase field (by design)" "UNEXPECTEDLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
-[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and both scope boundaries hold" \
+# A TYPED destructuring pattern is out of scope, pinned. Collecting from
+# `let (a: string, b) = ...` would take `string` as a deleted identifier, fail to
+# find it as a definition, and then match every comment in the tree that says
+# "string" — a false positive that blocks pushes, which this audit has been
+# taught four separate times to fear more than a miss.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (staleGateValue: string, other: string) = ("a", "b")\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "typed destructuring (by design)" "not tracked (exit 0) — OK"
+else
+  note "typed destructuring (by design)" "UNEXPECTEDLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A CONSTRUCTOR inside a pattern is not a binder. In F# an uppercase identifier
+# in a pattern position is a union case or literal — `let (Some staleGateValue,
+# other) = ...` binds staleGateValue and MATCHES on Some. Collecting `Some`
+# reported it as a deleted identifier against every comment in the tree that
+# mentions it.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (Some staleGateValue, other) = (Some 1, 2)\nlet keeper = 1\n// Some wraps staleGateValue in the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+# BOTH halves. Asserting only that `Some` is absent would pass if the audit
+# stopped extracting the binder beside it too — silence for the wrong reason.
+# The binder must be REPORTED and the constructor must NOT be.
+if [ "$rc" -ne 0 ] \
+   && grep -qE "^  staleGateValue[[:space:]]" <<<"$out" \
+   && ! grep -qE "^  Some[[:space:]]" <<<"$out"; then
+  note "constructor skipped, binder kept" "reported (exit $rc) — OK"
+else
+  note "constructor skipped, binder kept" "WRONG — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# NESTED patterns are uncovered, and must be uncovered CONSISTENTLY. The tuple
+# regex truncates at the first inner paren, so `((a), b)` used to yield `(a` and
+# then report `a` — coverage by accident, which makes the stated boundary false.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let ((staleGateValue), other) = ((1), 2)\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "nested pattern (by design)" "not tracked (exit 0) — OK"
+else
+  note "nested pattern (by design)" "INCONSISTENTLY TRACKED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A DESTRUCTURED BINDING THAT SURVIVES. Editing the values, or moving the line,
+# keeps the binders alive — but the survivor check knew only the
+# name-after-keyword and record-field grammars, so it read them as deleted and
+# failed the gate over an honest comment. The same asymmetry as the brace-line
+# field arm, and the fourth on this branch: extraction learns a form, the
+# survivor check does not.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (staleGateValue, foldedGate) = (1, 2)\n// staleGateValue and foldedGate are the gate hooks\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'let (staleGateValue, foldedGate) = (3, 4)\n// staleGateValue and foldedGate are the gate hooks\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "destructured binding survives" "silent (exit 0) — OK"
+else
+  note "destructured binding survives" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A DESTRUCTURED IDENTIFIER ENDING IN `'`. The literal guard below must not
+# treat an identifier apostrophe as a literal marker — doing so dropped the whole
+# pattern and contradicted the coverage claimed for untyped tuples, while the
+# same name shape is proven elsewhere in this file.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf "let (staleGateValue', foldedGate) = (1, 2)\nlet keeper = 1\n// staleGateValue' is the gate hook\n" > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -qE "^  staleGateValue'[[:space:]]" <<<"$out"; then
+  note "destructured name ending in '" "reported (exit $rc) — OK"
+else
+  note "destructured name ending in '" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A STRING LITERAL inside a pattern is data, not a binder. F# patterns can match
+# on literals, and a token scan cannot tell `let ("staleGateValue", other) =`
+# from a binding — it reported the literal's text as a deleted identifier and
+# failed the gate over a comment that legitimately mentions it.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let ("staleGateValue", other) = ("x", 2)\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "literal in a pattern (by design)" "not tracked (exit 0) — OK"
+else
+  note "literal in a pattern (by design)" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and all five scope boundaries hold" \
                   || { echo "STALE-REF PROOF FAILED"; exit 1; }
