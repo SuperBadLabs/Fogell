@@ -84,10 +84,21 @@ type Record =
     /// can all straddle the deadline. Recording the answer as actionable and
     /// voiding it afterwards leaves a window — crash between the two and the
     /// resumed attempt finds a usable approval for a gate that had already
-    /// closed. So a bounded prompt records the answer provisionally, the walker
-    /// rules on it against the deadline, and only then is it promoted to an
-    /// actionable [InputDecision]. An UNBOUNDED prompt skips all of this: with no
-    /// deadline an answer cannot be late, so it is actionable when written.
+    /// closed. So a bounded prompt records the answer provisionally and the
+    /// walker rules on it against the deadline IN THE ATTEMPT THAT READ IT.
+    ///
+    /// IT IS NEVER PROMOTED. This said "and only then is it promoted to an
+    /// actionable [InputDecision]", describing a design that was replaced — the
+    /// host appends EITHER this record (cancellable prompt) OR an
+    /// [InputDecision] (unbounded), never one and then the other, and nothing
+    /// rewrites a provisional answer into a decision. A reader trusting the old
+    /// sentence would expect a bounded answer to survive a restart, which is the
+    /// precise opposite of the FG-046b safety model: it stays provisional, so a
+    /// resumed attempt asks again rather than acting on an answer whose
+    /// eligibility it cannot re-derive.
+    ///
+    /// An UNBOUNDED prompt skips all of this: with no deadline an answer cannot
+    /// be late, so it is actionable when written.
     /// FG-046b. This prompt could be CANCELLED while it waited — it had a
     /// deadline, or a failFast sibling that could interrupt it. Written the
     /// first time such a prompt polls, because the journal otherwise cannot tell
