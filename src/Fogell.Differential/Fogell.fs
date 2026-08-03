@@ -112,16 +112,23 @@ module FogellSide =
             // `timestamps(false)` or named parameters when it compiles the
             // model, so accepting them here would run a build Jenkins refuses —
             // failing OPEN on a script the reference engine will not execute.
-            let timestampsOption =
-                pipeline.Options |> List.tryFind (fun o -> o.Name = "timestamps")
+            // EVERY entry, not the first. `options` is a Step LIST and the parser
+            // keeps them all, so `options { timestamps(); timestamps(false) }`
+            // arrives with both — `tryFind` saw the valid one, accepted it, and
+            // ran a build Jenkins refuses to compile.
+            let timestampsOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "timestamps")
 
             let timestampsArgError =
-                match timestampsOption with
-                | Some o when not (List.isEmpty o.Positional) || not (List.isEmpty o.Named) ->
+                if
+                    timestampsOptions
+                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                then
                     Some "the timestamps() option takes no arguments"
-                | _ -> None
+                else
+                    None
 
-            let declaresTimestamps = timestampsOption.IsSome && timestampsArgError.IsNone
+            let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
 
             // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
             // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
