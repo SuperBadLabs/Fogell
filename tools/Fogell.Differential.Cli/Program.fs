@@ -197,7 +197,9 @@ let main argv =
             { BaseUrl = baseUrl
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
-              WorkspaceCollector = collector }
+              WorkspaceCollector = collector
+              // per-case; replaced at each call site from that case's script
+              DeclaresTimestamps = false }
 
         let fogellRoot =
             Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
@@ -231,6 +233,12 @@ let main argv =
             |> List.collect (fun file ->
                 let name = Path.GetFileName file
                 let script = File.ReadAllText file
+
+                // FG-053. Read off the SCRIPT and given to BOTH engines. Nothing
+                // in a line's shape distinguishes the engine's timestamp prefix
+                // from a build printing one of its own, so normalisation is told
+                // rather than left to guess — and it must be told the same thing
+                // on both sides or the comparison is between two different rules.
                 // Job names MUST be derived from the file, not its index: an
                 // index-derived name reshuffles when a case is added, and the
                 // new occupant inherits the previous run's workspace. That
@@ -269,12 +277,38 @@ let main argv =
                     else
                         buildSeparator.Split script |> Array.toList
 
+                // FG-053. Derived from the BODIES, after SCM-marker stripping and
+                // sequence splitting — the whole case FILE is not a Jenkinsfile:
+                // an SCM case starts with a marker line and a sequence carries
+                // `//// NEXT BUILD ////` separators, so parsing the file gave
+                // `false` for both and Jenkins was told something Fogell was not.
+                //
+                // Every body must AGREE. Jenkins.runMany takes one config for the
+                // whole sequence, so a sequence that declares the option in some
+                // builds and not others cannot be represented — it fails NAMED
+                // below rather than silently using the first body's answer.
+                let declaresTimestampsPerBody =
+                    scripts
+                    |> List.map (fun body ->
+                        match Fogell.Pipeline.Parser.Parser.parse body with
+                        | Ok p -> p.Options |> List.exists (fun o -> o.Name = "timestamps")
+                        | Error _ -> false)
+
+                let caseCfg =
+                    { cfg with
+                        DeclaresTimestamps =
+                            declaresTimestampsPerBody |> List.exists id }
+
                 // A malformed case must fail NAMED, not as an opaque parse error:
                 // empty sequence segments, a marker with no body, or an SCM case
                 // that also declares NEXT BUILD separators (SCM sequences are not
                 // wired — FogellSide.runMany passes Scm = None deliberately).
+                let mixedTimestamps =
+                    declaresTimestampsPerBody |> List.distinct |> List.length > 1
+
                 let malformed =
-                    (List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace)
+                    mixedTimestamps
+                    || (List.length scripts > 1 && scripts |> List.exists String.IsNullOrWhiteSpace)
                     || (isScmCase
                         && (String.IsNullOrWhiteSpace scripts.Head
                             || buildSeparator.IsMatch scripts.Head))
@@ -297,7 +331,9 @@ let main argv =
                     if malformed then
                         let e =
                             Result.Error (
-                                if isScmCase then
+                                if mixedTimestamps then
+                                    "unsupported sequence: some builds declare options { timestamps() } and others do not — Jenkins takes one config for the whole sequence, so the two engines could not be told the same thing"
+                                elif isScmCase then
                                     "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
                                 else
                                     "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
@@ -306,10 +342,10 @@ let main argv =
                     else
                         match scmSpec with
                         | Some spec ->
-                            Jenkins.runMany cfg envReplacementsAll job [ FromScm spec ],
+                            Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
                             [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
                         | None ->
-                            Jenkins.runMany cfg envReplacementsAll job (scripts |> List.map Inline),
+                            Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
                             FogellSide.runMany envReplacementsAll fogellRoot job scripts
 
                 let solo = List.length scripts = 1

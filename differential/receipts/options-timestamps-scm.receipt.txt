@@ -1,9 +1,14 @@
-# Differential receipt — input-positional-literal.Jenkinsfile
+# Differential receipt — options-timestamps-scm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e899b47ec53ed04c8e39deafe481ce45c9c318f0cec2f1ad4da13ae1e019d5b4
+seal:         10ef74c1b2e5153ee9ce2ccd60fe44ad65720b3586590bb2014b3b0b946c52f0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+timestamps(): jenkins=PARTIAL (1/21) fogell=PARTIAL (1/21) (prefix text excluded, coverage compared and sealed)
+
+## Output pairs compared canonically — inherited env (1)
+  line 9 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract
   compared: terminal result
@@ -58,21 +63,65 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         aborted
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | Timeout set to expire in 4 sec
-    | Deploy to ${TARGET}?
-    | Proceed or Abort
-    | Cancelling nested steps due to timeout
-    | Timeout has been exceeded
+  result:         success
+  workspace-hash: da42828fcb427f6846654fedc7d5dc56fb7ae7d630aadc0df2984b86f53a9262
+  output (21 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/case/options-timestamps-scm^{commit} # timeout=10
+    | Checking out Revision e8806b6fb1bb073b85583c21d40e3a8907e81d01 (refs/remotes/origin/case/options-timestamps-scm)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f e8806b6fb1bb073b85583c21d40e3a8907e81d01 # timeout=10
+    | Commit message: "sync: options-timestamps-scm"
+    | First time build. Skipping changelog.
+    | + echo scm-stamped
+  workspace:
+    2603b6157c15  Jenkinsfile
+    959ee89d1972  README.md
+    f1a76920e946  scm.txt
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt
 
 ## Fogell
-  result:         aborted
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | Timeout set to expire in 4 sec
-    | Deploy to ${TARGET}?
-    | Proceed or Abort
-    | Cancelling nested steps due to timeout
-    | Timeout has been exceeded
+  result:         success
+  workspace-hash: da42828fcb427f6846654fedc7d5dc56fb7ae7d630aadc0df2984b86f53a9262
+  output (21 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.43.0'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/case/options-timestamps-scm^{commit} # timeout=10
+    | Checking out Revision e8806b6fb1bb073b85583c21d40e3a8907e81d01 (refs/remotes/origin/case/options-timestamps-scm)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f e8806b6fb1bb073b85583c21d40e3a8907e81d01 # timeout=10
+    | Commit message: "sync: options-timestamps-scm"
+    | First time build. Skipping changelog.
+    | + echo scm-stamped
+  workspace:
+    2603b6157c15  Jenkinsfile
+    959ee89d1972  README.md
+    f1a76920e946  scm.txt
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt

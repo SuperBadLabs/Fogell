@@ -527,6 +527,7 @@ let continuationResolution =
           Output = output
           WorkspaceHash = "not-collected"
           WorkspaceFiles = []
+          Timestamps = (0, 0)
           Concurrent = false
           EngineNotes = []
           ReportedFailureReason = false }
@@ -613,6 +614,65 @@ let continuationResolution =
               Expect.equal folds [ "line 1 compared canonically: ${HOME}" ] "and the receipt names the pair"
           } ]
 
+/// FG-053. A timestamp-shaped prefix is engine decoration ONLY when the script
+/// declared `options { timestamps() }`. Nothing in a line's shape says which it
+/// is, so the strip is conditional — and the first version was not, which meant
+/// a build printing `[2026-08-03T03:54:07.729Z] value` had it removed from every
+/// case, and two DIFFERENT user instants compared equal.
+///
+/// Tested HERE rather than as a differential case on purpose: a case can only
+/// plant a LITERAL line, which both engines print identically, so it passes with
+/// the bug present or absent. Discriminating needs two different instants, which
+/// is a divergence a passing case cannot express. One was written, observed to
+/// prove nothing, and deleted.
+let timestampPrefixIsConditional =
+    let stamped = "[2026-08-03T03:54:07.729Z] value"
+
+    testList
+        "timestamp prefix is conditional"
+        [ test "kept when the script did not declare timestamps()" {
+              Expect.equal
+                  (Trace.normaliseLineWhen false stamped)
+                  (Some stamped)
+                  "a build's own timestamp-shaped output must survive comparison verbatim"
+          }
+
+          test "stripped when the script declared timestamps()" {
+              Expect.equal
+                  (Trace.normaliseLineWhen true stamped)
+                  (Some "value")
+                  "the engine's prefix is excluded — two clocks never agree"
+          }
+
+          test "two different user instants stay different" {
+              let a = "[2026-08-03T03:54:07.729Z] value"
+              let b = "[2026-08-03T03:54:09.113Z] value"
+
+              Expect.notEqual
+                  (Trace.normaliseLineWhen false a)
+                  (Trace.normaliseLineWhen false b)
+                  "unconditional stripping collapsed these to one line, so a divergence read as PROVEN"
+          }
+
+          test "an indented timestamp-shaped line is never decoration" {
+              let indented = "   [2026-08-03T03:54:07.729Z] value"
+              let trimmed = indented.Trim()
+
+              Expect.equal
+                  (Trace.normaliseLineWhen true indented)
+                  (Some trimmed)
+                  "an engine's prefix is at column zero; a build's is not"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Differential" [ userOutputSurvives; stringModel; continuationResolution ])
+
+    runTestsWithCLIArgs
+        []
+        argv
+        (testList
+            "Fogell.Differential"
+            [ userOutputSurvives
+              stringModel
+              continuationResolution
+              timestampPrefixIsConditional ])

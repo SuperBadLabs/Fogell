@@ -37,6 +37,22 @@ type WalkerCtx =
       /// divergence.
       /// Receipt: `parallel-always-failfast`.
       Emit: string -> unit
+      /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
+      ///
+      /// A SETTER rather than a `create` parameter because the pipeline's
+      /// options are read after the context exists. It prefixes SUBSEQUENT
+      /// `Emit` calls and nothing already written; WHERE it is called is the
+      /// caller's decision and is placed at a MEASURED point — after SCM
+      /// provenance and the default checkout, both of which Jenkins leaves
+      /// unstamped because it cannot activate a Declarative option before it has
+      /// fetched and parsed the file (receipt `options-timestamps-scm`, PARTIAL
+      /// 1/21 on both engines).
+      ///
+      /// This said "from the moment the build starts", which is wrong and is the
+      /// kind of wrong that gets acted on: a maintainer trusting it would move
+      /// activation earlier and stamp the provenance line, which fails the SCM
+      /// case. Idempotent; calling it twice does not double-prefix.
+      EnableTimestamps: unit -> unit
       /// Register credential bindings atomically at the CURRENT output index.
       /// Masking applies to every later `Emit`; the recorded index scopes the
       /// LEAK CHECK only — output emitted from here on can leak these values,
@@ -158,6 +174,14 @@ module WalkerCtx =
         let mutable status = BuildStatus.Success
         let statusLock = obj ()
 
+        // FG-053. MEASURED on Jenkins 2.568.1: `options { timestamps() }` puts
+        // an ISO-8601 instant in brackets ahead of the lines the BUILD prints —
+        // measured 2/21 raw lines on a two-step build, NOT the [Pipeline]
+        // annotations, banners or Started/Finished rows —
+        // `[2026-08-03T03:54:07.729Z] + echo first`. Millisecond precision, UTC,
+        // trailing space. Receipt: `options-timestamps`.
+        let mutable timestamps = false
+
         { Emit =
             fun line ->
                 lock outputLock (fun () ->
@@ -167,7 +191,28 @@ module WalkerCtx =
                         else
                             Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
-                    output.Add safe)
+                    // AFTER masking, deliberately. The prefix carries no secret,
+                    // and masking a line whose start has already moved would let
+                    // an offset-based masker act on the wrong span.
+                    let stamped =
+                        if timestamps then
+                            // INVARIANT CULTURE. `ToString(format)` uses the
+                            // CURRENT culture, whose time separator is not always
+                            // `:` — a process running under one of those would
+                            // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
+                            // does not match, so Fogell would neither strip nor
+                            // count its own prefix. The engine's output would
+                            // depend on the operator's locale.
+                            let now =
+                                System.DateTime.UtcNow.ToString(
+                                    "yyyy-MM-ddTHH:mm:ss.fffZ",
+                                    System.Globalization.CultureInfo.InvariantCulture)
+                            $"[{now}] {safe}"
+                        else
+                            safe
+
+                    output.Add stamped)
+          EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
                 lock outputLock (fun () ->

@@ -1,7 +1,7 @@
 # Differential receipt — publish-named-args-interpolated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         85754251c939559d91267c6b1c8fb777413518588fdeb50c4873dfa711f49612
+seal:         dd9efdea7c114c83201c60ce307478499716f87780b7c9b51703465ecfde7fcf
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -9,7 +9,18 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   compared: terminal result
   compared: ordered normalised output lines
   compared: canonical workspace hash over sorted (path, content-hash) pairs
-  excluded: timestamps, ANSI escapes, blank lines
+  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
+  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
+    timestamps() coverage. Two engines read two clocks, so the instants can never
+    agree; an engine that IGNORED the option, or honoured it for only some lines,
+    would otherwise compare equal to one that honoured it fully. Line COUNTS are
+    printed but never compared — the engines do not emit the same number of lines.
+    LIMIT: the numerator counts stamped RAW lines while the denominator is the
+    compared-output length, so a stamped-but-suppressed line can offset an
+    unstamped compared one. Catches a total miss and an ordinary partial
+    implementation (both planted); not a per-line proof. FG-118 makes it exact.
+    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
+    the option, and read as true only because none did.
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
   compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
     trace is identical emitted output, continuations included (retires FG-002c)

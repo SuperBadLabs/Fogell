@@ -102,6 +102,47 @@ module FogellSide =
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
             let runCtx = WalkerCtx.create ()
+
+            // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
+            // engine decoration or the build's own output — nothing in a line's
+            // shape can tell those apart, so normalisation is told rather than
+            // left to guess.
+            // ZERO-ARGUMENT, and a name-only check accepted anything. Jenkins'
+            // Declarative `timestamps()` takes no arguments and REJECTS
+            // `timestamps(false)` or named parameters when it compiles the
+            // model, so accepting them here would run a build Jenkins refuses —
+            // failing OPEN on a script the reference engine will not execute.
+            // EVERY entry, not the first. `options` is a Step LIST and the parser
+            // keeps them all, so `options { timestamps(); timestamps(false) }`
+            // arrives with both — `tryFind` saw the valid one, accepted it, and
+            // ran a build Jenkins refuses to compile.
+            let timestampsOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "timestamps")
+
+            let timestampsArgError =
+                if
+                    timestampsOptions
+                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                then
+                    Some "the timestamps() option takes no arguments"
+                else
+                    None
+
+            let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
+
+            // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
+            // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
+            // enables the wrapper for the whole build or not at all, so honouring
+            // the pipeline form while silently dropping the stage form would
+            // produce unstamped output where Jenkins stamps — a divergence the
+            // engine would not announce. Refusing by name is this project's
+            // stated direction for a construct it does not implement (FG-103),
+            // and FG-120 carries the scoped enable/restore that would support it.
+            let stageTimestamps =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.exists (fun st -> st.Options |> List.exists (fun o -> o.Name = "timestamps"))
+
             let emit = runCtx.Emit
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
@@ -178,8 +219,58 @@ module FogellSide =
                     bump BuildStatus.Failure
             | _ -> ()
 
+            // REFUSED, and NOT YET TERMINAL — say what this does, because the
+            // sentence here previously claimed "fail closed" and "running the
+            // build at all would be failing OPEN" while the code does exactly
+            // that. A reviewer reproduced it: `timestamps(false)` with a
+            // `post { always { sh ... } }` exits FAILURE and still runs the post
+            // step, creating its file. Jenkins rejects the model before any
+            // stage or post runs, so this executes side effects for a script the
+            // reference engine never would.
+            //
+            // What IS right here is the POSITION: before the SCM block, because
+            // Jenkins refuses after the lightweight Jenkinsfile fetch and BEFORE
+            // its generated default checkout — validating after `runCheckout`
+            // left repository files behind and turned a compile refusal into a
+            // workspace-hash divergence.
+            //
+            // Making it terminal is a control-flow change to the walker and is
+            // FG-121, with the reproduction recorded there. No corpus file
+            // declares any of these forms; every one is a script Jenkins itself
+            // rejects.
+            // A COMPILE-SHAPED refusal, distinct from a build failure: Jenkins
+            // rejects the model before any stage or post runs, so neither may
+            // run here. `root.Failed` alone left pipeline `post` executing and
+            // creating files for a script the reference engine never accepts —
+            // reproduced by the verifier with `timestamps(false)` and a
+            // `post { always { sh ... } }`.
+            let mutable compileRejected = false
+
+            if stageTimestamps then
+                emit
+                    "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
+
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+
+            match timestampsArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
             match scm with
             | Some spec when not root.Failed.Value ->
+                // BEFORE the option can apply. Jenkins must FETCH and PARSE the
+                // Jenkinsfile before a Declarative option exists to activate, so
+                // its own provenance line is unprefixed even when the script
+                // declares `timestamps()`. Stamping it here would make Fogell
+                // report `all` against Jenkins' `partial` and fail a case whose
+                // output and workspace agree — a divergence invented by the
+                // wrapper's placement rather than by either engine.
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
 
                 // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
@@ -248,6 +339,26 @@ module FogellSide =
                                   "GIT_URL", spec.Url ]
                             | None -> []
             | _ -> ()
+
+            // FG-053. HERE: after SCM provenance AND after the auto-checkout,
+            // before the stage walk. Jenkins cannot activate a Declarative
+            // option until it has fetched and parsed the Jenkinsfile, so its
+            // provenance line and its default checkout are BOTH unprefixed and
+            // stamping begins with the build's own step output.
+            //
+            // MEASURED, not reasoned — receipt `options-timestamps-scm` reports
+            // PARTIAL (1/21) on BOTH engines. An earlier draft of this comment
+            // said "before checkout" and "everything from the checkout onward is
+            // stamped"; the checkout runs above, so that was wrong about its own
+            // placement even while the code was right.
+            //
+            // Enabling at context creation stamped the provenance line too and
+            // made Fogell read `all` against Jenkins' `partial` — a divergence
+            // the wrapper's placement invented, on a case whose output and
+            // workspace agreed.
+            if declaresTimestamps then
+                runCtx.EnableTimestamps()
+
 
             // The SCM wrapper values sit at the BASE layer — after the
             // Jenkins-provided variables, BEFORE pipeline/stage declarations —
@@ -338,7 +449,7 @@ module FogellSide =
             // runs after every stage. Modelled as a synthetic stage carrying only
             // the post section, which is also how the pipeline's own environment
             // reaches those steps.
-            if not (List.isEmpty pipeline.Post) then
+            if not (List.isEmpty pipeline.Post) && not compileRejected then
                 let synthetic =
                     { Name = ""
                       Agent = None
@@ -384,24 +495,35 @@ module FogellSide =
                 )
             else
 
+            let outputLines =
+                let idReplacements =
+                    runCtx.DurableIds()
+                    |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                    |> List.ofSeq
+
+                Trace.normaliseOutputShaped
+                    declaresTimestamps
+                    false
+                    ((workspace, "${WORKSPACE}") :: idReplacements)
+                    envReplacements
+                    (runCtx.Output())
+
             Result.Ok
                 { Result = BuildStatus.toWireString (runCtx.Status())
                   EngineNotes = runCtx.EngineNotes()
-                  Output =
-                    (let idReplacements =
-                        runCtx.DurableIds()
-                        |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
-                        |> List.ofSeq
-
-                     Trace.normaliseOutputShaped
-                         false
-                         ((workspace, "${WORKSPACE}") :: idReplacements)
-                         envReplacements
-                         (runCtx.Output()))
+                  Output = outputLines
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  ReportedFailureReason = Trace.reportedFailureReason (runCtx.Output()) }
+                  Timestamps =
+                      // same denominator as Jenkins.fs: the COMPARED output
+                      // gated on the declaration, for the reason stated in Jenkins.fs
+                      ((if declaresTimestamps then
+                            runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
+                        else
+                            0),
+                       List.length outputLines)
+                  ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
