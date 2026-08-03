@@ -301,10 +301,19 @@ module Compare =
             line "VERDICT: NOT COMPARABLE"
             line $"  - {d.Describe}"
 
-        // The timestamp fact, RENDERED as well as sealed. A receipt that
-        // compares something must show it: a reader checking whether
-        // `timestamps()` was honoured should not have to infer it from the
-        // absence of a divergence.
+        // The timestamp fact, rendered WHEN THERE IS ANY — and the sentence here
+        // used to say "a receipt that compares something must show it", which
+        // this does not do. The fact is compared and sealed for every case; it
+        // is PRINTED only when a side stamped at least one line, so a declared
+        // `timestamps()` case where both classify `none` seals the fact and
+        // shows nothing.
+        //
+        // Kept conditional rather than widened: printing it on all 102 receipts,
+        // almost all of which never mention the option, is noise that would
+        // train readers past the line. The honest fix is the wording, since the
+        // case it hides — declared but stamped nowhere — is a divergence on
+        // every OTHER axis anyway (the engine that honoured it stamped, so its
+        // count is non-zero and the line appears).
         match r.Jenkins, r.Fogell with
         | Some j, Some f when fst j.Timestamps > 0 || fst f.Timestamps > 0 ->
             line ""
