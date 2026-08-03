@@ -83,6 +83,9 @@ prove_form "let name'' (two)"         "let staleGateValue'' = 1" "staleGateValue
 prove_form "and Name (recursive type)" "and StaleGateValue = { A: int }" StaleGateValue
 prove_form "and name (recursive fn)"  "and staleGateValue x = x" staleGateValue
 prove_form "and private name"         "and private staleGateValue x = x" staleGateValue
+prove_form "let! (computation expr)"  "let! staleGateValue = fetch ()" staleGateValue
+prove_form "use binding"              "use staleGateValue = open ()" staleGateValue
+prove_form "use! binding"             "use! staleGateValue = openAsync ()" staleGateValue
 
 # The surviving comment REPEATS the binding keyword. Every fixture above names
 # the identifier bare, so none of them could catch a comment being mistaken for
@@ -283,6 +286,30 @@ if [ "$rc" -eq 0 ]; then
   note "non-F# deletion (out of scope)" "not extracted (exit 0) — OK"
 else
   note "non-F# deletion (out of scope)" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
+# A MULTI-LINE STRING whose CONTINUATION line carries `(*`. This is
+# src/Fogell.Store/Store.fs:430-443 exactly: an ordinary F# string opened on one
+# line, with `count(*)` — SQL, not a comment — on the lines below it. The token
+# must be on a CONTINUATION line to exercise anything: the first version of this
+# fixture put it beside the opening quote, where the scanner is already inside a
+# string within that same line, and so it passed with cross-line carrying on OR
+# off. Decoration, caught by running it against a copy with carrying disabled.
+#
+# With the state not carried, that `(*` opens a block comment, every later
+# declaration reads as comment text, and a binding that merely MOVED below it
+# fails the blocking gate.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let sql =\n    "SELECT n\n     FROM t WHERE count(*) > 0"\nlet staleGateValue = 1\nlet keeper = 2\n// staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base \
+  && printf 'let sql =\n    "SELECT n\n     FROM t WHERE count(*) > 0"\nlet keeper = 2\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -eq 0 ]; then
+  note "multi-line string with (*" "silent (exit 0) — OK"
+else
+  note "multi-line string with (*" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
 echo "=== the checker's own failure modes ==="

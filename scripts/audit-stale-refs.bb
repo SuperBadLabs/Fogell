@@ -58,67 +58,79 @@
 ;; comment here. This checker's errors should fall on the side of asking a human
 ;; to look, never on the side of silence.
 (defn- scan-line
-  "[comment-start-index depth-after] for one line, given the block depth it
+  "[comment-start depth' mode'] for one line, given the depth and lexical mode it
    begins with. nil start means the line holds no comment.
 
-   A CHARACTER SCAN, not a token count. Counting `(*` and `*)` occurrences
-   treats them as comment delimiters wherever they appear — so `let syntax =
-   \"(*\"` opened a block comment that never closed, every later line in the file
-   read as comment text, and surviving declarations below it were filtered out of
-   the definition scan while ordinary code entered the comment index. One inert
-   token in a string could make the blocking gate fail on unrelated code."
-  [^String l depth]
-  (let [n (.length l)]
-    (loop [i 0, d depth, in-str false, start (when (pos? depth) 0)]
+   A CHARACTER SCAN carrying state ACROSS lines, and the first version carried
+   only depth. Resetting the string mode per line was justified in a comment as
+   'right for the single-line literals this cares about' — which was simply
+   false about this repository: src/Fogell.Store/Store.fs:430 opens an ordinary
+   multi-line string whose continuation lines contain `count(*)`. Scanned as
+   code, that `(*` opened a block comment that never closed, every later line in
+   the file read as comment text, and its declarations were filtered out of the
+   definition scan. Unrelated moves or deletions could then falsely fail the
+   blocking gate.
+
+   Modes: :code, :str (ordinary, `\\` escapes), :vstr (`@\"...\"`, where `\"\"` is
+   an escaped quote and `\\` is not an escape), :tstr (`\"\"\"...\"\"\"`, closed only
+   by another triple)."
+  [^String l depth mode]
+  (let [n (.length l)
+        at? (fn [i ^String t] (and (<= (+ i (.length t)) n) (= t (.substring l i (+ i (.length t))))))]
+    (loop [i 0, d depth, m mode, start (when (and (pos? depth) (= m :code)) 0)]
       (if (>= i n)
-        [start d]
-        (let [c (.charAt l i)
-              c2 (when (< (inc i) n) (.charAt l (inc i)))]
+        [start d m]
+        (let [c (.charAt l i)]
           (cond
             ;; inside a block comment: only its own delimiters matter, and F#
             ;; block comments NEST
             (pos? d)
             (cond
-              (and (= c \*) (= c2 \))) (recur (+ i 2) (dec d) false (or start i))
-              (and (= c \() (= c2 \*)) (recur (+ i 2) (inc d) false (or start i))
-              :else (recur (inc i) d false (or start i)))
+              (at? i "*)") (recur (+ i 2) (dec d) m (or start i))
+              (at? i "(*") (recur (+ i 2) (inc d) m (or start i))
+              :else (recur (inc i) d m (or start i)))
 
-            ;; inside a string: nothing is a delimiter until it closes. Strings
-            ;; are treated as line-local, which is right for the single-line F#
-            ;; literals this scan cares about and bounds the damage of an odd
-            ;; quote in a shell script to its own line.
-            in-str
-            (cond
-              (and (= c \\) c2) (recur (+ i 2) d true start)
-              (= c \") (recur (inc i) d false start)
-              :else (recur (inc i) d true start))
+            (= m :tstr) (if (at? i "\"\"\"") (recur (+ i 3) d :code start) (recur (inc i) d m start))
+            (= m :vstr) (cond
+                          (at? i "\"\"") (recur (+ i 2) d m start)
+                          (= c \") (recur (inc i) d :code start)
+                          :else (recur (inc i) d m start))
+            (= m :str) (cond
+                         (and (= c \\) (< (inc i) n)) (recur (+ i 2) d m start)
+                         (= c \") (recur (inc i) d :code start)
+                         :else (recur (inc i) d m start))
 
             :else
             (cond
-              (= c \") (recur (inc i) d true start)
-              (and (= c \/) (= c2 \/)) [(or start i) d]
-              (and (= c \;) (= c2 \;)) [(or start i) d]
-              (= c \#) [(or start i) d]
-              (and (= c \() (= c2 \*)) (recur (+ i 2) (inc d) false (or start i))
-              :else (recur (inc i) d false start))))))))
+              (at? i "\"\"\"") (recur (+ i 3) d :tstr start)
+              (at? i "@\"") (recur (+ i 2) d :vstr start)
+              (= c \") (recur (inc i) d :str start)
+              (at? i "//") [(or start i) d m]
+              (at? i ";;") [(or start i) d m]
+              (= c \#) [(or start i) d m]
+              (at? i "(*") (recur (+ i 2) (inc d) m (or start i))
+              :else (recur (inc i) d m start))))))))
 
 (defn- comment-spans
-  "[[line-no text whole?] ...] for every line that is, or begins, a comment."
-  [lines]
-  (loop [[l & more] lines, n 1, depth 0, acc []]
+  "[[line-no text whole?] ...] for every line that is, or begins, a comment.
+
+   `carry?` threads lexical state between lines, which is correct for F# and
+   deliberately NOT done elsewhere: an unbalanced quote in a shell script would
+   otherwise swallow the rest of the file, and a checker that quietly stops
+   seeing comments is the failure this whole script exists to prevent."
+  [lines carry?]
+  (loop [[l & more] lines, n 1, depth 0, mode :code, acc []]
     (if (nil? l)
       acc
-      (let [inside? (pos? depth)
-            [idx depth'] (scan-line l depth)
+      (let [inside? (and (pos? depth) (= mode :code))
+            [idx depth' mode'] (scan-line l depth mode)
             ;; ENTIRELY a comment — as opposed to code with a trailing one.
-            ;; The distinction matters for the definition scan: `let x = 1 // n`
-            ;; is a definition, while an interior block-comment line is not,
-            ;; even when it happens to be shaped like `Field: string`.
             whole? (or inside?
-                       (and (some? idx)
-                            (str/blank? (subs l 0 idx))))
+                       (and (some? idx) (str/blank? (subs l 0 idx))))
             text (when (some? idx) (subs l idx))]
-        (recur more (inc n) depth'
+        (recur more (inc n)
+               (if carry? depth' 0)
+               (if carry? mode' :code)
                (if text (conj acc [n text whole?]) acc))))))
 
 ;; THE BASE MUST RESOLVE, and this script shipped without checking it: `git diff`
@@ -163,7 +175,7 @@
   ;; rotation notes`, and the audit failed the build on the word "member". A
   ;; false positive that BLOCKS pushes, introduced by the refactor that was
   ;; supposed to make this safer.
-  "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default|and)\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
+  "(?:(?:static|abstract|override|default|and)\\s+)*(?:let|member|type|override|default|and|use)!?\\s+(?:(?:private|internal|public|mutable|rec|inline|new|val)\\s+)*(?:[A-Za-z_][A-Za-z0-9_']*\\.)?")
 (def ^:private field-lead
   ;; a record field, which this codebase writes indented, on the brace line
   ;; (`{ Root: string }`), carrying an attribute
@@ -278,7 +290,7 @@
                                     (not (re-find #"/(bin|obj|\.git)/" (.getPath f))))
                          :let [content (try (slurp f) (catch Exception _ nil))]
                          :when content]
-                     [(.getPath f) (comment-spans (str/split-lines content))]))
+                     [(.getPath f) (comment-spans (str/split-lines content) (boolean (re-find #"\.(fs|fsi|fsx)$" (.getPath f))))]))
       comment-index (vec (for [[path spans] scanned, [n text _] spans] [path n text]))
       ;; line numbers that are ENTIRELY comment, per file. `still-defined?`
       ;; consults this instead of re-deciding from the matched text: an interior
