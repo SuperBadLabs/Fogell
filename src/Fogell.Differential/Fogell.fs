@@ -123,6 +123,19 @@ module FogellSide =
 
             let declaresTimestamps = timestampsOption.IsSome && timestampsArgError.IsNone
 
+            // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
+            // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
+            // enables the wrapper for the whole build or not at all, so honouring
+            // the pipeline form while silently dropping the stage form would
+            // produce unstamped output where Jenkins stamps — a divergence the
+            // engine would not announce. Refusing by name is this project's
+            // stated direction for a construct it does not implement (FG-103),
+            // and FG-120 carries the scoped enable/restore that would support it.
+            let stageTimestamps =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.exists (fun st -> st.Options |> List.exists (fun o -> o.Name = "timestamps"))
+
             let emit = runCtx.Emit
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
@@ -207,6 +220,13 @@ module FogellSide =
             // workspace and turned a compile refusal into a workspace-hash
             // divergence. Running the build at all would be failing OPEN on a
             // script the reference engine will not execute.
+            if stageTimestamps then
+                emit
+                    "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
+
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+
             match timestampsArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
