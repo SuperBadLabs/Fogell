@@ -20,6 +20,10 @@ pipeline {
         stage('one') {
             steps {
                 sh 'echo plain > plain.txt'
+                // ansiColor's documented effect is to set TERM to the map name
+                // inside its scope. A case that only checks plain output passes
+                // while that is unimplemented, so it is OBSERVED here.
+                sh 'echo "TERM=[$TERM]" > term.txt; cat term.txt'
                 echo 'a narrated line'
             }
         }

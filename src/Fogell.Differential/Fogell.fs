@@ -365,8 +365,27 @@ module FogellSide =
             // so a declared GIT_COMMIT overrides the wrapper (measured
             // semantics: declarations apply INSIDE the wrapper) and `when`
             // conditions see the wrapper values like any other env.
+            // FG-053. `ansiColor('<map>')` sets TERM to the map name for the
+            // scope it wraps. MEASURED, and it is the reason this option is NOT
+            // the inert accept-and-ignore an earlier commit here called it:
+            //   jenkins=+ echo TERM=[xterm]    fogell=+ echo TERM=[]
+            // Receipt: `options-ansicolor`.
+            // A case that checked only plain output passed while any pipeline
+            // reading TERM diverged.
+            //
+            // It joins the BASE layer beside the SCM wrapper values, for the
+            // same reason they are there: a declared `environment { TERM = ... }`
+            // must override it, because a declaration applies INSIDE the wrapper.
+            let ansiColorEnv =
+                match pipeline.Options |> List.tryFind (fun o -> o.Name = "ansiColor") with
+                | Some o ->
+                    match o.Positional with
+                    | m :: _ when m.Trim() <> "" -> [ "TERM", m.Trim().Trim('\'', '"') ]
+                    | _ -> []
+                | None -> []
+
             let envForWith =
-                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv) pipeline
+                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
 
 
 
