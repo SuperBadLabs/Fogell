@@ -107,8 +107,21 @@ module FogellSide =
             // engine decoration or the build's own output — nothing in a line's
             // shape can tell those apart, so normalisation is told rather than
             // left to guess.
-            let declaresTimestamps =
-                pipeline.Options |> List.exists (fun o -> o.Name = "timestamps")
+            // ZERO-ARGUMENT, and a name-only check accepted anything. Jenkins'
+            // Declarative `timestamps()` takes no arguments and REJECTS
+            // `timestamps(false)` or named parameters when it compiles the
+            // model, so accepting them here would run a build Jenkins refuses —
+            // failing OPEN on a script the reference engine will not execute.
+            let timestampsOption =
+                pipeline.Options |> List.tryFind (fun o -> o.Name = "timestamps")
+
+            let timestampsArgError =
+                match timestampsOption with
+                | Some o when not (List.isEmpty o.Positional) || not (List.isEmpty o.Named) ->
+                    Some "the timestamps() option takes no arguments"
+                | _ -> None
+
+            let declaresTimestamps = timestampsOption.IsSome && timestampsArgError.IsNone
 
             let emit = runCtx.Emit
             let bump = runCtx.Bump
@@ -334,6 +347,17 @@ module FogellSide =
             match pipelineOptionError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timeout option: {e}"
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            // FAIL CLOSED on `timestamps(false)` or named arguments. Jenkins
+            // rejects the zero-argument option's non-zero-argument forms when it
+            // compiles the model, so running the build here would be failing OPEN
+            // on a script the reference engine refuses to execute.
+            match timestampsArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
                 root.Failed.Value <- true
                 bump BuildStatus.Failure
             | None -> ()

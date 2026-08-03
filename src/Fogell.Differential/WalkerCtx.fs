@@ -188,7 +188,17 @@ module WalkerCtx =
                     // an offset-based masker act on the wrong span.
                     let stamped =
                         if timestamps then
-                            let now = System.DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                            // INVARIANT CULTURE. `ToString(format)` uses the
+                            // CURRENT culture, whose time separator is not always
+                            // `:` — a process running under one of those would
+                            // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
+                            // does not match, so Fogell would neither strip nor
+                            // count its own prefix. The engine's output would
+                            // depend on the operator's locale.
+                            let now =
+                                System.DateTime.UtcNow.ToString(
+                                    "yyyy-MM-ddTHH:mm:ss.fffZ",
+                                    System.Globalization.CultureInfo.InvariantCulture)
                             $"[{now}] {safe}"
                         else
                             safe

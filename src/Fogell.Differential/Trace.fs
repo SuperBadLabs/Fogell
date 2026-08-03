@@ -305,13 +305,13 @@ module Trace =
             @"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\]\s",
             Text.RegularExpressions.RegexOptions.Compiled)
 
-    /// Did this line carry a `timestamps()` prefix? Feeds [Trace.Timestamped],
+    /// Did this line carry a `timestamps()` prefix? Feeds [Trace.Timestamps],
     /// which IS compared — stripping without comparing presence would let an
     /// engine that ignores the option pass against one that honours it.
     let private stripAnsi (l: string) =
         Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "")
 
-    /// Did this line carry a `timestamps()` prefix? Feeds the coverage figure,
+    /// Did this line carry a `timestamps()` prefix? Feeds [Trace.Timestamps], the coverage pair,
     /// which IS compared.
     ///
     /// COLUMN ZERO, no `TrimStart`. Trimming first meant ordinary indented

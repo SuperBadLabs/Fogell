@@ -233,7 +233,7 @@ module Compare =
                 match t with
                 | Some x ->
                     let joined = String.concat "\n" x.Output
-                    // Timestamped is IN THE SEAL. It is compared, so a receipt
+                    // The timestamp coverage is IN THE SEAL. It is compared, so a receipt
                     // that did not bind it would let the fact be edited out
                     // without changing the hash — a sealed document asserting
                     // something its seal does not cover. The prefix TEXT stays
