@@ -57,6 +57,34 @@
 ;; Over-approximating is deliberate: `https://x` inside a string reads as a
 ;; comment here. This checker's errors should fall on the side of asking a human
 ;; to look, never on the side of silence.
+(defn- char-literal-len
+  "Length of the F# character literal starting at i, or nil if this apostrophe is
+   something else — a generic type parameter (`'T`), or the tail of an identifier
+   (`state'`). Recognised only when a closing quote actually follows.
+
+   NOT COVERED BY A FIXTURE, and said so rather than implied: a fixture was
+   written for this and turned out to be decoration. Consuming `'T` as though it
+   were a literal is harmless in practice — it skips two characters of a type
+   annotation and nothing downstream depends on them — so the case passed with
+   the guard present and absent. The closing-quote requirement stays because it
+   is correct, not because anything proves it earns its place."
+  [^String l i n]
+  (when (= \' (.charAt l i))
+    (cond
+      ;; '\n' '\'' '\"' '\\' and the like
+      (and (< (+ i 1) n) (= \\ (.charAt l (inc i))))
+      (let [close (loop [j (+ i 2)]
+                    (cond (>= j (min n (+ i 10))) nil
+                          (= \' (.charAt l j)) j
+                          :else (recur (inc j))))]
+        (when close (- (inc close) i)))
+
+      ;; 'x'
+      (and (< (+ i 2) n) (= \' (.charAt l (+ i 2))))
+      3
+
+      :else nil)))
+
 (defn- scan-line
   "[comment-start depth' mode'] for one line, given the depth and lexical mode it
    begins with. nil start means the line holds no comment.
@@ -102,6 +130,19 @@
 
             :else
             (cond
+              ;; CHARACTER LITERALS FIRST. `'\"'` is a live shape here
+              ;; (Limits.fs:80, Lexeme.fs:175) and its quote is not a string
+              ;; delimiter. Now that lexical mode is carried across lines, taking
+              ;; it as one leaves the scanner in :str for the rest of the file,
+              ;; dropping every later comment out of the index — so a deleted
+              ;; binding named by one of them passes --strict silently. The fix
+              ;; for carrying state created this; carrying state is still right.
+              ;;
+              ;; NOT every apostrophe: `'T` and `'a` are generic type parameters
+              ;; and `state'` ends an identifier. A literal is `'x'` or an
+              ;; escape `'\\n'`/`'\\''`, so it is recognised only when a closing
+              ;; quote actually follows.
+              (char-literal-len l i n) (recur (+ i (char-literal-len l i n)) d m start)
               (at? i "\"\"\"") (recur (+ i 3) d :tstr start)
               (at? i "@\"") (recur (+ i 2) d :vstr start)
               (= c \") (recur (inc i) d :str start)

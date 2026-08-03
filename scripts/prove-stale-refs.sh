@@ -312,6 +312,24 @@ else
   note "multi-line string with (*" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
+# A CHARACTER LITERAL HOLDING A DOUBLE QUOTE — `'"'`, live at
+# src/Fogell.Admission/Limits.fs:80 and src/Fogell.Pipeline.Parser/Lexeme.fs:175.
+# Once lexical mode is carried across lines, mistaking that quote for a string
+# delimiter leaves the scanner in :str for the rest of the file, so every later
+# comment drops out of the index and a deleted binding named by one passes
+# silently. The fix for carrying state is what created this class.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let isQuote c = (c = %s)\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' "'\"'" > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
+out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
+  note "char literal holding a quote" "reported (exit $rc) — OK"
+else
+  note "char literal holding a quote" "MISSED — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
+fi
+
 echo "=== the checker's own failure modes ==="
 out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && grep -q "does not resolve" <<<"$out"; then
