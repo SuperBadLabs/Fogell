@@ -337,7 +337,12 @@ module Trace =
     /// disagreed about `stamped > total`, so a proof could compare one fact and
     /// seal another.
     let timestampCoverage (stamped: int, total: int) =
-        if total = 0 || stamped = 0 then "none"
+        // STAMPED IS THE EVIDENCE, so it is tested first. `total = 0` meant
+        // "none" even when stamped was positive — a `timestamps()` pipeline
+        // whose only build output is a suppressed `ERROR:` diagnostic has
+        // (1, 0), which then compared equal to an engine that never stamped at
+        // all. Zero comparable lines is not zero stamping.
+        if stamped = 0 then "none"
         elif stamped >= total then "all"
         else "partial"
 
