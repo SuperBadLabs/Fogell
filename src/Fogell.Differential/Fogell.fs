@@ -199,6 +199,21 @@ module FogellSide =
                     bump BuildStatus.Failure
             | _ -> ()
 
+            // FAIL CLOSED on `timestamps(false)` or named arguments, BEFORE the
+            // SCM block. Jenkins rejects the zero-argument option's other forms
+            // when it compiles the Declarative model — after the lightweight
+            // Jenkinsfile fetch and BEFORE its generated default checkout — so
+            // validating after `runCheckout` left repository files in the
+            // workspace and turned a compile refusal into a workspace-hash
+            // divergence. Running the build at all would be failing OPEN on a
+            // script the reference engine will not execute.
+            match timestampsArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
+                root.Failed.Value <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
             match scm with
             | Some spec when not root.Failed.Value ->
                 // BEFORE the option can apply. Jenkins must FETCH and PARSE the
@@ -347,17 +362,6 @@ module FogellSide =
             match pipelineOptionError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timeout option: {e}"
-                root.Failed.Value <- true
-                bump BuildStatus.Failure
-            | None -> ()
-
-            // FAIL CLOSED on `timestamps(false)` or named arguments. Jenkins
-            // rejects the zero-argument option's non-zero-argument forms when it
-            // compiles the model, so running the build here would be failing OPEN
-            // on a script the reference engine refuses to execute.
-            match timestampsArgError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
                 root.Failed.Value <- true
                 bump BuildStatus.Failure
             | None -> ()
