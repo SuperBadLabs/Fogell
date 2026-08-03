@@ -231,17 +231,27 @@ module FogellSide =
             // FG-121, with the reproduction recorded there. No corpus file
             // declares any of these forms; every one is a script Jenkins itself
             // rejects.
+            // A COMPILE-SHAPED refusal, distinct from a build failure: Jenkins
+            // rejects the model before any stage or post runs, so neither may
+            // run here. `root.Failed` alone left pipeline `post` executing and
+            // creating files for a script the reference engine never accepts —
+            // reproduced by the verifier with `timestamps(false)` and a
+            // `post { always { sh ... } }`.
+            let mutable compileRejected = false
+
             if stageTimestamps then
                 emit
                     "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
 
                 root.Failed.Value <- true
+                compileRejected <- true
                 bump BuildStatus.Failure
 
             match timestampsArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
                 root.Failed.Value <- true
+                compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
 
@@ -432,7 +442,7 @@ module FogellSide =
             // runs after every stage. Modelled as a synthetic stage carrying only
             // the post section, which is also how the pipeline's own environment
             // reaches those steps.
-            if not (List.isEmpty pipeline.Post) then
+            if not (List.isEmpty pipeline.Post) && not compileRejected then
                 let synthetic =
                     { Name = ""
                       Agent = None

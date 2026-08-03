@@ -49,9 +49,10 @@ type Trace =
       ///
       /// Stripping alone would make the exclusion dishonest in the other
       /// direction — an engine that ignored `timestamps()` entirely would
-      /// compare equal to one that honoured it. So PRESENCE is compared as a
-      /// boolean, exactly as [ReportedFailureReason] is: the wording is the
-      /// plugin's, the fact is the engine's.
+      /// compare equal to one that honoured it. So COVERAGE is compared, as
+      /// `none` / `partial` / `all`: the wording is the plugin's, the fact is
+      /// the engine's. (This said "as a boolean" after the code had moved on —
+      /// the same sentence, in its seventh place on this branch.)
       /// (COMPARABLE lines carrying a `timestamps()` prefix, comparable lines).
       ///
       /// A COVERAGE PAIR, not a boolean, and the boolean was my own bug: under
