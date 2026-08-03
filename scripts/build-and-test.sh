@@ -32,6 +32,31 @@ if [ -x scripts/audit-claims.bb ]; then
 
 fi
 
+# FG-104b: a comment naming a mechanism the code no longer has. Three of those
+# landed in one day and every one was caught by a reviewer rather than a check —
+# `audit-claims.bb` asks a different question (does a MEASURED claim name a
+# receipt) that a stale identifier passes trivially.
+#
+# Scope, stated exactly because vaguer versions of this sentence have been a
+# finding TWICE: F# BINDINGS of four or more characters — let/member/type/
+# override/default/and declarations and PascalCase record fields — named in comments
+# or nested `(* ... *)` blocks. Short names are deliberately out (`x`, `id`,
+# `ctx` occur in ordinary English and a checker that fires on prose gets
+# switched off), and non-F# symbols are not extracted at all: a deleted shell
+# function or bb def can leave a stale comment this audit will not see.
+#
+# Proven to fail before being trusted, and the proof runs first: 16 binding
+# forms, a comment repeating the keyword, a record field on the brace line and
+# one named inside a block comment, a string that merely looks like a
+# definition, two false-positive cases, and four of the checker's own failure
+# modes.
+echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
+# the proof runs FIRST and in scratch repositories: a checker nobody has watched
+# fail is a claim, and this one has twice been wrong about its own job
+./scripts/prove-stale-refs.sh || { echo "STALE-REF PROOF FAILED"; exit 1; }
+./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
+  || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
+
 # FG-112: the restart lane is self-contained (dotnet + bash + a SIGKILL) and
 # is the ONLY automated coverage of PersistenceHooks/resume — it runs in the
 # gate so the headline durability semantics cannot silently regress.
@@ -41,6 +66,11 @@ echo "=== restart lane (FG-112, blocking) ==="
 # FG-046b: same argument for durable APPROVAL — a human's answer surviving a
 # kill is the one guarantee no receipt can cover (the differential harness has
 # no approver on either side), so its only proof is this lane.
+# FG-046e: scenario N's watcher earns its place only if it is proven to REPORT
+# a breach. Runs first, on planted overlaps, in scratch directories.
+echo "=== inbox-watcher proof (FG-046e, blocking) ==="
+./scripts/prove-approval-watcher.sh || { echo "APPROVAL-WATCH PROOF FAILED"; exit 1; }
+
 echo "=== approval lane (FG-046b, blocking) ==="
 ./scripts/run-approval-lane.sh || { echo "APPROVAL LANE FAILED"; exit 1; }
 
