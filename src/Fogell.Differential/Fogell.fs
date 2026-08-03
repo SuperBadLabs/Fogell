@@ -212,14 +212,25 @@ module FogellSide =
                     bump BuildStatus.Failure
             | _ -> ()
 
-            // FAIL CLOSED on `timestamps(false)` or named arguments, BEFORE the
-            // SCM block. Jenkins rejects the zero-argument option's other forms
-            // when it compiles the Declarative model — after the lightweight
-            // Jenkinsfile fetch and BEFORE its generated default checkout — so
-            // validating after `runCheckout` left repository files in the
-            // workspace and turned a compile refusal into a workspace-hash
-            // divergence. Running the build at all would be failing OPEN on a
-            // script the reference engine will not execute.
+            // REFUSED, and NOT YET TERMINAL — say what this does, because the
+            // sentence here previously claimed "fail closed" and "running the
+            // build at all would be failing OPEN" while the code does exactly
+            // that. A reviewer reproduced it: `timestamps(false)` with a
+            // `post { always { sh ... } }` exits FAILURE and still runs the post
+            // step, creating its file. Jenkins rejects the model before any
+            // stage or post runs, so this executes side effects for a script the
+            // reference engine never would.
+            //
+            // What IS right here is the POSITION: before the SCM block, because
+            // Jenkins refuses after the lightweight Jenkinsfile fetch and BEFORE
+            // its generated default checkout — validating after `runCheckout`
+            // left repository files behind and turned a compile refusal into a
+            // workspace-hash divergence.
+            //
+            // Making it terminal is a control-flow change to the walker and is
+            // FG-121, with the reproduction recorded there. No corpus file
+            // declares any of these forms; every one is a script Jenkins itself
+            // rejects.
             if stageTimestamps then
                 emit
                     "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
