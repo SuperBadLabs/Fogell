@@ -8,6 +8,12 @@ open System.Security.Cryptography
 type Divergence =
     | ResultDiffers of jenkins: string * fogell: string
     | DiagnosticSilence of engine: string
+    /// One engine printed `timestamps()` prefixes and the other did not. The
+    /// prefix TEXT is excluded from line comparison — two clocks never agree —
+    /// so without this the exclusion would let an engine that IGNORES the option
+    /// compare equal to one that honours it, which is the exact shape of hole
+    /// FG-102's rule exists to prevent.
+    | TimestampMismatch of jenkins: string * fogell: string
     | OutputDiffers of firstMismatchIndex: int * jenkins: string option * fogell: string option
     | WorkspaceDiffers of jenkins: string * fogell: string
     | JenkinsFailed of string
@@ -17,6 +23,8 @@ type Divergence =
         match this with
         | ResultDiffers(j, f) -> $"terminal result: jenkins={j} fogell={f}"
         | DiagnosticSilence engine -> $"{engine} failed without reporting a reason"
+        | TimestampMismatch(j, f) ->
+            $"timestamps() coverage differs: jenkins={j} fogell={f} — the option is honoured differently by the two engines"
         | OutputDiffers(i, j, f) ->
             let show = Option.defaultValue "<absent>"
             $"output line {i}: jenkins={show j} fogell={show f}"
@@ -175,6 +183,29 @@ module Compare =
                   if not fogell.ReportedFailureReason then DiagnosticSilence "fogell"
                   if not jenkins.ReportedFailureReason then DiagnosticSilence "jenkins"
 
+              // COMPARED, not excluded. `normaliseLine` strips the prefix so the
+              // instants never have to agree; this is what stops that strip from
+              // hiding a missing implementation.
+              // CLASSIFIED, not counted: the engines never print the same
+              // number of lines, so only none/partial/all can be compared. A
+              // partial stamper no longer passes against a full one, which an
+              // `exists` boolean allowed.
+              // CLASSIFICATION ONLY — and the first version compared
+              // `partial(1/2)` strings, which put the counts back into the
+              // comparison the comment above says are not comparable. Two
+              // partial stampers with different line counts would have diverged
+              // on the counts rather than on the behaviour. Counts survive in
+              // the MESSAGE, where they help a reader, and nowhere else.
+              let classify = Trace.timestampCoverage
+
+              let describe (stamped, total) =
+                  match classify (stamped, total) with
+                  | "partial" -> $"partial ({stamped}/{total})"
+                  | c -> c
+
+              if classify jenkins.Timestamps <> classify fogell.Timestamps then
+                  TimestampMismatch(describe jenkins.Timestamps, describe fogell.Timestamps)
+
               if
                   jenkins.WorkspaceHash <> "not-collected"
                   && fogell.WorkspaceHash <> "not-collected"
@@ -202,7 +233,16 @@ module Compare =
                 match t with
                 | Some x ->
                     let joined = String.concat "\n" x.Output
-                    $"{x.Result}|{x.WorkspaceHash}|{joined}"
+                    // Timestamped is IN THE SEAL. It is compared, so a receipt
+                    // that did not bind it would let the fact be edited out
+                    // without changing the hash — a sealed document asserting
+                    // something its seal does not cover. The prefix TEXT stays
+                    // out (two clocks), the FACT is bound.
+                    // the SAME classifier the comparison uses. Three copies of
+                    // this rule existed — compare, seal, render — and two of them
+                    // disagreed about `stamped > total`, so a proof could compare
+                    // one fact and seal another.
+                    $"{x.Result}|{x.WorkspaceHash}|timestamps={Trace.timestampCoverage x.Timestamps}|{joined}"
                 | None -> "<none>"
 
             // Folds join the sealed content: a fold section edited after the
@@ -260,6 +300,24 @@ module Compare =
         | NotComparable d ->
             line "VERDICT: NOT COMPARABLE"
             line $"  - {d.Describe}"
+
+        // The timestamp fact, RENDERED as well as sealed. A receipt that
+        // compares something must show it: a reader checking whether
+        // `timestamps()` was honoured should not have to infer it from the
+        // absence of a divergence.
+        match r.Jenkins, r.Fogell with
+        | Some j, Some f when fst j.Timestamps > 0 || fst f.Timestamps > 0 ->
+            line ""
+
+            let show ((stamped, total) as ts) =
+                match Trace.timestampCoverage ts with
+                | "partial" -> $"PARTIAL ({stamped}/{total})"
+                | "all" -> $"all ({total})"
+                | c -> c
+
+            line
+                $"timestamps(): jenkins={show j.Timestamps} fogell={show f.Timestamps} (prefix text excluded, coverage compared and sealed)"
+        | _ -> ()
 
         // Every fold this case USED, printed in the case that used it. A reader
         // of this receipt alone sees exactly which output pairs were accepted

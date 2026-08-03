@@ -1,9 +1,11 @@
-# Differential receipt — input-positional-literal.Jenkinsfile
+# Differential receipt — options-timestamps-compact.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e899b47ec53ed04c8e39deafe481ce45c9c318f0cec2f1ad4da13ae1e019d5b4
+seal:         76ae43b0a2ae13617b4996ba4c9299f7c13bbf0d322b1af8e485e6d1dcbbd46e
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+timestamps(): jenkins=all (1) fogell=all (1) (prefix text excluded, coverage compared and sealed)
 
 ## Comparison contract
   compared: terminal result
@@ -58,21 +60,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         aborted
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | Timeout set to expire in 4 sec
-    | Deploy to ${TARGET}?
-    | Proceed or Abort
-    | Cancelling nested steps due to timeout
-    | Timeout has been exceeded
+  result:         success
+  workspace-hash: b242c765c11322adb78904b12b3ed08844cd9114213060cbf32ba0d018787efa
+  output (1 lines):
+    | + echo compact
+  workspace:
+    2bc48a641910  compact.txt
 
 ## Fogell
-  result:         aborted
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (5 lines):
-    | Timeout set to expire in 4 sec
-    | Deploy to ${TARGET}?
-    | Proceed or Abort
-    | Cancelling nested steps due to timeout
-    | Timeout has been exceeded
+  result:         success
+  workspace-hash: b242c765c11322adb78904b12b3ed08844cd9114213060cbf32ba0d018787efa
+  output (1 lines):
+    | + echo compact
+  workspace:
+    2bc48a641910  compact.txt

@@ -37,6 +37,44 @@ type Trace =
       /// said somewhere — and the receipt is where an engine talks about itself
       /// without inventing build output Jenkins does not print.
       EngineNotes: string list
+      /// Whether the console carried `timestamps()` prefixes.
+      ///
+      /// Jenkins stamps BUILD-OUTPUT lines, not its own annotations or banners
+      /// (measured). The prefix TEXT cannot be compared — two engines read two clocks — so
+      /// `normaliseLine` strips it and the contract has always claimed
+      /// "excluded: timestamps". That claim was UNIMPLEMENTED until FG-053: no
+      /// code stripped one, and it read as true only because no case used the
+      /// option. Measured on Jenkins 2.568.1, a build-output line becomes
+      /// `[2026-08-03T03:54:07.729Z] + echo first`.
+      ///
+      /// Stripping alone would make the exclusion dishonest in the other
+      /// direction — an engine that ignored `timestamps()` entirely would
+      /// compare equal to one that honoured it. So PRESENCE is compared as a
+      /// boolean, exactly as [ReportedFailureReason] is: the wording is the
+      /// plugin's, the fact is the engine's.
+      /// (COMPARABLE lines carrying a `timestamps()` prefix, comparable lines).
+      ///
+      /// A COVERAGE PAIR, not a boolean, and the boolean was my own bug: under
+      /// `Seq.exists` an engine that stamped ONE line compared equal to one that
+      /// stamped every line — the same partial-implementation hole the enable
+      /// timing had, one level up.
+      ///
+      /// COMPARED AS `none` / `partial` / `all` AND NOTHING ELSE. The counts are
+      /// printed for a reader and never compared: two engines do not print the
+      /// same number of lines, so comparing them would manufacture divergences
+      /// out of an accident of formatting.
+      ///
+      /// STATED LIMIT (FG-118). The numerator counts stamped RAW lines and the
+      /// denominator is the COMPARED output length, because the shaping pipeline
+      /// filters with cross-line context and does not report which source lines
+      /// survived. A stamped line that is suppressed can therefore offset an
+      /// unstamped line that is compared, and the pair still classifies `all`.
+      /// It catches a total miss and an ordinary partial implementation — both
+      /// planted and verified — but it is NOT a per-line proof, and this comment
+      /// says so rather than letting the receipt imply one. FG-118 threads
+      /// survivor flags through `normaliseOutputInnerWhen` and makes it exact.
+      Timestamps: int * int
+
       /// Whether the engine reported a reason for a non-success.
       ///
       /// The exact wording is NOT compared: Jenkins' text comes from whichever
@@ -243,7 +281,7 @@ module Trace =
     /// The pipeline-graph annotation GRAMMAR: `[Pipeline] word`, braces with an
     /// optional stage label, `// word` closes, and the exact multiword boundary
     /// sentences. Applied only to a trace bearing REAL structure (see
-    /// [normaliseOutputInner]): Fogell emits no annotations, so an
+    /// [normaliseOutputInnerWhen]): Fogell emits no annotations, so an
     /// annotation-shaped user line there stays visible and a Jenkins-side drop
     /// becomes a VISIBLE divergence, never a silent double-drop.
     let isGraphAnnotation (t: string) =
@@ -251,11 +289,80 @@ module Trace =
         || t = "[Pipeline] End of Pipeline"
         || Text.RegularExpressions.Regex.IsMatch(t, @"^\[Pipeline\]( \{( \(.*\))?| \}| // [A-Za-z][A-Za-z0-9_]*| [A-Za-z][A-Za-z0-9_]*)?$")
 
-    let normaliseLine (line: string) : string option =
+    /// `options { timestamps() }` prefixes console lines with an ISO-8601
+    /// instant in brackets. Measured, Jenkins 2.568.1:
+    ///     [2026-08-03T03:54:07.729Z] + echo first
+    ///
+    /// NOT every line, which an earlier version of this comment asserted from a
+    /// single divergence message and was wrong about twice: Jenkins stamps what
+    /// the BUILD prints, not its own [Pipeline] annotations, banners or
+    /// Started/Finished rows. Measured 2/21 raw lines on a two-step build.
+    /// Anchored and shaped: a build printing `[not a timestamp] x` keeps its
+    /// line, because an exclusion that swallows arbitrary bracketed text would
+    /// hide real output — the failure FG-102's rule exists to prevent.
+    let private timestampPrefix =
+        Text.RegularExpressions.Regex(
+            @"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\]\s",
+            Text.RegularExpressions.RegexOptions.Compiled)
+
+    /// Did this line carry a `timestamps()` prefix? Feeds [Trace.Timestamped],
+    /// which IS compared — stripping without comparing presence would let an
+    /// engine that ignores the option pass against one that honours it.
+    let private stripAnsi (l: string) =
+        Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "")
+
+    /// Did this line carry a `timestamps()` prefix? Feeds the coverage figure,
+    /// which IS compared.
+    ///
+    /// COLUMN ZERO, no `TrimStart`. Trimming first meant ordinary indented
+    /// output — `   [2026-08-03T03:54:07.729Z] value`, a build echoing a
+    /// timestamp of its own — read as engine decoration and was stripped,
+    /// hiding real output while the comment above claimed the rule was anchored.
+    /// An engine's prefix is always at column zero; a build's is not.
+    let hasTimestampPrefix (line: string) =
+        timestampPrefix.IsMatch(stripAnsi line)
+
+    /// ANSI escapes AND a `timestamps()` prefix — every decoration an engine may
+    /// put around a line that says nothing about what the build did.
+    ///
+    /// ONE helper, used by line normalisation, `[Pipeline]` annotation
+    /// detection, suppression context and `reportedFailureReason`. Two private
+    /// `clean` functions stripped ANSI only, so with the option on, annotations
+    /// went unsuppressed and a timestamped `ERROR:` stopped counting as a
+    /// reported failure reason — the fix for `normaliseLine` not reaching its
+    /// siblings. The same half-fix shape as the audit's extraction/survivor
+    /// drift, and the same answer: share the rule instead of repeating it.
+    /// none / partial / all, and the ONLY place this rule lives. Three copies
+    /// existed — the comparison, the seal and the receipt body — and two of them
+    /// disagreed about `stamped > total`, so a proof could compare one fact and
+    /// seal another.
+    let timestampCoverage (stamped: int, total: int) =
+        if total = 0 || stamped = 0 then "none"
+        elif stamped >= total then "all"
+        else "partial"
+
+    /// `stripTimestamps` — whether the SCRIPT declared `options { timestamps() }`.
+    ///
+    /// Conditional, and the first version was not: it removed a timestamp-shaped
+    /// prefix from every compared line of every case, so a build printing
+    /// `[2026-08-03T03:54:07.729Z] value` at column zero had it stripped and two
+    /// DIFFERENT user timestamps compared equal. The comment claimed anchoring
+    /// protected exactly that — but anchoring only tells column zero from an
+    /// indent, and cannot tell the engine's decoration from the build's own
+    /// output. Only the script knows, so the script decides.
+    let stripDecoration (stripTimestamps: bool) (l: string) =
+        if stripTimestamps then timestampPrefix.Replace(stripAnsi l, "") else stripAnsi l
+
+    let normaliseLineWhen (stripTimestamps: bool) (line: string) : string option =
         let stripped =
             Text.RegularExpressions.Regex.Replace(line, @"\x1b\[[0-9;]*[A-Za-z]", "")
 
-        let t = stripped.Trim()
+        // the prefix goes BEFORE every other rule, or each of them would have to
+        // know about it: `Post stage` and `Finished: SUCCESS` are matched
+        // exactly, and a timestamped copy would sail past both.
+        let t =
+            (if stripTimestamps then timestampPrefix.Replace(stripped, "") else stripped)
+                .Trim()
 
         if t = "" then
             None
@@ -298,7 +405,7 @@ module Trace =
     /// `+ test -d /each/engine's/root` is one command with two spellings, not two
     /// commands. Applied to every line: the same substitution an author's
     /// `$WORKSPACE` reference would produce on either side.
-    let internal normaliseOutputInner (lines: string seq) : string list =
+    let internal normaliseOutputInnerWhen (stripTimestamps: bool) (lines: string seq) : string list =
         // Two engine-narration shapes are recognised by CONTEXT, never by their text
         // alone, because a build can legitimately print either:
         //
@@ -314,8 +421,7 @@ module Trace =
         // so they are gated instead.
         let all = lines |> Seq.toArray
 
-        let clean (l: string) =
-            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+        let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
 
         let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
 
@@ -390,7 +496,7 @@ module Trace =
             prevRaw <- raw
 
             if not suppress then
-                match normaliseLine all[i] with
+                match normaliseLineWhen stripTimestamps all[i] with
                 | Some l ->
                     if not hasAnnotations || pastFirstOutputStep || not (isPreambleBanner l) then
                         yield l
@@ -405,6 +511,7 @@ module Trace =
         [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
 
     let internal normaliseOutputWithInner2
+        (stripTimestamps: bool)
         (globalReplacements: (string * string) list)
         (traceOnlyReplacements: (string * string) list)
         (lines: string seq)
@@ -434,9 +541,11 @@ module Trace =
             else
                 g
 
-        normaliseOutputInner (lines |> Seq.map canonical)
+        normaliseOutputInnerWhen stripTimestamps (lines |> Seq.map canonical)
 
-    let normaliseOutput (lines: string seq) : string list = normaliseOutputInner lines
+    let normaliseLine (line: string) : string option = normaliseLineWhen false line
+
+    let normaliseOutput (lines: string seq) : string list = normaliseOutputInnerWhen false lines
 
     /// `applyDurableShape` — the JENKINS side cannot know its own generated
     /// durable-script ids (they exist only inside its container), so its trace
@@ -446,6 +555,7 @@ module Trace =
     /// stays literal — a cross-engine spoof pair therefore DIVERGES visibly
     /// rather than collapsing to one token.
     let normaliseOutputShaped
+        (stripTimestamps: bool)
         (applyDurableShape: bool)
         (globalReplacements: (string * string) list)
         (traceOnlyReplacements: (string * string) list)
@@ -457,10 +567,10 @@ module Trace =
             else
                 l
 
-        normaliseOutputWithInner2 globalReplacements traceOnlyReplacements (lines |> Seq.map shaped)
+        normaliseOutputWithInner2 stripTimestamps globalReplacements traceOnlyReplacements (lines |> Seq.map shaped)
 
     let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
-        normaliseOutputWithInner2 replacements [] lines
+        normaliseOutputWithInner2 false replacements [] lines
 
 
     /// `Terminated` on its own is only a reason when an interrupt was narrated with it;
@@ -471,11 +581,10 @@ module Trace =
     /// them. A Jenkins failure explained ONLY by a stack trace would then report NO
     /// reason while Fogell's `ERROR:` reported one — a DiagnosticSilence divergence on an
     /// otherwise matching run. The same context detection has to serve both.
-    let reportedFailureReason (lines: string seq) : bool =
+    let reportedFailureReasonWhen (stripTimestamps: bool) (lines: string seq) : bool =
         let all = lines |> Seq.toArray
 
-        let clean (l: string) =
-            Text.RegularExpressions.Regex.Replace(l, @"\x1b\[[0-9;]*[A-Za-z]", "").Trim()
+        let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
 
         let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
 
@@ -501,7 +610,18 @@ module Trace =
         [ "compared: terminal result"
           "compared: ordered normalised output lines"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
-          "excluded: timestamps, ANSI escapes, blank lines"
+          "excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines"
+          "compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:"
+          "  timestamps() coverage. Two engines read two clocks, so the instants can never"
+          "  agree; an engine that IGNORED the option, or honoured it for only some lines,"
+          "  would otherwise compare equal to one that honoured it fully. Line COUNTS are"
+          "  printed but never compared — the engines do not emit the same number of lines."
+          "  LIMIT: the numerator counts stamped RAW lines while the denominator is the"
+          "  compared-output length, so a stamped-but-suppressed line can offset an"
+          "  unstamped compared one. Catches a total miss and an ordinary partial"
+          "  implementation (both planted); not a per-line proof. FG-118 makes it exact."
+          "  FG-053: this exclusion was CLAIMED and unimplemented until a case first used"
+          "  the option, and read as true only because none did."
           "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"
           "compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the"
           "  trace is identical emitted output, continuations included (retires FG-002c)"
@@ -537,3 +657,6 @@ module Trace =
           "excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as"
           "  the reported reason; the wording comes from whichever plugin implements the step"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
+    /// Back-compat for callers with no script in hand (tests, ad-hoc tools).
+    /// A trace built through the differential always passes the script's answer.
+    let reportedFailureReason (lines: string seq) : bool = reportedFailureReasonWhen false lines

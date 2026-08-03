@@ -37,6 +37,14 @@ type WalkerCtx =
       /// divergence.
       /// Receipt: `parallel-always-failfast`.
       Emit: string -> unit
+      /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
+      ///
+      /// A SETTER rather than a `create` parameter because the pipeline's
+      /// options are read after the context exists, and because Jenkins applies
+      /// the option to everything the console prints from the moment the build
+      /// starts — not to a subtree. Idempotent; calling it twice does not
+      /// double-prefix.
+      EnableTimestamps: unit -> unit
       /// Register credential bindings atomically at the CURRENT output index.
       /// Masking applies to every later `Emit`; the recorded index scopes the
       /// LEAK CHECK only — output emitted from here on can leak these values,
@@ -158,6 +166,14 @@ module WalkerCtx =
         let mutable status = BuildStatus.Success
         let statusLock = obj ()
 
+        // FG-053. MEASURED on Jenkins 2.568.1: `options { timestamps() }` puts
+        // an ISO-8601 instant in brackets ahead of the lines the BUILD prints —
+        // measured 2/21 raw lines on a two-step build, NOT the [Pipeline]
+        // annotations, banners or Started/Finished rows —
+        // `[2026-08-03T03:54:07.729Z] + echo first`. Millisecond precision, UTC,
+        // trailing space. Receipt: `options-timestamps`.
+        let mutable timestamps = false
+
         { Emit =
             fun line ->
                 lock outputLock (fun () ->
@@ -167,7 +183,18 @@ module WalkerCtx =
                         else
                             Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
-                    output.Add safe)
+                    // AFTER masking, deliberately. The prefix carries no secret,
+                    // and masking a line whose start has already moved would let
+                    // an offset-based masker act on the wrong span.
+                    let stamped =
+                        if timestamps then
+                            let now = System.DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+                            $"[{now}] {safe}"
+                        else
+                            safe
+
+                    output.Add stamped)
+          EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
                 lock outputLock (fun () ->

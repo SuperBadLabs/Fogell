@@ -28,7 +28,15 @@ type JenkinsConfig =
       ///
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
-      WorkspaceCollector: string option }
+      WorkspaceCollector: string option
+      /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
+      ///
+      /// Jenkins cannot be asked, and its console cannot be inspected for it
+      /// without circularity — deciding to strip prefixes because prefixes are
+      /// present is not a test. The side that PARSES knows, the same reasoning
+      /// [Trace.Concurrent] already uses, so the CLI reads it off the script and
+      /// tells both engines.
+      DeclaresTimestamps: bool }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -179,6 +187,19 @@ module Jenkins =
                         | None, None -> "not-collected", []
 
                     let rawLines = console.Replace("\r\n", "\n").Split '\n'
+                    let declaresTimestamps = cfg.DeclaresTimestamps
+
+                    // hoisted so the timestamp coverage can use the SAME list the
+                    // comparison uses as its denominator
+                    let outputLines =
+                        let fromBanner =
+                            rawLines
+                            |> Array.tryPick (fun l ->
+                                let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
+                                if m.Success then Some m.Groups[1].Value else None)
+
+                        let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
+                        Trace.normaliseOutputShaped declaresTimestamps true [ ws, "${WORKSPACE}" ] envReplacements rawLines
 
                     let trace =
                         { Result = terminal
@@ -187,22 +208,27 @@ module Jenkins =
                           // `Running on <node> in <path>` — so a non-default
                           // JENKINS_HOME or a remote agent canonicalises correctly;
                           // the pinned controller path is only the fallback
-                          Output =
-                            (let fromBanner =
-                                rawLines
-                                |> Array.tryPick (fun l ->
-                                    let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
-                                    if m.Success then Some m.Groups[1].Value else None)
-
-                             let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
-
-                             Trace.normaliseOutputShaped true [ ws, "${WORKSPACE}" ] envReplacements rawLines)
+                          Output = outputLines
                           WorkspaceHash = workspaceHash
                           WorkspaceFiles = files
                           // Jenkins does not tell us whether the script had a
                           // parallel block; the side that parses does.
                           Concurrent = false
-                          ReportedFailureReason = Trace.reportedFailureReason rawLines }
+                          Timestamps =
+                              // THE DENOMINATOR IS THE COMPARED OUTPUT, arrived at
+                              // by measuring twice and being wrong twice. Against
+                              // raw non-blank lines Jenkins read PARTIAL (2/21);
+                              // against `normaliseLine` survivors, PARTIAL (2/20).
+                              // Both were the wrong question: `Output` is built by
+                              // `normaliseOutputShaped`, a deeper filter, and only
+                              // its survivors are ever compared. Jenkins stamps
+                              // what the BUILD prints — not its own [Pipeline]
+                              // annotations, banners or Started/Finished rows —
+                              // and those are excluded anyway, so counting them
+                              // judged an engine against lines nobody compares.
+                              (rawLines |> Seq.filter Trace.hasTimestampPrefix |> Seq.length,
+                               List.length outputLines)
+                          ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps rawLines }
 
                     Ok trace
 

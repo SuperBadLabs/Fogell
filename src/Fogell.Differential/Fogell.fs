@@ -102,6 +102,23 @@ module FogellSide =
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
             let runCtx = WalkerCtx.create ()
+
+            // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
+            // engine decoration or the build's own output — nothing in a line's
+            // shape can tell those apart, so normalisation is told rather than
+            // left to guess.
+            let declaresTimestamps =
+                pipeline.Options |> List.exists (fun o -> o.Name = "timestamps")
+
+            // BEFORE the first `emit`, not where the other options are
+            // read: SCM provenance and checkout narration are printed long
+            // before that point, and Jenkins applies `timestamps()` to the whole
+            // console from the moment the build starts. Enabling it later left
+            // those early lines bare while `Timestamped` — an ANY-line boolean —
+            // still reported true, so a partial implementation passed.
+            if declaresTimestamps then
+                runCtx.EnableTimestamps()
+
             let emit = runCtx.Emit
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
@@ -384,24 +401,31 @@ module FogellSide =
                 )
             else
 
+            let outputLines =
+                let idReplacements =
+                    runCtx.DurableIds()
+                    |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                    |> List.ofSeq
+
+                Trace.normaliseOutputShaped
+                    declaresTimestamps
+                    false
+                    ((workspace, "${WORKSPACE}") :: idReplacements)
+                    envReplacements
+                    (runCtx.Output())
+
             Result.Ok
                 { Result = BuildStatus.toWireString (runCtx.Status())
                   EngineNotes = runCtx.EngineNotes()
-                  Output =
-                    (let idReplacements =
-                        runCtx.DurableIds()
-                        |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
-                        |> List.ofSeq
-
-                     Trace.normaliseOutputShaped
-                         false
-                         ((workspace, "${WORKSPACE}") :: idReplacements)
-                         envReplacements
-                         (runCtx.Output()))
+                  Output = outputLines
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  ReportedFailureReason = Trace.reportedFailureReason (runCtx.Output()) }
+                  Timestamps =
+                      // same denominator as Jenkins.fs: the COMPARED output
+                      (runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length,
+                       List.length outputLines)
+                  ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
