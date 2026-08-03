@@ -40,10 +40,18 @@ type WalkerCtx =
       /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
       ///
       /// A SETTER rather than a `create` parameter because the pipeline's
-      /// options are read after the context exists, and because Jenkins applies
-      /// the option to everything the console prints from the moment the build
-      /// starts — not to a subtree. Idempotent; calling it twice does not
-      /// double-prefix.
+      /// options are read after the context exists. It prefixes SUBSEQUENT
+      /// `Emit` calls and nothing already written; WHERE it is called is the
+      /// caller's decision and is placed at a MEASURED point — after SCM
+      /// provenance and the default checkout, both of which Jenkins leaves
+      /// unstamped because it cannot activate a Declarative option before it has
+      /// fetched and parsed the file (receipt `options-timestamps-scm`, PARTIAL
+      /// 1/21 on both engines).
+      ///
+      /// This said "from the moment the build starts", which is wrong and is the
+      /// kind of wrong that gets acted on: a maintainer trusting it would move
+      /// activation earlier and stamp the provenance line, which fails the SCM
+      /// case. Idempotent; calling it twice does not double-prefix.
       EnableTimestamps: unit -> unit
       /// Register credential bindings atomically at the CURRENT output index.
       /// Masking applies to every later `Emit`; the recorded index scopes the
