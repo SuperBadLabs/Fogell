@@ -226,7 +226,16 @@ module Jenkins =
                               // annotations, banners or Started/Finished rows —
                               // and those are excluded anyway, so counting them
                               // judged an engine against lines nobody compares.
-                              (rawLines |> Seq.filter Trace.hasTimestampPrefix |> Seq.length,
+                              // GATED on the declaration, for the same reason
+                              // the strip is: a timestamp-shaped line is only
+                              // decoration when the script asked for it. Ungated,
+                              // a build printing a literal `[ISO-8601] value` was
+                              // counted, rendered and SEALED as `timestamps()`
+                              // coverage in a case that never used the option.
+                              ((if declaresTimestamps then
+                                    rawLines |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
+                                else
+                                    0),
                                List.length outputLines)
                           ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps rawLines }
 

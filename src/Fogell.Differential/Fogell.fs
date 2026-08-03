@@ -110,15 +110,6 @@ module FogellSide =
             let declaresTimestamps =
                 pipeline.Options |> List.exists (fun o -> o.Name = "timestamps")
 
-            // BEFORE the first `emit`, not where the other options are
-            // read: SCM provenance and checkout narration are printed long
-            // before that point, and Jenkins applies `timestamps()` to the whole
-            // console from the moment the build starts. Enabling it later left
-            // those early lines bare while `Timestamped` — an ANY-line boolean —
-            // still reported true, so a partial implementation passed.
-            if declaresTimestamps then
-                runCtx.EnableTimestamps()
-
             let emit = runCtx.Emit
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
@@ -197,6 +188,13 @@ module FogellSide =
 
             match scm with
             | Some spec when not root.Failed.Value ->
+                // BEFORE the option can apply. Jenkins must FETCH and PARSE the
+                // Jenkinsfile before a Declarative option exists to activate, so
+                // its own provenance line is unprefixed even when the script
+                // declares `timestamps()`. Stamping it here would make Fogell
+                // report `all` against Jenkins' `partial` and fail a case whose
+                // output and workspace agree — a divergence invented by the
+                // wrapper's placement rather than by either engine.
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
 
                 // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
@@ -265,6 +263,26 @@ module FogellSide =
                                   "GIT_URL", spec.Url ]
                             | None -> []
             | _ -> ()
+
+            // FG-053. HERE: after SCM provenance AND after the auto-checkout,
+            // before the stage walk. Jenkins cannot activate a Declarative
+            // option until it has fetched and parsed the Jenkinsfile, so its
+            // provenance line and its default checkout are BOTH unprefixed and
+            // stamping begins with the build's own step output.
+            //
+            // MEASURED, not reasoned — receipt `options-timestamps-scm` reports
+            // PARTIAL (1/21) on BOTH engines. An earlier draft of this comment
+            // said "before checkout" and "everything from the checkout onward is
+            // stamped"; the checkout runs above, so that was wrong about its own
+            // placement even while the code was right.
+            //
+            // Enabling at context creation stamped the provenance line too and
+            // made Fogell read `all` against Jenkins' `partial` — a divergence
+            // the wrapper's placement invented, on a case whose output and
+            // workspace agreed.
+            if declaresTimestamps then
+                runCtx.EnableTimestamps()
+
 
             // The SCM wrapper values sit at the BASE layer — after the
             // Jenkins-provided variables, BEFORE pipeline/stage declarations —
@@ -423,7 +441,11 @@ module FogellSide =
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
                   Timestamps =
                       // same denominator as Jenkins.fs: the COMPARED output
-                      (runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length,
+                      // gated on the declaration, for the reason stated in Jenkins.fs
+                      ((if declaresTimestamps then
+                            runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
+                        else
+                            0),
                        List.length outputLines)
                   ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
