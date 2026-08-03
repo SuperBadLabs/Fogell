@@ -36,7 +36,21 @@ start_watch() {
     sleep 0.05
   done
 }
-stop_watch() { sleep 0.5; kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; WPID=""; }
+# LIVENESS BEFORE THE INTENTIONAL KILL — the same check scenario N gained, and
+# this proof did not, which is the checker-blind-at-its-own-edges pattern landing
+# on the proof of the checker. A watcher that exits after recording only the
+# first CREATE/DELETE pair leaves a log whose peak is 1 and whose events are
+# well-formed, so `withdraw-then-publish` reports exit 0 and a partial watcher
+# implementation passes its own planted proof. After the kill the two states are
+# indistinguishable, so it has to be asked before.
+WATCHER_DIED=0
+stop_watch() {
+  sleep 0.5
+  kill -0 "$WPID" 2>/dev/null || WATCHER_DIED=1
+  kill "$WPID" 2>/dev/null
+  wait "$WPID" 2>/dev/null
+  WPID=""
+}
 
 run_case() {
   local label=$1 want=$2 body=$3 expect=${4:-}
@@ -44,7 +58,12 @@ run_case() {
   d=$(mktemp -d /tmp/approval-watch.XXXXXX); log="$d/events"; : > "$log"
   if ! start_watch "$d" "$log"; then note "$label" "WATCHER NEVER REGISTERED"; FAIL=1; return; fi
   ( cd "$d" && eval "$body" )
+  WATCHER_DIED=0
   stop_watch
+  if [ "$WATCHER_DIED" -eq 1 ]; then
+    note "$label" "WATCHER EXITED BEFORE TEARDOWN — its log is a partial capture"
+    sed 's/^/      /' "$log"; FAIL=1; return
+  fi
   "$WATCH" report "$log" $expect >"$d/out" 2>&1; local rc=$?
   if [ "$rc" -eq "$want" ]; then
     note "$label" "exit $rc — OK"
