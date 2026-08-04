@@ -62,7 +62,16 @@
             (recur (inc i) depth (conj stage-depths (inc depth)) acc)
             (and (= c \o) (str/starts-with? (subs s i (min n (+ i 7))) "options")
                  (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
-            (if-let [ob (str/index-of s "{" i)]
+            ;; the brace must be the NEXT non-whitespace character. `index-of`
+            ;; took the next `{` ANYWHERE, so a quoted `options` — scrub leaves
+            ;; strings intact — started a block at some distant brace and swept
+            ;; unrelated code in. That is the over-run that emitted `steps`,
+            ;; `bat` and `try` as directives.
+            (if-let [ob (let [j (loop [k (+ i 7)]
+                                  (if (and (< k n) (Character/isWhitespace (.charAt s k)))
+                                    (recur (inc k))
+                                    k))]
+                          (when (and (< j n) (= \{ (.charAt s j))) j))]
               (let [close (loop [j ob, d 0]
                             (cond (>= j n) n
                                   (= (.charAt s j) \{) (recur (inc j) (inc d))
@@ -72,6 +81,10 @@
                        (conj acc [(inc ob) close (boolean (seq stage-depths))])))
               (recur (inc i) depth stage-depths acc))
             :else (recur (inc i) depth stage-depths acc)))))))
+
+(when (empty? *command-line-args*)
+  (println "usage: count-options.bb <corpus-directory>")
+  (System/exit 2))
 
 (let [files (->> (fs/list-dir (first *command-line-args*)) (filter fs/regular-file?) sort)
       rows (for [f files
