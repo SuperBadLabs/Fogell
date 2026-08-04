@@ -536,9 +536,17 @@ module WalkerOrchestration =
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
                 | Some _, None when not (List.isEmpty stage.Post) ->
-                    // REFUSED, FG-137. UNPROVEN BY RECEIPT (FG-129: a refusal is
-                    // compile-shaped and cannot be sealed) — measured, not suspected:
-                    // Jenkins runs
+                    // REFUSED, FG-137. A RUNTIME fail-closed refusal, NOT a
+                    // compile-shaped one: this guard runs inside `runStage` when the
+                    // stage is reached, so earlier stages have already produced side
+                    // effects. An earlier version of this comment called it
+                    // compile-shaped and cited FG-129 — I had just called that rule
+                    // "mechanical" and applied it without checking its precondition.
+                    //
+                    // UNPROVEN BY RECEIPT for its own reason: this engine
+                    // DELIBERATELY diverges here, refusing a pipeline Jenkins runs, so
+                    // no case can be PROVEN against it by construction.
+                    // Measured, not suspected: Jenkins runs
                     // a retried stage's `post` ONCE PER ATTEMPT. The probe traced
                     //   jenkins: + echo tick / Retrying / + echo tick   (two ticks)
                     //   fogell:  Retrying / + echo tick                 (one)
@@ -557,7 +565,11 @@ module WalkerOrchestration =
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
                 | Some _, None when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
-                    // REFUSED COMBINATION, FG-136. `runWithRetry` gives each attempt a
+                    // REFUSED COMBINATION, FG-136 — runtime fail-closed, like FG-137
+                    // above and for the same reason: this runs when the stage is
+                    // reached, not at compile time. UNPROVEN BY RECEIPT because the
+                    // engine deliberately refuses a pipeline Jenkins runs.
+                    // `runWithRetry` gives each attempt a
                     // THROWAWAY status sink and publishes the attempt's status only
                     // after the body returns, so while a retried stage is running
                     // `runCtx.Status()` is still Success. The nested skip below reads
