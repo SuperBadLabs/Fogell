@@ -228,6 +228,12 @@ let main argv =
         // while keeping one; a collision is a configuration error, said so.
         let sealedPaths = System.Collections.Generic.HashSet<string>()
 
+        // FG-119. Cases that diverged and then did not reproduce. Held so the
+        // summary NAMES them with the divergence text that was seen: a receipt
+        // sealed from a re-run must never imply the first run was clean, and a
+        // recovery nobody is told about is indistinguishable from a passing case.
+        let recoveredCases = System.Collections.Generic.List<string * string list * int>()
+
         let receipts =
             files
             |> List.collect (fun file ->
@@ -327,44 +333,104 @@ let main argv =
                     else
                         None
 
-                let jenkinsRuns, fogellRuns =
-                    if malformed then
-                        let e =
-                            Result.Error (
-                                if mixedTimestamps then
-                                    "unsupported sequence: some builds declare options { timestamps() } and others do not — Jenkins takes one config for the whole sequence, so the two engines could not be told the same thing"
-                                elif isScmCase then
-                                    "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
-                                else
-                                    "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
-                            )
-                        scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
-                    else
-                        match scmSpec with
-                        | Some spec ->
-                            Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
-                            [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
-                        | None ->
-                            Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
-                            FogellSide.runMany envReplacementsAll fogellRoot job scripts
+                // FG-119. A case is run, and if it DIVERGES it is run again before
+                // any verdict is sealed. `dash` writes an `sh -x` trace line in more
+                // than one write(), so two stages of a shell pipeline interleave
+                // character-by-character (`+ ls out` + `+ wc -l` -> `+ + lswc -l out`).
+                // MEASURED: both engines do it — container dash 5/200 runs, local ~8% —
+                // so this is not a Fogell defect to repair but an unreliable ORACLE,
+                // and roughly one to two cases per 106-case suite were diverging on it.
+                //
+                // Confirmation by repetition, NOT relaxation. A pattern-match on
+                // 'looks interleaved' would also swallow a real divergence that happened
+                // to contain a mid-line `+ ` — and `+ echo a + b` is an ordinary trace.
+                // A divergence that reproduces is real and still fails; one that does
+                // not is reported RECOVERED with the original text, never silently.
+                let runBothEngines () =
+                    let jenkinsRuns, fogellRuns =
+                        if malformed then
+                            let e =
+                                Result.Error (
+                                    if mixedTimestamps then
+                                        "unsupported sequence: some builds declare options { timestamps() } and others do not — Jenkins takes one config for the whole sequence, so the two engines could not be told the same thing"
+                                    elif isScmCase then
+                                        "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
+                                    else
+                                        "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                                )
+                            scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
+                        else
+                            match scmSpec with
+                            | Some spec ->
+                                Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
+                                [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
+                            | None ->
+                                Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
+                                FogellSide.runMany envReplacementsAll fogellRoot job scripts
+
+                    jenkinsRuns, fogellRuns
 
                 let solo = List.length scripts = 1
 
-                List.zip jenkinsRuns fogellRuns
-                |> List.mapi (fun bi (jenkins, fogell) ->
-                    let caseName =
-                        if solo then
-                            name
-                        else
-                            // suffix inserted before the FINAL extension (never
-                            // string-Replace, which rewrites every occurrence and
-                            // no-ops on other extensions, sealing N builds over
-                            // one receipt)
-                            let stem = Path.GetFileNameWithoutExtension name
-                            let ext = Path.GetExtension name
-                            $"{stem}.b{bi + 1}{ext}"
+                let caseNameFor bi =
+                    if solo then
+                        name
+                    else
+                        // suffix inserted before the FINAL extension (never
+                        // string-Replace, which rewrites every occurrence and
+                        // no-ops on other extensions, sealing N builds over one receipt)
+                        let stem = Path.GetFileNameWithoutExtension name
+                        let ext = Path.GetExtension name
+                        $"{stem}.b{bi + 1}{ext}"
 
-                    let r = Compare.receipt caseName core envReplacementsAll jenkins fogell
+                let buildReceipts () =
+                    let jenkinsRuns, fogellRuns = runBothEngines ()
+
+                    List.zip jenkinsRuns fogellRuns
+                    |> List.mapi (fun bi (jenkins, fogell) ->
+                        Compare.receipt (caseNameFor bi) core envReplacementsAll jenkins fogell)
+
+                let anyDiverged rs =
+                    rs |> List.exists (fun (r: Receipt) ->
+                        match r.Verdict with
+                        | Diverged _ -> true
+                        | _ -> false)
+
+                let describeDivergences rs =
+                    rs
+                    |> List.collect (fun (r: Receipt) ->
+                        match r.Verdict with
+                        | Diverged ds -> ds |> List.map (fun d -> d.Describe)
+                        | _ -> [])
+
+                // Two extra attempts: a divergence surviving three independent runs is
+                // not the ~2-8%-per-run trace race.
+                let rec confirm attemptNo (firstSeen: string list option) =
+                    let rs = buildReceipts ()
+
+                    if anyDiverged rs && attemptNo < 2 then
+                        // Announced, not silent: a re-run that leaves no trace makes a
+                        // sealed receipt indistinguishable from a first-run pass, and it
+                        // is also the only evidence that this retry loop RAN at all.
+                        printfn "  %-46s re-running (diverged, attempt %d of 3)" name (attemptNo + 1)
+
+                        let seen =
+                            match firstSeen with
+                            | Some f -> Some f
+                            | None -> Some(describeDivergences rs)
+
+                        confirm (attemptNo + 1) seen
+                    else
+                        rs, firstSeen, attemptNo
+
+                let results, firstSeen, retries = confirm 0 None
+
+                if retries > 0 && not (anyDiverged results) then
+                    recoveredCases.Add(name, defaultArg firstSeen [], retries) |> ignore
+
+                results
+                |> List.mapi (fun bi r ->
+                    let caseName = caseNameFor bi
                     let path = Compare.seal receiptDir r
 
                     if not (sealedPaths.Add path) then
@@ -378,6 +444,7 @@ let main argv =
 
                     let verdict =
                         match r.Verdict with
+                        | Proven when workspaceCompared && retries > 0 -> "PROVEN(recovered)"
                         | Proven when workspaceCompared -> "PROVEN"
                         | Proven -> "PROVEN-PARTIAL"
                         | Diverged ds -> $"DIVERGED({ds.Length})"
@@ -406,6 +473,16 @@ let main argv =
         let partial = receipts |> List.filter (fun r -> r.Verdict = Proven && not (isFull r)) |> List.length
 
         printfn ""
+        if recoveredCases.Count > 0 then
+            printfn ""
+            printfn "RECOVERED — diverged, then did not reproduce (FG-119 trace race):"
+
+            for (nm, seen, n) in recoveredCases do
+                printfn "  %s (clean after %d re-run%s); first run showed:" nm n (if n = 1 then "" else "s")
+                for d in seen do printfn "        %s" d
+
+            printfn ""
+
         printfn "tier-1 proven (incl. workspace): %d / %d" full receipts.Length
         printfn "proven-partial (result+output):  %d / %d" partial receipts.Length
 
