@@ -320,11 +320,21 @@ module FogellSide =
                 |> List.collect (fun st -> flattenSteps st.Steps)
                 |> List.filter (fun st -> st.Name = "unstable")
                 |> List.tryPick (fun st ->
-                    let hasMessage =
-                        not (List.isEmpty st.Positional)
-                        || st.Named |> List.exists (fun (n, _) -> n = "message")
-
-                    if hasMessage then None else Some "the unstable step requires a message")
+                    // ARITY is compile-shaped too, and I had inferred it was runtime.
+                    // UNPROVEN BY RECEIPT (FG-129: no compile-shaped refusal is
+                    // sealable), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
+                    // `Arguments to "unstable" must be explicitly named.` with an
+                    // EMPTY workspace, where routing it through the blank-message
+                    // runtime path had already run the preceding step. Three
+                    // outcomes, not two:
+                    //   no message      -> compile refusal (Missing required parameter)
+                    //   extra arguments -> compile refusal (must be explicitly named)
+                    //   blank message   -> COMPILES, prior steps run, then throws
+                    match st.Positional, st.Named with
+                    | [ _ ], [] -> None
+                    | [], [ ("message", _) ] -> None
+                    | [], [] -> Some "the unstable step requires a message"
+                    | _ -> Some "the unstable step takes exactly one message argument")
 
             let skipStagesArgError =
                 if

@@ -147,7 +147,9 @@ module WalkerRules =
         | Some _, None -> Error $"unknown timeout unit '{unit}'"
         | None, _ -> Error "timeout has no numeric time value"
 
-    /// The count a `retry` carries, or None when it is missing or not an integer.
+    /// The count a `retry` carries, or None when it is missing, not an integer,
+    /// not positive, or accompanied by ANY other argument — the doc said only
+    /// "missing or not an integer" after the arity check was added to the body.
     ///
     /// FG-053(b). Separate from [retryCount] because a STAGE OPTION must be able to
     /// REFUSE a malformed count: `options { retry('nope') }` is refused by Jenkins

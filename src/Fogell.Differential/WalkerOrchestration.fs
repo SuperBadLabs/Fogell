@@ -674,13 +674,16 @@ module WalkerOrchestration =
                 // positional `unstable('msg')` or named `unstable(message: 'msg')`;
                 // both are valid Groovy for a one-parameter step, and refusing the
                 // named form is the mistake `ansiColor` already made once.
+                // EXACT ARITY, like `retryCountOpt` and `ansiColorMap`. Taking the
+                // first positional and ignoring the rest accepted `unstable('a','b')`
+                // and `unstable(message: 'a', bogus: true)` — malformed Jenkinsfiles
+                // running with arguments silently discarded. Fixed for `retry` on
+                // this branch and not, until now, for the step beside it.
                 let msg =
-                    match rendered.Positional with
-                    | m :: _ -> m
-                    | [] ->
-                        rendered.Named
-                        |> List.tryPick (fun (n, v) -> if n = "message" then Some v else None)
-                        |> Option.defaultValue ""
+                    match rendered.Positional, rendered.Named with
+                    | [ m ], [] -> m
+                    | [], [ ("message", m) ] -> m
+                    | _ -> ""
 
                 // A BLANK message FAILS THE BUILD AT THIS STEP, it does not mark
                 // unstable. UNPROVEN BY RECEIPT, and for its OWN reason rather than
@@ -735,9 +738,6 @@ module WalkerOrchestration =
                     if ctx.Failed.Value && deadlineDidFire (Some mine) then
                         emit "Timeout has been exceeded"
 
-            // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
-            // the first, and there is no backoff. `retry(3)` around a step
-            // that always fails runs it exactly three times.
             // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after the
             // first, and there is no backoff. `retry(3)` around a step that always
             // fails runs it exactly three times. The loop itself is `runWithRetry`,
