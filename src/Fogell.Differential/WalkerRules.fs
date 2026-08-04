@@ -156,9 +156,19 @@ module WalkerRules =
     /// performing side effects. The step spelling keeps its default; only the
     /// option validates, because that is where the measurement is.
     let retryCountOpt (step: Step) : int option =
-        step.Named
-        |> List.tryPick (fun (k, v) -> if k = "count" then Some v else None)
-        |> Option.orElse (List.tryHead step.Positional)
+        // EXACT ARITY, not "a count can be found somewhere in here". Reading the
+        // named `count` or the FIRST positional and ignoring the rest accepted
+        // `retry(2, 3)` and `retry(count: 2, bogus: true)` — discarding arguments
+        // and running the stage, while the diagnostic claimed it required "one
+        // positive integer count". Mirrors `ansiColorMap`, which allows exactly the
+        // positional and named spellings of its one parameter and nothing else.
+        let value =
+            match step.Positional, step.Named with
+            | [ v ], [] -> Some v
+            | [], [ ("count", v) ] -> Some v
+            | _ -> None
+
+        value
         |> Option.bind (fun v -> match Int32.TryParse(v.Trim()) with
                                  | true, n when n > 0 -> Some n
                                  | _ -> None)
