@@ -297,6 +297,26 @@ module FogellSide =
                     | Some _ -> None
                     | None -> Some "the retry(<count>) option needs one positive integer count")
 
+            // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
+            // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
+            // runs, empty workspace. UNPROVEN BY RECEIPT (FG-129).
+            //
+            // A BLANK message is different and is handled at the STEP, not here:
+            // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
+            // then fails at the step. Collapsing the two would have been wrong in one
+            // direction or the other.
+            let unstableArgError =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.collect (fun st -> st.Steps)
+                |> List.filter (fun st -> st.Name = "unstable")
+                |> List.tryPick (fun st ->
+                    let hasMessage =
+                        not (List.isEmpty st.Positional)
+                        || st.Named |> List.exists (fun (n, _) -> n = "message")
+
+                    if hasMessage then None else Some "the unstable step requires a message")
+
             let skipStagesArgError =
                 if
                     skipStagesOptions
@@ -472,6 +492,14 @@ module FogellSide =
             match ansiColorArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            match unstableArgError with
+            | Some e ->
+                emit $"ERROR: a stage declares an unusable unstable step: {e}"
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure

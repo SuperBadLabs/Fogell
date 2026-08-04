@@ -647,8 +647,25 @@ module WalkerOrchestration =
                         |> List.tryPick (fun (n, v) -> if n = "message" then Some v else None)
                         |> Option.defaultValue ""
 
-                emit $"WARNING: {msg}"
-                ctx.Sink BuildStatus.Unstable
+                // A BLANK message FAILS THE BUILD AT THIS STEP, it does not mark
+                // unstable. UNPROVEN BY RECEIPT, and for its OWN reason rather than
+                // FG-129's: result and workspace AGREE (both fail, both leave
+                // `before.txt`), and the only divergence is Jenkins' Java stack trace
+                // — `Caused: hudson.remoting.ProxyException ...` — which this engine
+                // does not emit. Matching a plugin's exception layout is the
+                // over-fitting the comparison contract already refuses for compiler
+                // error text. Measured on Jenkins 2.568.1: `unstable(message: '')`
+                // COMPILES — so earlier steps in the stage run — and then throws when
+                // the step executes. That is a different shape from a MISSING
+                // message, which Jenkins refuses at compile time before anything
+                // runs; the two are handled in different places for that reason.
+                if msg.Trim() = "" then
+                    emit "ERROR: the unstable step requires a non-empty message"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                else
+                    emit $"WARNING: {msg}"
+                    ctx.Sink BuildStatus.Unstable
 
             // JB-FAIL-001/002: timeout and abort share one interrupt path,
             // and the interrupt is a trappable SIGTERM with a grace window.
