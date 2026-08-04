@@ -620,7 +620,16 @@ module FogellSide =
                     // Jenkins names every stage it skips because of an earlier
                     // failure. Being quieter than Jenkins about why a stage did not
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
-                    emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                    //
+                    // EXCEPT after a COMPILE rejection, where saying it is being
+                    // LOUDER than Jenkins: it refuses the model before any stage
+                    // exists to skip, so it emits no such line and this one is pure
+                    // invention. It was also half of the divergence on the
+                    // unknown-option case, which FG-129 recorded as entirely the
+                    // banner limit — a self-inflicted difference filed as somebody
+                    // else's problem.
+                    if not compileRejected then
+                        emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
                     runStage root workspace pipelineDeadline stage
 
