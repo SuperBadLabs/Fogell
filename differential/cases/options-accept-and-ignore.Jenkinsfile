@@ -7,9 +7,15 @@
 // `quietPeriod` and `rateLimitBuilds` are the same shape: they affect when a
 // build STARTS, which a receipt comparing one build cannot see.
 //
-// So the whole job is to accept them and say why. What this case pins is that
-// accepting them is not silently accepting ANYTHING: `options-unknown-name`
-// proves an unknown type is refused, and these four are on Jenkins' own list.
+// So the whole job is to accept them and say why.
+//
+// WHAT THIS CASE DOES NOT PROVE, stated because an earlier version of this
+// comment claimed it did: it covers the VALID form of each option only. A known
+// name with a malformed argument — `quietPeriod('abc')`, `buildDiscarder()`,
+// `disableConcurrentBuilds('x')`, `parallelsAlwaysFailFast(false)` — is still
+// accepted here and refused by Jenkins. That is FG-130, and it is a THIRD axis
+// of the same conflation this ticket has now hit twice: the name is valid, the
+// scope is valid, and the ARGUMENTS are not.
 pipeline {
     agent any
     options {
