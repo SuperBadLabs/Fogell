@@ -167,57 +167,73 @@ module FogellSide =
             // engine would not announce. Refusing by name is this project's
             // stated direction for a construct it does not implement (FG-103),
             // and FG-120 carries the scoped enable/restore that would support it.
-            // FG-053. An option name Jenkins does not know is a COMPILE-TIME refusal,
-            // not something to ignore. Measured on Jenkins 2.568.1 with
-            // `options { notARealOption() }`: before this, jenkins=failure against
-            // fogell=success, because options here dispatch
-            // by name-filter (`o.Name = "timestamps"` and friends) and anything
-            // unmatched falls through silently. The engines disagreed about whether
-            // the Jenkinsfile was VALID, which is worse than a wrong value.
+            // FG-053. Options are classified in THREE ways, and the default is
+            // refusal. An earlier version of this allowlist held every name Jenkins
+            // accepts, which conflated "Jenkins knows this NAME" with "Fogell
+            // implements this BEHAVIOUR" — so `checkoutToSubdirectory('src')`, which
+            // moves the automatic checkout under a subdirectory, was accepted and
+            // silently ignored. That is the divergence this project refuses by name
+            // rather than commits quietly (FG-103). Caught by the pre-push verifier.
             //
-            // THE LIST IS JENKINS' OWN, not a guess: its refusal enumerates every
-            // accepted type, which is exactly the evidence FG-126 says an allowlist
-            // needs before it is written — a hand-rolled one would refuse working
-            // pipelines to fix nothing.
-            //
-            // UNPROVEN BY RECEIPT, and it cannot currently be otherwise: a
-            // compile-rejected Jenkins build emits no `[Pipeline]` structure, so
-            // `Trace.isPreambleBanner` — deliberately gated on real structure, to
-            // stop a spoofed banner being dropped — leaves `Started by user ...`
-            // in Jenkins' normalised output while Fogell's is empty. Every
-            // compile-shaped refusal is unsealable for that reason, which is why
-            // FG-121 and FG-126 have no receipts either. FG-129 carries the gap.
-            // What IS sealed is the positive half: `options-accept-and-ignore`
-            // proves the four inert options are accepted, so this refusal is not
-            // blanket rejection. Terminal result and workspace now MATCH on the
-            // unknown-name script; only the banner line differs.
-            //
-            // CAVEAT, and why this is pinned rather than offered as general truth:
-            // the set is PLUGIN-DEPENDENT. `withAWS`, `podTemplate`, `dockerNode`
-            // and `throttle` come from installed plugins, so a differently
-            // provisioned Jenkins accepts a different list. This matches the lab's
-            // pinned 2.568.1, which every receipt in this suite is measured against.
-            let jenkinsKnownOptions =
-                set
-                    [ "ansiColor"; "buildDiscarder"; "catchError"; "checkoutToSubdirectory"
-                      "copyArtifactPermission"; "disableConcurrentBuilds"; "disableRestartFromStage"
-                      "disableResume"; "dockerNode"; "durabilityHint"; "githubProjectProperty"
-                      "lock"; "newContainerPerStage"; "overrideIndexTriggers"
-                      "parallelsAlwaysFailFast"; "podTemplate"; "preserveStashes"; "quietPeriod"
-                      "rateLimitBuilds"; "retry"; "script"; "skipDefaultCheckout"
-                      "skipStagesAfterUnstable"; "throttle"; "throttleJobProperty"; "timeout"
-                      "timestamps"; "waitUntil"; "warnError"; "withAWS"; "withBuildUser"
-                      "withChecks"; "withContext"; "withCredentials"; "withEnv"; "withKubeConfig"
-                      "withKubeCredentials"; "wrap"; "ws" ]
+            // HONOURED: the engine implements the semantics.
+            let honouredOptions =
+                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast" ]
 
-            // Stage options too: Jenkins validates the name wherever the block
-            // appears, and the corpus carries stage-level `timeout` and `retry`.
-            let unknownOptionNames =
-                (pipeline.Options
-                 @ (pipeline.Stages |> Pipeline.flattenStages |> List.collect (fun st -> st.Options)))
+            // INERT: retention and queueing policy with no observable effect on ONE
+            // build, which is all a receipt can see. Accepted with the reason stated.
+            // Receipt: `options-accept-and-ignore`.
+            let inertOptions =
+                set [ "buildDiscarder"; "disableConcurrentBuilds"; "quietPeriod"; "rateLimitBuilds" ]
+
+            // Everything else Jenkins accepts is REFUSED, because accepting it would
+            // mean running a build whose semantics this engine does not reproduce.
+            // That includes `retry` and `skipStagesAfterUnstable`, which ARE in the
+            // corpus (2 and 1 files) — they move from "runs with the wrong semantics,
+            // silently" to "refused, loudly", which is the honest state until
+            // FG-053(b) implements them.
+            let supportedOptions = Set.union honouredOptions inertOptions
+
+            // SCOPE: measured against the lab, UNPROVEN BY RECEIPT for the FG-129
+            // reason above — a compile-refusal case cannot be sealed. Jenkins
+            // enumerates a DIFFERENT valid set
+            // for a stage `options` block than for the pipeline one, and refuses a
+            // pipeline-only option inside a stage. `stage { options { buildDiscarder(...) } }`
+            // gives jenkins=failure — one global list accepted it and ran the build.
+            //   pipeline-only, measured: buildDiscarder, disableConcurrentBuilds,
+            //     quietPeriod, rateLimitBuilds, parallelsAlwaysFailFast, disableResume,
+            //     disableRestartFromStage, overrideIndexTriggers, preserveStashes,
+            //     copyArtifactPermission, durabilityHint, githubProjectProperty,
+            //     newContainerPerStage, throttleJobProperty
+            //   stage-valid, measured: ansiColor, catchError, checkoutToSubdirectory,
+            //     dockerNode, lock, podTemplate, retry, script, skipDefaultCheckout,
+            //     throttle, timeout, timestamps, waitUntil, warnError, with*, wrap, ws
+            let pipelineOnlyOptions =
+                set [ "buildDiscarder"; "disableConcurrentBuilds"; "quietPeriod"; "rateLimitBuilds"
+                      "parallelsAlwaysFailFast"; "disableResume"; "disableRestartFromStage"
+                      "overrideIndexTriggers"; "preserveStashes"; "copyArtifactPermission"
+                      "durabilityHint"; "githubProjectProperty"; "newContainerPerStage"
+                      "throttleJobProperty" ]
+
+            let refusedPipelineOptions =
+                pipeline.Options
                 |> List.map (fun o -> o.Name)
-                |> List.filter (fun n -> not (jenkinsKnownOptions.Contains n))
+                |> List.filter (fun n -> not (supportedOptions.Contains n))
                 |> List.distinct
+
+            let stageOptionNames =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.collect (fun st -> st.Options |> List.map (fun o -> o.Name))
+                |> List.distinct
+
+            // A stage option is refused if this engine does not support it OR if
+            // Jenkins does not accept it at stage scope at all.
+            let refusedStageOptions =
+                stageOptionNames
+                |> List.filter (fun n -> not (supportedOptions.Contains n) || pipelineOnlyOptions.Contains n)
+
+            let unknownOptionNames =
+                (refusedPipelineOptions @ refusedStageOptions) |> List.distinct
 
             let stageTimestamps =
                 pipeline.Stages
