@@ -228,7 +228,11 @@ module FogellSide =
             // `timestamps` is refused separately by FG-120. Everything else in a
             // stage block is refused — including names Jenkins accepts there —
             // because this engine reads none of them.
-            let stageHonouredOptions = set [ "timeout" ]
+            // `retry` joins `timeout` here now that FG-053(b) implements it: the
+            // stage's steps run through the shared retry loop. It was refused by
+            // FG-053(a) precisely so it could not run with the wrong semantics
+            // silently, and that refusal is what this ticket lifts.
+            let stageHonouredOptions = set [ "timeout"; "retry" ]
 
             // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
             // generic list caught it first and reported "unknown option type(s):

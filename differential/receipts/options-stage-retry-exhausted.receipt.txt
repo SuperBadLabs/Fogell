@@ -1,7 +1,7 @@
-# Differential receipt — parallel-post-selection.Jenkinsfile
+# Differential receipt — options-stage-retry-exhausted.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         297fb54899e19a8f04a8236d32d7294ccc2f83ecbfcb8d8c08dba221ee6660a1
+seal:         7447e8b9e0749093db764c7586f119b4ca772bbff0f150ababdcf478f6f8e8a3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,32 +56,33 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
   result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  workspace-hash: 75ec501f1264c3938fd8729b213e043d37c31fe7bb1e76626feaf9dad8bdc736
+  output (7 lines):
+    | + echo tick
+    | + exit 9
+    | Retrying
+    | + echo tick
+    | + exit 9
+    | Stage "after" skipped due to earlier failure(s)
+    | + echo post
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    8030404398e6  post.txt
+    8f7f2704de51  ticks.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  workspace-hash: 75ec501f1264c3938fd8729b213e043d37c31fe7bb1e76626feaf9dad8bdc736
+  output (7 lines):
+    | + echo tick
+    | + exit 9
+    | Retrying
+    | + echo tick
+    | + exit 9
+    | Stage "after" skipped due to earlier failure(s)
+    | + echo post
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    8030404398e6  post.txt
+    8f7f2704de51  ticks.txt

@@ -197,6 +197,77 @@ module WalkerOrchestration =
         let warnSecretInterpolation = WalkerArgs.warnSecretInterpolation runCtx
         let adviseNewBinding = WalkerArgs.adviseNewBinding runCtx
 
+        // FG-053(b). The retry LOOP, shared by the `retry(N) { }` STEP and by a
+        // stage's `options { retry(N) }`. Extracted rather than copied: this
+        // session has spent several rounds on the same wrong idea living in two
+        // places, and every measured subtlety below — N total attempts with no
+        // backoff, a fresh failure flag per attempt, a human REJECTION that must
+        // not be re-asked, a nested rejection propagated to an enclosing retry —
+        // would otherwise have to be reproduced correctly a second time.
+        // Receipts: `retry-succeeds`, `retry-timeout-retries`.
+        let runWithRetry (ctx: BranchCtx) (attempts: int) (runBody: BranchCtx -> unit) =
+            let attempts = max 1 attempts
+            let mutable attempt = 1
+            let mutable settled = false
+
+            while not settled && attempt <= attempts do
+                // Each attempt gets a fresh failure flag AND a throwaway status
+                // sink. MEASURED (FG-035): a body that fails once then succeeds is
+                // a SUCCESS build. Bumping the build status from the failed attempt
+                // reported `failure` with an identical workspace — the work was
+                // right, the bookkeeping was not.
+                let attemptStatus = ref BuildStatus.Success
+
+                let attemptCtx =
+                    { ctx with
+                        Failed = ref false
+                        // fresh per attempt, like Failed: this attempt's own
+                        // rejection, not one inherited from an earlier one
+                        HumanRejected = ref false
+                        Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
+
+                runBody attemptCtx
+
+                if not attemptCtx.Failed.Value then
+                    // A retried body may still have gone unstable; that is not a
+                    // retryable failure, so it must reach the build.
+                    ctx.Sink attemptStatus.Value
+                    settled <- true
+                elif attemptCtx.HumanRejected.Value then
+                    // FG-046b. A human who REJECTED a deployment gate was asked
+                    // again by the next attempt, and an approval there could carry
+                    // the whole build to success. The person said no; that is not a
+                    // retryable failure.
+                    //
+                    // Tested on the REJECTION, not on the aborted status, and the
+                    // difference is measured rather than reasoned: a nested
+                    // `timeout` expiring also aborts the attempt, and Jenkins
+                    // RETRIES that one — three attempts, two `Retrying` lines
+                    // (receipt `retry-timeout-retries`). Reading the status stopped
+                    // both, silently costing every `retry { timeout { … } }`
+                    // pipeline its remaining attempts.
+                    ctx.Sink attemptStatus.Value
+                    ctx.Failed.Value <- true
+                    // PROPAGATED, and this line is the whole nested case: the
+                    // attempt's ref is fresh precisely so one attempt's rejection
+                    // does not leak into the next, but that also severs it from an
+                    // ENCLOSING retry. Without this, `retry(3) { retry(2) { input … } }`
+                    // had the outer scope see an ordinary failed attempt, print
+                    // `Retrying`, and put the prompt back in front of someone who
+                    // had already declined it.
+                    ctx.HumanRejected.Value <- true
+                    settled <- true
+                elif attempt < attempts then
+                    // Jenkins prints this between attempts, with no delay: retry
+                    // does not back off.
+                    emit "Retrying"
+                    attempt <- attempt + 1
+                else
+                    // Final attempt failed: now it is the build's failure.
+                    ctx.Sink attemptStatus.Value
+                    ctx.Failed.Value <- true
+                    attempt <- attempt + 1
+
         let rec runPostWithDeadline
             (ctx: BranchCtx)
             (cwd: string)
@@ -392,7 +463,24 @@ module WalkerOrchestration =
                                 stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
                                 ctx.Sink st }
 
-                runStageBody body cwd deadline stage
+                // FG-053(b). Stage-level `options { retry(N) }` re-runs THIS STAGE'S
+                // STEPS, through the same `runWithRetry` the `retry(N) { }` step
+                // uses. MEASURED on Jenkins 2.568.1 with a stage failing once then
+                // succeeding: `Retrying` between attempts, later stages run, build
+                // SUCCEEDS; and with a stage that always fails: N attempts, N-1
+                // `Retrying` lines, later stages skipped, pipeline `post` still runs,
+                // build fails. Workspace state PERSISTS across attempts — the probe
+                // counts through a file that survives.
+                //
+                // Sharing the loop rather than copying it is deliberate: it carries
+                // measured subtleties a second implementation would have to
+                // rediscover, including that a human REJECTION is not retried while a
+                // nested `timeout` abort IS.
+                // Receipts: `options-stage-retry`, `options-stage-retry-exhausted`.
+                match stage.Options |> List.tryFind (fun o -> o.Name = "retry") with
+                | Some o -> runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
+                                runStageBody attemptCtx cwd deadline stage)
+                | None -> runStageBody body cwd deadline stage
 
                 if body.Failed.Value then ctx.Failed.Value <- true
 
@@ -520,82 +608,15 @@ module WalkerOrchestration =
             // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after
             // the first, and there is no backoff. `retry(3)` around a step
             // that always fails runs it exactly three times.
+            // JB-FAIL-005: retry(N) is N TOTAL attempts, not N retries after the
+            // first, and there is no backoff. `retry(3)` around a step that always
+            // fails runs it exactly three times. The loop itself is `runWithRetry`,
+            // shared with a stage's `options { retry(N) }`.
             | "retry", _ when not (List.isEmpty step.Block) ->
-                let attempts = max 1 (retryCount (renderStepArgs ctx stage step))
-                let mutable attempt = 1
-                let mutable settled = false
-
-                while not settled && attempt <= attempts do
-                    // Each attempt gets a fresh failure flag AND a throwaway
-                    // status sink. MEASURED (FG-035): a body that fails once
-                    // then succeeds is a SUCCESS build. Bumping the build
-                    // status from the failed attempt reported `failure` with an
-                    // identical workspace — the work was right, the bookkeeping
-                    // was not.
-                    // Receipt: `retry-succeeds`.
-                    let attemptStatus = ref BuildStatus.Success
-
-                    let attemptCtx =
-                        { ctx with
-                            Failed = ref false
-                            // fresh per attempt, like Failed: this attempt's own
-                            // rejection, not one inherited from an earlier one
-                            HumanRejected = ref false
-                            Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
-
+                runWithRetry ctx (retryCount (renderStepArgs ctx stage step)) (fun attemptCtx ->
                     for inner in step.Block do
                         if not (halted attemptCtx) then
-                            runStepDispatch attemptCtx cwd stage inner deadline
-
-                    if not attemptCtx.Failed.Value then
-                        // A retried body may still have gone unstable; that is
-                        // not a retryable failure, so it must reach the build.
-                        ctx.Sink attemptStatus.Value
-                        settled <- true
-                    elif attemptCtx.HumanRejected.Value then
-                        // FG-046b. A human who REJECTED a deployment gate was
-                        // asked again by the next attempt, and an approval there
-                        // could carry the whole build to success. The person said
-                        // no; that is not a retryable failure.
-                        //
-                        // Tested on the REJECTION, not on the aborted status, and
-                        // the difference is measured rather than reasoned: a
-                        // nested `timeout` expiring also aborts the attempt, and
-                        // Jenkins RETRIES that one — three attempts, two
-                        // `Retrying` lines (receipt `retry-timeout-retries`).
-                        // Reading the status stopped both, silently costing every
-                        // `retry { timeout { … } }` pipeline its remaining
-                        // attempts. That regression was mine, introduced by
-                        // asserting Jenkins' behaviour instead of measuring it.
-                        //
-                        // A failFast SIBLING needs no case here — it signals
-                        // through the interrupt predicate, so `halted` stops each
-                        // attempt before any inner step runs and nothing is
-                        // re-executed. A rejection has no such predicate, which is
-                        // why it re-ran the body.
-                        ctx.Sink attemptStatus.Value
-                        ctx.Failed.Value <- true
-                        // PROPAGATED, and this line is the whole nested case:
-                        // the attempt's ref is fresh precisely so one attempt's
-                        // rejection does not leak into the next, but that also
-                        // severs it from an ENCLOSING retry. Without this,
-                        // `retry(3) { retry(2) { input … } }` had the outer scope
-                        // see an ordinary failed attempt, print `Retrying`, and
-                        // put the prompt back in front of someone who had already
-                        // declined it. A parallel branch needs no equivalent — it
-                        // INHERITS the ref rather than minting one.
-                        ctx.HumanRejected.Value <- true
-                        settled <- true
-                    elif attempt < attempts then
-                        // Jenkins prints this between attempts, with no delay:
-                        // retry does not back off.
-                        emit "Retrying"
-                        attempt <- attempt + 1
-                    else
-                        // Final attempt failed: now it is the build's failure.
-                        ctx.Sink attemptStatus.Value
-                        ctx.Failed.Value <- true
-                        attempt <- attempt + 1
+                            runStepDispatch attemptCtx cwd stage inner deadline)
 
             // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
             // after the block an added variable is UNSET and a shadowed one

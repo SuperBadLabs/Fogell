@@ -1,7 +1,7 @@
-# Differential receipt — parallel-post-selection.Jenkinsfile
+# Differential receipt — options-stage-retry.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         297fb54899e19a8f04a8236d32d7294ccc2f83ecbfcb8d8c08dba221ee6660a1
+seal:         de3e2e666b53cf1fe18845d038db5f71f10c1c77aab1f39a50a8c565e6506d62
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,32 +56,53 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  result:         success
+  workspace-hash: f0d93234e09873a8486a9a000af7c8ac2713267fb2ae1d696b4c7dc49da7e052
+  output (17 lines):
+    | + cat count.txt
+    | + echo 0
+    | + n=0
+    | + n=1
+    | + echo 1
+    | + echo attempt 1
+    | attempt 1
+    | + [ 1 -ge 2 ]
+    | Retrying
+    | + cat count.txt
+    | + n=1
+    | + n=2
+    | + echo 2
+    | + echo attempt 2
+    | attempt 2
+    | + [ 2 -ge 2 ]
+    | + echo after
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    7b9a72466d39  after.txt
+    53c234e5e847  count.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  result:         success
+  workspace-hash: f0d93234e09873a8486a9a000af7c8ac2713267fb2ae1d696b4c7dc49da7e052
+  output (17 lines):
+    | + cat count.txt
+    | + echo 0
+    | + n=0
+    | + n=1
+    | + echo 1
+    | + echo attempt 1
+    | attempt 1
+    | + [ 1 -ge 2 ]
+    | Retrying
+    | + cat count.txt
+    | + n=1
+    | + n=2
+    | + echo 2
+    | + echo attempt 2
+    | attempt 2
+    | + [ 2 -ge 2 ]
+    | + echo after
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    7b9a72466d39  after.txt
+    53c234e5e847  count.txt
