@@ -439,7 +439,10 @@ let main argv =
                         // Announced, not silent: a re-run that leaves no trace makes a
                         // sealed receipt indistinguishable from a first-run pass, and it
                         // is also the only evidence that this retry loop RAN at all.
-                        printfn "  %-46s re-running (diverged, attempt %d of 3)" name (attemptNo + 1)
+                        // attemptNo counts COMPLETED attempts, so the one about to run is +2.
+                        // Printing +1 renamed the attempt that just failed, which
+                        // defeats using this line to audit that the loop ran 3 times.
+                        printfn "  %-46s re-running (diverged, attempt %d of 3)" name (attemptNo + 2)
 
                         // Accumulated across attempts, first-seen winning PER BUILD.
                         // Freezing the whole map on the first diverging attempt lost a
@@ -463,22 +466,29 @@ let main argv =
 
                 let results, firstSeen, retries = confirm 0 None
 
-                // RECOVERED requires the re-run to actually PROVE the case. "Not
+                // RECOVERED requires THIS build's re-run to actually PROVE it. "Not
                 // diverged" also admits NotComparable, and calling a non-comparable
-                // re-run "clean after 1 re-run" would be a false claim in the one
-                // place a reader looks to find out whether the evidence is sound.
-                let allProven =
-                    results
-                    |> List.forall (fun (r: Receipt) ->
-                        match r.Verdict with
-                        | Proven -> true
-                        | _ -> false)
+                // re-run "clean after 1 re-run" would be a false claim in the one place
+                // a reader looks to find out whether the evidence is sound.
+                //
+                // Decided PER RECEIPT. Gating on the whole case being proven cleared the
+                // map for every build when any sibling was still Diverged, so a build
+                // that diverged on attempt 1 and was proven on attempt 3 sealed as an
+                // ordinary first-attempt proof — destroying the per-build provenance
+                // added in the same round. Two of my own fixes cancelling each other.
+                let seenMap = defaultArg firstSeen Map.empty
 
                 let recovered =
-                    if retries > 0 && allProven then
-                        defaultArg firstSeen Map.empty
-                    else
+                    if retries = 0 then
                         Map.empty
+                    else
+                        results
+                        |> List.mapi (fun bi (r: Receipt) ->
+                            match r.Verdict, Map.tryFind bi seenMap with
+                            | Proven, Some ds -> Some(bi, ds)
+                            | _ -> None)
+                        |> List.choose id
+                        |> Map.ofList
 
                 // Stamped into the RECEIPT, not just the console: the receipt is what
                 // gets committed and read later, and without this a re-run receipt is
