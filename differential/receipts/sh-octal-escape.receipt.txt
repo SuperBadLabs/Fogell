@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — sh-octal-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         67bd3580f536d1d96ff95f8b25c7b2d70de0026fd6374c15dcf6aa978bbcac2e
+seal:         23629a96eacdf95a2a264738987a70dee3f8920cf4edbb453c74fa8e20260ffd
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,34 +56,27 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+  result:         success
+  workspace-hash: 80e3bc6b748a967e2a06f6a5fcc56d352aba5151aa9636202cae502ce6222cb6
   output (5 lines):
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | + sleep 6
-    | + echo done
+    | + printf red
+    | + cat colour.txt
+    | red
+    | + printf tab	here
+    | tab	here
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    12c1357a66ef  colour.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
+  result:         success
+  workspace-hash: 80e3bc6b748a967e2a06f6a5fcc56d352aba5151aa9636202cae502ce6222cb6
   output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+    | + printf red
+    | + cat colour.txt
+    | red
+    | + printf tab	here
+    | tab	here
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    12c1357a66ef  colour.txt

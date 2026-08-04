@@ -40,13 +40,39 @@ let position: P<Position> =
 // Value only; interpolation is NOT evaluated here. ADR 0002: the parser
 // records source, the interpreter decides meaning.
 
+/// FG-122. Groovy string escapes are Java's: the simple letters, a UNICODE
+/// escape, and an OCTAL escape of one to three digits.
+///
+/// MEASURED against Jenkins 2.568.1: `sh 'printf "\\033[31mred\\033[0m"'` traced
+/// as `+ printf red` there — a real ESC byte, which normalisation then strips —
+/// and as `+ printf 033[31mred033[0m` here (receipt `sh-octal-escape`), because the fallback returned the
+/// escape's first character and left `33` as ordinary text. The two engines ran
+/// DIFFERENT COMMANDS for the same Jenkinsfile, and every single-quoted `sh`
+/// body carrying a backslash escape diverged, not only colour.
+///
+/// SHARED by both escape parsers below. The simple-letter map existed twice —
+/// here and in `escapedCharKeepingDollar` — and adding octal to one would have
+/// left the other reading `\033` as three characters, which is the drift this
+/// project has spent a branch learning to prevent by deleting the copy.
+let private numericEscape: P<char> =
+    (skipChar 'u'
+     >>. manyMinMaxSatisfy 4 4 (fun c ->
+         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+     |>> fun hex -> char (System.Convert.ToInt32(hex, 16)))
+    <|> (manyMinMaxSatisfy 1 3 (fun c -> c >= '0' && c <= '7')
+         |>> fun digits -> char (System.Convert.ToInt32(digits, 8)))
+
+let private simpleEscape (c: char) =
+    match c with
+    | 'n' -> '\n'
+    | 't' -> '\t'
+    | 'r' -> '\r'
+    | 'b' -> '\b'
+    | 'f' -> '\012'
+    | c -> c
+
 let private escapedChar: P<char> =
-    skipChar '\\' >>. anyChar
-    |>> function
-        | 'n' -> '\n'
-        | 't' -> '\t'
-        | 'r' -> '\r'
-        | c -> c
+    skipChar '\\' >>. (numericEscape <|> (anyChar |>> simpleEscape))
 
 let private quoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
@@ -65,18 +91,22 @@ let private tripleQuoted (q: string) : P<string> =
 /// Jenkins. The marker now survives to the interpolation pass, which honours it and
 /// then removes it.
 let private escapedCharKeepingDollar: P<string> =
-    skipChar '\\' >>. anyChar
-    |>> function
-        | 'n' -> "\n"
-        | 't' -> "\t"
-        | 'r' -> "\r"
-        // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is
-        // an escaped BACKSLASH followed by a live interpolation — Groovy yields one
-        // backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
-        // cases indistinguishable downstream, so that value came out as a literal
-        // `$X`. NUL cannot occur in an environment value, so it cannot collide.
-        | '$' -> "\u0000"
-        | c -> string c
+    skipChar '\\'
+    >>. ((numericEscape |>> string)
+         <|> (anyChar
+              |>> function
+                  | 'n' -> "\n"
+                  | 't' -> "\t"
+                  | 'r' -> "\r"
+                  // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9).
+                  // `"\\$X"` is an escaped BACKSLASH followed by a live
+                  // interpolation — Groovy yields one backslash and expands `$X`.
+                  // Decoding the escaped dollar to "\$" made the two cases
+                  // indistinguishable downstream, so that value came out as a
+                  // literal `$X`. NUL cannot occur in an environment value, so it
+                  // cannot collide.
+                  | '$' -> "\u0000"
+                  | c -> string c))
 
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
