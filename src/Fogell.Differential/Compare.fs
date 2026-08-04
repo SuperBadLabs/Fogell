@@ -66,8 +66,18 @@ type Receipt =
       /// retry logic's own comment promised would never happen. Caught by the
       /// pre-push verifier's model review.
       RecoveredFrom: string list
-      /// Hash over the receipt's own comparable content, so a receipt cannot be
+      /// Hash over the receipt's COMPARED CONTENT — the two engines' results,
+      /// output and workspace — so the evidence a verdict rests on cannot be
       /// edited after the fact without detection.
+      ///
+      /// It does NOT cover [RecoveredFrom], which is run provenance rather than
+      /// compared content and is deliberately excluded so that a case proven on
+      /// attempt 1 and the same case proven on attempt 2 seal identically. The
+      /// consequence, stated because the previous wording ("a receipt cannot be
+      /// edited") implied otherwise: the RECOVERED block CAN be removed from a
+      /// committed receipt without breaking the seal. Restoring that guarantee
+      /// needs a second provenance hash — FG-128, not smuggled in behind a
+      /// comment. Caught by the pre-push verifier's model review.
       Seal: string }
 
 module Compare =
@@ -307,6 +317,9 @@ module Compare =
             for d in r.RecoveredFrom do
                 line $"    {d}"
 
+            line "  NOTE: this block is run provenance and is NOT covered by the seal"
+            line "  above, which hashes the compared content so a verdict's evidence cannot"
+            line "  be altered undetected. See FG-128."
             line "  FG-119: `sh -x` over a shell pipeline interleaves on BOTH engines, so a"
             line "  divergence is confirmed by repetition before it is believed. A case that"
             line "  recovers REPEATEDLY across runs is a defect report, not noise."

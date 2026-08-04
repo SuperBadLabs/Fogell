@@ -254,18 +254,28 @@ let main argv =
                     + Text.RegularExpressions.Regex.Replace(
                         Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
 
-                // wipe any stale workspace so a hash can only match on merit
-                match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
-                | null
-                | "" -> ()
-                | template ->
-                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
-                    psi.ArgumentList.Add "-c"
-                    psi.ArgumentList.Add(template.Replace("{job}", job))
-                    psi.RedirectStandardOutput <- true
-                    psi.RedirectStandardError <- true
-                    use p = Diagnostics.Process.Start psi
-                    p.WaitForExit 30_000 |> ignore
+                // Wipe any stale workspace so a hash can only match on merit.
+                //
+                // FG-119: this MUST run before EVERY attempt, not once per case.
+                // The retry loop re-runs a diverging case, and Fogell starts each
+                // attempt from a fresh workspace while Jenkins keeps its own — so a
+                // wipe hoisted out of the loop left attempts 2 and 3 comparing dirty
+                // Jenkins state against clean Fogell state, and could CONFIRM a
+                // divergence that the retry itself manufactured. That is the exact
+                // inverse of the flake the retry exists to remove, and it would have
+                // been indistinguishable from a real finding.
+                let wipeJenkinsWorkspace () =
+                    match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
+                    | null
+                    | "" -> ()
+                    | template ->
+                        let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                        psi.ArgumentList.Add "-c"
+                        psi.ArgumentList.Add(template.Replace("{job}", job))
+                        psi.RedirectStandardOutput <- true
+                        psi.RedirectStandardError <- true
+                        use p = Diagnostics.Process.Start psi
+                        p.WaitForExit 30_000 |> ignore
 
                 // FG-052. A case whose FIRST LINE is `//// SCM JOB ////` runs as an
                 // SCM-DEFINED job: the sync script pushed its body to the fixture
@@ -350,6 +360,8 @@ let main argv =
                 // A divergence that reproduces is real and still fails; one that does
                 // not is reported RECOVERED with the original text, never silently.
                 let runBothEngines () =
+                    wipeJenkinsWorkspace ()
+
                     let jenkinsRuns, fogellRuns =
                         if malformed then
                             let e =
