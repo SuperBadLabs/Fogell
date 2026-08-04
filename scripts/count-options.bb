@@ -49,8 +49,16 @@
           (cond
             (= c \{) (recur (inc i) (inc depth) stage-depths acc)
             (= c \}) (recur (inc i) (dec depth) (disj stage-depths depth) acc)
-            (and (= c \s) (str/starts-with? (subs s i (min n (+ i 6))) "stage ")
-                 (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
+            ;; `stage` on a WORD BOUNDARY, then optional space and `(` or `{`.
+            ;; Matching the literal "stage " missed `stage('x')` — the form
+            ;; Declarative actually uses — so every stage-level options block was
+            ;; reported as pipeline-level and the "stage column is zero" claim
+            ;; passed while unverified.
+            (and (= c \s)
+                 (str/starts-with? (subs s i (min n (+ i 5))) "stage")
+                 (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i)))))
+                 (let [r (str/triml (subs s (+ i 5) (min n (+ i 12))))]
+                   (or (str/starts-with? r "(") (str/starts-with? r "{"))))
             (recur (inc i) depth (conj stage-depths (inc depth)) acc)
             (and (= c \o) (str/starts-with? (subs s i (min n (+ i 7))) "options")
                  (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
