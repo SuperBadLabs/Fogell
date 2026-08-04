@@ -12,8 +12,21 @@ fail=0
 for p in tests/*/; do
   [ -f "$p/$(basename "$p").fsproj" ] || continue
   echo "--- $(basename "$p") ---"
-  dotnet run --project "$p" -c Release --no-build 2>&1 | rg -o "EXPECTO! .*" | tail -1
-  [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
+  # Capture, then decide what to show. Piping straight into `rg -o "EXPECTO! .*"`
+  # printed the summary and DISCARDED every failure detail, so a red gate said
+  # "1 failed" and named neither the test nor the assertion. That is what CI did
+  # on PR #36 while the same suite passed locally: the one run that could have
+  # explained an environment-dependent failure threw the explanation away.
+  # A gate that cannot be diagnosed from its own output is a gate you re-run
+  # instead of read.
+  test_out="$(dotnet run --project "$p" -c Release --no-build 2>&1)"
+  test_rc=$?
+  if [ "$test_rc" -ne 0 ]; then
+    fail=1
+    printf '%s\n' "$test_out"
+  else
+    printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1
+  fi
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
 # FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The

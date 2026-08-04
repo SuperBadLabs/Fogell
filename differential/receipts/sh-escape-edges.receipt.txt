@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — sh-escape-edges.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a9a6f01873dd1e65d632b15b5fed7116236b1fa86bbe59e7e5253466ee0e4a09
+seal:         f7f9c27c1e72852749c63f4218ae011e2aba68ca1a6d2e1c2eb547d49b4df677
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,34 +56,57 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 6ff607a2ef99a254891ea05d90be3eb3abe67a3b4f8abf209ab17682352a0ec5
+  output (16 lines):
+    | + printf [ 0]
+    | + cat octal-range.txt
+    | [ 0]
+    | + printf [ABC]
+    | + cat octal-plain.txt
+    | [ABC]
+    | + printf [$MISSING]
+    | + cat octal-dollar.txt
+    | [$MISSING]
+    | + printf ABC
+    | + od -c simple-bf.txt
+    | 0000000   A  \b   B  \f   C
+    | 0000005
+    | + printf [A][A]
+    | + cat unicode.txt
+    | [A][A]
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    649e8f43c078  octal-dollar.txt
+    275a52d87c0c  octal-plain.txt
+    2de88c4cff1b  octal-range.txt
+    25d2f286d82b  simple-bf.txt
+    4d5846bc7ca0  unicode.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + sleep 6
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 6ff607a2ef99a254891ea05d90be3eb3abe67a3b4f8abf209ab17682352a0ec5
+  output (16 lines):
+    | + printf [ 0]
+    | + cat octal-range.txt
+    | [ 0]
+    | + printf [ABC]
+    | + cat octal-plain.txt
+    | [ABC]
+    | + printf [$MISSING]
+    | + cat octal-dollar.txt
+    | [$MISSING]
+    | + printf ABC
+    | + od -c simple-bf.txt
+    | 0000000   A  \b   B  \f   C
+    | 0000005
+    | + printf [A][A]
+    | + cat unicode.txt
+    | [A][A]
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    649e8f43c078  octal-dollar.txt
+    275a52d87c0c  octal-plain.txt
+    2de88c4cff1b  octal-range.txt
+    25d2f286d82b  simple-bf.txt
+    4d5846bc7ca0  unicode.txt

@@ -836,9 +836,30 @@ JF
 "$HOST_BIN" "$Q/Jenkinsfile" "$Q/ws" gate "$Q/build.journal" "$Q/approvals" > "$Q/run1.log" 2>&1 &
 PID=$!
 QID=$(await_pending "$Q/approvals") || { echo "FAIL: no prompt published"; cat "$Q/run1.log"; exit 1; }
+# The gate must still be SHUT here. Marker counts alone prove the step RAN, not
+# that it WAITED: an engine that publishes the prompt and charges past it lands
+# exactly one `one` and one `two` and passes every check below. Scenario H makes
+# the same assertion at its second gate. The sleep gives a racing engine time to
+# reveal itself — without it this only rules out an engine that skips the wait
+# instantaneously. Raised by the pre-push verifier's model review on PR #36,
+# immediately after the marker counts closed the adjacent hole.
+sleep 2
+grep -q '^two$' "$Q/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the bounded gate ran before anyone answered it"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the host exited while the prompt was still pending"; exit 1; }
 printf 'approve quinn\n' > "$Q/approvals/$QID.decision"
 set +e; wait "$PID"; set -e
 grep -q 'completed: success' "$Q/run1.log" || { echo "FAIL: the bounded prompt did not complete"; cat "$Q/run1.log"; exit 1; }
+# "usable in the attempt that read it" is the claim below, and success plus
+# journal state did not test it: an engine that SKIPPED the step past the gate
+# still reports success and still writes the provisional record, so Q passed
+# while violating the very sentence it exists to prove. Same marker assertions
+# scenario A already makes. Raised by the pre-push verifier's model review on PR #36.
+QMARK="$Q/ws/gate/markers.txt"
+[ "$(grep -c '^two$' "$QMARK" 2>/dev/null)" -eq 1 ] || {
+  echo "FAIL: the step past the bounded gate did not run exactly once"; exit 1; }
+[ "$(grep -c '^one$' "$QMARK" 2>/dev/null)" -eq 1 ] || {
+  echo "FAIL: the step before the bounded gate did not run exactly once"; exit 1; }
 # the answer is provisional and STAYS provisional: usable in the attempt that
 # read it, never actionable for another one
 grep -q $'^input-answer-provisional\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {

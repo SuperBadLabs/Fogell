@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — sh-slashy-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a9a6f01873dd1e65d632b15b5fed7116236b1fa86bbe59e7e5253466ee0e4a09
+seal:         39cd93d03c9323fa3543951961b4e5dd4d672c00d2f543ddfc3596067ca8b6eb
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,34 +56,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 1747b39fa000fd9d4c568367295b92f4911da7956d2155b414828736a8968640
+  output (4 lines):
+    | + printf [\033]
+    | + od -c slashy.txt
+    | 0000000   [ 033   ]
+    | 0000003
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    00be4cd45382  slashy.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + sleep 6
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 1747b39fa000fd9d4c568367295b92f4911da7956d2155b414828736a8968640
+  output (4 lines):
+    | + printf [\033]
+    | + od -c slashy.txt
+    | 0000000   [ 033   ]
+    | 0000003
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    00be4cd45382  slashy.txt

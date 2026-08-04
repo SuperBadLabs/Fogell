@@ -102,10 +102,17 @@ type Stage =
     { Name: string
       Agent: AgentSpec option
       Environment: (string * string) list
-      /// Names whose value was written with a LITERAL quote form (single, triple
-      /// single, or slashy). Groovy does not interpolate those, so neither may we
-      /// — expanding `'$BUILD_NUMBER'` runs a different value than Jenkins and can
-      /// produce a false differential match.
+      /// Names whose value was written with a LITERAL quote form: single-quoted
+      /// or triple-single-quoted, and ONLY those. Groovy does not interpolate
+      /// them, so neither may we — expanding `'$BUILD_NUMBER'` runs a different
+      /// value than Jenkins and can produce a false differential match.
+      ///
+      /// SLASHY IS NOT LITERAL, though this comment listed it as one until the
+      /// pre-push verifier's model review on PR #36. A slashy string is a
+      /// GString: `Lexeme.fs` marks it interpolating and the parser records a
+      /// name here only when `interpolates` is false, so no slashy value ever
+      /// entered this set. The prose claimed a behaviour the code did not have —
+      /// the same shape of drift FG-122 spent two rounds on.
       EnvironmentLiteralNames: Set<string>
       Steps: Step list
       /// FG-045. Stage-level `options { }`. Previously discarded outright, so a

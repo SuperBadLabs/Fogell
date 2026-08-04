@@ -40,13 +40,102 @@ let position: P<Position> =
 // Value only; interpolation is NOT evaluated here. ADR 0002: the parser
 // records source, the interpreter decides meaning.
 
+/// FG-122. In the QUOTED forms — single, double, and their triple variants —
+/// Groovy's string escapes are Java's: the simple letters, a UNICODE escape,
+/// and an OCTAL escape of one or two digits, or three when the first is 0-3
+/// (see the range note below; a flat "one to three" is what this comment said
+/// while the code was greedy, and both were wrong together).
+///
+/// NOT slashy strings, which this comment covered until the pre-push verifier's
+/// model review on PR #36. Those escape only their delimiter — see
+/// [slashyQuoted], and FG-125 for what routing them through here cost.
+///
+/// MEASURED against Jenkins 2.568.1: `sh 'printf "\\033[31mred\\033[0m"'` traced
+/// as `+ printf red` there — a real ESC byte, which normalisation then strips —
+/// and as `+ printf 033[31mred033[0m` here (receipt `sh-octal-escape`), because the fallback returned the
+/// escape's first character and left `33` as ordinary text. The two engines ran
+/// DIFFERENT COMMANDS for the same Jenkinsfile, and every single-quoted `sh`
+/// body carrying a backslash escape diverged, not only colour.
+///
+/// SHARED by both escape parsers below. The simple-letter map existed twice —
+/// here and in `escapedCharKeepingDollar` — and adding octal to one would have
+/// left the other reading `\033` as three characters, which is the drift this
+/// project has spent a branch learning to prevent by deleting the copy.
+/// NUL and SOH are PARSER PROVENANCE MARKERS, not ordinary characters: NUL means
+/// "this dollar was escaped" (restored to `$` downstream) and a leading SOH means
+/// "this argument was an unquoted expression" (`Parser.fs`). Before FG-122 no
+/// escape could produce either — the old fallback dropped the backslash and left
+/// digits as text — so the comment claiming "NUL cannot occur ... it cannot
+/// collide" was true when written and MY OWN numeric decoding invalidated it:
+/// `"\000X"` rendered `$X`, and a value starting `\001` was evaluated as an
+/// expression instead of forwarded.
+///
+/// Refusing to decode into a sentinel makes the escape fall through to the
+/// literal fallback, which is exactly the pre-FG-122 behaviour for these two
+/// code points — no worse than before for them, correct for everything else, and
+/// incapable of corrupting a value. Out-of-band provenance is the real fix:
+/// FG-127. Raised by BOTH reviewers on PR #36.
+let private rejectSentinel (c: char) : P<char> =
+    if c = '\u0000' || c = '\u0001' then
+        fail "escape decodes to a parser provenance sentinel"
+    else
+        preturn c
+
+let private numericEscape: P<char> =
+  attempt (
+    // ONE OR MORE `u`: Java's UnicodeEscape is `\ u+ HexDigit{4}`, so `\uu0041`
+    // is also `A`. Accepting exactly one passed `uu0041` through as text while
+    // the board row claimed unicode escapes were handled — an overclaim I wrote.
+    // Raised by the pre-push verifier's model review on PR #36.
+    (skipMany1 (skipChar 'u')
+     >>. manyMinMaxSatisfy 4 4 (fun c ->
+         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+     |>> fun hex -> char (System.Convert.ToInt32(hex, 16)))
+    // THREE digits only when the first is 0-3 — Java's OctalEscape production is
+    // `ZeroToThree OctalDigit OctalDigit`, so `\400` is the TWO-digit `\40` (a
+    // space) followed by a literal `0`. MEASURED on Jenkins 2.568.1, receipt
+    // `sh-escape-edges`: `printf "[\400]"` traces `+ printf [ 0]` there, where a
+    // greedy 1-3 reader yielded `[Ā]` (U+0100) and the case DIVERGED.
+    // Raised by Codex on PR #36.
+    <|> attempt (
+            manyMinMaxSatisfy 1 1 (fun c -> c >= '0' && c <= '3')
+            .>>. manyMinMaxSatisfy 2 2 (fun c -> c >= '0' && c <= '7')
+            |>> fun (hi, lo) -> char (System.Convert.ToInt32(hi + lo, 8)))
+    <|> (manyMinMaxSatisfy 1 2 (fun c -> c >= '0' && c <= '7')
+         |>> fun digits -> char (System.Convert.ToInt32(digits, 8)))
+    >>= rejectSentinel)
+
+let private simpleEscape (c: char) =
+    match c with
+    | 'n' -> '\n'
+    | 't' -> '\t'
+    | 'r' -> '\r'
+    | 'b' -> '\b'
+    // '\f', not '\012': in F# that trigraph is DECIMAL, so it reads as octal 12
+    // to anyone carrying Java's escapes in their head — which is everyone
+    // touching this function. Raised by Copilot on PR #36.
+    | 'f' -> '\f'
+    | c -> c
+
 let private escapedChar: P<char> =
-    skipChar '\\' >>. anyChar
-    |>> function
-        | 'n' -> '\n'
-        | 't' -> '\t'
-        | 'r' -> '\r'
-        | c -> c
+    skipChar '\\' >>. (numericEscape <|> (anyChar |>> simpleEscape))
+
+/// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
+///
+/// A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is an
+/// escaped BACKSLASH followed by a live interpolation — Groovy yields one
+/// backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
+/// cases indistinguishable downstream, so that value came out as a literal `$X`.
+/// NUL cannot occur in an environment value, so it cannot collide.
+///
+/// It applies to a NUMERIC escape too: `\044` decodes to `$`, and Groovy decides
+/// interpolation LEXICALLY — before escapes are decoded — so that dollar is
+/// ordinary text and `"\044MISSING"` stays `$MISSING`. Returning a bare "$"
+/// handed the GString renderer a live interpolation: MEASURED on Jenkins
+/// 2.568.1, receipt `sh-escape-edges` — jenkins=success, fogell=FAILURE on the
+/// unresolvable name, a build Jenkins passes. Raised by Codex on PR #36.
+let private keepDollar (c: char) : string =
+    if c = '$' then "\u0000" else string c
 
 let private quoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
@@ -55,6 +144,26 @@ let private quoted (q: string) : P<string> =
 let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
+
+/// FG-125. A SLASHY string is the one form whose escapes are NOT Java's: it
+/// escapes only its `/` delimiter and preserves every other backslash sequence
+/// verbatim.
+///
+/// MEASURED on Jenkins 2.568.1, receipt `sh-slashy-escape`:
+/// `sh(/printf '[\033]' > slashy.txt/)` traces `+ printf [\033]` there — a
+/// backslash and three digits. Routing slashy through `escapedChar` decoded an
+/// ESC byte and Fogell traced `+ printf []`, so the two engines ran DIFFERENT
+/// COMMANDS — the same defect FG-122 fixed for the quoted forms while leaving
+/// it standing here, because all four slashy call sites called `quoted "/"`.
+///
+/// The parenthesised call is what made this measurable at all: `sh /.../` with
+/// no parentheses is REFUSED by Jenkins at compile time, and the probe that used
+/// it proved nothing while looking like evidence.
+let private slashyQuoted: P<string> =
+    between (skipString "/") (skipString "/") (
+        manyStrings (
+            (skipChar '\\' >>. (anyChar |>> fun c -> if c = '/' then "/" else "\\" + string c))
+            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string)))
 
 /// As [escapedChar], but an escaped $ keeps its backslash.
 ///
@@ -65,18 +174,8 @@ let private tripleQuoted (q: string) : P<string> =
 /// Jenkins. The marker now survives to the interpolation pass, which honours it and
 /// then removes it.
 let private escapedCharKeepingDollar: P<string> =
-    skipChar '\\' >>. anyChar
-    |>> function
-        | 'n' -> "\n"
-        | 't' -> "\t"
-        | 'r' -> "\r"
-        // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is
-        // an escaped BACKSLASH followed by a live interpolation — Groovy yields one
-        // backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
-        // cases indistinguishable downstream, so that value came out as a literal
-        // `$X`. NUL cannot occur in an environment value, so it cannot collide.
-        | '$' -> "\u0000"
-        | c -> string c
+    skipChar '\\'
+    >>. ((numericEscape |>> keepDollar) <|> (anyChar |>> (simpleEscape >> keepDollar)))
 
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
@@ -110,7 +209,7 @@ let stringLiteralWithKind: P<string * bool> =
               // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
               // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
               // expand. Only single-quoted forms are literal.
-              attempt (quoted "/" |>> fun s -> s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, true) ])
 
 /// Quote KIND without the NUL sentinel, for consumers that forward the value verbatim
 /// instead of interpolating it.
@@ -134,7 +233,7 @@ let stringLiteralWithKindBoth: P<string * string * bool> =
               attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
               attempt (quoted "'" |>> fun s -> s, s, false)
               attempt (quotedKeepingDollar "\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
-              attempt (quoted "/" |>> fun s -> s, s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, s, true) ])
 
 let stringLiteralWithKindPlain: P<string * bool> =
     lexeme (
@@ -143,7 +242,7 @@ let stringLiteralWithKindPlain: P<string * bool> =
               attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
               attempt (quoted "'" |>> fun s -> s, false)
               attempt (quoted "\"" |>> fun s -> s, true)
-              attempt (quoted "/" |>> fun s -> s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, true) ])
 
 let stringLiteral: P<string> =
     lexeme (
@@ -152,7 +251,7 @@ let stringLiteral: P<string> =
               attempt (tripleQuoted "\"\"\"")
               attempt (quoted "'")
               attempt (quoted "\"")
-              attempt (quoted "/") ])
+              attempt slashyQuoted ])
 
 // --- balanced raw capture --------------------------------------------------
 
