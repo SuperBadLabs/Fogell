@@ -535,7 +535,10 @@ module WalkerOrchestration =
                     // this branch had it.
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
-                | Some _, None when not (List.isEmpty stage.Post) ->
+                | Some o, None when
+                    not (List.isEmpty stage.Post)
+                    && (WalkerRules.retryCountOpt (renderStepArgs body stage o) |> Option.defaultValue 1) > 1
+                    ->
                     // REFUSED, FG-137. A RUNTIME fail-closed refusal, NOT a
                     // compile-shaped one: this guard runs inside `runStage` when the
                     // stage is reached, so earlier stages have already produced side
@@ -559,6 +562,13 @@ module WalkerOrchestration =
                     // Fixing it means moving the post invocation inside the attempt —
                     // it currently sits after the loop with its own status and timeout
                     // handling — which is a restructure this refusal buys time for.
+                    //
+                    // ONLY when the count is >1. `retry(1)` is ONE total attempt, so
+                    // post-per-attempt and post-once are the same thing and there is
+                    // nothing to under-run. The first version refused every retry+post
+                    // stage including that one — over-refusing a pipeline Jenkins runs
+                    // correctly, which is the FG-126 trap in a new costume and one I
+                    // introduced while trying to avoid a divergence.
                     emit
                         $"ERROR: stage \"{stage.Name}\" combines options {{ retry }} with a post block, which Jenkins runs once PER ATTEMPT and this engine runs once (FG-137) — refusing rather than under-running post side effects"
 
