@@ -441,10 +441,21 @@ let main argv =
                         // is also the only evidence that this retry loop RAN at all.
                         printfn "  %-46s re-running (diverged, attempt %d of 3)" name (attemptNo + 1)
 
+                        // Accumulated across attempts, first-seen winning PER BUILD.
+                        // Freezing the whole map on the first diverging attempt lost a
+                        // build that diverged only on attempt 2, and its receipt then
+                        // sealed as an ordinary first-pass proof — the exact durable
+                        // provenance this block exists to guarantee.
+                        let thisAttempt = divergencesByBuild rs
+
                         let seen =
                             match firstSeen with
-                            | Some f -> Some f
-                            | None -> Some(divergencesByBuild rs)
+                            | None -> Some thisAttempt
+                            | Some f ->
+                                Some(
+                                    thisAttempt
+                                    |> Map.fold (fun acc bi ds -> if Map.containsKey bi acc then acc else Map.add bi ds acc) f
+                                )
 
                         confirm (attemptNo + 1) seen
                     else
@@ -496,7 +507,11 @@ let main argv =
 
                     let verdict =
                         match r.Verdict with
-                        | Proven when workspaceCompared && retries > 0 -> "PROVEN(recovered)"
+                        // Keyed on THIS receipt's stamp, not the sequence's retry count:
+                        // a sibling build that never diverged must not be labelled
+                        // recovered. Same mistake as the receipt stamp one round earlier,
+                        // fixed there and left here.
+                        | Proven when workspaceCompared && not (List.isEmpty r.RecoveredFrom) -> "PROVEN(recovered)"
                         | Proven when workspaceCompared -> "PROVEN"
                         | Proven -> "PROVEN-PARTIAL"
                         | Diverged ds -> $"DIVERGED({ds.Length})"

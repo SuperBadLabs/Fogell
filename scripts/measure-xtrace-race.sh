@@ -14,7 +14,10 @@
 #   2. is Jenkins immune, or merely luckier?              (luckier; both corrupt)
 #
 # Usage: scripts/measure-xtrace-race.sh [iterations]     (default 200)
-#        FOGELL_JENKINS_HOST/CONTAINER select the container arm.
+#        FOGELL_RACE_CONTAINER_HOST + FOGELL_RACE_CONTAINER opt into the
+#        container arm (see the note above it). The names here were wrong —
+#        they said FOGELL_JENKINS_HOST/CONTAINER, which the script does not
+#        read, so anyone following this line silently got the local arms only.
 set -uo pipefail
 
 N="${1:-200}"
