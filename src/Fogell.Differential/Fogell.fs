@@ -306,6 +306,34 @@ module FogellSide =
 
             let mutable scmWrapperEnv: (string * string) list = []
 
+            // EVERY SCM case, BEFORE anything can set `root.Failed`. This is the
+            // lane's core invariant: the bytes this engine was handed must be the
+            // bytes the SCM serves, because Jenkins executes the latter.
+            //
+            // It lived inside `match scm with Some spec when not root.Failed.Value`,
+            // so the FG-053 option refusals — which set `root.Failed` above — made a
+            // refused SCM case skip verification entirely and seal against unverified
+            // bytes. The comment on this check already recorded it vanishing once
+            // before, "exactly when skipDefaultCheckout did"; guarding it on a
+            // failure flag is how it keeps happening. Unconditional now: a check that
+            // any later short-circuit can switch off is not fail-closed.
+            match scm with
+            | Some spec ->
+                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                // the subprocess reader trims trailing whitespace, so compare TRIMMED
+                // on both sides (a trailing newline is not a different script) with
+                // line endings normalised
+                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
+                    failwith (
+                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                    )
+                | Ok _ -> ()
+            | None -> ()
+
+
             match scm with
             | Some spec when not root.Failed.Value ->
                 // MEASURED only for `agent any` at pipeline level (receipt
@@ -362,7 +390,7 @@ module FogellSide =
 
             if not (List.isEmpty stageScopeRefusals) then
                 emit (
-                    "ERROR: stage options(s) not honoured at stage scope by this engine: "
+                    "ERROR: stage option(s) not honoured at stage scope by this engine: "
                     + String.concat ", " stageScopeRefusals
                     + " — refusing rather than running them with the wrong semantics"
                 )
@@ -405,24 +433,6 @@ module FogellSide =
                 // output and workspace agree — a divergence invented by the
                 // wrapper's placement rather than by either engine.
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
-
-                // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
-                // (a check that rode along with the auto-checkout vanished
-                // exactly when skipDefaultCheckout did): the bytes this engine
-                // was handed must be the bytes the SCM serves, because Jenkins
-                // executes the latter. Read them from the SCM itself.
-                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
-                | Result.Error e ->
-                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
-                // the subprocess reader trims trailing whitespace, so compare
-                // TRIMMED on both sides (a trailing newline is not a different
-                // script) with line endings normalised
-                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
-                    failwith (
-                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                    )
-                | Ok _ -> ()
 
                 // `options { skipDefaultCheckout() }` suppresses the Declarative
                 // auto-checkout; the Obtained line still prints (the definition
