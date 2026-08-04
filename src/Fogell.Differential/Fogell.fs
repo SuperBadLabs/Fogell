@@ -582,6 +582,14 @@ module FogellSide =
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timeout option: {e}"
                 root.Failed.Value <- true
+                // COMPILE-shaped, like every other option refusal. This branch set
+                // `root.Failed` alone, and the pipeline `post` guard tests
+                // `compileRejected`, so `timeout(time: 1, unit: 'NOPE')` skipped the
+                // stage and then RAN `post { always { ... } }`, creating files for a
+                // Jenkinsfile Jenkins refuses to compile. FG-121 fixed precisely this
+                // for the timestamps and ansiColor refusals and this one was left
+                // behind — the same defect, in the same block, one branch down.
+                compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
 
