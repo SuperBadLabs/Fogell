@@ -40,10 +40,15 @@ let position: P<Position> =
 // Value only; interpolation is NOT evaluated here. ADR 0002: the parser
 // records source, the interpreter decides meaning.
 
-/// FG-122. Groovy string escapes are Java's: the simple letters, a UNICODE
-/// escape, and an OCTAL escape of one or two digits — or three when the first
-/// is 0-3 (see the range note below; a flat "one to three" is what this comment
-/// said while the code was greedy, and both were wrong together).
+/// FG-122. In the QUOTED forms — single, double, and their triple variants —
+/// Groovy's string escapes are Java's: the simple letters, a UNICODE escape,
+/// and an OCTAL escape of one or two digits, or three when the first is 0-3
+/// (see the range note below; a flat "one to three" is what this comment said
+/// while the code was greedy, and both were wrong together).
+///
+/// NOT slashy strings, which this comment covered until the pre-push verifier's
+/// model review on PR #36. Those escape only their delimiter — see
+/// [slashyQuoted], and FG-125 for what routing them through here cost.
 ///
 /// MEASURED against Jenkins 2.568.1: `sh 'printf "\\033[31mred\\033[0m"'` traced
 /// as `+ printf red` there — a real ESC byte, which normalisation then strips —
@@ -111,6 +116,26 @@ let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
         manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
 
+/// FG-125. A SLASHY string is the one form whose escapes are NOT Java's: it
+/// escapes only its `/` delimiter and preserves every other backslash sequence
+/// verbatim.
+///
+/// MEASURED on Jenkins 2.568.1, receipt `sh-slashy-escape`:
+/// `sh(/printf '[\033]' > slashy.txt/)` traces `+ printf [\033]` there — a
+/// backslash and three digits. Routing slashy through `escapedChar` decoded an
+/// ESC byte and Fogell traced `+ printf []`, so the two engines ran DIFFERENT
+/// COMMANDS — the same defect FG-122 fixed for the quoted forms while leaving
+/// it standing here, because all four slashy call sites called `quoted "/"`.
+///
+/// The parenthesised call is what made this measurable at all: `sh /.../` with
+/// no parentheses is REFUSED by Jenkins at compile time, and the probe that used
+/// it proved nothing while looking like evidence.
+let private slashyQuoted: P<string> =
+    between (skipString "/") (skipString "/") (
+        manyStrings (
+            (skipChar '\\' >>. (anyChar |>> fun c -> if c = '/' then "/" else "\\" + string c))
+            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string)))
+
 /// As [escapedChar], but an escaped $ keeps its backslash.
 ///
 /// REVIEW FIX (Codex, PR #14 round 7): in a GString, "\$BUILD_NUMBER" is the
@@ -155,7 +180,7 @@ let stringLiteralWithKind: P<string * bool> =
               // REVIEW FIX (Codex, PR #14 round 5): a slashy string is a GString in
               // Groovy and DOES interpolate, so `IMAGE = /build-$BUILD_NUMBER/` must
               // expand. Only single-quoted forms are literal.
-              attempt (quoted "/" |>> fun s -> s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, true) ])
 
 /// Quote KIND without the NUL sentinel, for consumers that forward the value verbatim
 /// instead of interpolating it.
@@ -179,7 +204,7 @@ let stringLiteralWithKindBoth: P<string * string * bool> =
               attempt (tripleQuotedKeepingDollar "\"\"\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
               attempt (quoted "'" |>> fun s -> s, s, false)
               attempt (quotedKeepingDollar "\"" |>> fun s -> s.Replace("\u0000", "$"), s, true)
-              attempt (quoted "/" |>> fun s -> s, s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, s, true) ])
 
 let stringLiteralWithKindPlain: P<string * bool> =
     lexeme (
@@ -188,7 +213,7 @@ let stringLiteralWithKindPlain: P<string * bool> =
               attempt (tripleQuoted "\"\"\"" |>> fun s -> s, true)
               attempt (quoted "'" |>> fun s -> s, false)
               attempt (quoted "\"" |>> fun s -> s, true)
-              attempt (quoted "/" |>> fun s -> s, true) ])
+              attempt (slashyQuoted |>> fun s -> s, true) ])
 
 let stringLiteral: P<string> =
     lexeme (
@@ -197,7 +222,7 @@ let stringLiteral: P<string> =
               attempt (tripleQuoted "\"\"\"")
               attempt (quoted "'")
               attempt (quoted "\"")
-              attempt (quoted "/") ])
+              attempt slashyQuoted ])
 
 // --- balanced raw capture --------------------------------------------------
 
