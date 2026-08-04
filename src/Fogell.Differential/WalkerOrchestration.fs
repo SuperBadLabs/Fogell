@@ -535,6 +535,27 @@ module WalkerOrchestration =
                     // this branch had it.
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
+                | Some _, None when not (List.isEmpty stage.Post) ->
+                    // REFUSED, FG-137. UNPROVEN BY RECEIPT (FG-129: a refusal is
+                    // compile-shaped and cannot be sealed) — measured, not suspected:
+                    // Jenkins runs
+                    // a retried stage's `post` ONCE PER ATTEMPT. The probe traced
+                    //   jenkins: + echo tick / Retrying / + echo tick   (two ticks)
+                    //   fogell:  Retrying / + echo tick                 (one)
+                    // with the workspace hashes differing on `postticks.txt`, because
+                    // this wraps `runStageBody` alone while the stage `post` runs once
+                    // after the loop. Post side effects are notifications and
+                    // artifacts, so running them N-1 times too few is a real loss, not
+                    // a cosmetic one.
+                    //
+                    // Fixing it means moving the post invocation inside the attempt —
+                    // it currently sits after the loop with its own status and timeout
+                    // handling — which is a restructure this refusal buys time for.
+                    emit
+                        $"ERROR: stage \"{stage.Name}\" combines options {{ retry }} with a post block, which Jenkins runs once PER ATTEMPT and this engine runs once (FG-137) — refusing rather than under-running post side effects"
+
+                    body.Failed.Value <- true
+                    body.Sink BuildStatus.Failure
                 | Some _, None when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
                     // REFUSED COMBINATION, FG-136. `runWithRetry` gives each attempt a
                     // THROWAWAY status sink and publishes the attempt's status only
