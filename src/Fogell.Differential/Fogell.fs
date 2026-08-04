@@ -177,7 +177,10 @@ module FogellSide =
             //
             // HONOURED: the engine implements the semantics.
             let honouredOptions =
-                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast" ]
+                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast"
+                      // FG-053(b) implements these two; FG-053(a) refused them so
+                      // they could not run with the wrong semantics silently.
+                      "retry"; "skipStagesAfterUnstable" ]
 
             // INERT: retention and queueing policy with no observable effect on ONE
             // build, which is all a receipt can see. Accepted with the reason stated.
@@ -258,6 +261,11 @@ module FogellSide =
             let unknownOptionNames = refusedPipelineOptions |> List.distinct
 
             let stageScopeRefusals = refusedStageOptions |> List.distinct
+
+            // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
+            // scope), and read by PRESENCE — it takes no arguments.
+            let skipAfterUnstable =
+                pipeline.Options |> List.exists (fun o -> o.Name = "skipStagesAfterUnstable")
 
             let stageTimestamps =
                 pipeline.Stages
@@ -634,6 +642,21 @@ module FogellSide =
                     // else's problem.
                     if not compileRejected then
                         emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                elif skipAfterUnstable && runCtx.Status() = BuildStatus.Unstable then
+                    // FG-053(b). `options { skipStagesAfterUnstable() }` stops the
+                    // build at the first stage that went UNSTABLE, and says so with
+                    // its OWN sentence — not the failure one. MEASURED on Jenkins
+                    // 2.568.1 by running the same pipeline WITH and WITHOUT the
+                    // option, which is what makes it a measurement of the option
+                    // rather than of unstable handling generally:
+                    //   with:    Stage "three" skipped due to earlier stage(s) marking the build as unstable
+                    //   without: + echo three
+                    // Both end `unstable`, both run pipeline `post`. The skipped
+                    // stage's file is ABSENT from the workspace, so the hash checks
+                    // the skip happened rather than was merely announced.
+                    // Receipts: `options-skip-after-unstable`,
+                    // `options-unstable-runs-on` (the control).
+                    emit $"Stage \"{stage.Name}\" skipped due to earlier stage(s) marking the build as unstable"
                 else
                     runStage root workspace pipelineDeadline stage
 

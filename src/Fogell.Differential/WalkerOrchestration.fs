@@ -216,6 +216,11 @@ module WalkerOrchestration =
                 // a SUCCESS build. Bumping the build status from the failed attempt
                 // reported `failure` with an identical workspace — the work was
                 // right, the bookkeeping was not.
+                // Receipt: `retry-succeeds` (and `options-stage-retry` for the
+                // stage-option spelling of the same loop). The citation was on this
+                // claim before the extraction and did not travel with it — the
+                // audit caught the gap, which is the one thing a refactor most
+                // easily loses.
                 let attemptStatus = ref BuildStatus.Success
 
                 let attemptCtx =
@@ -572,6 +577,36 @@ module WalkerOrchestration =
             else
 
             match step.Name, step.Positional with
+            // FG-053(b). `unstable('msg')` marks the build UNSTABLE and CONTINUES —
+            // the stage's remaining steps and every later stage still run. MEASURED
+            // on Jenkins 2.568.1: it prints `WARNING: msg`, the build ends
+            // `unstable`, and with no `skipStagesAfterUnstable()` the following
+            // stage runs normally.
+            //
+            // Implemented here because `skipStagesAfterUnstable` CANNOT BE REACHED
+            // without it: this engine had no way to produce UNSTABLE from inside a
+            // pipeline at all — line 838 of Fogell.fs parses a trace RESULT STRING,
+            // and the existing `unstable { }` cases are POST CONDITIONS. Shipping
+            // the option against an unreachable state would have been a branch that
+            // looks implemented and cannot be exercised, which is the FG-129 shape.
+            // Receipt: `options-unstable-runs-on`.
+            | "unstable", _ ->
+                let rendered = renderStepArgs ctx stage step
+
+                // positional `unstable('msg')` or named `unstable(message: 'msg')`;
+                // both are valid Groovy for a one-parameter step, and refusing the
+                // named form is the mistake `ansiColor` already made once.
+                let msg =
+                    match rendered.Positional with
+                    | m :: _ -> m
+                    | [] ->
+                        rendered.Named
+                        |> List.tryPick (fun (n, v) -> if n = "message" then Some v else None)
+                        |> Option.defaultValue ""
+
+                emit $"WARNING: {msg}"
+                ctx.Sink BuildStatus.Unstable
+
             // JB-FAIL-001/002: timeout and abort share one interrupt path,
             // and the interrupt is a trappable SIGTERM with a grace window.
             | "timeout", _ when not (List.isEmpty step.Block) ->

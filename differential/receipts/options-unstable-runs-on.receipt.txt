@@ -1,7 +1,7 @@
-# Differential receipt — parallel-post-selection.Jenkinsfile
+# Differential receipt — options-unstable-runs-on.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         00072cec167d1a1a383e38bae0d9dad7211729bd0394902bc5a32c2707f5c86f
+seal:         1054300cbf46073d8989b546d9231aa5771f23eeb704d5924f9402a5a0a012a0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,32 +56,33 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | Failed in branch fails
-    | + echo fine
-    | + echo correct
+  result:         unstable
+  workspace-hash: 8c1ccd532ac0c7ff48ed259362df0bd549783a4df052bd6905d638d905113c61
+  output (5 lines):
+    | + echo one
+    | + echo u
+    | WARNING: flaky
+    | + echo three
+    | + echo post
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    2c8b08da5ce6  one.txt
+    8030404398e6  post.txt
+    f69369121844  three.txt
+    ea46748e171a  u.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  result:         unstable
+  workspace-hash: 8c1ccd532ac0c7ff48ed259362df0bd549783a4df052bd6905d638d905113c61
+  output (5 lines):
+    | + echo one
+    | + echo u
+    | WARNING: flaky
+    | + echo three
+    | + echo post
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    2c8b08da5ce6  one.txt
+    8030404398e6  post.txt
+    f69369121844  three.txt
+    ea46748e171a  u.txt
