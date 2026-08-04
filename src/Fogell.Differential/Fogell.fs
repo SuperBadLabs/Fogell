@@ -305,10 +305,19 @@ module FogellSide =
             // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
             // then fails at the step. Collapsing the two would have been wrong in one
             // direction or the other.
+            // RECURSIVELY, into wrapper bodies. Scanning `st.Steps` alone missed
+            // `timeout { sh '...'; unstable() }` — the body lives in `Step.Block` —
+            // so the refusal was bypassed, `before.txt` WAS created, and the comment
+            // below claiming "nothing runs, empty workspace" was false for exactly
+            // the shape a wrapper produces. Same top-level-only mistake as the
+            // options scan and `Parser.fs`'s first-vs-all, in a third place.
+            let rec flattenSteps (steps: Step list) =
+                steps |> List.collect (fun st -> st :: flattenSteps st.Block)
+
             let unstableArgError =
                 pipeline.Stages
                 |> Pipeline.flattenStages
-                |> List.collect (fun st -> st.Steps)
+                |> List.collect (fun st -> flattenSteps st.Steps)
                 |> List.filter (fun st -> st.Name = "unstable")
                 |> List.tryPick (fun st ->
                     let hasMessage =
