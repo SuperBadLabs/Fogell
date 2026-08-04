@@ -104,7 +104,22 @@ let private argList
             named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order
 
 let private stepBlock: P<Step list> =
-    between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
+    // SEMICOLONS separate statements in Groovy, and a step block may use them:
+    // `steps { sh 'a'; sh 'b' }` is ordinary Declarative that Jenkins runs.
+    //
+    // Without consuming them the failure was SILENT and total. `many` stopped at
+    // the `;`, `between` then demanded `}` and found `;`, so the whole
+    // `stepBlock` failed — and because the `steps` section is wrapped in
+    // `attempt`, that failure backtracked and the section was simply never
+    // picked. `Steps` defaulted to [], giving a stage with NO steps, no
+    // diagnostic, and a SUCCESSFUL build. Neither step ran and nothing said so.
+    // FG-134.
+    //
+    // Leading and trailing separators are allowed too — `{ ; sh 'a'; }` is legal
+    // Groovy and refusing it would trade one wrong answer for another.
+    let separators = skipMany (symbol ";")
+
+    between (symbol "{") (symbol "}") (ws >>. separators >>. many (attempt (stepParser .>> separators)))
 
 /// Whitespace WITHIN a line. Load-bearing: see the step parser below.
 let private hspaces: P<unit> = skipMany (anyOf " \t")

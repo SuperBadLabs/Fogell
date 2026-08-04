@@ -1,7 +1,7 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — steps-semicolon-separated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c6e03196683a1d34626dbd3a3f809ebd2b4f5522d34a8c36edeb3688953deb25
+seal:         05318058ea06a2d560bdcf05dc248ec6d90f4594b4d1c58884923667a64a44e2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,40 +56,31 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
+    | + echo a
+    | + echo b
+    | + echo c
+    | + echo d
+  workspace:
+    87428fc52280  a.txt
+    0263829989b6  b.txt
+    a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-quick
-    | + echo from-slow
-    | from-quick
-    | + sleep 1
-    | from-slow
-    | + sleep 45
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
+    | + echo a
+    | + echo b
+    | + echo c
+    | + echo d
+  workspace:
+    87428fc52280  a.txt
+    0263829989b6  b.txt
+    a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
