@@ -337,7 +337,10 @@ let main argv =
                 // any verdict is sealed. `dash` writes an `sh -x` trace line in more
                 // than one write(), so two stages of a shell pipeline interleave
                 // character-by-character (`+ ls out` + `+ wc -l` -> `+ + lswc -l out`).
-                // MEASURED: both engines do it — container dash 5/200 runs, local ~8% —
+                // Both engines do it — container dash 5/200 runs, local ~8%. UNPROVEN BY
+                // RECEIPT and it cannot be otherwise: this is a property of the SHELL,
+                // below the level a differential case can observe. Reproduced by
+                // scripts/measure-xtrace-race.sh, which is the evidence —
                 // so this is not a Fogell defect to repair but an unreliable ORACLE,
                 // and roughly one to two cases per 106-case suite were diverging on it.
                 //
