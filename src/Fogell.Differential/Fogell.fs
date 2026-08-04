@@ -167,6 +167,58 @@ module FogellSide =
             // engine would not announce. Refusing by name is this project's
             // stated direction for a construct it does not implement (FG-103),
             // and FG-120 carries the scoped enable/restore that would support it.
+            // FG-053. An option name Jenkins does not know is a COMPILE-TIME refusal,
+            // not something to ignore. Measured on Jenkins 2.568.1 with
+            // `options { notARealOption() }`: before this, jenkins=failure against
+            // fogell=success, because options here dispatch
+            // by name-filter (`o.Name = "timestamps"` and friends) and anything
+            // unmatched falls through silently. The engines disagreed about whether
+            // the Jenkinsfile was VALID, which is worse than a wrong value.
+            //
+            // THE LIST IS JENKINS' OWN, not a guess: its refusal enumerates every
+            // accepted type, which is exactly the evidence FG-126 says an allowlist
+            // needs before it is written — a hand-rolled one would refuse working
+            // pipelines to fix nothing.
+            //
+            // UNPROVEN BY RECEIPT, and it cannot currently be otherwise: a
+            // compile-rejected Jenkins build emits no `[Pipeline]` structure, so
+            // `Trace.isPreambleBanner` — deliberately gated on real structure, to
+            // stop a spoofed banner being dropped — leaves `Started by user ...`
+            // in Jenkins' normalised output while Fogell's is empty. Every
+            // compile-shaped refusal is unsealable for that reason, which is why
+            // FG-121 and FG-126 have no receipts either. FG-129 carries the gap.
+            // What IS sealed is the positive half: `options-accept-and-ignore`
+            // proves the four inert options are accepted, so this refusal is not
+            // blanket rejection. Terminal result and workspace now MATCH on the
+            // unknown-name script; only the banner line differs.
+            //
+            // CAVEAT, and why this is pinned rather than offered as general truth:
+            // the set is PLUGIN-DEPENDENT. `withAWS`, `podTemplate`, `dockerNode`
+            // and `throttle` come from installed plugins, so a differently
+            // provisioned Jenkins accepts a different list. This matches the lab's
+            // pinned 2.568.1, which every receipt in this suite is measured against.
+            let jenkinsKnownOptions =
+                set
+                    [ "ansiColor"; "buildDiscarder"; "catchError"; "checkoutToSubdirectory"
+                      "copyArtifactPermission"; "disableConcurrentBuilds"; "disableRestartFromStage"
+                      "disableResume"; "dockerNode"; "durabilityHint"; "githubProjectProperty"
+                      "lock"; "newContainerPerStage"; "overrideIndexTriggers"
+                      "parallelsAlwaysFailFast"; "podTemplate"; "preserveStashes"; "quietPeriod"
+                      "rateLimitBuilds"; "retry"; "script"; "skipDefaultCheckout"
+                      "skipStagesAfterUnstable"; "throttle"; "throttleJobProperty"; "timeout"
+                      "timestamps"; "waitUntil"; "warnError"; "withAWS"; "withBuildUser"
+                      "withChecks"; "withContext"; "withCredentials"; "withEnv"; "withKubeConfig"
+                      "withKubeCredentials"; "wrap"; "ws" ]
+
+            // Stage options too: Jenkins validates the name wherever the block
+            // appears, and the corpus carries stage-level `timeout` and `retry`.
+            let unknownOptionNames =
+                (pipeline.Options
+                 @ (pipeline.Stages |> Pipeline.flattenStages |> List.collect (fun st -> st.Options)))
+                |> List.map (fun o -> o.Name)
+                |> List.filter (fun n -> not (jenkinsKnownOptions.Contains n))
+                |> List.distinct
+
             let stageTimestamps =
                 pipeline.Stages
                 |> Pipeline.flattenStages
@@ -274,6 +326,12 @@ module FogellSide =
             // reproduced by the verifier with `timestamps(false)` and a
             // `post { always { sh ... } }`.
             let mutable compileRejected = false
+
+            if not (List.isEmpty unknownOptionNames) then
+                emit ("ERROR: pipeline declares unknown option type(s): " + String.concat ", " unknownOptionNames)
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
 
             if stageTimestamps then
                 emit
