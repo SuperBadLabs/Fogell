@@ -232,7 +232,8 @@ let main argv =
         // summary NAMES them with the divergence text that was seen: a receipt
         // sealed from a re-run must never imply the first run was clean, and a
         // recovery nobody is told about is indistinguishable from a passing case.
-        let recoveredCases = System.Collections.Generic.List<string * string list * int>()
+        let recoveredCases =
+            System.Collections.Generic.List<string * string list * int * int>()
 
         let receipts =
             files
@@ -269,13 +270,33 @@ let main argv =
                     | null
                     | "" -> ()
                     | template ->
+                        // FAILS CLOSED. `WaitForExit 30_000 |> ignore` swallowed both the
+                        // timeout and a nonzero exit — tolerable when this ran once as a
+                        // hygiene step, NOT once the retry loop made it load-bearing:
+                        // a silently failed wipe puts dirty Jenkins state against fresh
+                        // Fogell state, which is the divergence-manufacturing bug moving
+                        // the wipe into the loop was meant to prevent. On timeout the
+                        // process is also killed, or it would still be deleting the
+                        // workspace while the next attempt writes into it.
                         let psi = Diagnostics.ProcessStartInfo("/bin/sh")
                         psi.ArgumentList.Add "-c"
                         psi.ArgumentList.Add(template.Replace("{job}", job))
                         psi.RedirectStandardOutput <- true
                         psi.RedirectStandardError <- true
                         use p = Diagnostics.Process.Start psi
-                        p.WaitForExit 30_000 |> ignore
+
+                        if not (p.WaitForExit 30_000) then
+                            (try p.Kill true with _ -> ())
+
+                            failwith
+                                $"FOGELL_JENKINS_WIPE_CMD timed out after 30s for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state"
+
+                        if p.ExitCode <> 0 then
+                            let out = p.StandardOutput.ReadToEnd()
+                            let err = p.StandardError.ReadToEnd()
+
+                            failwith
+                                $"FOGELL_JENKINS_WIPE_CMD exited {p.ExitCode} for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state.\nstdout: {out}\nstderr: {err}"
 
                 // FG-052. A case whose FIRST LINE is `//// SCM JOB ////` runs as an
                 // SCM-DEFINED job: the sync script pushed its body to the fixture
@@ -416,13 +437,13 @@ let main argv =
                 // every sibling claim "this case DIVERGED" when a single build had —
                 // with nothing to say which. Provenance that misattributes is worse
                 // than none: it invents evidence against cases that were clean.
-                let divergencesByBuild (rs: Receipt list) =
+                let divergencesByBuild (attemptNo: int) (rs: Receipt list) =
                     rs
                     |> List.mapi (fun bi (r: Receipt) ->
                         match r.Verdict with
-                        | Diverged ds -> bi, ds |> List.map (fun d -> d.Describe)
-                        | _ -> bi, [])
-                    |> List.filter (fun (_, ds) -> not (List.isEmpty ds))
+                        | Diverged ds -> bi, (ds |> List.map (fun d -> d.Describe), attemptNo)
+                        | _ -> bi, ([], attemptNo))
+                    |> List.filter (fun (_, (ds, _)) -> not (List.isEmpty ds))
                     |> Map.ofList
 
                 // Two extra attempts. This does NOT prove a surviving divergence is
@@ -432,7 +453,7 @@ let main argv =
                 // real and fails closed, which is a decision rule, not a proof.
                 // (An earlier draft of this comment said "is not the trace race",
                 // which claimed more than the code delivers.)
-                let rec confirm attemptNo (firstSeen: Map<int, string list> option) =
+                let rec confirm attemptNo (firstSeen: Map<int, string list * int> option) =
                     let rs = buildReceipts ()
 
                     if anyDiverged rs && attemptNo < 2 then
@@ -449,7 +470,8 @@ let main argv =
                         // build that diverged only on attempt 2, and its receipt then
                         // sealed as an ordinary first-pass proof — the exact durable
                         // provenance this block exists to guarantee.
-                        let thisAttempt = divergencesByBuild rs
+                        // attemptNo counts COMPLETED attempts, so this run was +1.
+                        let thisAttempt = divergencesByBuild (attemptNo + 1) rs
 
                         let seen =
                             match firstSeen with
@@ -485,7 +507,7 @@ let main argv =
                         results
                         |> List.mapi (fun bi (r: Receipt) ->
                             match r.Verdict, Map.tryFind bi seenMap with
-                            | Proven, Some ds -> Some(bi, ds)
+                            | Proven, Some entry -> Some(bi, entry)
                             | _ -> None)
                         |> List.choose id
                         |> Map.ofList
@@ -496,10 +518,18 @@ let main argv =
                 // receipt that actually diverged carries the claim.
                 results
                 |> List.mapi (fun bi r ->
-                    let mine = defaultArg (Map.tryFind bi recovered) []
+                    let mine, firstAt =
+                        match Map.tryFind bi recovered with
+                        | Some(ds, at) -> ds, at
+                        | None -> [], 0
 
                     if not (List.isEmpty mine) then
-                        recoveredCases.Add(caseNameFor bi, mine, retries) |> ignore
+                        // The attempt THIS BUILD first diverged on, not the case's retry
+                        // count: in a sequence where build 1 diverges on attempt 1 and
+                        // build 2 first diverges on attempt 2, reporting both as a
+                        // "first run" divergence with the same re-run count is false
+                        // about the second.
+                        recoveredCases.Add(caseNameFor bi, mine, firstAt, retries + 1) |> ignore
 
                     { r with RecoveredFrom = mine })
                 |> List.mapi (fun bi r ->
@@ -556,8 +586,12 @@ let main argv =
             printfn "  CAUSE UNCLASSIFIED: the retry covers every divergence, not just the"
             printfn "  known trace race. The SAME case recovering repeatedly is a defect report:"
 
-            for (nm, seen, n) in recoveredCases do
-                printfn "  %s (clean after %d re-run%s); first run showed:" nm n (if n = 1 then "" else "s")
+            for (nm, seen, firstAt, total) in recoveredCases do
+                printfn
+                    "  %s — first diverged on attempt %d of %d, proven on the last; that attempt showed:"
+                    nm
+                    firstAt
+                    total
                 for d in seen do printfn "        %s" d
 
             printfn ""
