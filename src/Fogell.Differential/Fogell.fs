@@ -130,6 +130,35 @@ module FogellSide =
 
             let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
 
+            let ansiColorOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
+
+            // Jenkins' ansiColor step exposes ONE parameter, the colour map name.
+            // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
+            // argument silently dropped — the same fail-open shape the timestamps
+            // arg check closed, and every entry is validated for the same reason
+            // `tryFind` was wrong there.
+            // `ansiColor('xterm')` AND `ansiColor(colorMapName: 'xterm')` are both
+            // valid — the parameter has a name and Groovy lets it be passed
+            // either way. A positional-only check REFUSED the named form, which
+            // is worse than the fail-open it replaced: it rejects a Jenkinsfile
+            // Jenkins accepts.
+            let ansiColorMap (o: Step) =
+                match o.Positional, o.Named with
+                | [ m ], [] -> Some m
+                | [], [ ("colorMapName", m) ] -> Some m
+                | _ -> None
+
+            let ansiColorArgError =
+                if List.length ansiColorOptions > 1 then
+                    // Declarative rejects a repeated option at compile time; we
+                    // silently applied the first and ignored the rest.
+                    Some "the ansiColor option is declared more than once"
+                elif ansiColorOptions |> List.exists (fun o -> (ansiColorMap o).IsNone) then
+                    Some "the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
+                else
+                    None
+
             // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
             // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
             // enables the wrapper for the whole build or not at all, so honouring
@@ -254,6 +283,14 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
 
+            match ansiColorArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
             match timestampsArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
@@ -365,8 +402,27 @@ module FogellSide =
             // so a declared GIT_COMMIT overrides the wrapper (measured
             // semantics: declarations apply INSIDE the wrapper) and `when`
             // conditions see the wrapper values like any other env.
+            // FG-053. `ansiColor('<map>')` sets TERM to the map name for the
+            // scope it wraps. MEASURED, and it is the reason this option is NOT
+            // the inert accept-and-ignore an earlier commit here called it:
+            //   jenkins=+ echo TERM=[xterm]    fogell=+ echo TERM=[]
+            // Receipt: `options-ansicolor`.
+            // A case that checked only plain output passed while any pipeline
+            // reading TERM diverged.
+            //
+            // It joins the BASE layer beside the SCM wrapper values, for the
+            // same reason they are there: a declared `environment { TERM = ... }`
+            // must override it, because a declaration applies INSIDE the wrapper.
+            let ansiColorEnv =
+                match ansiColorOptions with
+                | [ o ] when ansiColorArgError.IsNone ->
+                    match ansiColorMap o with
+                    | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
+                    | None -> []
+                | _ -> []
+
             let envForWith =
-                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv) pipeline
+                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
 
 
 
