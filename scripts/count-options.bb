@@ -4,9 +4,17 @@
 ;; `rg -l` over-counts: the very first sampled file carries `//retry(3)`,
 ;; commented out, which a string search reports as a retry user.
 ;;
-;; Scans with a tiny lexer rather than regexes: strings, line comments and block
-;; comments are skipped, then `options` blocks are found by brace matching and
-;; their directives read off. A `stage {` seen at an enclosing depth marks the
+;; Scans with a tiny lexer rather than regexes: LINE AND BLOCK COMMENTS are
+;; skipped — strings are NOT, and this sentence said otherwise until a reviewer
+;; read it against the code. Blanking strings is what broke the first version:
+;; one unmatched apostrophe swallowed the rest of a file and 33 files with an
+;; options block were reported as 10.
+;;
+;; STATED CONSEQUENCE: an `options { ... }` block written INSIDE a Groovy string
+;; — a triple-quoted heredoc generating a Jenkinsfile, say — is counted as real.
+;; None appears in this corpus, and the adjacent-brace rule below makes a quoted
+;; bare word `options` harmless, but a genuine block in a string would land. Then
+;; `options` blocks are found by brace matching and their directives read off. A `stage {` seen at an enclosing depth marks the
 ;; block STAGE-LEVEL — which matters now that FG-120 refuses that form.
 (require '[babashka.fs :as fs] '[clojure.string :as str])
 
