@@ -230,11 +230,21 @@ module FogellSide =
             // because this engine reads none of them.
             let stageHonouredOptions = set [ "timeout" ]
 
+            // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
+            // generic list caught it first and reported "unknown option type(s):
+            // timestamps" — a name Jenkins knows, that this engine knows, and that
+            // is refused for a specific reason the reader is then denied. A
+            // diagnostic that misclassifies is worse than a vague one.
             let refusedStageOptions =
-                stageOptionNames |> List.filter (fun n -> not (stageHonouredOptions.Contains n))
+                stageOptionNames
+                |> List.filter (fun n -> not (stageHonouredOptions.Contains n) && n <> "timestamps")
 
-            let unknownOptionNames =
-                (refusedPipelineOptions @ refusedStageOptions) |> List.distinct
+            // TWO DISTINCT REFUSALS, kept apart because they mean different things:
+            // a name no scope accepts, versus a name that is fine elsewhere and not
+            // honoured HERE. Merging them let the second be announced as the first.
+            let unknownOptionNames = refusedPipelineOptions |> List.distinct
+
+            let stageScopeRefusals = refusedStageOptions |> List.distinct
 
             let stageTimestamps =
                 pipeline.Stages
@@ -346,6 +356,17 @@ module FogellSide =
 
             if not (List.isEmpty unknownOptionNames) then
                 emit ("ERROR: pipeline declares unknown option type(s): " + String.concat ", " unknownOptionNames)
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+
+            if not (List.isEmpty stageScopeRefusals) then
+                emit (
+                    "ERROR: stage options(s) not honoured at stage scope by this engine: "
+                    + String.concat ", " stageScopeRefusals
+                    + " — refusing rather than running them with the wrong semantics"
+                )
+
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
