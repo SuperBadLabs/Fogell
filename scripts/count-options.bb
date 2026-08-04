@@ -77,8 +77,11 @@
             (and (= c \s)
                  (str/starts-with? (subs s i (min n (+ i 5))) "stage")
                  (or (zero? i) (not (ident-char? (.charAt s (dec i)))))
-                 (let [r (str/triml (subs s (+ i 5) (min n (+ i 12))))]
-                   (or (str/starts-with? r "(") (str/starts-with? r "{"))))
+                 ;; skip ALL whitespace, not a 7-character window: `stage` and
+                 ;; its opener may be separated by a newline and indentation.
+                 (let [j (loop [k (+ i 5)]
+                           (if (and (< k n) (Character/isWhitespace (.charAt s k))) (recur (inc k)) k))]
+                   (and (< j n) (or (= \( (.charAt s j)) (= \{ (.charAt s j))))))
             (recur (inc i) depth (conj stage-depths (inc depth)) acc)
             (and (= c \o) (str/starts-with? (subs s i (min n (+ i 7))) "options")
                  (or (zero? i) (not (ident-char? (.charAt s (dec i))))))
@@ -112,10 +115,29 @@
                        s (scrub raw)]
                  [a b stage?] (options-blocks s)
                  ;; directive = the identifier opening a line inside the block
-                 d (->> (subs s a b)
-                        str/split-lines
-                        (keep #(second (re-find #"^\s*([A-Za-z][A-Za-z0-9_]*)" %)))
-                        distinct)]
+                 ;; TOP-LEVEL directives only, found by statement start rather
+                 ;; than by line start. A line-leading regex took the FIRST name
+                 ;; on a line — so `options { timestamps(); timeout(...) }` lost
+                 ;; the second — and counted continuation lines of a multiline
+                 ;; argument, so `buildDiscarder(logRotator(\n numToKeepStr: '5'))`
+                 ;; reported `numToKeepStr` as a directive. Depth-0 only.
+                 d (let [body (subs s a b)
+                         m (count body)]
+                     (loop [k 0, depth 0, start? true, acc []]
+                       (if (>= k m)
+                         (distinct acc)
+                         (let [c (.charAt body k)]
+                           (cond
+                             (= c \() (recur (inc k) (inc depth) false acc)
+                             (= c \)) (recur (inc k) (max 0 (dec depth)) false acc)
+                             (or (= c \newline) (= c \;) (= c \{) (= c \})) (recur (inc k) depth true acc)
+                             (Character/isWhitespace c) (recur (inc k) depth start? acc)
+                             (and start? (zero? depth) (Character/isLetter c))
+                             (let [e (loop [q k] (if (and (< q m) (or (Character/isLetterOrDigit (.charAt body q))
+                                                                     (= \_ (.charAt body q))))
+                                                   (recur (inc q)) q))]
+                               (recur e depth false (conj acc (subs body k e))))
+                             :else (recur (inc k) depth false acc))))))]
              {:file (fs/file-name f) :directive d :stage stage?})]
   (println (format "corpus files: %d   files with an options block: %d"
                    (count files) (count (distinct (map :file rows)))))

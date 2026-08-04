@@ -138,12 +138,24 @@ module FogellSide =
             // argument silently dropped — the same fail-open shape the timestamps
             // arg check closed, and every entry is validated for the same reason
             // `tryFind` was wrong there.
+            // `ansiColor('xterm')` AND `ansiColor(colorMapName: 'xterm')` are both
+            // valid — the parameter has a name and Groovy lets it be passed
+            // either way. A positional-only check REFUSED the named form, which
+            // is worse than the fail-open it replaced: it rejects a Jenkinsfile
+            // Jenkins accepts.
+            let ansiColorMap (o: Step) =
+                match o.Positional, o.Named with
+                | [ m ], [] -> Some m
+                | [], [ ("colorMapName", m) ] -> Some m
+                | _ -> None
+
             let ansiColorArgError =
-                if
-                    ansiColorOptions
-                    |> List.exists (fun o -> List.length o.Positional <> 1 || not (List.isEmpty o.Named))
-                then
-                    Some "the ansiColor(<colorMapName>) option takes exactly one argument"
+                if List.length ansiColorOptions > 1 then
+                    // Declarative rejects a repeated option at compile time; we
+                    // silently applied the first and ignored the rest.
+                    Some "the ansiColor option is declared more than once"
+                elif ansiColorOptions |> List.exists (fun o -> (ansiColorMap o).IsNone) then
+                    Some "the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
                 else
                     None
 
@@ -403,8 +415,10 @@ module FogellSide =
             // must override it, because a declaration applies INSIDE the wrapper.
             let ansiColorEnv =
                 match ansiColorOptions with
-                | o :: _ when ansiColorArgError.IsNone ->
-                    [ "TERM", o.Positional.Head.Trim().Trim('\'', '"') ]
+                | [ o ] when ansiColorArgError.IsNone ->
+                    match ansiColorMap o with
+                    | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
+                    | None -> []
                 | _ -> []
 
             let envForWith =
