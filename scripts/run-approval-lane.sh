@@ -307,6 +307,21 @@ printf 'approve' > "$F/approvals/$FID.decision"     # verdict only, no submitter
 sleep 3
 grep -q '^input-decision' "$F/build.journal" && { echo "FAIL: a fragment was accepted as an answer"; exit 1; }
 kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on a fragment"; cat "$F/run.log"; exit 1; }
+# THE VOCABULARY IS EXACT. `approved`/`rejected` were accepted by the parser while
+# this file's contract and every malformed-answer error said otherwise, and F
+# passed throughout because it only ever tried the spellings that happen to be
+# right — a scenario proves the contract it states only for the inputs it feeds.
+# FG-131.
+printf 'approved frank\n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q '^input-decision' "$F/build.journal" && {
+  echo "FAIL: 'approved' was accepted; the contract says exactly 'approve <who>'"; exit 1; }
+printf 'rejected frank\n' > "$F/approvals/$FID.decision"
+sleep 3
+grep -q '^input-decision' "$F/build.journal" && {
+  echo "FAIL: 'rejected' was accepted; the contract says exactly 'reject <who>'"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the build acted on an out-of-contract answer"; cat "$F/run.log"; exit 1; }
+
 # two complete lines — two approvers, or automation appending. Ambiguous is not
 # an answer: read with a two-field split it approved as "alice reject bob".
 printf 'approve alice\nreject bob\n' > "$F/approvals/$FID.decision"

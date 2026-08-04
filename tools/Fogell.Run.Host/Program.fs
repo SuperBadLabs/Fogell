@@ -412,10 +412,16 @@ let main argv =
             match body.Split([| ' '; '\t' |], 2, StringSplitOptions.RemoveEmptyEntries) with
             | [| v; w |] when w.Trim() <> "" ->
                 match v.Trim().ToLowerInvariant() with
-                | "approve"
-                | "approved" -> Some(Ok(true, w.Trim()))
-                | "reject"
-                | "rejected" -> Some(Ok(false, w.Trim()))
+                // EXACTLY `approve` / `reject`. The `approved` / `rejected` aliases
+                // were accepted here while the contract at the top of this file, and
+                // every malformed-answer error below, said the vocabulary was exact —
+                // so an out-of-contract answer was consumed and journaled, and
+                // approval-lane scenario F passed because it only ever tried the two
+                // spellings that happen to be right. A parser looser than its stated
+                // contract is a comment claiming more than its code. Nothing writes
+                // the aliases: no script, lane or test produced one. FG-131.
+                | "approve" -> Some(Ok(true, w.Trim()))
+                | "reject" -> Some(Ok(false, w.Trim()))
                 | _ -> Some(Error $"{path} does not say approve or reject (got {body.Length} chars)")
             | _ -> Some(Error $"{path} must say '<approve|reject> <who>' on one line (got {body.Length} chars)")
 

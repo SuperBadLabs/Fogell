@@ -167,6 +167,94 @@ module FogellSide =
             // engine would not announce. Refusing by name is this project's
             // stated direction for a construct it does not implement (FG-103),
             // and FG-120 carries the scoped enable/restore that would support it.
+            // FG-053. Options are classified in THREE ways, and the default is
+            // refusal. An earlier version of this allowlist held every name Jenkins
+            // accepts, which conflated "Jenkins knows this NAME" with "Fogell
+            // implements this BEHAVIOUR" — so `checkoutToSubdirectory('src')`, which
+            // moves the automatic checkout under a subdirectory, was accepted and
+            // silently ignored. That is the divergence this project refuses by name
+            // rather than commits quietly (FG-103). Caught by the pre-push verifier.
+            //
+            // HONOURED: the engine implements the semantics.
+            let honouredOptions =
+                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast" ]
+
+            // INERT: retention and queueing policy with no observable effect on ONE
+            // build, which is all a receipt can see. Accepted with the reason stated.
+            // Receipt: `options-accept-and-ignore`.
+            let inertOptions =
+                set [ "buildDiscarder"; "disableConcurrentBuilds"; "quietPeriod"; "rateLimitBuilds" ]
+
+            // Everything else Jenkins accepts is REFUSED, because accepting it would
+            // mean running a build whose semantics this engine does not reproduce.
+            // That includes `retry` and `skipStagesAfterUnstable`, which ARE in the
+            // corpus (2 and 1 files) — they move from "runs with the wrong semantics,
+            // silently" to "refused, loudly", which is the honest state until
+            // FG-053(b) implements them.
+            let supportedOptions = Set.union honouredOptions inertOptions
+
+            // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
+            // reason above: Jenkins enumerates a DIFFERENT valid set for a stage
+            // `options` block than for the pipeline one and refuses pipeline-only
+            // names there — `stage { options { buildDiscarder(...) } }` is
+            // jenkins=failure. Fogell refuses far more narrowly than that (only
+            // `timeout` survives at stage scope, see below), so an explicit
+            // pipeline-only SET is not needed to get the refusal right; it existed
+            // here, was read by nothing after the stage rule tightened, and is
+            // deleted rather than left as a binding that looks load-bearing.
+
+            let refusedPipelineOptions =
+                pipeline.Options
+                |> List.map (fun o -> o.Name)
+                |> List.filter (fun n -> not (supportedOptions.Contains n))
+                |> List.distinct
+
+            let stageOptionNames =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.collect (fun st -> st.Options |> List.map (fun o -> o.Name))
+                |> List.distinct
+
+            // HONOURED IS PER (NAME, SCOPE), NOT PER NAME. The previous version
+            // allowed any supported name at stage scope, but `ansiColor` is read
+            // ONLY from `pipeline.Options`, so `stage { options { ansiColor('xterm') } }`
+            // ran to success with TERM=dumb instead of xterm — silently, which is
+            // the whole failure mode this classification exists to stop. Same for
+            // `skipDefaultCheckout`, also read pipeline-only. Caught by the
+            // pre-push verifier, which built the scratch pipeline and read TERM.
+            //
+            // `timeout` is the ONLY option honoured at stage scope: the orchestrator
+            // calls `deadlineFromOptions stage.Options` (WalkerOrchestration). Stage
+            // `timestamps` is refused separately by FG-120. Everything else in a
+            // stage block is refused — including names Jenkins accepts there —
+            // because this engine reads none of them.
+            let stageHonouredOptions = set [ "timeout" ]
+
+            // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
+            // generic list caught it first and reported "unknown option type(s):
+            // timestamps" — a name Jenkins knows, that this engine knows, and that
+            // is refused for a specific reason the reader is then denied. A
+            // diagnostic that misclassifies is worse than a vague one.
+            let refusedStageOptions =
+                stageOptionNames
+                |> List.filter (fun n -> not (stageHonouredOptions.Contains n) && n <> "timestamps")
+
+            // Two refusal SITES, pipeline and stage — NOT two accurate categories,
+            // and an earlier comment here claimed they were. They are not: a
+            // pipeline `retry` is a name Jenkins knows and this engine does not
+            // implement, and it went out as "unknown"; a genuinely unknown name in a
+            // stage block went out as "not honoured at stage scope". Both refusals
+            // are CORRECT — the wording was what lied, in the commit that split them
+            // to stop exactly that.
+            //
+            // Both now say UNSUPPORTED, which is true of every case either list can
+            // hold. Telling unknown from known-but-unimplemented from wrong-scope
+            // needs the Jenkins-known set per scope, which is FG-133; claiming the
+            // distinction without making it is how this went wrong twice.
+            let unknownOptionNames = refusedPipelineOptions |> List.distinct
+
+            let stageScopeRefusals = refusedStageOptions |> List.distinct
+
             let stageTimestamps =
                 pipeline.Stages
                 |> Pipeline.flattenStages
@@ -227,6 +315,34 @@ module FogellSide =
 
             let mutable scmWrapperEnv: (string * string) list = []
 
+            // EVERY SCM case, BEFORE anything can set `root.Failed`. This is the
+            // lane's core invariant: the bytes this engine was handed must be the
+            // bytes the SCM serves, because Jenkins executes the latter.
+            //
+            // It lived inside `match scm with Some spec when not root.Failed.Value`,
+            // so the FG-053 option refusals — which set `root.Failed` above — made a
+            // refused SCM case skip verification entirely and seal against unverified
+            // bytes. The comment on this check already recorded it vanishing once
+            // before, "exactly when skipDefaultCheckout did"; guarding it on a
+            // failure flag is how it keeps happening. Unconditional now: a check that
+            // any later short-circuit can switch off is not fail-closed.
+            match scm with
+            | Some spec ->
+                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                // the subprocess reader trims trailing whitespace, so compare TRIMMED
+                // on both sides (a trailing newline is not a different script) with
+                // line endings normalised
+                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
+                    failwith (
+                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                    )
+                | Ok _ -> ()
+            | None -> ()
+
+
             match scm with
             | Some spec when not root.Failed.Value ->
                 // MEASURED only for `agent any` at pipeline level (receipt
@@ -275,6 +391,23 @@ module FogellSide =
             // `post { always { sh ... } }`.
             let mutable compileRejected = false
 
+            if not (List.isEmpty unknownOptionNames) then
+                emit ("ERROR: pipeline declares option(s) this engine does not support: " + String.concat ", " unknownOptionNames)
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+
+            if not (List.isEmpty stageScopeRefusals) then
+                emit (
+                    "ERROR: stage declares option(s) this engine does not support at stage scope: "
+                    + String.concat ", " stageScopeRefusals
+                    + " — refusing rather than running them with the wrong semantics"
+                )
+
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+
             if stageTimestamps then
                 emit
                     "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
@@ -309,24 +442,6 @@ module FogellSide =
                 // output and workspace agree — a divergence invented by the
                 // wrapper's placement rather than by either engine.
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
-
-                // The lane's core invariant, FAIL-CLOSED for EVERY SCM case
-                // (a check that rode along with the auto-checkout vanished
-                // exactly when skipDefaultCheckout did): the bytes this engine
-                // was handed must be the bytes the SCM serves, because Jenkins
-                // executes the latter. Read them from the SCM itself.
-                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
-                | Result.Error e ->
-                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
-                // the subprocess reader trims trailing whitespace, so compare
-                // TRIMMED on both sides (a trailing newline is not a different
-                // script) with line endings normalised
-                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
-                    failwith (
-                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                    )
-                | Ok _ -> ()
 
                 // `options { skipDefaultCheckout() }` suppresses the Declarative
                 // auto-checkout; the Obtained line still prints (the definition
@@ -467,6 +582,14 @@ module FogellSide =
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timeout option: {e}"
                 root.Failed.Value <- true
+                // COMPILE-shaped, like every other option refusal. This branch set
+                // `root.Failed` alone, and the pipeline `post` guard tests
+                // `compileRejected`, so `timeout(time: 1, unit: 'NOPE')` skipped the
+                // stage and then RAN `post { always { ... } }`, creating files for a
+                // Jenkinsfile Jenkins refuses to compile. FG-121 fixed precisely this
+                // for the timestamps and ansiColor refusals and this one was left
+                // behind — the same defect, in the same block, one branch down.
+                compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
 
@@ -497,7 +620,16 @@ module FogellSide =
                     // Jenkins names every stage it skips because of an earlier
                     // failure. Being quieter than Jenkins about why a stage did not
                     // run is the JB-DUR-005 defect in miniature, so we say it too.
-                    emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                    //
+                    // EXCEPT after a COMPILE rejection, where saying it is being
+                    // LOUDER than Jenkins: it refuses the model before any stage
+                    // exists to skip, so it emits no such line and this one is pure
+                    // invention. It was also half of the divergence on the
+                    // unknown-option case, which FG-129 recorded as entirely the
+                    // banner limit — a self-inflicted difference filed as somebody
+                    // else's problem.
+                    if not compileRejected then
+                        emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
                 else
                     runStage root workspace pipelineDeadline stage
 

@@ -497,7 +497,16 @@ stageRef.Value <-
                         | _ -> None))
                     Set.empty
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
-              Options = defaultArg (pick (function SecOptions o -> Some o | _ -> None)) []
+            // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
+            // second `options { }` block was invisible: `options { buildDiscarder(...) }`
+            // followed by `options { retry(2) }` parsed as the first alone, and the
+            // FG-053 refusal never saw the directive it exists to catch — Fogell ran
+            // a build Jenkins rejects. This is the same first-vs-all mistake this
+            // file already fixed one level down, where `tryFind` over the ENTRIES of
+            // one block accepted `timestamps(); timestamps(false)`; the section level
+            // kept it. Collecting them concatenated also preserves the duplicate for
+            // the arg validators, which is what makes the repeat detectable at all.
+              Options = sections |> List.collect (function SecOptions o -> o | _ -> [])
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []
@@ -581,7 +590,16 @@ let private pipelineParser: P<Pipeline> =
                         | _ -> None))
                     Set.empty
               Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
-              Options = defaultArg (pick (function TopOptions o -> Some o | _ -> None)) []
+            // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
+            // second `options { }` block was invisible: `options { buildDiscarder(...) }`
+            // followed by `options { retry(2) }` parsed as the first alone, and the
+            // FG-053 refusal never saw the directive it exists to catch — Fogell ran
+            // a build Jenkins rejects. This is the same first-vs-all mistake this
+            // file already fixed one level down, where `tryFind` over the ENTRIES of
+            // one block accepted `timestamps(); timestamps(false)`; the section level
+            // kept it. Collecting them concatenated also preserves the duplicate for
+            // the arg validators, which is what makes the repeat detectable at all.
+              Options = sections |> List.collect (function TopOptions o -> o | _ -> [])
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
               Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
               Stages = defaultArg (pick (function TopStages s -> Some s | _ -> None)) []
