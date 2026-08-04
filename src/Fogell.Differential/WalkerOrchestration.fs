@@ -493,6 +493,15 @@ module WalkerOrchestration =
                 // rediscover, including that a human REJECTION is not retried while a
                 // nested `timeout` abort IS.
                 // Receipts: `options-stage-retry`, `options-stage-retry-exhausted`.
+                // DURABILITY GAP, FG-135: persisted steps are keyed by
+                // (stage, index) with no attempt dimension, so a crash after a
+                // FAILED attempt journals `step-finished` for that step and a
+                // resumed build skips it as durably finished — printing `Retrying`
+                // without ever re-running it. Normal (non-resumed) execution is
+                // correct; only crash-resume mid-retry degrades. Shipped knowingly
+                // because the alternative is FG-053(a)'s outright refusal, under
+                // which these pipelines always failed — but it is a hole in a
+                // headline guarantee, not a rough edge.
                 match stage.Options |> List.tryFind (fun o -> o.Name = "retry") with
                 | Some o -> runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
                                 runStageBody attemptCtx cwd deadline stage)
