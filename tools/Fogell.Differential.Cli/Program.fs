@@ -285,6 +285,18 @@ let main argv =
                         psi.RedirectStandardError <- true
                         use p = Diagnostics.Process.Start psi
 
+                        // DRAIN BEFORE WAITING. Both streams are redirected, so a wipe
+                        // that writes more than a pipe buffer blocks in the child while
+                        // the parent waits — and the fail-closed timeout above then turns
+                        // a working command into an aborted suite. Reproduced by the
+                        // verifier with FOGELL_JENKINS_WIPE_CMD='yes | head -c 200000'.
+                        //
+                        // The deadlock predates the hardening; `|> ignore` merely hid it,
+                        // proceeding with an UNWIPED workspace instead. Making it loud was
+                        // right, but loud-and-wrong is still wrong.
+                        let outTask = p.StandardOutput.ReadToEndAsync()
+                        let errTask = p.StandardError.ReadToEndAsync()
+
                         if not (p.WaitForExit 30_000) then
                             (try p.Kill true with _ -> ())
 
@@ -292,8 +304,8 @@ let main argv =
                                 $"FOGELL_JENKINS_WIPE_CMD timed out after 30s for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state"
 
                         if p.ExitCode <> 0 then
-                            let out = p.StandardOutput.ReadToEnd()
-                            let err = p.StandardError.ReadToEnd()
+                            let out = try outTask.Result with _ -> "<unread>"
+                            let err = try errTask.Result with _ -> "<unread>"
 
                             failwith
                                 $"FOGELL_JENKINS_WIPE_CMD exited {p.ExitCode} for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state.\nstdout: {out}\nstderr: {err}"
