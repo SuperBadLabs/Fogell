@@ -493,15 +493,20 @@ module WalkerOrchestration =
                 // rediscover, including that a human REJECTION is not retried while a
                 // nested `timeout` abort IS.
                 // Receipts: `options-stage-retry`, `options-stage-retry-exhausted`.
-                // DURABILITY GAP, FG-135: persisted steps are keyed by
-                // (stage, index) with no attempt dimension, so a crash after a
-                // FAILED attempt journals `step-finished` for that step and a
-                // resumed build skips it as durably finished — printing `Retrying`
-                // without ever re-running it. Normal (non-resumed) execution is
-                // correct; only crash-resume mid-retry degrades. Shipped knowingly
-                // because the alternative is FG-053(a)'s outright refusal, under
-                // which these pipelines always failed — but it is a hole in a
-                // headline guarantee, not a rough edge.
+                // DURABILITY GAP, FG-135, and the guard below is what answers it.
+                // Persisted steps are keyed by (stage, index) with no attempt
+                // dimension, so WITHOUT that guard a crash after a FAILED attempt
+                // would journal `step-finished` for the step and a resumed build
+                // would skip it as durably finished — printing `Retrying` while
+                // never re-running it — and an `input` before it would share the
+                // identity (stage, index, occurrence) across attempts, letting an
+                // earlier approval be reused.
+                //
+                // An earlier version of this comment said the degraded durable path
+                // was "shipped knowingly". It is not: that judgement was reversed
+                // when the approval consequence surfaced, and this paragraph
+                // outlived it by one commit — describing behaviour the lines below
+                // now prevent.
                 match stage.Options |> List.tryFind (fun o -> o.Name = "retry"), persistence with
                 | Some _, Some _ ->
                     // FAILS CLOSED UNDER PERSISTENCE (FG-135). Steps are journaled as
