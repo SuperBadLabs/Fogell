@@ -23,10 +23,15 @@
 
    An earlier version also blanked string literals, and one unmatched quote — an
    apostrophe in prose — blanked the REST OF THE FILE, so 33 files with an
-   options block were reported as 10. Strings are left alone: they rarely
-   carry braces that break matching, and a directive is read from the start of a
-   line, where a string cannot be. `//` preceded by `:` is left alone too, so a
-   URL inside a string does not eat the line."
+   options block were reported as 10. Strings are therefore left alone, and the
+   cost is stated in the header rather than argued away here: a triple-quoted
+   Groovy string CAN carry a line-start `options { ... }`, and this scanner would
+   count it. None appears in this corpus. An earlier version of this docstring
+   claimed strings were safe because 'a directive is read from the start of a
+   line, where a string cannot be', which is simply false of a heredoc.
+
+   `//` preceded by `:` is left alone, so a URL inside a string does not eat the
+   line."
   [^String s]
   (let [n (count s) out (StringBuilder.)]
     (loop [i 0]
