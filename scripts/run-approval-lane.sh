@@ -836,6 +836,17 @@ JF
 "$HOST_BIN" "$Q/Jenkinsfile" "$Q/ws" gate "$Q/build.journal" "$Q/approvals" > "$Q/run1.log" 2>&1 &
 PID=$!
 QID=$(await_pending "$Q/approvals") || { echo "FAIL: no prompt published"; cat "$Q/run1.log"; exit 1; }
+# The gate must still be SHUT here. Marker counts alone prove the step RAN, not
+# that it WAITED: an engine that publishes the prompt and charges past it lands
+# exactly one `one` and one `two` and passes every check below. Scenario H makes
+# the same assertion at its second gate. The sleep gives a racing engine time to
+# reveal itself — without it this only rules out an engine that skips the wait
+# instantaneously. Raised by the pre-push verifier's model review on PR #36,
+# immediately after the marker counts closed the adjacent hole.
+sleep 2
+grep -q '^two$' "$Q/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the bounded gate ran before anyone answered it"; exit 1; }
+kill -0 "$PID" 2>/dev/null || { echo "FAIL: the host exited while the prompt was still pending"; exit 1; }
 printf 'approve quinn\n' > "$Q/approvals/$QID.decision"
 set +e; wait "$PID"; set -e
 grep -q 'completed: success' "$Q/run1.log" || { echo "FAIL: the bounded prompt did not complete"; cat "$Q/run1.log"; exit 1; }
