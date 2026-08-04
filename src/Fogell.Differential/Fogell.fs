@@ -314,10 +314,24 @@ module FogellSide =
             let rec flattenSteps (steps: Step list) =
                 steps |> List.collect (fun st -> st :: flattenSteps st.Block)
 
+            // EVERY step list a build can execute: stage steps, stage `post` arms,
+            // and pipeline `post` arms — `Post` is a SEPARATE FIELD from `Steps`, so
+            // a scan made recursive into `Step.Block` still missed
+            // `post { always { unstable() } }`, which ran the stage body and left
+            // workspace side effects before failing at runtime.
+            //
+            // Fourth variant of the same incompleteness on this branch: one section
+            // of many (`tryPick`), top-level stages only, `st.Steps` without
+            // `Step.Block`, and now steps without `post`. Each time the traversal
+            // covered the shape in front of me and the comment described all of them.
+            let postSteps (post: (PostCondition * Step list) list) =
+                post |> List.collect (fun (_, steps) -> flattenSteps steps)
+
             let unstableArgError =
-                pipeline.Stages
-                |> Pipeline.flattenStages
-                |> List.collect (fun st -> flattenSteps st.Steps)
+                (pipeline.Stages
+                 |> Pipeline.flattenStages
+                 |> List.collect (fun st -> flattenSteps st.Steps @ postSteps st.Post))
+                @ postSteps pipeline.Post
                 |> List.filter (fun st -> st.Name = "unstable")
                 |> List.tryPick (fun st ->
                     // ARITY is compile-shaped too, and I had inferred it was runtime.
