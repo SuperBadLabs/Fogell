@@ -51,6 +51,13 @@
 
             :else (do (.append out c) (recur (inc i)))))))))
 
+(defn- ident-char?
+  "A Groovy identifier character. `Character/isLetterOrDigit` alone treats `_`
+   and `$` as boundaries, so `my_stage('x') { options { retry(2) } }` was read as
+   a Declarative stage and reported a stage-level `retry` that is not one."
+  [^Character c]
+  (or (Character/isLetterOrDigit c) (= c \_) (= c \$)))
+
 (defn options-blocks
   "[[start end stage-level?] ...] for every `options { ... }` block."
   [^String s]
@@ -69,12 +76,12 @@
             ;; passed while unverified.
             (and (= c \s)
                  (str/starts-with? (subs s i (min n (+ i 5))) "stage")
-                 (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i)))))
+                 (or (zero? i) (not (ident-char? (.charAt s (dec i)))))
                  (let [r (str/triml (subs s (+ i 5) (min n (+ i 12))))]
                    (or (str/starts-with? r "(") (str/starts-with? r "{"))))
             (recur (inc i) depth (conj stage-depths (inc depth)) acc)
             (and (= c \o) (str/starts-with? (subs s i (min n (+ i 7))) "options")
-                 (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
+                 (or (zero? i) (not (ident-char? (.charAt s (dec i))))))
             ;; the brace must be the NEXT non-whitespace character. `index-of`
             ;; took the next `{` ANYWHERE, so a quoted `options` — scrub leaves
             ;; strings intact — started a block at some distant brace and swept

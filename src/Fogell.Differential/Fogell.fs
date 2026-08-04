@@ -130,6 +130,23 @@ module FogellSide =
 
             let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
 
+            let ansiColorOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
+
+            // Jenkins' ansiColor step exposes ONE parameter, the colour map name.
+            // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
+            // argument silently dropped — the same fail-open shape the timestamps
+            // arg check closed, and every entry is validated for the same reason
+            // `tryFind` was wrong there.
+            let ansiColorArgError =
+                if
+                    ansiColorOptions
+                    |> List.exists (fun o -> List.length o.Positional <> 1 || not (List.isEmpty o.Named))
+                then
+                    Some "the ansiColor(<colorMapName>) option takes exactly one argument"
+                else
+                    None
+
             // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
             // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
             // enables the wrapper for the whole build or not at all, so honouring
@@ -254,6 +271,14 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
 
+            match ansiColorArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
             match timestampsArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
@@ -377,12 +402,10 @@ module FogellSide =
             // same reason they are there: a declared `environment { TERM = ... }`
             // must override it, because a declaration applies INSIDE the wrapper.
             let ansiColorEnv =
-                match pipeline.Options |> List.tryFind (fun o -> o.Name = "ansiColor") with
-                | Some o ->
-                    match o.Positional with
-                    | m :: _ when m.Trim() <> "" -> [ "TERM", m.Trim().Trim('\'', '"') ]
-                    | _ -> []
-                | None -> []
+                match ansiColorOptions with
+                | o :: _ when ansiColorArgError.IsNone ->
+                    [ "TERM", o.Positional.Head.Trim().Trim('\'', '"') ]
+                | _ -> []
 
             let envForWith =
                 WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
