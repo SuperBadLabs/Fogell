@@ -279,6 +279,24 @@ module FogellSide =
             let skipStagesOptions =
                 pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
 
+            // FG-053(b). A stage `retry` with a missing or non-integer count is a
+            // COMPILE refusal, not a default. UNPROVEN BY RECEIPT for the FG-129
+            // reason — no compile-shaped refusal is sealable — and measured on
+            // Jenkins 2.568.1:
+            // `options { retry('nope') }` gives
+            // `Expecting "int" but got "nope" of type class java.lang.String`
+            // and jenkins=failure, where defaulting to one attempt ran the stage
+            // and reported fogell=success — an invalid Jenkinsfile performing side
+            // effects. Same shape as `timestampsArgError` beside it.
+            let stageRetryArgError =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.collect (fun st -> st.Options |> List.filter (fun o -> o.Name = "retry"))
+                |> List.tryPick (fun o ->
+                    match WalkerRules.retryCountOpt o with
+                    | Some _ -> None
+                    | None -> Some "the retry(<count>) option needs one positive integer count")
+
             let skipStagesArgError =
                 if
                     skipStagesOptions
@@ -454,6 +472,14 @@ module FogellSide =
             match ansiColorArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            match stageRetryArgError with
+            | Some e ->
+                emit $"ERROR: a stage declares an unusable retry option: {e}"
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
