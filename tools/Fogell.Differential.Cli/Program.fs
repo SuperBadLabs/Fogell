@@ -228,6 +228,13 @@ let main argv =
         // while keeping one; a collision is a configuration error, said so.
         let sealedPaths = System.Collections.Generic.HashSet<string>()
 
+        // FG-119. Cases that diverged and then did not reproduce. Held so the
+        // summary NAMES them with the divergence text that was seen: a receipt
+        // sealed from a re-run must never imply the first run was clean, and a
+        // recovery nobody is told about is indistinguishable from a passing case.
+        let recoveredCases =
+            System.Collections.Generic.List<string * string list * int * int>()
+
         let receipts =
             files
             |> List.collect (fun file ->
@@ -248,18 +255,60 @@ let main argv =
                     + Text.RegularExpressions.Regex.Replace(
                         Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
 
-                // wipe any stale workspace so a hash can only match on merit
-                match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
-                | null
-                | "" -> ()
-                | template ->
-                    let psi = Diagnostics.ProcessStartInfo("/bin/sh")
-                    psi.ArgumentList.Add "-c"
-                    psi.ArgumentList.Add(template.Replace("{job}", job))
-                    psi.RedirectStandardOutput <- true
-                    psi.RedirectStandardError <- true
-                    use p = Diagnostics.Process.Start psi
-                    p.WaitForExit 30_000 |> ignore
+                // Wipe any stale workspace so a hash can only match on merit.
+                //
+                // FG-119: this MUST run before EVERY attempt, not once per case.
+                // The retry loop re-runs a diverging case, and Fogell starts each
+                // attempt from a fresh workspace while Jenkins keeps its own — so a
+                // wipe hoisted out of the loop left attempts 2 and 3 comparing dirty
+                // Jenkins state against clean Fogell state, and could CONFIRM a
+                // divergence that the retry itself manufactured. That is the exact
+                // inverse of the flake the retry exists to remove, and it would have
+                // been indistinguishable from a real finding.
+                let wipeJenkinsWorkspace () =
+                    match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WIPE_CMD" with
+                    | null
+                    | "" -> ()
+                    | template ->
+                        // FAILS CLOSED. `WaitForExit 30_000 |> ignore` swallowed both the
+                        // timeout and a nonzero exit — tolerable when this ran once as a
+                        // hygiene step, NOT once the retry loop made it load-bearing:
+                        // a silently failed wipe puts dirty Jenkins state against fresh
+                        // Fogell state, which is the divergence-manufacturing bug moving
+                        // the wipe into the loop was meant to prevent. On timeout the
+                        // process is also killed, or it would still be deleting the
+                        // workspace while the next attempt writes into it.
+                        let psi = Diagnostics.ProcessStartInfo("/bin/sh")
+                        psi.ArgumentList.Add "-c"
+                        psi.ArgumentList.Add(template.Replace("{job}", job))
+                        psi.RedirectStandardOutput <- true
+                        psi.RedirectStandardError <- true
+                        use p = Diagnostics.Process.Start psi
+
+                        // DRAIN BEFORE WAITING. Both streams are redirected, so a wipe
+                        // that writes more than a pipe buffer blocks in the child while
+                        // the parent waits — and the fail-closed timeout above then turns
+                        // a working command into an aborted suite. Reproduced by the
+                        // verifier with FOGELL_JENKINS_WIPE_CMD='yes | head -c 200000'.
+                        //
+                        // The deadlock predates the hardening; `|> ignore` merely hid it,
+                        // proceeding with an UNWIPED workspace instead. Making it loud was
+                        // right, but loud-and-wrong is still wrong.
+                        let outTask = p.StandardOutput.ReadToEndAsync()
+                        let errTask = p.StandardError.ReadToEndAsync()
+
+                        if not (p.WaitForExit 30_000) then
+                            (try p.Kill true with _ -> ())
+
+                            failwith
+                                $"FOGELL_JENKINS_WIPE_CMD timed out after 30s for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state"
+
+                        if p.ExitCode <> 0 then
+                            let out = try outTask.Result with _ -> "<unread>"
+                            let err = try errTask.Result with _ -> "<unread>"
+
+                            failwith
+                                $"FOGELL_JENKINS_WIPE_CMD exited {p.ExitCode} for job {job}; a retry would compare dirty Jenkins state against fresh Fogell state.\nstdout: {out}\nstderr: {err}"
 
                 // FG-052. A case whose FIRST LINE is `//// SCM JOB ////` runs as an
                 // SCM-DEFINED job: the sync script pushed its body to the fixture
@@ -327,44 +376,176 @@ let main argv =
                     else
                         None
 
-                let jenkinsRuns, fogellRuns =
-                    if malformed then
-                        let e =
-                            Result.Error (
-                                if mixedTimestamps then
-                                    "unsupported sequence: some builds declare options { timestamps() } and others do not — Jenkins takes one config for the whole sequence, so the two engines could not be told the same thing"
-                                elif isScmCase then
-                                    "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
-                                else
-                                    "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
-                            )
-                        scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
-                    else
-                        match scmSpec with
-                        | Some spec ->
-                            Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
-                            [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
-                        | None ->
-                            Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
-                            FogellSide.runMany envReplacementsAll fogellRoot job scripts
+                // FG-119. A case is run, and if it DIVERGES it is run again before
+                // any verdict is sealed. `dash` writes an `sh -x` trace line in more
+                // than one write(), so two stages of a shell pipeline interleave
+                // character-by-character (`+ ls out` + `+ wc -l` -> `+ + lswc -l out`).
+                // Both engines do it — container dash 5/200 runs, local ~8%. UNPROVEN BY
+                // RECEIPT and it cannot be otherwise: this is a property of the SHELL,
+                // below the level a differential case can observe. Reproduced by
+                // scripts/measure-xtrace-race.sh, which is the evidence —
+                // so this is not a Fogell defect to repair but an unreliable ORACLE,
+                // and roughly one to two cases per 106-case suite were diverging on it.
+                //
+                // Confirmation by repetition, NOT relaxation. A pattern-match on
+                // 'looks interleaved' would also swallow a real divergence that happened
+                // to contain a mid-line `+ ` — and `+ echo a + b` is an ordinary trace.
+                // A divergence that reproduces is real and still fails; one that does
+                // not is reported RECOVERED with the original text, never silently.
+                let runBothEngines () =
+                    wipeJenkinsWorkspace ()
+
+                    let jenkinsRuns, fogellRuns =
+                        if malformed then
+                            let e =
+                                Result.Error (
+                                    if mixedTimestamps then
+                                        "unsupported sequence: some builds declare options { timestamps() } and others do not — Jenkins takes one config for the whole sequence, so the two engines could not be told the same thing"
+                                    elif isScmCase then
+                                        "malformed SCM case: empty body or //// NEXT BUILD //// separators (SCM sequences are not supported)"
+                                    else
+                                        "malformed sequence file: empty build segment around a //// NEXT BUILD //// separator"
+                                )
+                            scripts |> List.map (fun _ -> e), scripts |> List.map (fun _ -> e)
+                        else
+                            match scmSpec with
+                            | Some spec ->
+                                Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
+                                [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
+                            | None ->
+                                Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
+                                FogellSide.runMany envReplacementsAll fogellRoot job scripts
+
+                    jenkinsRuns, fogellRuns
 
                 let solo = List.length scripts = 1
 
-                List.zip jenkinsRuns fogellRuns
-                |> List.mapi (fun bi (jenkins, fogell) ->
-                    let caseName =
-                        if solo then
-                            name
-                        else
-                            // suffix inserted before the FINAL extension (never
-                            // string-Replace, which rewrites every occurrence and
-                            // no-ops on other extensions, sealing N builds over
-                            // one receipt)
-                            let stem = Path.GetFileNameWithoutExtension name
-                            let ext = Path.GetExtension name
-                            $"{stem}.b{bi + 1}{ext}"
+                let caseNameFor bi =
+                    if solo then
+                        name
+                    else
+                        // suffix inserted before the FINAL extension (never
+                        // string-Replace, which rewrites every occurrence and
+                        // no-ops on other extensions, sealing N builds over one receipt)
+                        let stem = Path.GetFileNameWithoutExtension name
+                        let ext = Path.GetExtension name
+                        $"{stem}.b{bi + 1}{ext}"
 
-                    let r = Compare.receipt caseName core envReplacementsAll jenkins fogell
+                let buildReceipts () =
+                    let jenkinsRuns, fogellRuns = runBothEngines ()
+
+                    List.zip jenkinsRuns fogellRuns
+                    |> List.mapi (fun bi (jenkins, fogell) ->
+                        Compare.receipt (caseNameFor bi) core envReplacementsAll jenkins fogell)
+
+                let anyDiverged rs =
+                    rs |> List.exists (fun (r: Receipt) ->
+                        match r.Verdict with
+                        | Diverged _ -> true
+                        | _ -> false)
+
+                // Keyed BY BUILD INDEX. A `//// NEXT BUILD ////` sequence seals one
+                // receipt per build, and stamping one flat list onto all of them made
+                // every sibling claim "this case DIVERGED" when a single build had —
+                // with nothing to say which. Provenance that misattributes is worse
+                // than none: it invents evidence against cases that were clean.
+                let divergencesByBuild (attemptNo: int) (rs: Receipt list) =
+                    rs
+                    |> List.mapi (fun bi (r: Receipt) ->
+                        match r.Verdict with
+                        | Diverged ds -> bi, (ds |> List.map (fun d -> d.Describe), attemptNo)
+                        | _ -> bi, ([], attemptNo))
+                    |> List.filter (fun (_, (ds, _)) -> not (List.isEmpty ds))
+                    |> Map.ofList
+
+                // Two extra attempts. This does NOT prove a surviving divergence is
+                // real — it reduces a p-per-run flake to p^3, so the measured 2-8%
+                // race becomes ~0.05% while a 50%-intermittent defect still passes
+                // 12.5% of the time. After three attempts the case is TREATED as
+                // real and fails closed, which is a decision rule, not a proof.
+                // (An earlier draft of this comment said "is not the trace race",
+                // which claimed more than the code delivers.)
+                let rec confirm attemptNo (firstSeen: Map<int, string list * int> option) =
+                    let rs = buildReceipts ()
+
+                    if anyDiverged rs && attemptNo < 2 then
+                        // Announced, not silent: a re-run that leaves no trace makes a
+                        // sealed receipt indistinguishable from a first-run pass, and it
+                        // is also the only evidence that this retry loop RAN at all.
+                        // attemptNo counts COMPLETED attempts, so the one about to run is +2.
+                        // Printing +1 renamed the attempt that just failed, which
+                        // defeats using this line to audit that the loop ran 3 times.
+                        printfn "  %-46s re-running (diverged, attempt %d of 3)" name (attemptNo + 2)
+
+                        // Accumulated across attempts, first-seen winning PER BUILD.
+                        // Freezing the whole map on the first diverging attempt lost a
+                        // build that diverged only on attempt 2, and its receipt then
+                        // sealed as an ordinary first-pass proof — the exact durable
+                        // provenance this block exists to guarantee.
+                        // attemptNo counts COMPLETED attempts, so this run was +1.
+                        let thisAttempt = divergencesByBuild (attemptNo + 1) rs
+
+                        let seen =
+                            match firstSeen with
+                            | None -> Some thisAttempt
+                            | Some f ->
+                                Some(
+                                    thisAttempt
+                                    |> Map.fold (fun acc bi ds -> if Map.containsKey bi acc then acc else Map.add bi ds acc) f
+                                )
+
+                        confirm (attemptNo + 1) seen
+                    else
+                        rs, firstSeen, attemptNo
+
+                let results, firstSeen, retries = confirm 0 None
+
+                // RECOVERED requires THIS build's re-run to actually PROVE it. "Not
+                // diverged" also admits NotComparable, and calling a non-comparable
+                // re-run "clean after 1 re-run" would be a false claim in the one place
+                // a reader looks to find out whether the evidence is sound.
+                //
+                // Decided PER RECEIPT. Gating on the whole case being proven cleared the
+                // map for every build when any sibling was still Diverged, so a build
+                // that diverged on attempt 1 and was proven on attempt 3 sealed as an
+                // ordinary first-attempt proof — destroying the per-build provenance
+                // added in the same round. Two of my own fixes cancelling each other.
+                let seenMap = defaultArg firstSeen Map.empty
+
+                let recovered =
+                    if retries = 0 then
+                        Map.empty
+                    else
+                        results
+                        |> List.mapi (fun bi (r: Receipt) ->
+                            match r.Verdict, Map.tryFind bi seenMap with
+                            | Proven, Some entry -> Some(bi, entry)
+                            | _ -> None)
+                        |> List.choose id
+                        |> Map.ofList
+
+                // Stamped into the RECEIPT, not just the console: the receipt is what
+                // gets committed and read later, and without this a re-run receipt is
+                // byte-identical to a first-attempt pass. Per build, so only the
+                // receipt that actually diverged carries the claim.
+                results
+                |> List.mapi (fun bi r ->
+                    let mine, firstAt =
+                        match Map.tryFind bi recovered with
+                        | Some(ds, at) -> ds, at
+                        | None -> [], 0
+
+                    if not (List.isEmpty mine) then
+                        // The attempt THIS BUILD first diverged on, not the case's retry
+                        // count: in a sequence where build 1 diverges on attempt 1 and
+                        // build 2 first diverges on attempt 2, reporting both as a
+                        // "first run" divergence with the same re-run count is false
+                        // about the second.
+                        recoveredCases.Add(caseNameFor bi, mine, firstAt, retries + 1) |> ignore
+
+                    { r with RecoveredFrom = mine })
+                |> List.mapi (fun bi r ->
+                    let caseName = caseNameFor bi
                     let path = Compare.seal receiptDir r
 
                     if not (sealedPaths.Add path) then
@@ -378,6 +559,11 @@ let main argv =
 
                     let verdict =
                         match r.Verdict with
+                        // Keyed on THIS receipt's stamp, not the sequence's retry count:
+                        // a sibling build that never diverged must not be labelled
+                        // recovered. Same mistake as the receipt stamp one round earlier,
+                        // fixed there and left here.
+                        | Proven when workspaceCompared && not (List.isEmpty r.RecoveredFrom) -> "PROVEN(recovered)"
                         | Proven when workspaceCompared -> "PROVEN"
                         | Proven -> "PROVEN-PARTIAL"
                         | Diverged ds -> $"DIVERGED({ds.Length})"
@@ -406,6 +592,22 @@ let main argv =
         let partial = receipts |> List.filter (fun r -> r.Verdict = Proven && not (isFull r)) |> List.length
 
         printfn ""
+        if recoveredCases.Count > 0 then
+            printfn ""
+            printfn "RECOVERED — diverged, then did not reproduce on re-run (FG-119 retry)."
+            printfn "  CAUSE UNCLASSIFIED: the retry covers every divergence, not just the"
+            printfn "  known trace race. The SAME case recovering repeatedly is a defect report:"
+
+            for (nm, seen, firstAt, total) in recoveredCases do
+                printfn
+                    "  %s — first diverged on attempt %d of %d, proven on the last; that attempt showed:"
+                    nm
+                    firstAt
+                    total
+                for d in seen do printfn "        %s" d
+
+            printfn ""
+
         printfn "tier-1 proven (incl. workspace): %d / %d" full receipts.Length
         printfn "proven-partial (result+output):  %d / %d" partial receipts.Length
 
