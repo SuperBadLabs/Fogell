@@ -56,6 +56,16 @@ type Receipt =
       /// byte-equal, listed per case so the relaxation is visible in the receipt
       /// that used it, never only in the rule's statement.
       FoldedOutputPairs: string list
+      /// FG-119. Divergences seen on EARLIER attempts of this case that did not
+      /// reproduce. Empty for a case proven on its first run.
+      ///
+      /// This lives in the RECEIPT and not only in the run's console output,
+      /// because the receipt is the artifact that gets committed and read months
+      /// later. Keeping recovery in the console alone left a re-run receipt
+      /// byte-identical to a first-attempt pass — which is precisely what the
+      /// retry logic's own comment promised would never happen. Caught by the
+      /// pre-push verifier's model review.
+      RecoveredFrom: string list
       /// Hash over the receipt's own comparable content, so a receipt cannot be
       /// edited after the fact without detection.
       Seal: string }
@@ -266,6 +276,11 @@ module Compare =
                else
                    [])
           FoldedOutputPairs = folds
+          // Deliberately NOT part of `comparable`, so the seal still hashes what
+          // the two engines produced. A case proven on attempt 1 and the same case
+          // proven on attempt 2 must seal identically — recovery is provenance
+          // about the RUN, not about the compared content.
+          RecoveredFrom = []
           Seal = sha256Text comparable }
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
@@ -284,6 +299,18 @@ module Compare =
             match r.Jenkins, r.Fogell with
             | Some j, Some f -> workspaceWasCompared j f
             | _ -> false
+
+        if not (List.isEmpty r.RecoveredFrom) then
+            line "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce."
+            line "  The verdict below is from a re-run. What the earlier attempt showed:"
+
+            for d in r.RecoveredFrom do
+                line $"    {d}"
+
+            line "  FG-119: `sh -x` over a shell pipeline interleaves on BOTH engines, so a"
+            line "  divergence is confirmed by repetition before it is believed. A case that"
+            line "  recovers REPEATEDLY across runs is a defect report, not noise."
+            line ""
 
         match r.Verdict with
         | Proven when workspaceCompared ->

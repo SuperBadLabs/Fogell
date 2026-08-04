@@ -406,8 +406,13 @@ let main argv =
                         | Diverged ds -> ds |> List.map (fun d -> d.Describe)
                         | _ -> [])
 
-                // Two extra attempts: a divergence surviving three independent runs is
-                // not the ~2-8%-per-run trace race.
+                // Two extra attempts. This does NOT prove a surviving divergence is
+                // real — it reduces a p-per-run flake to p^3, so the measured 2-8%
+                // race becomes ~0.05% while a 50%-intermittent defect still passes
+                // 12.5% of the time. After three attempts the case is TREATED as
+                // real and fails closed, which is a decision rule, not a proof.
+                // (An earlier draft of this comment said "is not the trace race",
+                // which claimed more than the code delivers.)
                 let rec confirm attemptNo (firstSeen: string list option) =
                     let rs = buildReceipts ()
 
@@ -428,10 +433,20 @@ let main argv =
 
                 let results, firstSeen, retries = confirm 0 None
 
-                if retries > 0 && not (anyDiverged results) then
-                    recoveredCases.Add(name, defaultArg firstSeen [], retries) |> ignore
+                let recovered =
+                    if retries > 0 && not (anyDiverged results) then
+                        defaultArg firstSeen []
+                    else
+                        []
 
+                if not (List.isEmpty recovered) then
+                    recoveredCases.Add(name, recovered, retries) |> ignore
+
+                // Stamped into the RECEIPT, not just the console: the receipt is what
+                // gets committed and read later, and without this a re-run receipt is
+                // byte-identical to a first-attempt pass.
                 results
+                |> List.map (fun r -> { r with RecoveredFrom = recovered })
                 |> List.mapi (fun bi r ->
                     let caseName = caseNameFor bi
                     let path = Compare.seal receiptDir r

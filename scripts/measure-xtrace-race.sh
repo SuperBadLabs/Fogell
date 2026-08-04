@@ -18,8 +18,21 @@
 set -uo pipefail
 
 N="${1:-200}"
-: "${FOGELL_JENKINS_HOST:=luigi}"
-: "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
+
+# The container arm is OPT-IN. It defaulted to luigi/jenkins-lab, which meant the
+# documented command with no environment set would copy files into and execute
+# inside the SHARED SINGLE-TENANT lab — the one the differential suite needs
+# exclusively, and which this very ticket exists because runs interfere with each
+# other. A measurement tool that perturbs the thing being measured is worse than
+# no tool. Raised by the pre-push verifier's model review.
+#
+#   FOGELL_RACE_CONTAINER_HOST=luigi FOGELL_RACE_CONTAINER=jenkins-lab \
+#     scripts/measure-xtrace-race.sh
+#
+# Run it only when the lab is idle. The local arms below need nothing and are
+# sufficient for the capture-mechanism question on their own.
+FOGELL_JENKINS_HOST="${FOGELL_RACE_CONTAINER_HOST:-}"
+FOGELL_JENKINS_CONTAINER="${FOGELL_RACE_CONTAINER:-}"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -54,6 +67,15 @@ echo "=== local host, $N iterations each ==="
 echo "  PIPE capture (what Fogell does): $(corrupt_rate pipe) corrupted runs"
 echo "  FILE capture (what Jenkins does): $(corrupt_rate file) corrupted runs"
 echo "  -> if these are close, the CAPTURE MECHANISM is not the cause."
+
+if [ -z "$FOGELL_JENKINS_HOST" ] || [ -z "$FOGELL_JENKINS_CONTAINER" ]; then
+  echo "=== container arm SKIPPED (opt-in) ==="
+  echo "  Set FOGELL_RACE_CONTAINER_HOST and FOGELL_RACE_CONTAINER to run it, and only"
+  echo "  while the differential lab is idle — it executes inside that container."
+  echo "  Without it the local arms above still answer the capture-mechanism question,"
+  echo "  but they say NOTHING about whether Jenkins is affected."
+  exit 0
+fi
 
 echo "=== ${FOGELL_JENKINS_CONTAINER} on ${FOGELL_JENKINS_HOST}, $N iterations ==="
 if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$FOGELL_JENKINS_HOST" true 2>/dev/null; then
