@@ -176,8 +176,17 @@ module FogellSide =
             // rather than commits quietly (FG-103). Caught by the pre-push verifier.
             //
             // HONOURED: the engine implements the semantics.
+            // PIPELINE scope. `retry` is deliberately ABSENT: FG-053(b) implements
+            // it for a STAGE's options only, and Jenkins' pipeline-level `retry`
+            // retries the WHOLE PIPELINE — a different feature this engine does not
+            // have. Listing it here accepted `options { retry(3) }` at pipeline
+            // scope and ran ONE attempt, silently, which is the name-vs-scope
+            // conflation PR #38 fixed for `ansiColor` and I reproduced in the very
+            // next ticket. The corpus has ZERO pipeline-level `retry` (measured:
+            // 0 pipeline / 2 stage), so refusing it costs nothing today.
             let honouredOptions =
-                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast" ]
+                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast"
+                      "skipStagesAfterUnstable" ]
 
             // INERT: retention and queueing policy with no observable effect on ONE
             // build, which is all a receipt can see. Accepted with the reason stated.
@@ -187,10 +196,11 @@ module FogellSide =
 
             // Everything else Jenkins accepts is REFUSED, because accepting it would
             // mean running a build whose semantics this engine does not reproduce.
-            // That includes `retry` and `skipStagesAfterUnstable`, which ARE in the
-            // corpus (2 and 1 files) — they move from "runs with the wrong semantics,
-            // silently" to "refused, loudly", which is the honest state until
-            // FG-053(b) implements them.
+            // FG-053(b) has since implemented `skipStagesAfterUnstable` (pipeline
+            // scope) and `retry` (STAGE scope only — Jenkins' pipeline-level `retry`
+            // retries the whole pipeline, which this engine does not do), so both
+            // have moved out of this set. What remains refused is everything Jenkins
+            // accepts whose semantics are not reproduced here.
             let supportedOptions = Set.union honouredOptions inertOptions
 
             // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
@@ -223,12 +233,17 @@ module FogellSide =
             // `skipDefaultCheckout`, also read pipeline-only. Caught by the
             // pre-push verifier, which built the scratch pipeline and read TERM.
             //
-            // `timeout` is the ONLY option honoured at stage scope: the orchestrator
-            // calls `deadlineFromOptions stage.Options` (WalkerOrchestration). Stage
-            // `timestamps` is refused separately by FG-120. Everything else in a
-            // stage block is refused — including names Jenkins accepts there —
+            // `timeout` and `retry` are the options honoured at stage scope: the
+            // orchestrator calls `deadlineFromOptions stage.Options` for the first
+            // and `runWithRetry` over `runStageBody` for the second (FG-053(b)).
+            // Stage `timestamps` is refused separately by FG-120. Everything else in
+            // a stage block is refused — including names Jenkins accepts there —
             // because this engine reads none of them.
-            let stageHonouredOptions = set [ "timeout" ]
+            // `retry` joins `timeout` here now that FG-053(b) implements it: the
+            // stage's steps run through the shared retry loop. It was refused by
+            // FG-053(a) precisely so it could not run with the wrong semantics
+            // silently, and that refusal is what this ticket lifts.
+            let stageHonouredOptions = set [ "timeout"; "retry" ]
 
             // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
             // generic list caught it first and reported "unknown option type(s):
@@ -254,6 +269,97 @@ module FogellSide =
             let unknownOptionNames = refusedPipelineOptions |> List.distinct
 
             let stageScopeRefusals = refusedStageOptions |> List.distinct
+
+            // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
+            // scope). ZERO-ARGUMENT: reading it by mere presence meant
+            // `skipStagesAfterUnstable(false)` ENABLED the skip — the option saying
+            // the opposite of what it does. That is the `parallelsAlwaysFailFast(false)`
+            // defect I filed as FG-130 and then reproduced here in the same session;
+            // an argument-bearing form is refused rather than guessed at.
+            let skipStagesOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
+
+            // FG-053(b). A stage `retry` with a missing or non-integer count is a
+            // COMPILE refusal, not a default. UNPROVEN BY RECEIPT for the FG-129
+            // reason — no compile-shaped refusal is sealable — and measured on
+            // Jenkins 2.568.1:
+            // `options { retry('nope') }` gives
+            // `Expecting "int" but got "nope" of type class java.lang.String`
+            // and jenkins=failure, where defaulting to one attempt ran the stage
+            // and reported fogell=success — an invalid Jenkinsfile performing side
+            // effects. Same shape as `timestampsArgError` beside it.
+            let stageRetryArgError =
+                pipeline.Stages
+                |> Pipeline.flattenStages
+                |> List.collect (fun st -> st.Options |> List.filter (fun o -> o.Name = "retry"))
+                |> List.tryPick (fun o ->
+                    match WalkerRules.retryCountOpt o with
+                    | Some _ -> None
+                    | None -> Some "the retry(<count>) option needs one positive integer count")
+
+            // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
+            // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
+            // runs, empty workspace. UNPROVEN BY RECEIPT (FG-129).
+            //
+            // A BLANK message is different and is handled at the STEP, not here:
+            // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
+            // then fails at the step. Collapsing the two would have been wrong in one
+            // direction or the other.
+            // RECURSIVELY, into wrapper bodies. Scanning `st.Steps` alone missed
+            // `timeout { sh '...'; unstable() }` — the body lives in `Step.Block` —
+            // so the refusal was bypassed, `before.txt` WAS created, and the comment
+            // below claiming "nothing runs, empty workspace" was false for exactly
+            // the shape a wrapper produces. Same top-level-only mistake as the
+            // options scan and `Parser.fs`'s first-vs-all, in a third place.
+            let rec flattenSteps (steps: Step list) =
+                steps |> List.collect (fun st -> st :: flattenSteps st.Block)
+
+            // EVERY step list a build can execute: stage steps, stage `post` arms,
+            // and pipeline `post` arms — `Post` is a SEPARATE FIELD from `Steps`, so
+            // a scan made recursive into `Step.Block` still missed
+            // `post { always { unstable() } }`, which ran the stage body and left
+            // workspace side effects before failing at runtime.
+            //
+            // Fourth variant of the same incompleteness on this branch: one section
+            // of many (`tryPick`), top-level stages only, `st.Steps` without
+            // `Step.Block`, and now steps without `post`. Each time the traversal
+            // covered the shape in front of me and the comment described all of them.
+            let postSteps (post: (PostCondition * Step list) list) =
+                post |> List.collect (fun (_, steps) -> flattenSteps steps)
+
+            let unstableArgError =
+                (pipeline.Stages
+                 |> Pipeline.flattenStages
+                 |> List.collect (fun st -> flattenSteps st.Steps @ postSteps st.Post))
+                @ postSteps pipeline.Post
+                |> List.filter (fun st -> st.Name = "unstable")
+                |> List.tryPick (fun st ->
+                    // ARITY is compile-shaped too, and I had inferred it was runtime.
+                    // UNPROVEN BY RECEIPT (FG-129: no compile-shaped refusal is
+                    // sealable), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
+                    // `Arguments to "unstable" must be explicitly named.` with an
+                    // EMPTY workspace, where routing it through the blank-message
+                    // runtime path had already run the preceding step. Three
+                    // outcomes, not two:
+                    //   no message      -> compile refusal (Missing required parameter)
+                    //   extra arguments -> compile refusal (must be explicitly named)
+                    //   blank message   -> COMPILES, prior steps run, then throws
+                    match st.Positional, st.Named with
+                    | [ _ ], [] -> None
+                    | [], [ ("message", _) ] -> None
+                    | [], [] -> Some "the unstable step requires a message"
+                    | _ -> Some "the unstable step takes exactly one message argument")
+
+            let skipStagesArgError =
+                if
+                    skipStagesOptions
+                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                then
+                    Some "the skipStagesAfterUnstable() option takes no arguments"
+                else
+                    None
+
+            let skipAfterUnstable = not (List.isEmpty skipStagesOptions) && skipStagesArgError.IsNone
 
             let stageTimestamps =
                 pipeline.Stages
@@ -424,6 +530,30 @@ module FogellSide =
                 bump BuildStatus.Failure
             | None -> ()
 
+            match unstableArgError with
+            | Some e ->
+                emit $"ERROR: a stage declares an unusable unstable step: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            match stageRetryArgError with
+            | Some e ->
+                emit $"ERROR: a stage declares an unusable retry option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            match skipStagesArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable skipStagesAfterUnstable option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
             match timestampsArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
@@ -566,6 +696,7 @@ module FogellSide =
                       RunStepInner = runStepInner
                       EvalWhen = evalWhen
                       AlwaysFailFast = alwaysFailFast
+                      SkipStagesAfterUnstable = skipAfterUnstable
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
@@ -630,6 +761,21 @@ module FogellSide =
                     // else's problem.
                     if not compileRejected then
                         emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                elif skipAfterUnstable && runCtx.Status() = BuildStatus.Unstable then
+                    // FG-053(b). `options { skipStagesAfterUnstable() }` stops the
+                    // build at the first stage that went UNSTABLE, and says so with
+                    // its OWN sentence — not the failure one. MEASURED on Jenkins
+                    // 2.568.1 by running the same pipeline WITH and WITHOUT the
+                    // option, which is what makes it a measurement of the option
+                    // rather than of unstable handling generally:
+                    //   with:    Stage "three" skipped due to earlier stage(s) marking the build as unstable
+                    //   without: + echo three
+                    // Both end `unstable`, both run pipeline `post`. The skipped
+                    // stage's file is ABSENT from the workspace, so the hash checks
+                    // the skip happened rather than was merely announced.
+                    // Receipts: `options-skip-after-unstable`,
+                    // `options-unstable-runs-on` (the control).
+                    emit $"Stage \"{stage.Name}\" skipped due to earlier stage(s) marking the build as unstable"
                 else
                     runStage root workspace pipelineDeadline stage
 

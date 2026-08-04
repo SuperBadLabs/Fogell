@@ -1,7 +1,7 @@
-# Differential receipt — parallel-post-selection.Jenkinsfile
+# Differential receipt — options-skip-after-unstable-nested.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         297fb54899e19a8f04a8236d32d7294ccc2f83ecbfcb8d8c08dba221ee6660a1
+seal:         d8308cf2153b65d76665ecb2761a35bce73f34e9aaaf9b9557b831b40ca8aca7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,32 +56,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+  result:         unstable
+  workspace-hash: 034a3f8385a1376ed4df9f60deac606eb7cf955867767382f796aca030ec3768
   output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+    | + echo n1
+    | WARNING: flaky
+    | Stage "n2" skipped due to earlier stage(s) marking the build as unstable
+    | Stage "after" skipped due to earlier stage(s) marking the build as unstable
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    2cf0ed7c6896  n1.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
+  result:         unstable
+  workspace-hash: 034a3f8385a1376ed4df9f60deac606eb7cf955867767382f796aca030ec3768
   output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+    | + echo n1
+    | WARNING: flaky
+    | Stage "n2" skipped due to earlier stage(s) marking the build as unstable
+    | Stage "after" skipped due to earlier stage(s) marking the build as unstable
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    2cf0ed7c6896  n1.txt

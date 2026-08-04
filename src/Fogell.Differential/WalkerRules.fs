@@ -147,6 +147,34 @@ module WalkerRules =
         | Some _, None -> Error $"unknown timeout unit '{unit}'"
         | None, _ -> Error "timeout has no numeric time value"
 
+    /// The count a `retry` carries, or None when it is missing, not an integer,
+    /// not positive, or accompanied by ANY other argument — the doc said only
+    /// "missing or not an integer" after the arity check was added to the body.
+    ///
+    /// FG-053(b). Separate from [retryCount] because a STAGE OPTION must be able to
+    /// REFUSE a malformed count: `options { retry('nope') }` is refused by Jenkins
+    /// at compile time (`Expecting "int" but got "nope"`), where falling back to a
+    /// default ran the stage and reported SUCCESS — an invalid Jenkinsfile
+    /// performing side effects. The step spelling keeps its default; only the
+    /// option validates, because that is where the measurement is.
+    let retryCountOpt (step: Step) : int option =
+        // EXACT ARITY, not "a count can be found somewhere in here". Reading the
+        // named `count` or the FIRST positional and ignoring the rest accepted
+        // `retry(2, 3)` and `retry(count: 2, bogus: true)` — discarding arguments
+        // and running the stage, while the diagnostic claimed it required "one
+        // positive integer count". Mirrors `ansiColorMap`, which allows exactly the
+        // positional and named spellings of its one parameter and nothing else.
+        let value =
+            match step.Positional, step.Named with
+            | [ v ], [] -> Some v
+            | [], [ ("count", v) ] -> Some v
+            | _ -> None
+
+        value
+        |> Option.bind (fun v -> match Int32.TryParse(v.Trim()) with
+                                 | true, n when n > 0 -> Some n
+                                 | _ -> None)
+
     let retryCount (step: Step) =
         step.Named
         |> List.tryPick (fun (k, v) -> if k = "count" then Some v else None)
