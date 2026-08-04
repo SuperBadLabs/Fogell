@@ -530,6 +530,26 @@ module WalkerOrchestration =
 
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
+                | Some _, None when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
+                    // REFUSED COMBINATION, FG-136. `runWithRetry` gives each attempt a
+                    // THROWAWAY status sink and publishes the attempt's status only
+                    // after the body returns, so while a retried stage is running
+                    // `runCtx.Status()` is still Success. The nested skip below reads
+                    // that global status — so a nested child going unstable inside a
+                    // retried parent would NOT skip its sibling, silently diverging
+                    // from the behaviour `options-skip-after-unstable-nested`
+                    // measured.
+                    //
+                    // Neither receipt catches it: they cover nested skip and stage
+                    // retry separately, and the composed shape has no case. Refusing
+                    // rather than threading an attempt-local status accessor through
+                    // `BranchCtx` on a guess — the fix wants its own measurement and
+                    // a composed receipt, which is FG-136.
+                    emit
+                        $"ERROR: stage \"{stage.Name}\" combines options {{ retry }} with nested stages under skipStagesAfterUnstable, whose interaction this engine does not model yet (FG-136) — refusing rather than skipping the wrong stage"
+
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
                 | Some o, None ->
                     runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
                         runStageBody attemptCtx cwd deadline stage)
