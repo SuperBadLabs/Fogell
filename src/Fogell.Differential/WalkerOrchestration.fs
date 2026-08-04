@@ -128,6 +128,16 @@ type OrchestrationDeps =
       RunStepInner: BranchCtx -> Stage -> string -> Step -> Deadline option -> unit
       EvalWhen: Stage -> WhenCondition -> bool option
       AlwaysFailFast: bool
+      /// FG-053(b). `options { skipStagesAfterUnstable() }`. Needed HERE and
+      /// not only in the pipeline's own stage loop: nested sequential stages
+      /// run through `runStage` from inside this module, and enforcing the
+      /// policy only at top level let a nested sibling run after its
+      /// predecessor went unstable. MEASURED on Jenkins 2.568.1 — it skips
+      /// the nested sibling AND the following top-level stage, with the same
+      /// sentence for both.
+      /// Receipt: `options-skip-after-unstable-nested` (and
+      /// `options-skip-after-unstable` for the top-level spelling).
+      SkipStagesAfterUnstable: bool
       WorkspaceRoot: string
       ArtifactRoot: string
       JobName: string
@@ -174,6 +184,7 @@ module WalkerOrchestration =
         let runStepInner = deps.RunStepInner
         let evalWhen = deps.EvalWhen
         let alwaysFailFast = deps.AlwaysFailFast
+        let skipStagesAfterUnstable = deps.SkipStagesAfterUnstable
         let workspaceRoot = deps.WorkspaceRoot
         let artifactRoot = deps.ArtifactRoot
         let jobName = deps.JobName
@@ -1675,7 +1686,11 @@ module WalkerOrchestration =
                         ctx.Failed.Value <- true
                 else
                     for nested in stage.Nested do
-                        runStage ctx cwd deadline nested
+                        if skipStagesAfterUnstable && runCtx.Status() = BuildStatus.Unstable then
+                            emit
+                                $"Stage \"{nested.Name}\" skipped due to earlier stage(s) marking the build as unstable"
+                        else
+                            runStage ctx cwd deadline nested
 
                 // the group-commit boundary — AFTER nested/parallel content, so
                 // "everything before it is durable" is actually true of it, and

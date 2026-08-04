@@ -196,10 +196,11 @@ module FogellSide =
 
             // Everything else Jenkins accepts is REFUSED, because accepting it would
             // mean running a build whose semantics this engine does not reproduce.
-            // That includes `retry` and `skipStagesAfterUnstable`, which ARE in the
-            // corpus (2 and 1 files) — they move from "runs with the wrong semantics,
-            // silently" to "refused, loudly", which is the honest state until
-            // FG-053(b) implements them.
+            // FG-053(b) has since implemented `skipStagesAfterUnstable` (pipeline
+            // scope) and `retry` (STAGE scope only — Jenkins' pipeline-level `retry`
+            // retries the whole pipeline, which this engine does not do), so both
+            // have moved out of this set. What remains refused is everything Jenkins
+            // accepts whose semantics are not reproduced here.
             let supportedOptions = Set.union honouredOptions inertOptions
 
             // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
@@ -232,10 +233,11 @@ module FogellSide =
             // `skipDefaultCheckout`, also read pipeline-only. Caught by the
             // pre-push verifier, which built the scratch pipeline and read TERM.
             //
-            // `timeout` is the ONLY option honoured at stage scope: the orchestrator
-            // calls `deadlineFromOptions stage.Options` (WalkerOrchestration). Stage
-            // `timestamps` is refused separately by FG-120. Everything else in a
-            // stage block is refused — including names Jenkins accepts there —
+            // `timeout` and `retry` are the options honoured at stage scope: the
+            // orchestrator calls `deadlineFromOptions stage.Options` for the first
+            // and `runWithRetry` over `runStageBody` for the second (FG-053(b)).
+            // Stage `timestamps` is refused separately by FG-120. Everything else in
+            // a stage block is refused — including names Jenkins accepts there —
             // because this engine reads none of them.
             // `retry` joins `timeout` here now that FG-053(b) implements it: the
             // stage's steps run through the shared retry loop. It was refused by
@@ -607,6 +609,7 @@ module FogellSide =
                       RunStepInner = runStepInner
                       EvalWhen = evalWhen
                       AlwaysFailFast = alwaysFailFast
+                      SkipStagesAfterUnstable = skipAfterUnstable
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName

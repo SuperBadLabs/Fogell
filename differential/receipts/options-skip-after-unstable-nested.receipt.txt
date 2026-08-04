@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — options-skip-after-unstable-nested.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f92727c551292968c4176176a4f09d3e2ac8c5c16c1942d24a26fe78b889969a
+seal:         d8308cf2153b65d76665ecb2761a35bce73f34e9aaaf9b9557b831b40ca8aca7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,34 +56,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         unstable
+  workspace-hash: 034a3f8385a1376ed4df9f60deac606eb7cf955867767382f796aca030ec3768
+  output (4 lines):
+    | + echo n1
+    | WARNING: flaky
+    | Stage "n2" skipped due to earlier stage(s) marking the build as unstable
+    | Stage "after" skipped due to earlier stage(s) marking the build as unstable
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    2cf0ed7c6896  n1.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + sleep 6
-    | + exit 3
-    | Failed in branch quick-fail
-    | + echo done
+  result:         unstable
+  workspace-hash: 034a3f8385a1376ed4df9f60deac606eb7cf955867767382f796aca030ec3768
+  output (4 lines):
+    | + echo n1
+    | WARNING: flaky
+    | Stage "n2" skipped due to earlier stage(s) marking the build as unstable
+    | Stage "after" skipped due to earlier stage(s) marking the build as unstable
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    2cf0ed7c6896  n1.txt
