@@ -502,10 +502,33 @@ module WalkerOrchestration =
                 // because the alternative is FG-053(a)'s outright refusal, under
                 // which these pipelines always failed — but it is a hole in a
                 // headline guarantee, not a rough edge.
-                match stage.Options |> List.tryFind (fun o -> o.Name = "retry") with
-                | Some o -> runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
-                                runStageBody attemptCtx cwd deadline stage)
-                | None -> runStageBody body cwd deadline stage
+                match stage.Options |> List.tryFind (fun o -> o.Name = "retry"), persistence with
+                | Some _, Some _ ->
+                    // FAILS CLOSED UNDER PERSISTENCE (FG-135). Steps are journaled as
+                    // `step-finished <stage> <index> <status>` with no ATTEMPT
+                    // dimension, so a resume turns a failed attempt's record into
+                    // `AlreadyFinished` and skips the very step the next attempt
+                    // needs — printing retry progress while replaying the old
+                    // failure. Worse, an `input` before the failing step shares the
+                    // identity `(stage, index, occurrence)` across attempts, so a
+                    // PRIOR ATTEMPT'S APPROVAL can be reused for a later prompt.
+                    //
+                    // That second consequence is why this refuses rather than ships
+                    // degraded. A wrong retry count is a bug; replaying a human's
+                    // approval is the guarantee FG-046b exists to hold, and this
+                    // project fails closed on it. The differential harness runs
+                    // WITHOUT persistence, so the semantics stay receipt-proven —
+                    // what is refused is the durable path, until FG-135 gives the
+                    // journal an attempt identity.
+                    emit
+                        $"ERROR: stage \"{stage.Name}\" declares options {{ retry }} and this run is journaled; retry attempts have no durable identity yet (FG-135), so a resume could skip the step or reuse an earlier approval — refusing rather than risking either"
+
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | Some o, None ->
+                    runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
+                        runStageBody attemptCtx cwd deadline stage)
+                | None, _ -> runStageBody body cwd deadline stage
 
                 if body.Failed.Value then ctx.Failed.Value <- true
 
