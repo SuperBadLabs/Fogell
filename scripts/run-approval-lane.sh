@@ -839,6 +839,16 @@ QID=$(await_pending "$Q/approvals") || { echo "FAIL: no prompt published"; cat "
 printf 'approve quinn\n' > "$Q/approvals/$QID.decision"
 set +e; wait "$PID"; set -e
 grep -q 'completed: success' "$Q/run1.log" || { echo "FAIL: the bounded prompt did not complete"; cat "$Q/run1.log"; exit 1; }
+# "usable in the attempt that read it" is the claim below, and success plus
+# journal state did not test it: an engine that SKIPPED the step past the gate
+# still reports success and still writes the provisional record, so Q passed
+# while violating the very sentence it exists to prove. Same marker assertions
+# scenario A already makes. Raised by the pre-push verifier's model review on PR #36.
+QMARK="$Q/ws/gate/markers.txt"
+[ "$(grep -c '^two$' "$QMARK" 2>/dev/null)" -eq 1 ] || {
+  echo "FAIL: the step past the bounded gate did not run exactly once"; exit 1; }
+[ "$(grep -c '^one$' "$QMARK" 2>/dev/null)" -eq 1 ] || {
+  echo "FAIL: the step before the bounded gate did not run exactly once"; exit 1; }
 # the answer is provisional and STAYS provisional: usable in the attempt that
 # read it, never actionable for another one
 grep -q $'^input-answer-provisional\tGate\t1\t1\tapproved\tquinn$' "$Q/build.journal" || {
