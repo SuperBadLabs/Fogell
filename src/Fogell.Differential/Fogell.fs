@@ -239,9 +239,18 @@ module FogellSide =
                 stageOptionNames
                 |> List.filter (fun n -> not (stageHonouredOptions.Contains n) && n <> "timestamps")
 
-            // TWO DISTINCT REFUSALS, kept apart because they mean different things:
-            // a name no scope accepts, versus a name that is fine elsewhere and not
-            // honoured HERE. Merging them let the second be announced as the first.
+            // Two refusal SITES, pipeline and stage — NOT two accurate categories,
+            // and an earlier comment here claimed they were. They are not: a
+            // pipeline `retry` is a name Jenkins knows and this engine does not
+            // implement, and it went out as "unknown"; a genuinely unknown name in a
+            // stage block went out as "not honoured at stage scope". Both refusals
+            // are CORRECT — the wording was what lied, in the commit that split them
+            // to stop exactly that.
+            //
+            // Both now say UNSUPPORTED, which is true of every case either list can
+            // hold. Telling unknown from known-but-unimplemented from wrong-scope
+            // needs the Jenkins-known set per scope, which is FG-133; claiming the
+            // distinction without making it is how this went wrong twice.
             let unknownOptionNames = refusedPipelineOptions |> List.distinct
 
             let stageScopeRefusals = refusedStageOptions |> List.distinct
@@ -383,14 +392,14 @@ module FogellSide =
             let mutable compileRejected = false
 
             if not (List.isEmpty unknownOptionNames) then
-                emit ("ERROR: pipeline declares unknown option type(s): " + String.concat ", " unknownOptionNames)
+                emit ("ERROR: pipeline declares option(s) this engine does not support: " + String.concat ", " unknownOptionNames)
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
 
             if not (List.isEmpty stageScopeRefusals) then
                 emit (
-                    "ERROR: stage option(s) not honoured at stage scope by this engine: "
+                    "ERROR: stage declares option(s) this engine does not support at stage scope: "
                     + String.concat ", " stageScopeRefusals
                     + " — refusing rather than running them with the wrong semantics"
                 )
