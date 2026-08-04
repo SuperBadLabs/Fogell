@@ -193,26 +193,15 @@ module FogellSide =
             // FG-053(b) implements them.
             let supportedOptions = Set.union honouredOptions inertOptions
 
-            // SCOPE: measured against the lab, UNPROVEN BY RECEIPT for the FG-129
-            // reason above — a compile-refusal case cannot be sealed. Jenkins
-            // enumerates a DIFFERENT valid set
-            // for a stage `options` block than for the pipeline one, and refuses a
-            // pipeline-only option inside a stage. `stage { options { buildDiscarder(...) } }`
-            // gives jenkins=failure — one global list accepted it and ran the build.
-            //   pipeline-only, measured: buildDiscarder, disableConcurrentBuilds,
-            //     quietPeriod, rateLimitBuilds, parallelsAlwaysFailFast, disableResume,
-            //     disableRestartFromStage, overrideIndexTriggers, preserveStashes,
-            //     copyArtifactPermission, durabilityHint, githubProjectProperty,
-            //     newContainerPerStage, throttleJobProperty
-            //   stage-valid, measured: ansiColor, catchError, checkoutToSubdirectory,
-            //     dockerNode, lock, podTemplate, retry, script, skipDefaultCheckout,
-            //     throttle, timeout, timestamps, waitUntil, warnError, with*, wrap, ws
-            let pipelineOnlyOptions =
-                set [ "buildDiscarder"; "disableConcurrentBuilds"; "quietPeriod"; "rateLimitBuilds"
-                      "parallelsAlwaysFailFast"; "disableResume"; "disableRestartFromStage"
-                      "overrideIndexTriggers"; "preserveStashes"; "copyArtifactPermission"
-                      "durabilityHint"; "githubProjectProperty"; "newContainerPerStage"
-                      "throttleJobProperty" ]
+            // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
+            // reason above: Jenkins enumerates a DIFFERENT valid set for a stage
+            // `options` block than for the pipeline one and refuses pipeline-only
+            // names there — `stage { options { buildDiscarder(...) } }` is
+            // jenkins=failure. Fogell refuses far more narrowly than that (only
+            // `timeout` survives at stage scope, see below), so an explicit
+            // pipeline-only SET is not needed to get the refusal right; it existed
+            // here, was read by nothing after the stage rule tightened, and is
+            // deleted rather than left as a binding that looks load-bearing.
 
             let refusedPipelineOptions =
                 pipeline.Options
@@ -226,11 +215,23 @@ module FogellSide =
                 |> List.collect (fun st -> st.Options |> List.map (fun o -> o.Name))
                 |> List.distinct
 
-            // A stage option is refused if this engine does not support it OR if
-            // Jenkins does not accept it at stage scope at all.
+            // HONOURED IS PER (NAME, SCOPE), NOT PER NAME. The previous version
+            // allowed any supported name at stage scope, but `ansiColor` is read
+            // ONLY from `pipeline.Options`, so `stage { options { ansiColor('xterm') } }`
+            // ran to success with TERM=dumb instead of xterm — silently, which is
+            // the whole failure mode this classification exists to stop. Same for
+            // `skipDefaultCheckout`, also read pipeline-only. Caught by the
+            // pre-push verifier, which built the scratch pipeline and read TERM.
+            //
+            // `timeout` is the ONLY option honoured at stage scope: the orchestrator
+            // calls `deadlineFromOptions stage.Options` (WalkerOrchestration). Stage
+            // `timestamps` is refused separately by FG-120. Everything else in a
+            // stage block is refused — including names Jenkins accepts there —
+            // because this engine reads none of them.
+            let stageHonouredOptions = set [ "timeout" ]
+
             let refusedStageOptions =
-                stageOptionNames
-                |> List.filter (fun n -> not (supportedOptions.Contains n) || pipelineOnlyOptions.Contains n)
+                stageOptionNames |> List.filter (fun n -> not (stageHonouredOptions.Contains n))
 
             let unknownOptionNames =
                 (refusedPipelineOptions @ refusedStageOptions) |> List.distinct
