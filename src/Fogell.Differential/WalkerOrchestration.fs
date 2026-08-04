@@ -528,8 +528,13 @@ module WalkerOrchestration =
                     emit
                         $"ERROR: stage \"{stage.Name}\" declares options {{ retry }} and this run is journaled; retry attempts have no durable identity yet (FG-135), so a resume could skip the step or reuse an earlier approval — refusing rather than risking either"
 
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Failure
+                    // Through `body`, NOT `ctx`. `stageStatus` is accumulated by
+                    // `body.Sink`, and stage `post` selects its arm from it — so
+                    // sinking straight to `ctx` left `stageStatus` at Success and ran
+                    // `post { success }` on a FAILED build. Both refusals added on
+                    // this branch had it.
+                    body.Failed.Value <- true
+                    body.Sink BuildStatus.Failure
                 | Some _, None when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
                     // REFUSED COMBINATION, FG-136. `runWithRetry` gives each attempt a
                     // THROWAWAY status sink and publishes the attempt's status only
@@ -548,8 +553,13 @@ module WalkerOrchestration =
                     emit
                         $"ERROR: stage \"{stage.Name}\" combines options {{ retry }} with nested stages under skipStagesAfterUnstable, whose interaction this engine does not model yet (FG-136) — refusing rather than skipping the wrong stage"
 
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Failure
+                    // Through `body`, NOT `ctx`. `stageStatus` is accumulated by
+                    // `body.Sink`, and stage `post` selects its arm from it — so
+                    // sinking straight to `ctx` left `stageStatus` at Success and ran
+                    // `post { success }` on a FAILED build. Both refusals added on
+                    // this branch had it.
+                    body.Failed.Value <- true
+                    body.Sink BuildStatus.Failure
                 | Some o, None ->
                     runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
                         runStageBody attemptCtx cwd deadline stage)
