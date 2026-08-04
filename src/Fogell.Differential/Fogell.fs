@@ -176,11 +176,17 @@ module FogellSide =
             // rather than commits quietly (FG-103). Caught by the pre-push verifier.
             //
             // HONOURED: the engine implements the semantics.
+            // PIPELINE scope. `retry` is deliberately ABSENT: FG-053(b) implements
+            // it for a STAGE's options only, and Jenkins' pipeline-level `retry`
+            // retries the WHOLE PIPELINE — a different feature this engine does not
+            // have. Listing it here accepted `options { retry(3) }` at pipeline
+            // scope and ran ONE attempt, silently, which is the name-vs-scope
+            // conflation PR #38 fixed for `ansiColor` and I reproduced in the very
+            // next ticket. The corpus has ZERO pipeline-level `retry` (measured:
+            // 0 pipeline / 2 stage), so refusing it costs nothing today.
             let honouredOptions =
                 set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast"
-                      // FG-053(b) implements these two; FG-053(a) refused them so
-                      // they could not run with the wrong semantics silently.
-                      "retry"; "skipStagesAfterUnstable" ]
+                      "skipStagesAfterUnstable" ]
 
             // INERT: retention and queueing policy with no observable effect on ONE
             // build, which is all a receipt can see. Accepted with the reason stated.
@@ -263,9 +269,24 @@ module FogellSide =
             let stageScopeRefusals = refusedStageOptions |> List.distinct
 
             // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
-            // scope), and read by PRESENCE — it takes no arguments.
-            let skipAfterUnstable =
-                pipeline.Options |> List.exists (fun o -> o.Name = "skipStagesAfterUnstable")
+            // scope). ZERO-ARGUMENT: reading it by mere presence meant
+            // `skipStagesAfterUnstable(false)` ENABLED the skip — the option saying
+            // the opposite of what it does. That is the `parallelsAlwaysFailFast(false)`
+            // defect I filed as FG-130 and then reproduced here in the same session;
+            // an argument-bearing form is refused rather than guessed at.
+            let skipStagesOptions =
+                pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
+
+            let skipStagesArgError =
+                if
+                    skipStagesOptions
+                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                then
+                    Some "the skipStagesAfterUnstable() option takes no arguments"
+                else
+                    None
+
+            let skipAfterUnstable = not (List.isEmpty skipStagesOptions) && skipStagesArgError.IsNone
 
             let stageTimestamps =
                 pipeline.Stages
@@ -431,6 +452,14 @@ module FogellSide =
             match ansiColorArgError with
             | Some e ->
                 emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            match skipStagesArgError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable skipStagesAfterUnstable option: {e}"
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
