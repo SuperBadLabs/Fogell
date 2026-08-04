@@ -41,7 +41,9 @@ let position: P<Position> =
 // records source, the interpreter decides meaning.
 
 /// FG-122. Groovy string escapes are Java's: the simple letters, a UNICODE
-/// escape, and an OCTAL escape of one to three digits.
+/// escape, and an OCTAL escape of one or two digits — or three when the first
+/// is 0-3 (see the range note below; a flat "one to three" is what this comment
+/// said while the code was greedy, and both were wrong together).
 ///
 /// MEASURED against Jenkins 2.568.1: `sh 'printf "\\033[31mred\\033[0m"'` traced
 /// as `+ printf red` there — a real ESC byte, which normalisation then strips —
@@ -59,7 +61,17 @@ let private numericEscape: P<char> =
      >>. manyMinMaxSatisfy 4 4 (fun c ->
          (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
      |>> fun hex -> char (System.Convert.ToInt32(hex, 16)))
-    <|> (manyMinMaxSatisfy 1 3 (fun c -> c >= '0' && c <= '7')
+    // THREE digits only when the first is 0-3 — Java's OctalEscape production is
+    // `ZeroToThree OctalDigit OctalDigit`, so `\400` is the TWO-digit `\40` (a
+    // space) followed by a literal `0`. MEASURED on Jenkins 2.568.1, receipt
+    // `sh-escape-edges`: `printf "[\400]"` traces `+ printf [ 0]` there, where a
+    // greedy 1-3 reader yielded `[Ā]` (U+0100) and the case DIVERGED.
+    // Raised by Codex on PR #36.
+    <|> attempt (
+            manyMinMaxSatisfy 1 1 (fun c -> c >= '0' && c <= '3')
+            .>>. manyMinMaxSatisfy 2 2 (fun c -> c >= '0' && c <= '7')
+            |>> fun (hi, lo) -> char (System.Convert.ToInt32(hi + lo, 8)))
+    <|> (manyMinMaxSatisfy 1 2 (fun c -> c >= '0' && c <= '7')
          |>> fun digits -> char (System.Convert.ToInt32(digits, 8)))
 
 let private simpleEscape (c: char) =
@@ -73,6 +85,23 @@ let private simpleEscape (c: char) =
 
 let private escapedChar: P<char> =
     skipChar '\\' >>. (numericEscape <|> (anyChar |>> simpleEscape))
+
+/// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
+///
+/// A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is an
+/// escaped BACKSLASH followed by a live interpolation — Groovy yields one
+/// backslash and expands `$X`. Decoding the escaped dollar to "\$" made the two
+/// cases indistinguishable downstream, so that value came out as a literal `$X`.
+/// NUL cannot occur in an environment value, so it cannot collide.
+///
+/// It applies to a NUMERIC escape too: `\044` decodes to `$`, and Groovy decides
+/// interpolation LEXICALLY — before escapes are decoded — so that dollar is
+/// ordinary text and `"\044MISSING"` stays `$MISSING`. Returning a bare "$"
+/// handed the GString renderer a live interpolation: MEASURED on Jenkins
+/// 2.568.1, receipt `sh-escape-edges` — jenkins=success, fogell=FAILURE on the
+/// unresolvable name, a build Jenkins passes. Raised by Codex on PR #36.
+let private keepDollar (c: char) : string =
+    if c = '$' then "\u0000" else string c
 
 let private quoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
@@ -92,21 +121,7 @@ let private tripleQuoted (q: string) : P<string> =
 /// then removes it.
 let private escapedCharKeepingDollar: P<string> =
     skipChar '\\'
-    >>. ((numericEscape |>> string)
-         <|> (anyChar
-              |>> function
-                  | 'n' -> "\n"
-                  | 't' -> "\t"
-                  | 'r' -> "\r"
-                  // A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9).
-                  // `"\\$X"` is an escaped BACKSLASH followed by a live
-                  // interpolation — Groovy yields one backslash and expands `$X`.
-                  // Decoding the escaped dollar to "\$" made the two cases
-                  // indistinguishable downstream, so that value came out as a
-                  // literal `$X`. NUL cannot occur in an environment value, so it
-                  // cannot collide.
-                  | '$' -> "\u0000"
-                  | c -> string c))
+    >>. ((numericEscape |>> keepDollar) <|> (anyChar |>> (simpleEscape >> keepDollar)))
 
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
