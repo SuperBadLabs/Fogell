@@ -542,7 +542,9 @@ let main argv =
         printfn ""
         if recoveredCases.Count > 0 then
             printfn ""
-            printfn "RECOVERED — diverged, then did not reproduce (FG-119 trace race):"
+            printfn "RECOVERED — diverged, then did not reproduce on re-run (FG-119 retry)."
+            printfn "  CAUSE UNCLASSIFIED: the retry covers every divergence, not just the"
+            printfn "  known trace race. The SAME case recovering repeatedly is a defect report:"
 
             for (nm, seen, n) in recoveredCases do
                 printfn "  %s (clean after %d re-run%s); first run showed:" nm n (if n = 1 then "" else "s")

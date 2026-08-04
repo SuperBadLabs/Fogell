@@ -320,9 +320,12 @@ module Compare =
             line "  NOTE: this block is run provenance and is NOT covered by the seal"
             line "  above, which hashes the compared content so a verdict's evidence cannot"
             line "  be altered undetected. See FG-128."
-            line "  FG-119: `sh -x` over a shell pipeline interleaves on BOTH engines, so a"
-            line "  divergence is confirmed by repetition before it is believed. A case that"
-            line "  recovers REPEATEDLY across runs is a defect report, not noise."
+            line "  CAUSE UNCLASSIFIED. The FG-119 retry re-runs EVERY divergence, not"
+            line "  only the known `sh -x` pipeline interleaving, and nothing here"
+            line "  establishes which this was — a genuine intermittent engine mismatch"
+            line "  that happened to pass on re-run looks exactly the same. Naming the"
+            line "  trace race would let a real defect read as classified noise. A case"
+            line "  that recovers REPEATEDLY across runs is a defect report; treat it so."
             line ""
 
         match r.Verdict with
