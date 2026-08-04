@@ -411,12 +411,19 @@ let main argv =
                         | Diverged _ -> true
                         | _ -> false)
 
-                let describeDivergences rs =
+                // Keyed BY BUILD INDEX. A `//// NEXT BUILD ////` sequence seals one
+                // receipt per build, and stamping one flat list onto all of them made
+                // every sibling claim "this case DIVERGED" when a single build had —
+                // with nothing to say which. Provenance that misattributes is worse
+                // than none: it invents evidence against cases that were clean.
+                let divergencesByBuild (rs: Receipt list) =
                     rs
-                    |> List.collect (fun (r: Receipt) ->
+                    |> List.mapi (fun bi (r: Receipt) ->
                         match r.Verdict with
-                        | Diverged ds -> ds |> List.map (fun d -> d.Describe)
-                        | _ -> [])
+                        | Diverged ds -> bi, ds |> List.map (fun d -> d.Describe)
+                        | _ -> bi, [])
+                    |> List.filter (fun (_, ds) -> not (List.isEmpty ds))
+                    |> Map.ofList
 
                 // Two extra attempts. This does NOT prove a surviving divergence is
                 // real — it reduces a p-per-run flake to p^3, so the measured 2-8%
@@ -425,7 +432,7 @@ let main argv =
                 // real and fails closed, which is a decision rule, not a proof.
                 // (An earlier draft of this comment said "is not the trace race",
                 // which claimed more than the code delivers.)
-                let rec confirm attemptNo (firstSeen: string list option) =
+                let rec confirm attemptNo (firstSeen: Map<int, string list> option) =
                     let rs = buildReceipts ()
 
                     if anyDiverged rs && attemptNo < 2 then
@@ -437,7 +444,7 @@ let main argv =
                         let seen =
                             match firstSeen with
                             | Some f -> Some f
-                            | None -> Some(describeDivergences rs)
+                            | None -> Some(divergencesByBuild rs)
 
                         confirm (attemptNo + 1) seen
                     else
@@ -445,20 +452,35 @@ let main argv =
 
                 let results, firstSeen, retries = confirm 0 None
 
-                let recovered =
-                    if retries > 0 && not (anyDiverged results) then
-                        defaultArg firstSeen []
-                    else
-                        []
+                // RECOVERED requires the re-run to actually PROVE the case. "Not
+                // diverged" also admits NotComparable, and calling a non-comparable
+                // re-run "clean after 1 re-run" would be a false claim in the one
+                // place a reader looks to find out whether the evidence is sound.
+                let allProven =
+                    results
+                    |> List.forall (fun (r: Receipt) ->
+                        match r.Verdict with
+                        | Proven -> true
+                        | _ -> false)
 
-                if not (List.isEmpty recovered) then
-                    recoveredCases.Add(name, recovered, retries) |> ignore
+                let recovered =
+                    if retries > 0 && allProven then
+                        defaultArg firstSeen Map.empty
+                    else
+                        Map.empty
 
                 // Stamped into the RECEIPT, not just the console: the receipt is what
                 // gets committed and read later, and without this a re-run receipt is
-                // byte-identical to a first-attempt pass.
+                // byte-identical to a first-attempt pass. Per build, so only the
+                // receipt that actually diverged carries the claim.
                 results
-                |> List.map (fun r -> { r with RecoveredFrom = recovered })
+                |> List.mapi (fun bi r ->
+                    let mine = defaultArg (Map.tryFind bi recovered) []
+
+                    if not (List.isEmpty mine) then
+                        recoveredCases.Add(caseNameFor bi, mine, retries) |> ignore
+
+                    { r with RecoveredFrom = mine })
                 |> List.mapi (fun bi r ->
                     let caseName = caseNameFor bi
                     let path = Compare.seal receiptDir r
