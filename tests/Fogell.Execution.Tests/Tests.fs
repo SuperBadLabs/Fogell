@@ -64,6 +64,23 @@ let private waitForPidFile (pidFile: string) =
 /// within a single test.
 let private pidAlive (pid: int) = Directory.Exists $"/proc/{pid}"
 
+/// Reaping is asynchronous, so the assertion has to WAIT for it rather than
+/// sample once. Both call sites slept a flat 300ms and asserted — which passes
+/// or fails by how loaded the machine is, and CI proved it: PR #36 ran the same
+/// commit twice and got one red and one green, with the failure detail thrown
+/// away by the gate script (fixed alongside).
+///
+/// Symmetric with [waitForPidFile], which already polls to a deadline for the
+/// other half of the same handshake. This cannot weaken the test: a process that
+/// is genuinely never reaped still fails, three seconds later.
+let private waitForReap (pid: int) =
+    let clock = Diagnostics.Stopwatch.StartNew()
+
+    while pidAlive pid && clock.ElapsedMilliseconds < 3_000L do
+        Threading.Thread.Sleep 25
+
+    not (pidAlive pid)
+
 let workspaceHygiene =
     testList
         "FG-030 workspace hygiene"
@@ -278,8 +295,7 @@ let containment =
               match waitForPidFile pidFile with
               | None -> failtest "the daemon never started, so this test would prove nothing"
               | Some pid ->
-                  Threading.Thread.Sleep 300
-                  Expect.isFalse (pidAlive pid) $"daemon {pid} must be reaped after success"
+                  Expect.isTrue (waitForReap pid) $"daemon {pid} must be reaped after success"
 
                   match r.Termination with
                   | Some t -> Expect.equal t.LeakedProcesses 0 "no leak reported"
@@ -302,8 +318,7 @@ let containment =
               match waitForPidFile pidFile with
               | None -> failtest "the daemon never started, so this test would prove nothing"
               | Some pid ->
-                  Threading.Thread.Sleep 300
-                  Expect.isFalse (pidAlive pid) $"daemon {pid} must be reaped on abort"
+                  Expect.isTrue (waitForReap pid) $"daemon {pid} must be reaped on abort"
           }
 
           test "reaping can be opted out of" {

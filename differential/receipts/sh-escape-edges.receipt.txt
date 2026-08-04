@@ -1,7 +1,7 @@
 # Differential receipt — sh-escape-edges.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3346991704c5fb44ac36c5e08af0edc51b23a7459ff00d9864d0be256fbde584
+seal:         f7f9c27c1e72852749c63f4218ae011e2aba68ca1a6d2e1c2eb547d49b4df677
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -59,8 +59,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: c3101ee9bcec3b990f0f5e1b59b41eec8c50641a26be52b8d56cfbdc73bd3595
-  output (13 lines):
+  workspace-hash: 6ff607a2ef99a254891ea05d90be3eb3abe67a3b4f8abf209ab17682352a0ec5
+  output (16 lines):
     | + printf [ 0]
     | + cat octal-range.txt
     | [ 0]
@@ -74,16 +74,20 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | + od -c simple-bf.txt
     | 0000000   A  \b   B  \f   C
     | 0000005
+    | + printf [A][A]
+    | + cat unicode.txt
+    | [A][A]
   workspace:
     649e8f43c078  octal-dollar.txt
     275a52d87c0c  octal-plain.txt
     2de88c4cff1b  octal-range.txt
     25d2f286d82b  simple-bf.txt
+    4d5846bc7ca0  unicode.txt
 
 ## Fogell
   result:         success
-  workspace-hash: c3101ee9bcec3b990f0f5e1b59b41eec8c50641a26be52b8d56cfbdc73bd3595
-  output (13 lines):
+  workspace-hash: 6ff607a2ef99a254891ea05d90be3eb3abe67a3b4f8abf209ab17682352a0ec5
+  output (16 lines):
     | + printf [ 0]
     | + cat octal-range.txt
     | [ 0]
@@ -97,8 +101,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     | + od -c simple-bf.txt
     | 0000000   A  \b   B  \f   C
     | 0000005
+    | + printf [A][A]
+    | + cat unicode.txt
+    | [A][A]
   workspace:
     649e8f43c078  octal-dollar.txt
     275a52d87c0c  octal-plain.txt
     2de88c4cff1b  octal-range.txt
     25d2f286d82b  simple-bf.txt
+    4d5846bc7ca0  unicode.txt

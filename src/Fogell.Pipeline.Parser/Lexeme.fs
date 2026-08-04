@@ -62,7 +62,11 @@ let position: P<Position> =
 /// left the other reading `\033` as three characters, which is the drift this
 /// project has spent a branch learning to prevent by deleting the copy.
 let private numericEscape: P<char> =
-    (skipChar 'u'
+    // ONE OR MORE `u`: Java's UnicodeEscape is `\ u+ HexDigit{4}`, so `\uu0041`
+    // is also `A`. Accepting exactly one passed `uu0041` through as text while
+    // the board row claimed unicode escapes were handled — an overclaim I wrote.
+    // Raised by the pre-push verifier's model review on PR #36.
+    (skipMany1 (skipChar 'u')
      >>. manyMinMaxSatisfy 4 4 (fun c ->
          (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
      |>> fun hex -> char (System.Convert.ToInt32(hex, 16)))

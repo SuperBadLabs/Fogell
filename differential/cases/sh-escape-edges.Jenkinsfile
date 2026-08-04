@@ -20,6 +20,10 @@
 //     parsers now share `simpleEscape` and differ only by `keepDollar`.
 //     Raised by the pre-push verifier's model review on PR #36.
 //
+// (d) REPEATED `u`. Java's UnicodeEscape is `\ u+ HexDigit{4}`, so `\uu0041`
+//     is `A` exactly as `\u0041` is. Accepting a single `u` let `uu0041` through
+//     as text while the board claimed unicode escapes were handled.
+//
 // The slashy-string edge is NOT here. The first draft of this case carried
 // `sh /printf '[\033]' > slashy.txt/` and Jenkins refused the whole script at
 // COMPILE time — `expecting '}', found '[]'` — so that line proved nothing
@@ -38,6 +42,7 @@ pipeline {
                 sh 'printf "[\101\102\103]\n" > octal-plain.txt; cat octal-plain.txt'
                 sh "printf '[\044MISSING]\n' > octal-dollar.txt; cat octal-dollar.txt"
                 sh "printf 'A\bB\fC' > simple-bf.txt; od -c simple-bf.txt"
+                sh 'printf "[\u0041][\uu0041]\n" > unicode.txt; cat unicode.txt'
             }
         }
     }
