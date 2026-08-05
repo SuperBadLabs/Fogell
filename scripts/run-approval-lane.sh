@@ -1365,10 +1365,15 @@ echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==
 # limit, and this scenario asserts the HONEST behaviour for it: refuse the
 # pipeline.
 #
-# COVERAGE, stated exactly: the UNPARENTHESISED spelling (Z), the PARENTHESISED one
-# (Z2), and the MIXED positional+named one (Z3), each with an unparseable NAMED
-# argument. Three spellings, enumerated because each previous statement of this
-# scenario's coverage was broader than what it ran. It does NOT cover "any step form the grammar does not
+# COVERAGE, stated exactly: an unparseable NAMED argument, unparenthesised (Z) and
+# parenthesised (Z2); and an unparseable POSITIONAL argument standing before an
+# ordinary named one (Z3). Z3's `ok:` parses fine — calling it a mixed "unparseable
+# NAMED argument" case was wrong, and a broken mixed named form would pass this lane.
+# Enumerated to this level because every previous statement of this scenario's
+# coverage was broader than what it ran, including the one that replaced the last one.
+#
+# Z4 is the POSITIVE case: a VALID gate must still publish its message and wait.
+# Refusal scenarios alone cannot catch a fix that refuses everything. It does NOT cover "any step form the grammar does not
 # yet cover" — that is what this comment claimed while testing only the first
 # spelling, and the parenthesised one was meanwhile publishing a WRONG PROMPT.
 # Third time on this branch a scenario name has claimed a class and tested one
@@ -1513,6 +1518,49 @@ if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.
   echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1
 fi
 echo "a mixed positional+named unparseable gate was refused, not published as raw text"
+
+# ---------------------------------------------------------------- scenario Z4
+echo "=== Z4: a VALID triple-quoted gate publishes its MESSAGE and waits ==="
+# FG-149, and the first POSITIVE case in this series. Every scenario from Z onwards
+# asserts that something is REFUSED; a fix that refused every gate would pass them
+# all. This one fails if the engine over-refuses.
+#
+# `balancedRaw` skipped from one `"` to the next matching one, so `"""` read as an
+# empty string and the `)` inside the message counted towards depth. Before FG-147
+# that produced a wrong prompt; after it, a REFUSAL of a pipeline Jenkins accepts.
+Z4="$LANE/z4"; mkdir -p "$Z4/approvals"
+cat > "$Z4/Jenkinsfile" <<'Z4JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input(message: """Deploy " )?""", ok: "Ship it")
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z4JF
+"$HOST_BIN" "$Z4/Jenkinsfile" "$Z4/ws" gate "$Z4/build.journal" "$Z4/approvals" > "$Z4/run.log" 2>&1 &
+PID=$!
+Z4ID=$(await_pending "$Z4/approvals") || {
+  echo "FAIL: a VALID triple-quoted gate published NO prompt — the engine over-refuses"
+  cat "$Z4/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q 'prompt	Deploy " )?' "$Z4/approvals/$Z4ID.pending" || {
+  echo "FAIL: the prompt was not the message value"
+  cat "$Z4/approvals/$Z4ID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$Z4/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the triple-quoted gate ran before anyone answered it"
+  kill -9 "$PID" 2>/dev/null; exit 1; }
+printf 'approve zoe\n' > "$Z4/approvals/$Z4ID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Z4/run.log" || {
+  echo "FAIL: the answered triple-quoted gate did not complete"; cat "$Z4/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Z4/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the triple-quoted gate did not run exactly once"; exit 1; }
+echo "a valid triple-quoted gate published its message and waited"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

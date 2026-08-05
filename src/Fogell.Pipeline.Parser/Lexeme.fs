@@ -363,8 +363,38 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                 let c = stream.Peek()
 
                 if c = '\'' || c = '"' then
-                    // skip a string literal wholesale
+                    // TRIPLE-QUOTED SPANS FIRST. Treating `"""` as an empty string
+                    // followed by raw text made every delimiter inside a triple-quoted
+                    // value count towards depth: `input(message: """Deploy " )?""",
+                    // ok: "Ship it")` — valid Jenkins — reported `unbalanced '('`. Before
+                    // FG-147 that produced a WRONG PROMPT; after it, a REFUSAL of a
+                    // legitimate pipeline, which is how fail-closed turns a silent bug
+                    // into a visible one. The docs said this function skipped every
+                    // Groovy string form; it skipped one character to the next matching
+                    // one. MEASURED, approval-lane scenario Z4.
                     let q = c
+                    let isTriple = stream.Peek(1) = q && stream.Peek(2) = q
+
+                    if isTriple then
+                        stream.Skip(3)
+
+                        let mutable closed = false
+
+                        while not closed && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' then
+                                stream.Skip()
+                                if not stream.IsEndOfStream then stream.Skip()
+                            elif d = q && stream.Peek(1) = q && stream.Peek(2) = q then
+                                stream.Skip(3)
+                                closed <- true
+                            else
+                                stream.Skip()
+
+                        if not closed then failed <- true
+                    else
+
                     stream.Skip()
 
                     let mutable closed = false
