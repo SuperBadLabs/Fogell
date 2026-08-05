@@ -1293,5 +1293,53 @@ grep -q 'completed: success' "$X/run.log" || {
   echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
 echo "a concatenated-message gate published its prompt and waited"
 
+# ---------------------------------------------------------------- scenario Y
+echo "=== Y: a POSITIONAL concatenated gate message still gates ==="
+# FG-142, third route. The terminator guard went on the NAMED argument branch
+# first, so `input "Deploy " + env.TARGET` — positional, and as common a spelling
+# as the named one — still consumed just `"Deploy "`, backtracked `steps` to
+# EMPTY and shipped past the gate with no prompt.
+#
+# Scenario X could not catch it: X exercises `input message: …` and this is the
+# POSITIONAL branch, a different parser path to the identical outcome. X also
+# CLAIMED to cover "a concatenation" while testing only the named spelling, which
+# is the overclaim this scenario exists to retire.
+#
+# The following stage is deliberate: a skipped gate is only visibly wrong if
+# something after it runs.
+Y="$LANE/y"; mkdir -p "$Y/approvals"
+cat > "$Y/Jenkinsfile" <<'YJF'
+pipeline {
+    agent any
+    environment { TARGET = "prod" }
+    stages {
+        stage("Gate") {
+            steps {
+                input "Deploy " + env.TARGET
+                sh "echo shipped >> markers.txt"
+            }
+        }
+        stage("After") { steps { sh "echo after >> markers.txt" } }
+    }
+}
+YJF
+"$HOST_BIN" "$Y/Jenkinsfile" "$Y/ws" gate "$Y/build.journal" "$Y/approvals" > "$Y/run.log" 2>&1 &
+PID=$!
+YID=$(await_pending "$Y/approvals") || {
+  echo "FAIL: a POSITIONAL concatenated gate published NO prompt — the build would ship unapproved"
+  cat "$Y/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -qE '^(shipped|after)$' "$Y/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: work past the positional gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the positional prompt was pending"; cat "$Y/run.log"; exit 1; }
+printf 'approve yolanda\n' > "$Y/approvals/$YID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Y/run.log" || {
+  echo "FAIL: the answered positional gate did not complete"; cat "$Y/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Y/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the positional gate did not run exactly once"; exit 1; }
+echo "a positional concatenated gate published its prompt and waited"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

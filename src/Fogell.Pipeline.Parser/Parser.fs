@@ -92,8 +92,13 @@ let private namedArg: P<string * string> =
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
 /// Jenkins, and the positional form is as common as the named one — provenance was
 /// tracked for named arguments only, so every positional message was interpolated.
+/// FG-142, POSITIONAL. The terminator guard was applied to the NAMED branch only,
+/// so `input "Deploy " + env.TARGET` still consumed just `"Deploy "`, left
+/// `+ env.TARGET`, backtracked `steps` to EMPTY and shipped past the gate with no
+/// prompt — a THIRD route to the same bypass, fixed one branch at a time because
+/// I fixed the instance in front of me and described the class.
 let private positionalArgWithKind: P<string * string * bool> =
-    (stringLiteralWithKindBoth
+    (wholeValue stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
     <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
