@@ -1,7 +1,7 @@
-# Differential receipt — withenv-path-augmentation.Jenkinsfile
+# Differential receipt — options-timeout-beside-nested-call.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         74ffe1955c159ef3e12edfe4132955698c142f4af2f18cb2768c8f710417ad14
+seal:         198236464d9662ee9797e43fc4ac5dc30a99a148465cc99230c0aed75235d5c3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -58,21 +58,23 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
 
 ## Jenkins
-  result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
-  workspace:
-    229ff8957fd0  head.txt
+  result:         aborted
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (6 lines):
+    | Timeout set to expire in 1 sec
+    | + sleep 5
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded
 
 ## Fogell
-  result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
-  workspace:
-    229ff8957fd0  head.txt
+  result:         aborted
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (6 lines):
+    | Timeout set to expire in 1 sec
+    | + sleep 5
+    | Cancelling nested steps due to timeout
+    | Sending interrupt signal to process
+    | Terminated
+    | Timeout has been exceeded

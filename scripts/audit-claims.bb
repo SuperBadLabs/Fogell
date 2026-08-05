@@ -28,6 +28,49 @@
       receipts (->> (fs/glob (str root "/differential/receipts") "*.receipt.txt")
                     (map #(str/replace (fs/file-name %) ".receipt.txt" ""))
                     set)
+      ;; APPROVAL-LANE SCENARIOS COUNT AS EVIDENCE, and a receipt cannot replace them.
+      ;; A receipt compares terminal result, normalised output and workspace hash; it
+      ;; CANNOT observe whether an approval PROMPT WAS PUBLISHED. FG-141/142/143 were
+      ;; all invisible to a green 115/115 suite for exactly that reason. Forcing those
+      ;; claims to say UNPROVEN would make the honest answer a lie and drain the word
+      ;; of meaning for the claims that genuinely are unproven.
+      ;;
+      ;; The citation is VERIFIED, not free text: the scenario letter must exist in
+      ;; `run-approval-lane.sh`, so `approval-lane scenario Q` resolves and a citation
+      ;; of a scenario nobody wrote does not.
+      lane-scenarios (let [f (fs/file root "scripts/run-approval-lane.sh")]
+                       (if (fs/exists? f)
+                         (->> (re-seq #"(?m)^echo \"=== ([A-Z][0-9]*):" (slurp f))
+                              (map second)
+                              (map #(str "approval-lane scenario " %))
+                              set)
+                         #{}))
+      ;; WHOLE-TOKEN citations. A citation must be bounded on BOTH sides by something
+      ;; outside [A-Za-z0-9_-].
+      ;;
+      ;; Twice now the word for this check has been ahead of the check. It was called
+      ;; a KNOWN FLOOR while `scenario Z` stood in for `scenario Z2` — and two comments
+      ;; promptly did exactly that. It was then called EXACT while the boundary was
+      ;; `(?![A-Za-z0-9])`, which a HYPHEN slips straight through: `credentials-userpass`
+      ;; matched inside `credentials-userpass-masking`, and this corpus has FIVE such
+      ;; prefix pairs, so a stale hyphen-suffixed citation resolved against the shorter
+      ;; receipt. Both boundaries, and `-`/`_` counted as name characters.
+      ;;
+      ;; What it still CANNOT do, so a pass is not mistaken for proof: it verifies a
+      ;; cited scenario EXISTS, never that the scenario EXERCISES the claim — the
+      ;; same ceiling the receipt citations have.
+      ;; PROOF-SCRIPT CASES ARE EVIDENCE TOO, for the same reason lane scenarios are:
+      ;; some properties no receipt can carry. `stage-input-directive` is refused by
+      ;; Fogell and ACCEPTED by Jenkins, so a differential case is NOT-COMPARABLE by
+      ;; construction — there is no receipt to cite and never will be. Verified the same
+      ;; way: the case name must actually appear as an assertion in the proof script.
+      proof-cases (let [f (fs/file root "scripts/prove-section-refusals.sh")]
+                    (if (fs/exists? f)
+                      (->> (re-seq #"(?m)^expect_(?:refusal|control|env_ok)\s+([a-z0-9-]+)" (slurp f))
+                           (map second)
+                           set)
+                      #{}))
+      citable (into (into receipts lane-scenarios) proof-cases)
       ;; ALL F# sources, not just src/ — tools and tests carry MEASURED claims too, and a
       ;; check whose scope is narrower than its description is the very defect this script
       ;; exists to catch. Caught by review, in the script that catches it.
@@ -269,7 +312,9 @@
                   ;; window, one layer down.
                   neighbours (concat (subvec v start i) (subvec v (inc i) (inc stop)))
                   block (str/join " " (concat (mapcat :spans neighbours) [own]))
-                  named (filter #(str/includes? block %) receipts)
+                  named (filter #(re-find (re-pattern (str "(?<![A-Za-z0-9_-])\\Q" % "\\E(?![A-Za-z0-9_-])"))
+                                          block)
+                                citable)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes
                   ;; both engines fail, leaving only narration to compare). Saying so is a
@@ -283,8 +328,8 @@
       findings (remove :backed? claims)
       unproven-count (count (filter :unproven? claims))]
 
-  (println (format "MEASURED claims: %d source files scanned, %d receipts available"
-                   (count sources) (count receipts)))
+  (println (format "MEASURED claims: %d source files scanned, %d receipts + %d lane scenarios + %d proof cases citable"
+                   (count sources) (count receipts) (count lane-scenarios) (count proof-cases)))
   (if (empty? findings)
     (println (format "every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (%d)"
                      unproven-count))

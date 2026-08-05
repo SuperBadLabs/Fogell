@@ -1,7 +1,7 @@
-# Differential receipt — withenv-path-augmentation.Jenkinsfile
+# Differential receipt — steps-semicolon-after-raw-arg.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         74ffe1955c159ef3e12edfe4132955698c142f4af2f18cb2768c8f710417ad14
+seal:         fdd0c8419bc41d5cb13ec80f2154246df1a98b250fd3907bc679ff626883a9e5
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -59,20 +59,20 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
+  workspace-hash: 6bf2bd88dfb78d842a33170f397c2632c2bd57fb1126d2f91d0793ad4c533b79
+  output (2 lines):
+    | + echo a
+    | + echo b
   workspace:
-    229ff8957fd0  head.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
+  workspace-hash: 6bf2bd88dfb78d842a33170f397c2632c2bd57fb1126d2f91d0793ad4c533b79
+  output (2 lines):
+    | + echo a
+    | + echo b
   workspace:
-    229ff8957fd0  head.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt

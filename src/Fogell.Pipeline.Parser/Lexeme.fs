@@ -253,6 +253,104 @@ let stringLiteral: P<string> =
               attempt (quoted "\"")
               attempt slashyQuoted ])
 
+/// The RAW SOURCE of a Groovy string literal — the FIVE forms this lexer knows
+/// (triple-single, triple-double, single, double, slashy), escapes respected.
+/// NOT dollar-slashy `$/.../$`, which nothing here parses; a `;` inside one is
+/// unprotected. "every form" is what this said, and it was never true.
+///
+/// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
+/// [stringLiteral] above enumerates triple-single, triple-double, single, double
+/// and slashy. [balancedRaw] below skips `'`, `"` and comments escape-aware —
+/// but NOT slashy, which this comment previously claimed. It is a real gap, not
+/// a wording slip: a slashy carrying the active closing delimiter, such as
+/// `/a}b/` inside a `when { expression { … } }`, is counted as a brace and ends
+/// the balanced region early. UNPROVEN BY RECEIPT — not for FG-129's reason but
+/// because this documents an OPEN DEFECT: no case can be PROVEN against
+/// behaviour the engine gets wrong, and the receipt arrives with the FG-140
+/// fix. Measured against the host, which reports
+/// `no_stages: pipeline declares no stages`, the whole structure collapsed by a
+/// regex. FG-140. `Parser` needed the same knowledge to
+/// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
+/// scanner instead. Five review rounds found five forms it had missed, and two
+/// intermediate states produced SILENT no-ops — a build exiting 0 with no
+/// `step-started` and no files.
+///
+/// Three scanners disagreeing about what a string is was the defect; the
+/// semicolons only exposed it. This is the one implementation, here, where the
+/// other two already live.
+///
+/// Returns the literal's SOURCE including delimiters, because a caller
+/// reassembling a raw expression needs the text back exactly as written —
+/// [stringLiteral] decodes, which is the wrong thing for that job.
+let stringSpanRaw: P<string> =
+    let scan (stream: CharStream<unit>) =
+        let start = stream.Index
+        let c = stream.Peek()
+
+        let readDelimited (q: char) (tripled: bool) =
+            let closer = if tripled then System.String(q, 3) else string q
+            for _ in 1 .. closer.Length do stream.Skip()
+            let mutable closed = false
+            let mutable unterminated = false
+
+            while not closed && not stream.IsEndOfStream do
+                let d = stream.Peek()
+
+                if d = '\\' then
+                    stream.Skip()
+                    if not stream.IsEndOfStream then stream.Skip()
+                elif not tripled && d = q then
+                    stream.Skip()
+                    closed <- true
+                elif tripled && stream.PeekString 3 = closer then
+                    for _ in 1 .. 3 do stream.Skip()
+                    closed <- true
+                elif d = '\n' && not tripled && q <> '/' then
+                    // AN UNTERMINATED SINGLE-LINE LITERAL IS AN ERROR, not a span.
+                    // This used to report `closed`, so the caller received raw source
+                    // MISSING ITS CLOSING DELIMITER while the contract above promises
+                    // the delimiters are included. A malformed literal was then partly
+                    // accepted instead of failing closed — the same preference for
+                    // guessing over refusing that FG-143/145/147 each had to remove.
+                    unterminated <- true
+                    closed <- true
+                else
+                    stream.Skip()
+
+            closed && not unterminated
+
+        if c = '\'' || c = '"' then
+            let tripled = stream.PeekString 3 = System.String(c, 3)
+            if readDelimited c tripled then
+                let len = int (stream.Index - start)
+                stream.Seek start
+                Reply(stream.Read len)
+            else
+                stream.Seek start
+                Reply(Error, expected "a terminated string literal")
+        elif c = '/' then
+            // SLASHY, ASSUMED NOT DIVISION. This scanner treats any `/` as a slashy
+            // opener and does NOT decide between a literal and a division operator.
+            //
+            // NO CALLER SENDS `/` HERE ANY MORE. `rawArgValue` reaches this only
+            // after `'` or `"`; it once excluded `/` from plain text and tried
+            // here, and that was an APPROVAL BYPASS — `input message: 10 / 2` found
+            // no closing delimiter, the argument failed to parse, `steps` backtracked
+            // to EMPTY, and the build reported success with no prompt published
+            // (FG-141, approval-lane scenario W). This comment described that
+            // removed caller path for a round after it was gone.
+            if readDelimited '/' false then
+                let len = int (stream.Index - start)
+                stream.Seek start
+                Reply(stream.Read len)
+            else
+                stream.Seek start
+                Reply(Error, expected "a terminated slashy string")
+        else
+            Reply(Error, expected "a string literal")
+
+    scan
+
 // --- balanced raw capture --------------------------------------------------
 
 /// Capture the raw source of a balanced region, skipping over strings and
@@ -272,8 +370,38 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                 let c = stream.Peek()
 
                 if c = '\'' || c = '"' then
-                    // skip a string literal wholesale
+                    // TRIPLE-QUOTED SPANS FIRST. Treating `"""` as an empty string
+                    // followed by raw text made every delimiter inside a triple-quoted
+                    // value count towards depth: `input(message: """Deploy " )?""",
+                    // ok: "Ship it")` — valid Jenkins — reported `unbalanced '('`. Before
+                    // FG-147 that produced a WRONG PROMPT; after it, a REFUSAL of a
+                    // legitimate pipeline, which is how fail-closed turns a silent bug
+                    // into a visible one. The docs said this function skipped every
+                    // Groovy string form; it skipped one character to the next matching
+                    // one. MEASURED, approval-lane scenario Z4.
                     let q = c
+                    let isTriple = stream.Peek(1) = q && stream.Peek(2) = q
+
+                    if isTriple then
+                        stream.Skip(3)
+
+                        let mutable closed = false
+
+                        while not closed && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' then
+                                stream.Skip()
+                                if not stream.IsEndOfStream then stream.Skip()
+                            elif d = q && stream.Peek(1) = q && stream.Peek(2) = q then
+                                stream.Skip(3)
+                                closed <- true
+                            else
+                                stream.Skip()
+
+                        if not closed then failed <- true
+                    else
+
                     stream.Skip()
 
                     let mutable closed = false

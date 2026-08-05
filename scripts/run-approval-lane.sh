@@ -1200,5 +1200,428 @@ grep -q $'^input-decision\tGate\t1\t1\tapproved\tval$' "$V/build.journal" || {
   echo "FAIL: the settled answer was not journaled"; sed 's/^/  | /' "$V/build.journal"; exit 1; }
 echo "refused while changing, adopted once settled"
 
+# ---------------------------------------------------------------- scenario W
+echo "=== W: a gate argument that is a NUMERIC DIVISION still gates ==="
+# SCOPE: `10 / 2` ONLY. This scenario said "an expression" and tested one
+# shape of one. It passed green while `input message: /Deploy; / + env.TARGET`
+# — also an expression argument — shipped past its gate unapproved, because
+# that spelling reaches the literal branch and this one reaches the raw
+# scanner. A scenario name is a claim about coverage; scenario Z carries the
+# slashy case, and the two together still do not cover "an expression".
+#
+# FG-141. An APPROVAL BYPASS, not a parse curiosity: `input message: 10 / 2` sent
+# the `/` into a raw-argument scanner that assumed slashy, no closing delimiter
+# was found, the argument failed to parse, `steps` is wrapped in `attempt` so the
+# failure BACKTRACKED, the section became EMPTY — and the build reported SUCCESS
+# having never published a prompt. A human gate silently skipped.
+#
+# The lane is where that must be caught, because every other check passed: the
+# suite was 115/115 and both gates were green while this was live. What no
+# receipt covers is "a prompt was published at all".
+W="$LANE/w"; mkdir -p "$W/approvals"
+cat > "$W/Jenkinsfile" <<'WJF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: 10 / 2, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+WJF
+"$HOST_BIN" "$W/Jenkinsfile" "$W/ws" gate "$W/build.journal" "$W/approvals" > "$W/run.log" 2>&1 &
+PID=$!
+WID=$(await_pending "$W/approvals") || {
+  echo "FAIL: a gate with an expression argument published NO prompt — the build would ship unapproved"
+  cat "$W/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+# HELD SHUT for a bounded interval, not sampled once. A single check straight
+# after the prompt appears cannot tell a gate that WAITS from one that publishes
+# and charges on — the marker could land just after the sample. This is the same
+# weakness fixed in scenario Q earlier, and this scenario was written without it.
+sleep 2
+grep -q '^shipped$' "$W/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the expression-argument prompt was pending"; cat "$W/run.log"; exit 1; }
+printf 'approve wendy\n' > "$W/approvals/$WID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$W/run.log" || {
+  echo "FAIL: the answered gate did not complete"; cat "$W/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$W/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
+echo "an expression-argument gate published its prompt and waited"
+
+# ---------------------------------------------------------------- scenario X
+echo "=== X: a gate whose message is a CONCATENATION still gates ==="
+# FG-142, a SECOND approval bypass by a different route, and pre-existing in
+# merged code rather than introduced by the FG-138 work.
+#
+# `input message: 'Deploy ' + env.TARGET` matched `'Deploy '` as a complete
+# literal, left `+ env.TARGET` unconsumed, and the step block backtracked to
+# EMPTY — no prompt, build SUCCESS, the following stage ran.
+#
+# Scenario W does NOT cover this: `10 / 2` starts with a digit and reaches the
+# raw scanner, while a quoted prefix is claimed by the literal branch first. Two
+# routes to the same silent-empty-section outcome, and one case only ever proves
+# the route it takes.
+X="$LANE/x"; mkdir -p "$X/approvals"
+cat > "$X/Jenkinsfile" <<'XJF'
+pipeline {
+    agent any
+    environment { TARGET = "prod" }
+    stages {
+        stage("Gate") {
+            steps {
+                input message: "Deploy " + env.TARGET, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+XJF
+"$HOST_BIN" "$X/Jenkinsfile" "$X/ws" gate "$X/build.journal" "$X/approvals" > "$X/run.log" 2>&1 &
+PID=$!
+XID=$(await_pending "$X/approvals") || {
+  echo "FAIL: a gate with a CONCATENATED message published NO prompt — the build would ship unapproved"
+  cat "$X/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+# THE PROMPT'S VALUE, not merely its existence. This scenario guards a bypass AND
+# the wrong-prompt failure beside it (FG-145), and asserted only that SOME prompt
+# appeared before approving it — so a regression publishing `Deploy ` or the raw
+# argument body passed here and a human approved words the author never wrote.
+# Z4 checked its prompt value; X and Y were written before that lesson and not
+# revisited when it landed.
+grep -q "prompt	Deploy prod" "$X/approvals/$XID.pending" || {
+  echo "FAIL: the concatenated prompt was not \`Deploy prod\` — the operator would approve different words"
+  cat "$X/approvals/$XID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$X/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the concatenated-message gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the concatenated-message prompt was pending"; cat "$X/run.log"; exit 1; }
+printf 'approve xavier\n' > "$X/approvals/$XID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$X/run.log" || {
+  echo "FAIL: the answered concatenated-message gate did not complete"; cat "$X/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$X/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
+echo "a concatenated-message gate published its prompt and waited"
+
+# ---------------------------------------------------------------- scenario Y
+echo "=== Y: a POSITIONAL concatenated gate message still gates ==="
+# FG-142, third route. The terminator guard went on the NAMED argument branch
+# first, so `input "Deploy " + env.TARGET` — positional, and as common a spelling
+# as the named one — still consumed just `"Deploy "`, backtracked `steps` to
+# EMPTY and shipped past the gate with no prompt.
+#
+# Scenario X could not catch it: X exercises `input message: …` and this is the
+# POSITIONAL branch, a different parser path to the identical outcome. X also
+# CLAIMED to cover "a concatenation" while testing only the named spelling, which
+# is the overclaim this scenario exists to retire.
+#
+# The following stage is deliberate: a skipped gate is only visibly wrong if
+# something after it runs.
+Y="$LANE/y"; mkdir -p "$Y/approvals"
+cat > "$Y/Jenkinsfile" <<'YJF'
+pipeline {
+    agent any
+    environment { TARGET = "prod" }
+    stages {
+        stage("Gate") {
+            steps {
+                input "Deploy " + env.TARGET
+                sh "echo shipped >> markers.txt"
+            }
+        }
+        stage("After") { steps { sh "echo after >> markers.txt" } }
+    }
+}
+YJF
+"$HOST_BIN" "$Y/Jenkinsfile" "$Y/ws" gate "$Y/build.journal" "$Y/approvals" > "$Y/run.log" 2>&1 &
+PID=$!
+YID=$(await_pending "$Y/approvals") || {
+  echo "FAIL: a POSITIONAL concatenated gate published NO prompt — the build would ship unapproved"
+  cat "$Y/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q "prompt	Deploy prod" "$Y/approvals/$YID.pending" || {
+  echo "FAIL: the positional concatenated prompt was not \`Deploy prod\`"
+  cat "$Y/approvals/$YID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -qE '^(shipped|after)$' "$Y/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: work past the positional gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the positional prompt was pending"; cat "$Y/run.log"; exit 1; }
+printf 'approve yolanda\n' > "$Y/approvals/$YID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Y/run.log" || {
+  echo "FAIL: the answered positional gate did not complete"; cat "$Y/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Y/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the positional gate did not run exactly once"; exit 1; }
+echo "a positional concatenated gate published its prompt and waited"
+
+# ---------------------------------------------------------------- scenario Z
+echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==="
+# FG-143. The ROOT of scenarios W, X and Y rather than a fourth sibling of them.
+#
+# Each of those was a different way to make `stepBlock` fail; what turned a parse
+# failure into a SHIPPED BUILD was the opaque-section fallback, which consumed
+# `steps { … }` as `SecOther` once the `attempt` around it backtracked. The stage
+# then ran with NO STEPS and the build reported SUCCESS.
+#
+# MEASURED before the fix, with the slashy argument below: prompts=0, the gate
+# stage's workspace EMPTY, and the following stage's marker PRESENT — the human
+# approval skipped AND the work it guards dropped, with no diagnostic anywhere.
+#
+# Fogell does not parse slashy strings in expression arguments. That is a real
+# limit, and this scenario asserts the HONEST behaviour for it: refuse the
+# pipeline.
+#
+# COVERAGE, stated exactly: an unparseable NAMED argument, unparenthesised (Z) and
+# parenthesised (Z2); and an unparseable POSITIONAL argument standing before an
+# ordinary named one (Z3). Z3's `ok:` parses fine — calling it a mixed "unparseable
+# NAMED argument" case was wrong, and a broken mixed named form would pass this lane.
+# Enumerated to this level because every previous statement of this scenario's
+# coverage was broader than what it ran, including the one that replaced the last one.
+#
+# Z4 is the POSITIVE case: a VALID gate must still publish its message and wait.
+# Refusal scenarios alone cannot catch a fix that refuses everything. It does NOT cover "any step form the grammar does not
+# yet cover" — that is what this comment claimed while testing only the first
+# spelling, and the parenthesised one was meanwhile publishing a WRONG PROMPT.
+# Third time on this branch a scenario name has claimed a class and tested one
+# member of it; the pattern is worse here than a plain gap, because the broader
+# claim is what stops the next person looking.
+Z="$LANE/z"; mkdir -p "$Z/approvals"
+cat > "$Z/Jenkinsfile" <<'ZJF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: /Deploy; / + env.TARGET, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+        stage("After") {
+            steps {
+                sh "echo after >> markers.txt"
+            }
+        }
+    }
+}
+ZJF
+set +e
+timeout 60 "$HOST_BIN" "$Z/Jenkinsfile" "$Z/ws" gate "$Z/build.journal" "$Z/approvals" > "$Z/run.log" 2>&1
+Z_RC=$?
+set -e
+[ "$Z_RC" -eq 124 ] && {
+  echo "FAIL: an unparseable gate WAITED instead of being refused"; cat "$Z/run.log"; exit 1; }
+grep -q 'completed: success' "$Z/run.log" && {
+  echo "FAIL: an UNPARSEABLE gate argument completed successfully — the build shipped unapproved"
+  cat "$Z/run.log"; exit 1; }
+[ -z "$(ls -A "$Z/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused pipeline published an approval prompt"; exit 1; }
+if [ -f "$Z/ws/gate/markers.txt" ] && grep -qE '^(shipped|after)$' "$Z/ws/gate/markers.txt"; then
+  echo "FAIL: work ran inside a pipeline whose steps did not parse"; cat "$Z/ws/gate/markers.txt"; exit 1
+fi
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z/run.log" || {
+  echo "FAIL: the pipeline was dropped without any diagnostic"; cat "$Z/run.log"; exit 1; }
+echo "an unparseable gate argument was refused, not silently skipped"
+
+# Z2, the PARENTHESISED spelling of the same property. Found by the verifier after
+# Z was written and declared to hold for every uncovered form.
+#
+# This one was NOT a bypass, which is why the FG-143 fix did not catch it and why
+# it needs its own assertions: a prompt WAS published and the gate DID wait. The
+# published text was the raw argument body — `message: /Deploy; / + env.TARGET, ok:
+# "Ship it"` — so a human approved words the author never wrote, and `ok` was
+# dropped. A gate that stops the build while showing the wrong prompt still fails
+# the property this lane exists to defend.
+echo "=== Z2: a PARENTHESISED unparseable gate argument is REFUSED ==="
+Z2="$LANE/z2"; mkdir -p "$Z2/approvals"
+cat > "$Z2/Jenkinsfile" <<'Z2JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input(message: /Deploy; / + env.TARGET, ok: "Ship it")
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z2JF
+# BOUNDED. A refusal scenario must never WAIT: when the property is broken the
+# downgrade publishes a prompt and the host blocks for a decision nobody writes,
+# so an unbounded run HANGS instead of failing. It did exactly that during this
+# scenario's own mutation proof — the lane sat for minutes and only reported the
+# defect once the host was killed by hand. A checker that hangs is worse than one
+# that fails: in CI it burns the timeout and returns no verdict at all. The same
+# bounded-wait hardening was applied to scenarios Q and W earlier, and this
+# scenario was still written without it.
+set +e
+timeout 60 "$HOST_BIN" "$Z2/Jenkinsfile" "$Z2/ws" gate "$Z2/build.journal" "$Z2/approvals" > "$Z2/run.log" 2>&1
+Z2_RC=$?
+set -e
+[ "$Z2_RC" -eq 124 ] && {
+  echo "FAIL: the parenthesised gate WAITED on a prompt instead of refusing — the raw body became the prompt text"
+  cat "$Z2/run.log"; exit 1; }
+grep -q 'completed: success' "$Z2/run.log" && {
+  echo "FAIL: a parenthesised unparseable gate argument completed successfully"
+  cat "$Z2/run.log"; exit 1; }
+# ANY prompt is a failure, not merely one containing `message:`. Testing for the
+# raw body's own text made the assertion as narrow as the defect I had in mind:
+# a host publishing some OTHER prompt, or failing for an unrelated reason before
+# the work ran, still printed this scenario's success line.
+[ -z "$(ls -A "$Z2/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused pipeline published an approval prompt"; ls -1 "$Z2/approvals"; exit 1; }
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z2/run.log" || {
+  echo "FAIL: the parenthesised pipeline was dropped without any diagnostic"; cat "$Z2/run.log"; exit 1; }
+if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
+fi
+echo "a parenthesised unparseable gate argument was refused, not published as raw text"
+
+# Z3, a positional slashy carrying an ACTIVE DELIMITER before a named argument.
+# The `{` inside `/Deploy { /` is what the previous guard could not see: it tracked
+# bracket depth without skipping slashy spans, so the brace opened a level that never
+# closed and the later top-level `ok:` was hidden behind a non-zero depth. The earlier
+# spelling of this scenario used `/Ship; /`, which does not perturb the depth scanner
+# and therefore passed while this form was still broken.
+#
+# MIXED positional and named. The guard for Z2 tested only a LEADING `ident:`
+# while the ticket and the board row said "the body carries named-argument syntax" —
+# the code was the narrow thing and the claim was the class, one round after that
+# pattern was named on this branch. So `input("Deploy?", ok: /Ship; / + env.TARGET)`
+# still downgraded: the operator was shown `"Deploy?", ok: /Ship; / + env.TARGET`,
+# answered it, and the guarded step ran. Found by the verifier, not by scenario Z2,
+# which asserts the same property one spelling away.
+echo "=== Z3: a MIXED positional+named unparseable gate argument is REFUSED ==="
+Z3="$LANE/z3"; mkdir -p "$Z3/approvals"
+cat > "$Z3/Jenkinsfile" <<'Z3JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input(/Deploy { / + env.TARGET, ok: "Ship it")
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z3JF
+set +e
+timeout 60 "$HOST_BIN" "$Z3/Jenkinsfile" "$Z3/ws" gate "$Z3/build.journal" "$Z3/approvals" > "$Z3/run.log" 2>&1
+Z3_RC=$?
+set -e
+[ "$Z3_RC" -eq 124 ] && {
+  echo "FAIL: a mixed positional+named gate WAITED on a prompt instead of refusing"
+  cat "$Z3/run.log"; exit 1; }
+grep -q 'completed: success' "$Z3/run.log" && {
+  echo "FAIL: a mixed positional+named unparseable gate completed successfully"
+  cat "$Z3/run.log"; exit 1; }
+[ -z "$(ls -A "$Z3/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused mixed-argument pipeline published an approval prompt"; ls -1 "$Z3/approvals"; exit 1; }
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z3/run.log" || {
+  echo "FAIL: the mixed-argument pipeline was dropped without any diagnostic"; cat "$Z3/run.log"; exit 1; }
+if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1
+fi
+echo "a mixed positional+named unparseable gate was refused, not published as raw text"
+
+# ---------------------------------------------------------------- scenario Z4
+echo "=== Z4: a VALID triple-quoted gate publishes its MESSAGE and waits ==="
+# FG-149, and the first POSITIVE case in this series. Every scenario from Z onwards
+# asserts that something is REFUSED; a fix that refused every gate would pass them
+# all. This one fails if the engine over-refuses.
+#
+# `balancedRaw` skipped from one `"` to the next matching one, so `"""` read as an
+# empty string and the `)` inside the message counted towards depth. Before FG-147
+# that produced a wrong prompt; after it, a REFUSAL of a pipeline Jenkins accepts.
+Z4="$LANE/z4"; mkdir -p "$Z4/approvals"
+cat > "$Z4/Jenkinsfile" <<'Z4JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input(message: """Deploy " )?""", ok: "Ship it")
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z4JF
+"$HOST_BIN" "$Z4/Jenkinsfile" "$Z4/ws" gate "$Z4/build.journal" "$Z4/approvals" > "$Z4/run.log" 2>&1 &
+PID=$!
+Z4ID=$(await_pending "$Z4/approvals") || {
+  echo "FAIL: a VALID triple-quoted gate published NO prompt — the engine over-refuses"
+  cat "$Z4/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q 'prompt	Deploy " )?' "$Z4/approvals/$Z4ID.pending" || {
+  echo "FAIL: the prompt was not the message value"
+  cat "$Z4/approvals/$Z4ID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$Z4/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the triple-quoted gate ran before anyone answered it"
+  kill -9 "$PID" 2>/dev/null; exit 1; }
+printf 'approve zoe\n' > "$Z4/approvals/$Z4ID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Z4/run.log" || {
+  echo "FAIL: the answered triple-quoted gate did not complete"; cat "$Z4/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Z4/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the triple-quoted gate did not run exactly once"; exit 1; }
+echo "a valid triple-quoted gate published its message and waited"
+
+# ---------------------------------------------------------------- scenario Z5
+echo "=== Z5: a gate whose message is a NESTED CALL must not publish its SOURCE ==="
+# FG-157. The seventh approval defect on this branch and the FOURTH from one of my own
+# fixes. FG-150 added a nested-call branch so `buildDiscarder(logRotator(...))` would
+# stop dropping an options block; that branch returned the value UNMARKED, so it never
+# entered `ExpressionArgs` and rendering used the SOURCE TEXT.
+#
+# MEASURED before the fix: `input promptFactory()` published `prompt<TAB>promptFactory()`
+# and WAITED — a human asked to approve a function call as if it were the message. The
+# sentinel path was already correct: `input 10 / 2` publishes `5`. The fix routed around
+# working machinery.
+#
+# Scenarios W through Z4 could not catch it: they cover division, concatenation (named
+# and positional), slashy refusal, mixed args and triple quotes — every spelling I had
+# thought of, and not this one.
+Z5="$LANE/z5"; mkdir -p "$Z5/approvals"
+cat > "$Z5/Jenkinsfile" <<'Z5JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input promptFactory()
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z5JF
+set +e
+timeout 60 "$HOST_BIN" "$Z5/Jenkinsfile" "$Z5/ws" gate "$Z5/build.journal" "$Z5/approvals" > "$Z5/run.log" 2>&1
+Z5_RC=$?
+set -e
+[ "$Z5_RC" -eq 124 ] && {
+  echo "FAIL: the nested-call gate WAITED — it published something as a prompt"
+  cat "$Z5/run.log"; exit 1; }
+for pending in "$Z5/approvals"/*.pending; do
+  [ -e "$pending" ] || continue
+  echo "FAIL: a nested-call gate published a prompt — the operator would approve SOURCE TEXT"
+  cat "$pending"; exit 1
+done
+grep -q 'completed: success' "$Z5/run.log" && {
+  echo "FAIL: a gate whose message could not be evaluated completed successfully"
+  cat "$Z5/run.log"; exit 1; }
+if [ -f "$Z5/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z5/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a gate that never published a prompt"; exit 1
+fi
+echo "a nested-call gate failed closed instead of publishing its source text"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
