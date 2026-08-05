@@ -1420,6 +1420,7 @@ echo "an unparseable gate argument was refused, not silently skipped"
 # "Ship it"` — so a human approved words the author never wrote, and `ok` was
 # dropped. A gate that stops the build while showing the wrong prompt still fails
 # the property this lane exists to defend.
+echo "=== Z2: a PARENTHESISED unparseable gate argument is REFUSED ==="
 Z2="$LANE/z2"; mkdir -p "$Z2/approvals"
 cat > "$Z2/Jenkinsfile" <<'Z2JF'
 pipeline {
@@ -1452,12 +1453,14 @@ set -e
 grep -q 'completed: success' "$Z2/run.log" && {
   echo "FAIL: a parenthesised unparseable gate argument completed successfully"
   cat "$Z2/run.log"; exit 1; }
-for pending in "$Z2/approvals"/*.pending; do
-  [ -e "$pending" ] || continue
-  grep -q 'message:' "$pending" && {
-    echo "FAIL: the prompt published the RAW ARGUMENT BODY, so the operator approved text the author never wrote"
-    cat "$pending"; exit 1; }
-done
+# ANY prompt is a failure, not merely one containing `message:`. Testing for the
+# raw body's own text made the assertion as narrow as the defect I had in mind:
+# a host publishing some OTHER prompt, or failing for an unrelated reason before
+# the work ran, still printed this scenario's success line.
+[ -z "$(ls -A "$Z2/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused pipeline published an approval prompt"; ls -1 "$Z2/approvals"; exit 1; }
+grep -qE 'no_stages|refus|parse' "$Z2/run.log" || {
+  echo "FAIL: the parenthesised pipeline was dropped without any diagnostic"; cat "$Z2/run.log"; exit 1; }
 if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
 fi
@@ -1470,6 +1473,7 @@ echo "a parenthesised unparseable gate argument was refused, not published as ra
 # still downgraded: the operator was shown `"Deploy?", ok: /Ship; / + env.TARGET`,
 # answered it, and the guarded step ran. Found by the verifier, not by scenario Z2,
 # which asserts the same property one spelling away.
+echo "=== Z3: a MIXED positional+named unparseable gate argument is REFUSED ==="
 Z3="$LANE/z3"; mkdir -p "$Z3/approvals"
 cat > "$Z3/Jenkinsfile" <<'Z3JF'
 pipeline {
@@ -1494,12 +1498,10 @@ set -e
 grep -q 'completed: success' "$Z3/run.log" && {
   echo "FAIL: a mixed positional+named unparseable gate completed successfully"
   cat "$Z3/run.log"; exit 1; }
-for pending in "$Z3/approvals"/*.pending; do
-  [ -e "$pending" ] || continue
-  grep -q 'ok:' "$pending" && {
-    echo "FAIL: the prompt published the RAW ARGUMENT BODY of a mixed call"
-    cat "$pending"; exit 1; }
-done
+[ -z "$(ls -A "$Z3/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused mixed-argument pipeline published an approval prompt"; ls -1 "$Z3/approvals"; exit 1; }
+grep -qE 'no_stages|refus|parse' "$Z3/run.log" || {
+  echo "FAIL: the mixed-argument pipeline was dropped without any diagnostic"; cat "$Z3/run.log"; exit 1; }
 if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1
 fi

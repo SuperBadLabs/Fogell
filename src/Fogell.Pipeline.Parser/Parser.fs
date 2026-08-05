@@ -220,11 +220,12 @@ let private stepBlock: P<Step list> =
 ///
 /// The same silent-fallback shape as FG-143, one level down and NOT a bypass, which is
 /// why it outlived that fix: a prompt IS published and the gate DOES wait. It publishes
-/// the WRONG ONE. MEASURED, approval-lane scenario Z:
+/// the WRONG ONE. MEASURED, approval-lane scenario Z2:
 /// `input(message: /Deploy; / + env.TARGET, ok: "Ship it")` failed to reparse, became one
 /// positional argument, and the human was asked to approve the literal text
 /// `message: /Deploy; / + env.TARGET, ok: "Ship it"` — not Jenkins' message value — while
-/// `ok` was dropped entirely. An approval gate that shows the operator different words
+/// `ok` was dropped entirely. MEASURED, approval-lane scenario Z2. An approval gate
+/// that shows the operator different words
 /// than the pipeline author wrote is not a working gate, even though it stops the build.
 ///
 /// The downgrade stays for bodies with NO named-argument syntax, where treating the body
@@ -237,7 +238,7 @@ let private carriesNamedArg (body: string) =
     // was the narrow thing and the claim was the class, one round after that exact
     // pattern was named on this branch. `input("Deploy?", ok: /Ship; / + env.TARGET)`
     // therefore still downgraded, and the operator was asked to approve
-    // `"Deploy?", ok: /Ship; / + env.TARGET`. MEASURED, approval-lane scenario Z.
+    // `"Deploy?", ok: /Ship; / + env.TARGET`. MEASURED, approval-lane scenario Z3.
     //
     // Quoted spans are skipped so a `:` inside text is not named syntax, and nested
     // brackets are skipped so a map literal `[a: 1]` is not either. A ternary's `b : c`

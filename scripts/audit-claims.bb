@@ -40,17 +40,21 @@
       ;; of a scenario nobody wrote does not.
       lane-scenarios (let [f (fs/file root "scripts/run-approval-lane.sh")]
                        (if (fs/exists? f)
-                         (->> (re-seq #"(?m)^echo \"=== ([A-Z]):" (slurp f))
+                         (->> (re-seq #"(?m)^echo \"=== ([A-Z][0-9]*):" (slurp f))
                               (map second)
                               (map #(str "approval-lane scenario " %))
                               set)
                          #{}))
-      ;; KNOWN FLOOR, stated so a pass is not mistaken for proof: matching is
-      ;; SUBSTRING-based, so `scenario ZZZ` would resolve against `scenario Z`. The
-      ;; check catches a citation of something nobody wrote (proven: `scenario A`
-      ;; fails, `scenario Z` passes) and an absent citation; it does not catch a
-      ;; deliberately malformed one, and it never verifies the scenario EXERCISES
-      ;; the claim — the same ceiling the receipt citations have.
+      ;; EXACT citations, not substrings. The floor recorded here previously — that
+      ;; `scenario ZZZ` resolves against `scenario Z` — was not hypothetical: two
+      ;; comments went on to cite `scenario Z` for behaviours that scenarios Z2 and
+      ;; Z3 prove, and this check passed them because `Z` is a prefix of `Z2`.
+      ;; DOCUMENTING A HOLE IS NOT CLOSING ONE. A citation must now be followed by a
+      ;; non-alphanumeric character, so `Z` no longer stands in for `Z2`.
+      ;;
+      ;; What it still CANNOT do, so a pass is not mistaken for proof: it verifies a
+      ;; cited scenario EXISTS, never that the scenario EXERCISES the claim — the
+      ;; same ceiling the receipt citations have.
       citable (into receipts lane-scenarios)
       ;; ALL F# sources, not just src/ — tools and tests carry MEASURED claims too, and a
       ;; check whose scope is narrower than its description is the very defect this script
@@ -293,7 +297,8 @@
                   ;; window, one layer down.
                   neighbours (concat (subvec v start i) (subvec v (inc i) (inc stop)))
                   block (str/join " " (concat (mapcat :spans neighbours) [own]))
-                  named (filter #(str/includes? block %) citable)
+                  named (filter #(re-find (re-pattern (str "\\Q" % "\\E(?![A-Za-z0-9])")) block)
+                                citable)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes
                   ;; both engines fail, leaving only narration to compare). Saying so is a
