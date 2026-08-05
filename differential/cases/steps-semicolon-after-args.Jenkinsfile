@@ -1,25 +1,31 @@
 // FG-134, second half. A `;` must terminate a RAW (unquoted) argument, not just
 // separate two quoted steps.
 //
-// The step-block separator loop alone was not enough: for a step with named or
-// unquoted arguments the `;` never reached that loop, because the raw argument
-// scanners consumed it INSIDE the argument value. `sh script: 'a', label: 'x'; sh 'b'`
-// captured the semicolon and everything after it as part of `label`.
+// The step-block separator loop alone was not enough: for a step with an
+// unquoted argument the `;` never reached that loop, because the raw argument
+// scanners consumed it INSIDE the value.
 //
-// The QUOTED form (`sh 'a'; sh 'b'`) worked throughout, which is exactly why the
-// first fix looked complete — that was the shape in front of me. Raised as P1
-// independently by BOTH reviewers on PR #40.
+// THE ARGUMENT ADJACENT TO EACH `;` IS GENUINELY RAW — `returnStatus: true`,
+// unquoted — and that is the whole point. An earlier version used `label: 'first'`
+// and `echo 'unquoted step arg'`, both QUOTED, so it would have passed unchanged
+// while the raw scanners still swallowed the semicolon: it proved the separator
+// loop and CLAIMED to prove argument termination. Caught by the pre-push verifier
+// reading the case against its own comment.
+//
+// `sleep 1` was tried here first and is not implemented by this engine, so the
+// case failed for a reason that had nothing to do with semicolons — the control
+// (same steps, no semicolons) is what separated the two.
 pipeline {
     agent any
     stages {
         stage('one') {
             steps {
-                sh script: 'echo a > a.txt', label: 'first'; sh 'echo b > b.txt'
+                sh script: 'echo a > a.txt', returnStatus: true; sh 'echo b > b.txt'
             }
         }
         stage('two') {
             steps {
-                echo 'unquoted step arg'; sh 'echo c > c.txt'
+                sh script: 'echo c > c.txt', returnStatus: true; sh 'echo d > d.txt'
             }
         }
     }

@@ -1,7 +1,7 @@
 # Differential receipt — steps-semicolon-after-args.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         bd2379bd89793d5aac1061cd0a458603dde22de86fc78938a97f45033a05568f
+seal:         959b9c77bc02bb92d9a3311ae7a0c966b3b7a01fb0089772c7bc4b0ea4455988
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -59,26 +59,28 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 6fafd186cfe0a6c05acc5c0de8145838e88ee6da8120d9fe1da3cfb096f13d6b
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
   output (4 lines):
     | + echo a
     | + echo b
-    | unquoted step arg
     | + echo c
+    | + echo d
   workspace:
     87428fc52280  a.txt
     0263829989b6  b.txt
     a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 6fafd186cfe0a6c05acc5c0de8145838e88ee6da8120d9fe1da3cfb096f13d6b
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
   output (4 lines):
     | + echo a
     | + echo b
-    | unquoted step arg
     | + echo c
+    | + echo d
   workspace:
     87428fc52280  a.txt
     0263829989b6  b.txt
     a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
