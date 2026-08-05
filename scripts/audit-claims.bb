@@ -59,7 +59,18 @@
       ;; What it still CANNOT do, so a pass is not mistaken for proof: it verifies a
       ;; cited scenario EXISTS, never that the scenario EXERCISES the claim — the
       ;; same ceiling the receipt citations have.
-      citable (into receipts lane-scenarios)
+      ;; PROOF-SCRIPT CASES ARE EVIDENCE TOO, for the same reason lane scenarios are:
+      ;; some properties no receipt can carry. `stage-input-directive` is refused by
+      ;; Fogell and ACCEPTED by Jenkins, so a differential case is NOT-COMPARABLE by
+      ;; construction — there is no receipt to cite and never will be. Verified the same
+      ;; way: the case name must actually appear as an assertion in the proof script.
+      proof-cases (let [f (fs/file root "scripts/prove-section-refusals.sh")]
+                    (if (fs/exists? f)
+                      (->> (re-seq #"(?m)^expect_(?:refusal|control|env_ok)\s+([a-z0-9-]+)" (slurp f))
+                           (map second)
+                           set)
+                      #{}))
+      citable (into (into receipts lane-scenarios) proof-cases)
       ;; ALL F# sources, not just src/ — tools and tests carry MEASURED claims too, and a
       ;; check whose scope is narrower than its description is the very defect this script
       ;; exists to catch. Caught by review, in the script that catches it.
@@ -317,8 +328,8 @@
       findings (remove :backed? claims)
       unproven-count (count (filter :unproven? claims))]
 
-  (println (format "MEASURED claims: %d source files scanned, %d receipts + %d lane scenarios citable"
-                   (count sources) (count receipts) (count lane-scenarios)))
+  (println (format "MEASURED claims: %d source files scanned, %d receipts + %d lane scenarios + %d proof cases citable"
+                   (count sources) (count receipts) (count lane-scenarios) (count proof-cases)))
   (if (empty? findings)
     (println (format "every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (%d)"
                      unproven-count))

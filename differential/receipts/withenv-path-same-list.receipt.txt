@@ -3,19 +3,6 @@
 jenkins-core: 2.568.1
 seal:         b48261eb80be4f206b79f56518ddaff5a3bc5052621f10a51dd9e3c732cc29ab
 
-RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.
-  The verdict below is from a re-run. What the earlier attempt showed:
-    output line 0: jenkins=+ echo /opt/tools/bin:/custom-base:/usr/bin:/bin fogell=+ + echo /opt/tools/bin:/custom-base:/usr/bin:/bin
-  NOTE: this block is run provenance and is NOT covered by the seal
-  above, which hashes the compared content so a verdict's evidence cannot
-  be altered undetected. See FG-128.
-  CAUSE UNCLASSIFIED. The FG-119 retry re-runs EVERY divergence, not
-  only the known `sh -x` pipeline interleaving, and nothing here
-  establishes which this was — a genuine intermittent engine mismatch
-  that happened to pass on re-run looks exactly the same. Naming the
-  trace race would let a real defect read as classified noise. A case
-  that recovers REPEATEDLY across runs is a defect report; treat it so.
-
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract

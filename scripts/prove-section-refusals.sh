@@ -211,6 +211,35 @@ expect_refusal stage-env-bad "pipeline {
     }
 }"
 
+echo "=== stage-level input DIRECTIVE: an unsupported human gate must stop the build ==="
+# FG-155, a P0 and the only approval bypass on this branch that was not mine: mapped to
+# an opaque section in the FIRST parser commit and ignored by stage construction ever
+# since. MEASURED before the fix: `completed: success`, prompts=0, `shipped.txt` written
+# — the gate skipped and its guarded work done.
+#
+# THE APPROVAL LANE COULD NOT SEE IT. Every one of its 30+ fixtures uses the STEP form
+# `steps { input ... }`; this is the DIRECTIVE form, a different syntax reaching a
+# different parser path to the same human gate. Guards accumulate against the spelling
+# you already thought of.
+#
+# There is no control case here on purpose: Fogell does not implement this form, so
+# there is no valid version of it to keep running. When it is implemented, this case
+# must be replaced by a control that publishes a prompt and waits.
+expect_refusal stage-input-directive 'pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            input {
+                message "Deploy?"
+                ok "Ship it"
+            }
+            steps {
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}'
+
 echo "=== stage steps: the original silent fallback (FG-143) ==="
 expect_control stage-steps-ok 'completed: success' 'pipeline {
     agent any
@@ -235,7 +264,7 @@ expect_refusal stage-steps-bad 'pipeline {
 }'
 
 if [ "$FAILED" -eq 0 ]; then
-  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse when unparseable at both levels, and every control still runs"
+  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, and every control still runs"
 else
   echo "SECTION-REFUSAL PROOF FAILED"
   exit 1

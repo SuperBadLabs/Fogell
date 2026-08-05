@@ -603,7 +603,21 @@ let private actedOnSections =
           "stages"
           "parallel"
           "post"
-          "steps" ]
+          "steps"
+          // `input` IS A HUMAN GATE. It was mapped to an opaque section in the original
+          // parser and then IGNORED by stage construction, so the DIRECTIVE form
+          // `stage("Gate") { input { message "Deploy?" } steps { … } }` ran its steps
+          // with NO PROMPT PUBLISHED and the build reported success. MEASURED,
+          // proof case stage-input-directive:
+          // prompts=0, `shipped.txt` present. Pre-existing since the first parser
+          // commit, and invisible to the approval lane because every lane fixture uses
+          // the STEP form `steps { input … }` — a whole syntax the guards never touched.
+          //
+          // Fogell does not implement the directive form. Until it does, this REFUSES:
+          // an unsupported human gate must stop the build, never wave it through. That
+          // is the sixth approval bypass on this branch and the only one that was not
+          // mine. FG-155.
+          "input" ]
 
 let private stageParser, private stageRef = createParserForwardedToRef<Stage, unit> ()
 
@@ -663,7 +677,6 @@ stageRef.Value <-
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
-                      attempt (keyword "input" >>. (attempt (balancedRaw '{' '}') <|> balancedRaw '(' ')') |>> fun _ -> SecOther "input")
                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
