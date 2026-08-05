@@ -67,22 +67,18 @@ let private positionalArg: P<string> =
     <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim())
 
-/// FG-134 / FG-138. A `;` does NOT terminate a raw (unquoted) argument here, and
-/// this comment said it did after the change was reverted.
+/// FG-134 / FG-138. A `;` TERMINATES a raw (unquoted) argument, outside literals.
 ///
-/// The step-block separator loop handles the common shape, because a QUOTED value
-/// is consumed by the string-literal parser above and the `;` then reaches the
-/// loop. An UNQUOTED one — `checkout scm; sh 'make'`, `returnStatus: true; sh …`
-/// — is swallowed by the scanners here and the following step is lost. It fails
-/// LOUDLY (`completed: failure`, empty workspace), which is why it is tolerable
-/// while FG-138 is open.
+/// This comment previously said the opposite, and was written when the terminator
+/// was reverted — then left in place when FG-138 re-added it on this same branch.
+/// Fourth time in this session I have reverted or re-landed a decision and left
+/// the story about the other one; a stale rationale reads as intent and makes the
+/// code look like the anomaly.
 ///
-/// Adding `;` to the terminator set was tried and REVERTED: it needs a complete
-/// enumeration of Groovy string forms, five review rounds found five, and two of
-/// the intermediate states produced SILENT no-ops — a build exiting 0 with no
-/// `step-started` and no files, the exact class FG-134 exists to remove. The fix
-/// is to consume string spans through what `Lexeme` already knows rather than a
-/// fourth character scanner. FG-138.
+/// What holds now: literal SPANS are consumed whole by `Lexeme.stringSpanRaw`, so
+/// `;` is a stop character for the raw text BETWEEN literals and never truncates
+/// an expression carrying one inside quotes. Receipt
+/// `steps-semicolon-after-raw-arg`, proven to discriminate by mutation.
 
 let private argList
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =

@@ -311,8 +311,14 @@ let stringSpanRaw: P<string> =
                 stream.Seek start
                 Reply(Error, expected "a terminated string literal")
         elif c = '/' then
-            // slashy: `/` opens only where a raw expression could not be division,
-            // which the callers decide; here it is simply the delimiter.
+            // SLASHY, ASSUMED NOT DIVISION. This scanner treats any `/` as a slashy
+            // opener; it does NOT decide between a literal and a division operator,
+            // and no caller does either — `rawArgValue` simply excludes `/` from
+            // plain text and tries here. An earlier version of this comment said
+            // "the callers decide", documenting a guard that does not exist, which
+            // is worse than the gap: a reader could rely on it. A raw expression
+            // dividing by something would be mis-scanned, and the forms that would
+            // expose it are the ones FG-139 has yet to isolate.
             if readDelimited '/' false then
                 let len = int (stream.Index - start)
                 stream.Seek start
