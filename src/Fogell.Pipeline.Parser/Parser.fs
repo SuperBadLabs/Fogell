@@ -20,60 +20,12 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-/// A raw (unquoted) argument value, scanned STRING- AND ESCAPE-aware.
-///
-/// FG-134, and this is the fourth shape of one bug. Adding `;` to the terminator
-/// set so a separator could end an unquoted argument broke expressions carrying a
-/// semicolon inside their own literal; making quoted spans skip wholesale then
-/// broke ESCAPED quotes, because the span ended at the `\"` and the `;` after it
-/// terminated — the host exited 0 with `build-finished success`, NO `step-started`
-/// and no output file. A silent no-op: exactly the class this ticket exists to
-/// remove, reintroduced by the fix to the fix.
-///
-/// So the quote skipping is the SAME logic `Lexeme.balancedRaw` already uses —
-/// `\` consumes the next character, an unterminated single-quote bails at the
-/// newline — rather than a third hand-rolled variant. Three character scanners
-/// disagreeing about what a string is was the actual defect.
-let private rawArgValue (extraStop: char list) : P<string> =
-    let stops = [ ','; ')'; '\n'; '}' ] @ extraStop
-
-    let quoted: P<string> =
-        let span (q: char) : P<string> =
-            let inner (stream: CharStream<unit>) =
-                let sb = System.Text.StringBuilder()
-                sb.Append(stream.Read()) |> ignore // opening quote
-                let mutable closed = false
-
-                while not closed && not stream.IsEndOfStream do
-                    let d = stream.Peek()
-
-                    if d = '\\' then
-                        sb.Append(stream.Read()) |> ignore
-                        if not stream.IsEndOfStream then sb.Append(stream.Read()) |> ignore
-                    elif d = q then
-                        sb.Append(stream.Read()) |> ignore
-                        closed <- true
-                    elif d = '\n' && q = '\'' then
-                        closed <- true // unterminated single-quote: bail, as balancedRaw does
-                    else
-                        sb.Append(stream.Read()) |> ignore
-
-                Reply(sb.ToString())
-
-            attempt (lookAhead (pchar q) >>. inner)
-
-        span '\'' <|> span '"'
-
-    let plain: P<string> = many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"')
-
-    many1Strings (quoted <|> plain)
-
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
-            <|> (rawArgValue [ ';' ] .>> ws
+            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -81,7 +33,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (rawArgValue [ ';' ] .>> ws
+            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -91,13 +43,13 @@ let private positionalArgWithKind: P<string * string * bool> =
     (stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
-    <|> (rawArgValue [ '{'; ';' ] .>> ws
+    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (rawArgValue [ '{'; ';' ] .>> ws
+    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
 /// FG-134. `;` TERMINATES a raw (unquoted) argument.

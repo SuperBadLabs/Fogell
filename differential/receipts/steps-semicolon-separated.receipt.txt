@@ -1,7 +1,7 @@
 # Differential receipt — steps-semicolon-separated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         50657b859ebc7fbe204052492ac0e582da8561e8a95445341865ccb15c9f8592
+seal:         05318058ea06a2d560bdcf05dc248ec6d90f4594b4d1c58884923667a64a44e2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -59,44 +59,28 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: a75fac8e8e7d07bb93b61b8ddef55632ceba89555fcc891cadb08ec939bb4944
-  output (8 lines):
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
     | + echo a
     | + echo b
     | + echo c
     | + echo d
-    | + echo e
-    | + echo f
-    | + echo h
-    | + printf x"; still literal
   workspace:
     87428fc52280  a.txt
     0263829989b6  b.txt
     a3a5e715f0cc  c.txt
     8d74beec1be9  d.txt
-    a2bbdb2de535  e.txt
-    092fcfbbcfca  f.txt
-    c352c9ebee12  g.txt
-    91ee5e9f42ba  h.txt
 
 ## Fogell
   result:         success
-  workspace-hash: a75fac8e8e7d07bb93b61b8ddef55632ceba89555fcc891cadb08ec939bb4944
-  output (8 lines):
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
     | + echo a
     | + echo b
     | + echo c
     | + echo d
-    | + echo e
-    | + echo f
-    | + echo h
-    | + printf x"; still literal
   workspace:
     87428fc52280  a.txt
     0263829989b6  b.txt
     a3a5e715f0cc  c.txt
     8d74beec1be9  d.txt
-    a2bbdb2de535  e.txt
-    092fcfbbcfca  f.txt
-    c352c9ebee12  g.txt
-    91ee5e9f42ba  h.txt
