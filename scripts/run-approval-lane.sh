@@ -1407,7 +1407,7 @@ grep -q 'completed: success' "$Z/run.log" && {
 if [ -f "$Z/ws/gate/markers.txt" ] && grep -qE '^(shipped|after)$' "$Z/ws/gate/markers.txt"; then
   echo "FAIL: work ran inside a pipeline whose steps did not parse"; cat "$Z/ws/gate/markers.txt"; exit 1
 fi
-grep -qE 'no_stages|refus|parse' "$Z/run.log" || {
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z/run.log" || {
   echo "FAIL: the pipeline was dropped without any diagnostic"; cat "$Z/run.log"; exit 1; }
 echo "an unparseable gate argument was refused, not silently skipped"
 
@@ -1459,14 +1459,21 @@ grep -q 'completed: success' "$Z2/run.log" && {
 # the work ran, still printed this scenario's success line.
 [ -z "$(ls -A "$Z2/approvals" 2>/dev/null)" ] || {
   echo "FAIL: a refused pipeline published an approval prompt"; ls -1 "$Z2/approvals"; exit 1; }
-grep -qE 'no_stages|refus|parse' "$Z2/run.log" || {
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z2/run.log" || {
   echo "FAIL: the parenthesised pipeline was dropped without any diagnostic"; cat "$Z2/run.log"; exit 1; }
 if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
 fi
 echo "a parenthesised unparseable gate argument was refused, not published as raw text"
 
-# Z3, MIXED positional and named. The guard for Z2 tested only a LEADING `ident:`
+# Z3, a positional slashy carrying an ACTIVE DELIMITER before a named argument.
+# The `{` inside `/Deploy { /` is what the previous guard could not see: it tracked
+# bracket depth without skipping slashy spans, so the brace opened a level that never
+# closed and the later top-level `ok:` was hidden behind a non-zero depth. The earlier
+# spelling of this scenario used `/Ship; /`, which does not perturb the depth scanner
+# and therefore passed while this form was still broken.
+#
+# MIXED positional and named. The guard for Z2 tested only a LEADING `ident:`
 # while the ticket and the board row said "the body carries named-argument syntax" —
 # the code was the narrow thing and the claim was the class, one round after that
 # pattern was named on this branch. So `input("Deploy?", ok: /Ship; / + env.TARGET)`
@@ -1481,7 +1488,7 @@ pipeline {
     stages {
         stage("Gate") {
             steps {
-                input("Deploy?", ok: /Ship; / + env.TARGET)
+                input(/Deploy { / + env.TARGET, ok: "Ship it")
                 sh "echo shipped >> markers.txt"
             }
         }
@@ -1500,7 +1507,7 @@ grep -q 'completed: success' "$Z3/run.log" && {
   cat "$Z3/run.log"; exit 1; }
 [ -z "$(ls -A "$Z3/approvals" 2>/dev/null)" ] || {
   echo "FAIL: a refused mixed-argument pipeline published an approval prompt"; ls -1 "$Z3/approvals"; exit 1; }
-grep -qE 'no_stages|refus|parse' "$Z3/run.log" || {
+grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z3/run.log" || {
   echo "FAIL: the mixed-argument pipeline was dropped without any diagnostic"; cat "$Z3/run.log"; exit 1; }
 if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1

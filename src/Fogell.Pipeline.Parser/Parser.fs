@@ -230,69 +230,34 @@ let private stepBlock: P<Step list> =
 ///
 /// The downgrade stays for bodies with NO named-argument syntax, where treating the body
 /// as one positional value is what the step means (`withEnv([...])`, `timeout(5)`).
-let private carriesNamedArg (body: string) =
-    // TOP-LEVEL named-argument syntax ANYWHERE in the body, not just at the start.
-    //
-    // The first version of this guard tested only a LEADING `ident:` while the ticket
-    // and the board row both said "the body carries named-argument syntax". The code
-    // was the narrow thing and the claim was the class, one round after that exact
-    // pattern was named on this branch. `input("Deploy?", ok: /Ship; / + env.TARGET)`
-    // therefore still downgraded, and the operator was asked to approve
-    // `"Deploy?", ok: /Ship; / + env.TARGET`. MEASURED, approval-lane scenario Z3.
-    //
-    // Quoted spans are skipped so a `:` inside text is not named syntax, and nested
-    // brackets are skipped so a map literal `[a: 1]` is not either. A ternary's `b : c`
-    // CAN be read as named syntax here; that yields a REFUSAL of a body that already
-    // failed to parse, which is the safe direction — loud, not silent.
-    let n = body.Length
-    let mutable i = 0
-    let mutable depth = 0
-    let mutable found = false
-
-    while i < n && not found do
-        let c = body.[i]
-
-        if c = '\'' || c = '"' then
-            let q = c
-            i <- i + 1
-
-            while i < n && body.[i] <> q do
-                i <- i + (if body.[i] = '\\' then 2 else 1)
-
-            i <- i + 1
-        elif c = '(' || c = '[' || c = '{' then
-            depth <- depth + 1
-            i <- i + 1
-        elif c = ')' || c = ']' || c = '}' then
-            depth <- depth - 1
-            i <- i + 1
-        elif depth = 0 && (System.Char.IsLetter c || c = '_') then
-            while i < n && (System.Char.IsLetterOrDigit body.[i] || body.[i] = '_') do
-                i <- i + 1
-
-            let mutable j = i
-
-            while j < n && (body.[j] = ' ' || body.[j] = '\t') do
-                j <- j + 1
-
-            if j < n && body.[j] = ':' && (j + 1 >= n || body.[j + 1] <> ':') then
-                found <- true
-        else
-            i <- i + 1
-
-    found
+/// FG-147. A parenthesised argument body that FAILS to parse is REFUSED. There is no
+/// classification step, because every attempt to write one has been wrong.
+///
+/// The first guard tested a LEADING `ident:` while claiming to detect named syntax
+/// anywhere. The second scanned for top-level `ident:` anywhere, skipping quoted spans
+/// and brackets — and did not skip SLASHY spans, so `input(/Deploy { / + env.TARGET,
+/// ok: "Ship it")` opened a brace that never closed, hid the top-level `ok:` behind a
+/// non-zero depth, took the downgrade, and published the raw body as the prompt. The
+/// scanner has to be right about the exact construct that made the body unparseable in
+/// the first place, which is the same enumeration trap as the terminator whitelist that
+/// broke FG-122: a list of what to skip is only as complete as my list of what exists.
+///
+/// The body already failed to parse. That is the whole fact: we do not understand it,
+/// so we must not invent a value from it. Refusing needs no scanner and cannot be
+/// incomplete. MEASURED, approval-lane scenarios Z2 and Z3.
+///
+/// Bodies that parse are unaffected — `withEnv([...])`, `timeout(5)`, `sh(script: 'x')`
+/// never reach this branch. If a real Jenkinsfile ever needs an opaque paren body that
+/// Fogell cannot parse, it must be a REFUSAL that gets a ticket, not a silent guess at
+/// what the author meant.
 
 let private parenArgs (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
 
     match runParserOnString (ws >>. argList .>> eof) () "args" body with
-    | ParserResult.Success(v, _, _) -> preturn (Choice2Of2 v)
+    | ParserResult.Success(v, _, _) -> preturn v
     | ParserResult.Failure _ ->
-        if carriesNamedArg body then
-            fail
-                $"named arguments that do not parse are refused, never downgraded to one positional value: ({body})"
-        else
-            preturn (Choice1Of2 raw)
+        fail $"a parenthesised argument body that does not parse is refused, never downgraded to one positional value: ({body})"
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
@@ -313,27 +278,18 @@ stepRef.Value <-
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
                 [ attempt (balancedRaw '(' ')') >>= parenArgs
-                  attempt (hspaces >>. argList) |>> Choice2Of2
-                  preturn (Choice2Of2([], [], Set.empty, Set.empty, [], Set.empty, [])) ])
+                  attempt (hspaces >>. argList)
+                  preturn ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
             (fun pos name args -> pos, name, args)
     .>>. opt (attempt stepBlock)
     |>> fun ((pos, name, args), block) ->
+            // The DOWNGRADE THAT USED TO LIVE HERE IS GONE, not merely guarded. It
+            // re-parsed the paren body and, on failure, invented a single positional
+            // argument from the raw text — which is how an approval prompt came to
+            // show the operator `message: /Deploy; / + env.TARGET, ok: "Ship it"`.
+            // `parenArgs` now refuses instead, so there is no second path to reach.
             let named, positional, literalNamed, literalPositional, interpolationSource, expressionArgs, argOrder =
-                match args with
-                | Choice1Of2 raw ->
-                    // re-parse the captured paren body for named/positional
-                    let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
-                    match runParserOnString (ws >>. argList .>> eof) () "args" body with
-                    | ParserResult.Success((n, p, lit, litPos, src, expr, order), _, _) -> n, p, lit, litPos, src, expr, order
-                    | ParserResult.Failure _ ->
-                        [],
-                        (if body.Trim() = "" then [] else [ body.Trim() ]),
-                        Set.empty,
-                        Set.empty,
-                        [],
-                        Set.empty,
-                        (if body.Trim() = "" then [] else [ "#0" ])
-                | Choice2Of2(n, p, lit, litPos, src, expr, order) -> n, p, lit, litPos, src, expr, order
+                args
 
             { Name = name
               Positional = positional
@@ -344,10 +300,10 @@ stepRef.Value <-
               ExpressionArgs = expressionArgs
               ArgumentOrder = argOrder
               Block = defaultArg block []
-              RawArgs =
-                match args with
-                | Choice1Of2 raw -> raw
-                | Choice2Of2 _ -> ""
+              // Only ever populated on the OPAQUE paren path, which no longer exists.
+              // No code reads this field — `rg RawArgs` finds the record definition,
+              // this assignment and one test literal — so emptying it drops nothing.
+              RawArgs = ""
               Position = pos }
 
 // ---------------------------------------------------------------------------
