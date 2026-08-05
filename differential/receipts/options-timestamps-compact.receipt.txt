@@ -33,7 +33,12 @@ timestamps(): jenkins=all (1) fogell=all (1) (prefix text excluded, coverage com
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
     divergence into an equality, never hide one direction only. EVERY pair the
-    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
     comparison is always visible in the case it decided — ordinary output that
     prints an inherited value (e.g. `printenv HOME`) folds the same way, the
     declared environment-of-necessity class the ${WORKSPACE} fold already is

@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2f07f1869c540c01ca5397a7ba4e45b1594030ce3f086c7260f6d63e68933962
+seal:         6856d2045f71e638a66486e275421f3e503cacd3c4ce86413a6034c675cba38c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -34,7 +34,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
     divergence into an equality, never hide one direction only. EVERY pair the
-    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
     comparison is always visible in the case it decided — ordinary output that
     prints an inherited value (e.g. `printenv HOME`) folds the same way, the
     declared environment-of-necessity class the ${WORKSPACE} fold already is
@@ -86,12 +91,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
     | + echo from-quick
     | from-quick
     | + sleep 1
+    | + echo from-slow
+    | from-slow
+    | + sleep 45
     | + exit 3
     | Failed in branch quick-fail
     | Sending interrupt signal to process

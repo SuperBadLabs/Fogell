@@ -1,7 +1,7 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         91e792e74bf57cf25266d1c8d40884007e19c27c77da90c7151977afe1a432ca
+seal:         d32c1776350085de05a3261739d28dd95c861a14b23aa4107ff3601b4fd5dd5a
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -34,7 +34,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
     divergence into an equality, never hide one direction only. EVERY pair the
-    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
     comparison is always visible in the case it decided — ordinary output that
     prints an inherited value (e.g. `printenv HOME`) folds the same way, the
     declared environment-of-necessity class the ${WORKSPACE} fold already is
@@ -71,8 +76,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
     | + exit 6
-    | + echo fine
     | Failed in branch fails
+    | + echo fine
     | + echo correct
   workspace:
     8ecc5f94c57b  fine.txt
@@ -82,8 +87,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
-    | + exit 6
     | + echo fine
+    | + exit 6
     | Failed in branch fails
     | + echo correct
   workspace:
