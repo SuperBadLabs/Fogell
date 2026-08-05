@@ -184,13 +184,18 @@ module Compare =
             let d, _ =
                 walk 0 [] (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
 
-            let foldedLines =
-                jenkins @ fogell
+            // EVERY OCCURRENCE, per side. `List.distinct` collapsed them, so a receipt
+            // said "touched 2 jenkins / 2 fogell lines" above a single `${HOME}` entry —
+            // a count and a list that disagree, under a contract promising EVERY pair is
+            // listed. I noticed distinct hid multiplicity and talked myself out of it
+            // because the count line "already reports multiplicity"; two numbers that
+            // contradict each other are not a report.
+            let sideFolds label side =
+                side
                 |> List.filter (fun l -> canon l <> l)
-                |> List.map canon
-                |> List.distinct
-                |> List.sort
-                |> List.map (fun l -> $"compared canonically (multiset, order not meaningful): {l}")
+                |> List.map (fun l -> $"compared canonically (multiset, order not meaningful): {label} {canon l}")
+
+            let foldedLines = sideFolds "jenkins" jenkins @ sideFolds "fogell" fogell
 
             // THE RELAXATION IS DISCLOSED ON EVERY CONCURRENT CASE, not only when
             // canonicalisation happened to touch a line. FG-151.

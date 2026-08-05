@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         67812e410552e765d53b41b699f45af784fc41c73b0d4b2720e33b4941ecaa5b
+seal:         2f07f1869c540c01ca5397a7ba4e45b1594030ce3f086c7260f6d63e68933962
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -88,8 +88,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   output (11 lines):
     | + echo from-slow
     | from-slow
-    | + echo from-quick
     | + sleep 45
+    | + echo from-quick
     | from-quick
     | + sleep 1
     | + exit 3

@@ -1,14 +1,17 @@
 # Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         28a6d4362737b4197b62d8b42e020ed97097cf773b093933be9797cde7fcaa65
+seal:         68f5a018d02f9a715d1e11d7b385adb2f7221d6d9d03e2b192f4bef9c49cbfa7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output comparison notes (3)
+## Output comparison notes (6)
   multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 4 jenkins / 4 fogell lines
   multiset mode: inherited-env canonicalisation touched 2 jenkins / 2 fogell lines
-  compared canonically (multiset, order not meaningful): ${HOME}
+  compared canonically (multiset, order not meaningful): jenkins ${HOME}
+  compared canonically (multiset, order not meaningful): jenkins ${HOME}
+  compared canonically (multiset, order not meaningful): fogell ${HOME}
+  compared canonically (multiset, order not meaningful): fogell ${HOME}
 
 ## Comparison contract
   compared: terminal result
@@ -82,6 +85,6 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (4 lines):
     | + echo ${HOME}
-    | /home/srikanth
     | + echo ${HOME}
+    | /home/srikanth
     | /home/srikanth

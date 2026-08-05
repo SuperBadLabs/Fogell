@@ -9,12 +9,19 @@
 // used it (sealed)". Found by the verifier; the fix keeps the list, and this case is
 // what makes the fix visible rather than merely written.
 //
-// `echo $HOME` expands to a path that differs between the two engines, and the shell
-// expands it BEFORE tracing, so the value lands on the `+ ` XTRACE row — which is the
-// only place the env fold applies. A first attempt used `printenv HOME`, whose value
-// prints on an ordinary OUTPUT line: that is deliberately NOT folded, and the case
-// diverged for real (jenkins=/var/jenkins_home fogell=/home/srikanth). Running it in
-// PARALLEL forces both relaxations at once.
+// `echo $HOME` puts the differing path on both the `+ ` xtrace row and the output
+// line, and BOTH fold — the contract says so explicitly: ordinary output that prints
+// an inherited value (e.g. `printenv HOME`) folds the same way. Running it in PARALLEL
+// forces multiset comparison and env folding at once.
+//
+// A first draft used `printenv HOME` and diverged, and I wrote the WRONG REASON into
+// this comment: that output lines are deliberately not folded, unlike xtrace rows.
+// They are folded. The real cause was mine — I invoked the differential CLI directly
+// instead of through `run-differential.sh`, so `FOGELL_JENKINS_ENV_CMD` was unset and
+// `envCanonicalisationEnabled` silently became FALSE. I had diagnosed that correctly
+// at the time and still recorded the other explanation here, where it would have
+// taught the next reader a rule the engine does not have.
+
 pipeline {
     agent any
     stages {

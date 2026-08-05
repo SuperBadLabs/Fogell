@@ -12,7 +12,9 @@ open System.Security.Cryptography
 /// reduced to three things that *are* semantics:
 ///
 ///   1. the terminal result
-///   2. the ordered sequence of observable step outputs
+///   2. the ordered sequence of observable step outputs — EXCEPT for a CONCURRENT
+/// (parallel) build, whose outputs compare as a MULTISET because branch
+/// interleaving is not a difference between the engines (FG-151)
 ///   3. a canonical hash of the workspace the run produced
 ///
 /// Anything outside those three is deliberately not compared, and the reasons
