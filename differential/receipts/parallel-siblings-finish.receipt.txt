@@ -1,13 +1,17 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6d647e9c15e234958891975940d957dea41783712afc564fd9b271b03fca59c4
+seal:         aa74138ac5593126576e5c3eabd02f6186a98ec9cd087051a572b26924654327
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
+## Output comparison notes (1)
+  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 5 jenkins / 5 fogell lines
+
 ## Comparison contract
   compared: terminal result
-  compared: ordered normalised output lines
+  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
@@ -30,7 +34,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     replacement list applied to BOTH sides compares as that canonical form.
     Literals cancel; receipt lines stay literal; the rule can only turn a
     divergence into an equality, never hide one direction only. EVERY pair the
-    rule folds is LISTED in the receipt that used it (sealed), so a canonical
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
     comparison is always visible in the case it decided — ordinary output that
     prints an inherited value (e.g. `printenv HOME`) folds the same way, the
     declared environment-of-necessity class the ${WORKSPACE} fold already is
@@ -79,9 +88,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
   output (5 lines):
-    | + sleep 6
     | + echo failing
     | + exit 3
+    | + sleep 6
     | Failed in branch quick-fail
     | + echo done
   workspace:

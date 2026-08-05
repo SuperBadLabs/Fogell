@@ -12,7 +12,9 @@ open System.Security.Cryptography
 /// reduced to three things that *are* semantics:
 ///
 ///   1. the terminal result
-///   2. the ordered sequence of observable step outputs
+///   2. the ordered sequence of observable step outputs — EXCEPT for a CONCURRENT
+/// (parallel) build, whose outputs compare as a MULTISET because branch
+/// interleaving is not a difference between the engines (FG-151)
 ///   3. a canonical hash of the workspace the run produced
 ///
 /// Anything outside those three is deliberately not compared, and the reasons
@@ -614,7 +616,13 @@ module Trace =
     /// every receipt rather than buried in code.
     let comparisonContract =
         [ "compared: terminal result"
-          "compared: ordered normalised output lines"
+          // "ordered" IS NOT UNCONDITIONAL. A CONCURRENT case compares output as a
+          // MULTISET, because branch interleaving is not a difference between the
+          // engines — and this line said "ordered" with nothing anywhere in the
+          // receipt to say otherwise. FG-151. The per-receipt disclosure is emitted
+          // by `Compare.compareOutput`; this states the rule it belongs to.
+          "compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,"
+          "  which compare as a MULTISET; those receipts say so under `## Output comparison notes`"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines"
           "compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:"
@@ -637,7 +645,12 @@ module Trace =
           "  replacement list applied to BOTH sides compares as that canonical form."
           "  Literals cancel; receipt lines stay literal; the rule can only turn a"
           "  divergence into an equality, never hide one direction only. EVERY pair the"
-          "  rule folds is LISTED in the receipt that used it (sealed), so a canonical"
+          "  rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a"
+          "  CONCURRENT case, where multiset comparison pairs nothing, so the receipt"
+          "  lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their"
+          "  multiplicity instead of pair records. FG-158: this said EVERY pair while the"
+          "  concurrent path emitted occurrences, which is a promise the mode cannot keep."
+          "  A canonical"
           "  comparison is always visible in the case it decided — ordinary output that"
           "  prints an inherited value (e.g. `printenv HOME`) folds the same way, the"
           "  declared environment-of-necessity class the ${WORKSPACE} fold already is"

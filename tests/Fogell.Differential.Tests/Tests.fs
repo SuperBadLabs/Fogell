@@ -521,6 +521,112 @@ let stringModel =
 /// are resolved two-sidedly at COMPARE time. These rows pin the rule's shape:
 /// it collapses a pair differing only by same-name inherited values, and it
 /// never manufactures a divergence from lines that were already equal.
+/// FG-159. In CONCURRENT mode the fold list must record a row ONLY when the fold
+/// actually DECIDED a comparison — i.e. the row pairs with one on the other side once
+/// canonical. Three filters were needed to get there, each necessary and not
+/// sufficient: `canon l <> l` credited every row CONTAINING an inherited value; the
+/// multiset difference credited every row that DIFFERED; only pairing credits the rows
+/// the fold resolved.
+///
+/// These live as unit tests because the failing shapes DIVERGE, and a diverging case
+/// cannot sit in the differential suite — so the suite can never exercise them. Both
+/// receipts that do exercise the concurrent path are PROVEN cases with matching counts,
+/// which is exactly the blind spot that let two earlier versions of this filter ship.
+let concurrentFoldAccounting =
+    let mkTrace output =
+        { Result = "success"
+          Output = output
+          WorkspaceHash = "not-collected"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = true
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let repl = [ "/var/jenkins_home", "${HOME}"; "/root", "${HOME}" ]
+
+    let foldNotes (notes: string list) =
+        notes |> List.filter (fun n -> n.StartsWith "compared canonically")
+
+    testList
+        "FG-159 concurrent folds are recorded only when they decided a comparison"
+        [ test "the UNMATCHED row is not recorded while the matched pair still is" {
+              // Two Jenkins inherited-value rows against one Fogell row. One pair
+              // resolves canonically; the leftover matches nothing and the case diverges.
+              // Disclosing the pair is honest; crediting the leftover is not.
+              //
+              // MY FIRST VERSION OF THIS TEST asserted ZERO notes and failed — I wrote the
+              // expectation I wanted (nothing recorded on a diverging case) instead of the
+              // property (only unmatched rows are excluded). The test was wrong, not the
+              // filter, which is worth keeping visible: I have written the conclusion
+              // rather than the operation several times on this branch.
+              let jenkins = mkTrace [ "+ echo a"; "/var/jenkins_home"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "+ echo a"; "/root" ]
+              let verdict, notes = Compare.traces repl jenkins fogell
+
+              Expect.notEqual verdict Proven "the leftover row must still diverge"
+
+              Expect.equal
+                  (List.length (foldNotes notes))
+                  2
+                  "exactly the one resolved pair — never 4, which would credit the leftover"
+          }
+
+          test "unequal counts record only the rows that paired" {
+              // Two Jenkins rows against one Fogell row: one pair resolves, one is left
+              // over. Only the pair may be recorded.
+              let jenkins = mkTrace [ "/var/jenkins_home"; "/var/jenkins_home" ]
+              let fogell = mkTrace [ "/root" ]
+              let _, notes = Compare.traces repl jenkins fogell
+
+              Expect.equal
+                  (List.length (foldNotes notes))
+                  2
+                  "one pair = one note per side, never the unmatched leftover"
+          }
+
+          test "a pair the fold resolves is recorded even when JENKINS is already canonical" {
+              // The asymmetric shape: Jenkins prints the canonical token literally and
+              // Fogell prints the raw inherited value. The fold decides the comparison,
+              // so the receipt must say so — the filter that required the JENKINS row to
+              // change under `canon` reported 0 decided while relying on the relaxation.
+              let jenkins = mkTrace [ "${HOME}" ]
+              let fogell = mkTrace [ "/home/srikanth" ]
+              let verdict, notes = Compare.traces [ "/home/srikanth", "${HOME}" ] jenkins fogell
+
+              Expect.equal verdict Proven "the pair resolves canonically"
+
+              Expect.equal
+                  (List.length (foldNotes notes))
+                  2
+                  "the decided pair is disclosed even though the jenkins row did not change"
+          }
+
+          test "rows both engines printed identically are never recorded" {
+              // Byte-equal on both sides: canonicalisation rewrites them, but they would
+              // have compared equal anyway, so the fold decided nothing.
+              let jenkins = mkTrace [ "/var/jenkins_home"; "+ echo x" ]
+              let fogell = mkTrace [ "/var/jenkins_home"; "+ echo x" ]
+              let verdict, notes = Compare.traces repl jenkins fogell
+
+              Expect.equal verdict Proven "identical output compares equal"
+              Expect.equal (foldNotes notes) [] "a byte-equal row needs no fold"
+          }
+
+          test "a genuinely differing pair IS recorded, once per side" {
+              let jenkins = mkTrace [ "/var/jenkins_home" ]
+              let fogell = mkTrace [ "/root" ]
+              let verdict, notes = Compare.traces repl jenkins fogell
+
+              Expect.equal verdict Proven "the pair resolves canonically"
+
+              Expect.equal
+                  (List.length (foldNotes notes))
+                  2
+                  "the decided pair is disclosed on both sides"
+          }
+        ]
+
 let continuationResolution =
     let mkTrace output =
         { Result = "success"
@@ -674,5 +780,6 @@ let main argv =
             "Fogell.Differential"
             [ userOutputSurvives
               stringModel
+              concurrentFoldAccounting
               continuationResolution
               timestampPrefixIsConditional ])

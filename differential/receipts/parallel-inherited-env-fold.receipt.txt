@@ -1,9 +1,17 @@
-# Differential receipt — junit-failing.Jenkinsfile
+# Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e35c2528ac06b4cd41460c8674ab8b969d714d2f28f22a08ff5b5d8a0fb2bb14
+seal:         dbfc9f148224e12154e81e1f071d059162031160242a2f4ebe5f25e4b0971cd7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+
+## Output comparison notes (6)
+  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 4 jenkins / 4 fogell lines
+  multiset mode: inherited-env canonicalisation touched 2 jenkins + 2 fogell = 4 lines, of which 4 DECIDED a comparison (byte-equal rows need no fold)
+  compared canonically (multiset, order not meaningful): jenkins ${HOME}
+  compared canonically (multiset, order not meaningful): fogell ${HOME}
+  compared canonically (multiset, order not meaningful): jenkins ${HOME}
+  compared canonically (multiset, order not meaningful): fogell ${HOME}
 
 ## Comparison contract
   compared: terminal result
@@ -62,23 +70,26 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
+    branches interleave nondeterministically, so a sequence comparison would
+    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
+    order is NOT, and declarative Jenkins emits no branch prefix to attribute
+    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (3 lines):
-    | + mkdir -p reports
-    | + printf %s <testsuite name="s" tests="2" failures="1" errors="0" skipped="0"><testcase name="ok"/><testcase name="bad"><failure message="boom"/></testcase></testsuite>
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | + echo ${HOME}
+    | /var/jenkins_home
+    | + echo ${HOME}
+    | /var/jenkins_home
 
 ## Fogell
-  result:         unstable
-  workspace-hash: 19621cdd2b76ea4205a57093ec3e7bc5d758a571004d2343e3102154d6e2758d
-  output (3 lines):
-    | + mkdir -p reports
-    | + printf %s <testsuite name="s" tests="2" failures="1" errors="0" skipped="0"><testcase name="ok"/><testcase name="bad"><failure message="boom"/></testcase></testsuite>
-    | Recording test results
-  workspace:
-    b2aa877b610b  reports/results.xml
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | + echo ${HOME}
+    | + echo ${HOME}
+    | /home/srikanth
+    | /home/srikanth
