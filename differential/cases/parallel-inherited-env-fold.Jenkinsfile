@@ -9,18 +9,20 @@
 // used it (sealed)". Found by the verifier; the fix keeps the list, and this case is
 // what makes the fix visible rather than merely written.
 //
-// `echo $HOME` puts the differing path on both the `+ ` xtrace row and the output
-// line, and BOTH fold — the contract says so explicitly: ordinary output that prints
-// an inherited value (e.g. `printenv HOME`) folds the same way. Running it in PARALLEL
-// forces multiset comparison and env folding at once.
+// WHAT THIS EXERCISES, precisely: ORDINARY OUTPUT inherited-env folding under
+// MULTISET comparison. The xtrace rows arrive already canonicalised — normalisation
+// applies the trace-only replacements before comparison, so both sides read
+// `+ echo ${HOME}` and never enter the fold path at all. The lines that fold are the
+// ordinary output rows, `/var/jenkins_home` against `/home/srikanth`. The novel
+// combination is fold + multiset together, which no other case had.
 //
-// A first draft used `printenv HOME` and diverged, and I wrote the WRONG REASON into
-// this comment: that output lines are deliberately not folded, unlike xtrace rows.
-// They are folded. The real cause was mine — I invoked the differential CLI directly
-// instead of through `run-differential.sh`, so `FOGELL_JENKINS_ENV_CMD` was unset and
-// `envCanonicalisationEnabled` silently became FALSE. I had diagnosed that correctly
-// at the time and still recorded the other explanation here, where it would have
-// taught the next reader a rule the engine does not have.
+// TWO WRONG COMMENTS PRECEDED THIS ONE, both about the same mechanism. The first said
+// ordinary output is "deliberately NOT folded, unlike xtrace rows" — the reverse of
+// the truth, and `env-inherited-output-fold` already proved ordinary output folds. The
+// second said `echo $HOME` folds on BOTH rows, which the receipt disproves. The real
+// cause of the first draft's divergence was mine: invoking the differential CLI
+// directly instead of through `run-differential.sh` left `FOGELL_JENKINS_ENV_CMD`
+// unset, silently setting `envCanonicalisationEnabled` to FALSE.
 
 pipeline {
     agent any

@@ -1,7 +1,7 @@
 # Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         68f5a018d02f9a715d1e11d7b385adb2f7221d6d9d03e2b192f4bef9c49cbfa7
+seal:         16081ee25c8edfe8cbe0965a894e8984baa0e908f5ea65cfcf4cc3722ff8c3f2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -85,6 +85,6 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (4 lines):
     | + echo ${HOME}
-    | + echo ${HOME}
     | /home/srikanth
+    | + echo ${HOME}
     | /home/srikanth
