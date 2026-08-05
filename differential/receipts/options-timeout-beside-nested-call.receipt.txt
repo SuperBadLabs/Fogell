@@ -1,7 +1,7 @@
-# Differential receipt — parallel-failfast.Jenkinsfile
+# Differential receipt — options-timeout-beside-nested-call.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c4e7b75a289021e92293af70c867d5d150197bf145a9d011b4d72cc00f3abd4c
+seal:         198236464d9662ee9797e43fc4ac5dc30a99a148465cc99230c0aed75235d5c3
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,42 +56,25 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + sleep 1
-    | + echo started
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
+  result:         aborted
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (6 lines):
+    | Timeout set to expire in 1 sec
+    | + sleep 5
+    | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
-    | Failed in branch interrupted
-  workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    | Timeout has been exceeded
 
 ## Fogell
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + echo started
-    | + sleep 45
-    | + sleep 1
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
+  result:         aborted
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (6 lines):
+    | Timeout set to expire in 1 sec
+    | + sleep 5
+    | Cancelling nested steps due to timeout
     | Sending interrupt signal to process
     | Terminated
-    | Failed in branch interrupted
-  workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+    | Timeout has been exceeded

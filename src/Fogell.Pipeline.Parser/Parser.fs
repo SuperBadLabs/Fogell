@@ -123,6 +123,17 @@ let private positionalArgWithKind: P<string * string * bool> =
     (wholeValue stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
+    // A NESTED CALL is one value: `buildDiscarder(logRotator(numToKeepStr: '5'))`.
+    // `rawArgValue` stops at `)`, so it consumed `logRotator(numToKeepStr: '5'` and
+    // left a `)` that failed the `eof` in the reparse. Before FG-147 that failure was
+    // downgraded and the options block still parsed; after it, the failure propagated,
+    // `options` backtracked, and the TOP-LEVEL fallback swallowed the whole block —
+    // so `timeout(time: 1, unit: 'SECONDS')` beside it was SILENTLY DROPPED and a
+    // 5-second step ran to completion under a 1-second timeout. MEASURED against a
+    // control (timeout alone aborts) and against merged `fe0b095` (aborts), so this
+    // was a REGRESSION MY OWN FAIL-CLOSED INTRODUCED, invisible to receipt
+    // `options-accept-and-ignore` because that case's options are ignored anyway.
+    <|> attempt (identifier .>>. balancedRaw '(' ')' .>> ws |>> fun (n, raw) -> n + raw, n + raw, false)
     <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
@@ -705,7 +716,20 @@ let private topSection: P<TopSection> =
           attempt (keyword "stages" >>. stagesBody |>> TopStages)
           attempt (postSection |>> TopPost)
           attempt (keyword "libraries" >>. balancedRaw '{' '}' |>> fun _ -> TopOther "libraries")
-          (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')')) |>> fun (n, _) -> TopOther n) ]
+          // THE TOP-LEVEL FALLBACK MUST NOT CLAIM SECTIONS FOGELL ACTS ON. Same shape
+          // as FG-143 one level up: when `options` failed to parse for any reason this
+          // recorded the whole block as `TopOther` and every directive inside it was
+          // dropped without a word — including the ones the refusal model exists to
+          // enforce. A dropped `timeout` is a build that runs past a limit Jenkins
+          // applies. `stages` is here for the same reason: a pipeline whose stages do
+          // not parse must not be recorded as an opaque section and reported green.
+          (identifier
+           >>= (fun n ->
+               if n = "options" || n = "stages" then
+                   fail $"a `{n}` section that does not parse is refused, never recorded as an opaque section"
+               else
+                   (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
+                   |>> fun _ -> TopOther n)) ]
 
 /// Leading trivia a real Jenkinsfile carries before `pipeline {`: a shebang,
 /// `@Library` annotations, `import` lines, and top-level `def`s. All are legal

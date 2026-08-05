@@ -291,6 +291,7 @@ let stringSpanRaw: P<string> =
             let closer = if tripled then System.String(q, 3) else string q
             for _ in 1 .. closer.Length do stream.Skip()
             let mutable closed = false
+            let mutable unterminated = false
 
             while not closed && not stream.IsEndOfStream do
                 let d = stream.Peek()
@@ -305,12 +306,18 @@ let stringSpanRaw: P<string> =
                     for _ in 1 .. 3 do stream.Skip()
                     closed <- true
                 elif d = '\n' && not tripled && q <> '/' then
-                    // an unterminated single-line literal: bail where balancedRaw does
+                    // AN UNTERMINATED SINGLE-LINE LITERAL IS AN ERROR, not a span.
+                    // This used to report `closed`, so the caller received raw source
+                    // MISSING ITS CLOSING DELIMITER while the contract above promises
+                    // the delimiters are included. A malformed literal was then partly
+                    // accepted instead of failing closed — the same preference for
+                    // guessing over refusing that FG-143/145/147 each had to remove.
+                    unterminated <- true
                     closed <- true
                 else
                     stream.Skip()
 
-            closed
+            closed && not unterminated
 
         if c = '\'' || c = '"' then
             let tripled = stream.PeekString 3 = System.String(c, 3)
