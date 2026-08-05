@@ -166,11 +166,27 @@ module Compare =
             let d, _ =
                 walk 0 [] (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
 
+            // THE RELAXATION IS DISCLOSED ON EVERY CONCURRENT CASE, not only when
+            // canonicalisation happened to touch a line. FG-151.
+            //
+            // MEASURED: `parallel-always-failfast` stores Jenkins with the `from-quick`
+            // block first and Fogell with `from-slow` first, and reads PROVEN — correctly,
+            // because branch interleaving is not a difference between the engines. But the
+            // contract line said "compared: ORDERED normalised output lines" and no fold
+            // note was emitted (`jt + ft = 0`), so nothing in the receipt told a reader
+            // that ordering had NOT been compared. The receipt is the artifact the claim
+            // rests on; a relaxation it does not mention is a relaxation nobody can weigh.
+            //
+            // The rule this file already states — "every fold is REPORTED, not just
+            // applied ... visible per case instead of buried in the rule" — was written
+            // for the env fold and not carried to the sibling relaxation directly below
+            // it. Same defect as FG-152/FG-153, in the reporting layer.
             d,
-            (if jt + ft > 0 then
-                 [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
-             else
-                 [])
+            ($"multiset mode: ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines matched as a multiset"
+             :: (if jt + ft > 0 then
+                     [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
+                 else
+                     []))
         else
             walk 0 [] jenkins fogell
 

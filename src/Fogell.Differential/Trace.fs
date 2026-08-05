@@ -614,7 +614,13 @@ module Trace =
     /// every receipt rather than buried in code.
     let comparisonContract =
         [ "compared: terminal result"
-          "compared: ordered normalised output lines"
+          // "ordered" IS NOT UNCONDITIONAL. A CONCURRENT case compares output as a
+          // MULTISET, because branch interleaving is not a difference between the
+          // engines — and this line said "ordered" with nothing anywhere in the
+          // receipt to say otherwise. FG-151. The per-receipt disclosure is emitted
+          // by `Compare.compareOutput`; this states the rule it belongs to.
+          "compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,"
+          "  which compare as a MULTISET; those receipts say so in their fold notes"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines"
           "compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:"

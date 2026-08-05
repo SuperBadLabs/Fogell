@@ -1,13 +1,17 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b688f89c4c696557a1167f6adeea50c5d259a5bd4ff21429340aeb57464cbdd7
+seal:         b7087ec6a35e2c289fd41a664af5281a83f9b01a1b84f996986475d66d62f468
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
+## Output pairs compared canonically — inherited env (1)
+  multiset mode: ORDER NOT COMPARED (concurrent case) — 11 jenkins / 11 fogell lines matched as a multiset
+
 ## Comparison contract
   compared: terminal result
-  compared: ordered normalised output lines
+  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
+    which compare as a MULTISET; those receipts say so in their fold notes
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
