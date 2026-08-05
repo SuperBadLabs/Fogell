@@ -28,8 +28,11 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
 /// A slashy `/; …/` is NOT protected — `/` is ordinary raw text here (FG-141). Five review rounds on FG-134 each found another string
 /// form a hand-rolled character test had missed, and two of the intermediate
-/// states produced SILENT no-ops. `Lexeme` already knew every form; the fix is to
-/// ask it rather than to enumerate again.
+/// states produced SILENT no-ops. `Lexeme` knew MORE forms than the hand-rolled test
+/// did, and asking it beat enumerating again — but this path protects QUOTE-DELIMITED
+/// spans only, single/double/triple. Slashy and dollar-slashy are excluded two comments
+/// above, so "already knew every form" overstated what this code does. Third place that
+/// same sentence had to be retracted.
 let private rawArgValue (stops: char list) : P<string> =
     // `/` IS ORDINARY EXPRESSION TEXT HERE, NOT A SLASHY OPENER.
     //

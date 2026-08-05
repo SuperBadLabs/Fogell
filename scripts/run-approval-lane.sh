@@ -1287,6 +1287,15 @@ PID=$!
 XID=$(await_pending "$X/approvals") || {
   echo "FAIL: a gate with a CONCATENATED message published NO prompt — the build would ship unapproved"
   cat "$X/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+# THE PROMPT'S VALUE, not merely its existence. This scenario guards a bypass AND
+# the wrong-prompt failure beside it (FG-145), and asserted only that SOME prompt
+# appeared before approving it — so a regression publishing `Deploy ` or the raw
+# argument body passed here and a human approved words the author never wrote.
+# Z4 checked its prompt value; X and Y were written before that lesson and not
+# revisited when it landed.
+grep -q "prompt	Deploy prod" "$X/approvals/$XID.pending" || {
+  echo "FAIL: the concatenated prompt was not \`Deploy prod\` — the operator would approve different words"
+  cat "$X/approvals/$XID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
 sleep 2
 grep -q '^shipped$' "$X/ws/gate/markers.txt" 2>/dev/null && {
   echo "FAIL: the step past the concatenated-message gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
@@ -1335,6 +1344,9 @@ PID=$!
 YID=$(await_pending "$Y/approvals") || {
   echo "FAIL: a POSITIONAL concatenated gate published NO prompt — the build would ship unapproved"
   cat "$Y/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q "prompt	Deploy prod" "$Y/approvals/$YID.pending" || {
+  echo "FAIL: the positional concatenated prompt was not \`Deploy prod\`"
+  cat "$Y/approvals/$YID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
 sleep 2
 grep -qE '^(shipped|after)$' "$Y/ws/gate/markers.txt" 2>/dev/null && {
   echo "FAIL: work past the positional gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
