@@ -257,8 +257,16 @@ let stringLiteral: P<string> =
 ///
 /// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
 /// [stringLiteral] above enumerates triple-single, triple-double, single, double
-/// and slashy, and [balancedRaw] below skips them escape-aware so a delimiter
-/// inside one never affects a depth count. `Parser` needed the same knowledge to
+/// and slashy. [balancedRaw] below skips `'`, `"` and comments escape-aware —
+/// but NOT slashy, which this comment previously claimed. It is a real gap, not
+/// a wording slip: a slashy carrying the active closing delimiter, such as
+/// `/a}b/` inside a `when { expression { … } }`, is counted as a brace and ends
+/// the balanced region early. UNPROVEN BY RECEIPT — not for FG-129's reason but
+/// because this documents an OPEN DEFECT: no case can be PROVEN against
+/// behaviour the engine gets wrong, and the receipt arrives with the FG-140
+/// fix. Measured against the host, which reports
+/// `no_stages: pipeline declares no stages`, the whole structure collapsed by a
+/// regex. FG-140. `Parser` needed the same knowledge to
 /// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
 /// scanner instead. Five review rounds found five forms it had missed, and two
 /// intermediate states produced SILENT no-ops — a build exiting 0 with no
