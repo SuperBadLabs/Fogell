@@ -67,7 +67,7 @@
                     (map (fn [p]
                            (let [n (str/replace (fs/file-name p) ".receipt.txt" "")
                                  body (slurp (fs/file p))]
-                             ;; THE EXACT TIER-1 VERDICT, not a prefix. `PROVEN-PARTIAL`
+                             ;; THE TIER-1 VERDICT FIELD, matched to its end. `PROVEN-PARTIAL`
                              ;; also starts with "PROVEN" and the comparator emits it to
                              ;; say the workspace could NOT be compared — explicitly not
                              ;; tier 1. A prefix match would have counted it as proven and,
@@ -75,7 +75,14 @@
                              ;; tier 1: a false tier-1 produced by the very generator built
                              ;; to prevent false tiers. There are 0 such receipts today, so
                              ;; the bug was invisible and correct by accident.
-                             [n (if (re-find #"(?m)^VERDICT: PROVEN \(tier 1\)" body) :proven :other)])))
+                             ;; The tier phrase must END the field: end-of-line, or the
+                             ;; em-dash detail the renderer writes. The previous regex was
+                             ;; still a PREFIX — `PROVEN (tier 1) BUT ACTUALLY NOT` would
+                             ;; have matched it — while the comment above claimed it was
+                             ;; exact. An overclaim inside the fix for an overclaim.
+                             [n (if (re-find #"(?m)^VERDICT: PROVEN \(tier 1\)(?:\s+—[^\n]*)?$" body)
+                                    :proven
+                                    :other)])))
                     (into {}))
 
       tier-of (fn [{:keys [file verdict]}]

@@ -98,12 +98,15 @@ Rules that follow from the numbers:
 > does not read this file at all: it checks only that MEASURED comments in F# under
 > `src`, `tools` and `tests` NAME a receipt, never that the receipt proves the claim.
 >
+> For a HAND-TYPED number here: treat it as a claim awaiting a generator, and never
+> hand-edit one to match a run you did not seal. For the generated artifacts, cite them
+> and regenerate — editing those by hand is what `--check` exists to catch.
+>
 > This warning said the scorecard was hand-maintained and that FG-090/091/092 existed
 > "until they are built" — for one commit AFTER they were built and those rows marked
-> DONE. Updating the rows and not the prose that references them is the sibling drift
-> this board documents at least six times.
-> Until they are built, treat a number here as a claim awaiting a generator —
-> and never hand-edit one to match a run you did not seal.
+> DONE. The rewrite that fixed that left the trailing "Until they are built" sentence
+> standing one line below, contradicting itself: the eighth instance of this drift, made
+> while correcting the seventh, in the paragraph that names it.
 
 Measured on luigi against Jenkins 2.568.1 and the pinned 228-file corpus. Full
 derivation in `architecture/BASELINE.md`.
