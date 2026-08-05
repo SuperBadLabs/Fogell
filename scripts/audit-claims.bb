@@ -45,12 +45,16 @@
                               (map #(str "approval-lane scenario " %))
                               set)
                          #{}))
-      ;; EXACT citations, not substrings. The floor recorded here previously — that
-      ;; `scenario ZZZ` resolves against `scenario Z` — was not hypothetical: two
-      ;; comments went on to cite `scenario Z` for behaviours that scenarios Z2 and
-      ;; Z3 prove, and this check passed them because `Z` is a prefix of `Z2`.
-      ;; DOCUMENTING A HOLE IS NOT CLOSING ONE. A citation must now be followed by a
-      ;; non-alphanumeric character, so `Z` no longer stands in for `Z2`.
+      ;; WHOLE-TOKEN citations. A citation must be bounded on BOTH sides by something
+      ;; outside [A-Za-z0-9_-].
+      ;;
+      ;; Twice now the word for this check has been ahead of the check. It was called
+      ;; a KNOWN FLOOR while `scenario Z` stood in for `scenario Z2` — and two comments
+      ;; promptly did exactly that. It was then called EXACT while the boundary was
+      ;; `(?![A-Za-z0-9])`, which a HYPHEN slips straight through: `credentials-userpass`
+      ;; matched inside `credentials-userpass-masking`, and this corpus has FIVE such
+      ;; prefix pairs, so a stale hyphen-suffixed citation resolved against the shorter
+      ;; receipt. Both boundaries, and `-`/`_` counted as name characters.
       ;;
       ;; What it still CANNOT do, so a pass is not mistaken for proof: it verifies a
       ;; cited scenario EXISTS, never that the scenario EXERCISES the claim — the
@@ -297,7 +301,8 @@
                   ;; window, one layer down.
                   neighbours (concat (subvec v start i) (subvec v (inc i) (inc stop)))
                   block (str/join " " (concat (mapcat :spans neighbours) [own]))
-                  named (filter #(re-find (re-pattern (str "\\Q" % "\\E(?![A-Za-z0-9])")) block)
+                  named (filter #(re-find (re-pattern (str "(?<![A-Za-z0-9_-])\\Q" % "\\E(?![A-Za-z0-9_-])"))
+                                          block)
                                 citable)
                   ;; An explicit UNPROVEN admission resolves the claim too — some Jenkins
                   ;; behaviours cannot be receipted without over-fitting (a REJECTION makes

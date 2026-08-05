@@ -9,8 +9,15 @@
 // The fix is `Lexeme.stringSpanRaw`: literal SPANS are consumed whole, so `;`
 // can be a stop character without truncating an expression that carries one
 // inside a literal. FG-134 spent five review rounds discovering string forms a
-// hand-rolled character test had missed — `Lexeme` already enumerated all of
-// them, and asking it is the fix.
+// hand-rolled character test had missed.
+//
+// WHICH FORMS, exactly: single, double and triple quoted spans. SLASHY and
+// DOLLAR-SLASHY are NOT protected here — a `;` inside `/…/` still terminates the
+// raw argument. This comment previously said `Lexeme` enumerated ALL string forms
+// and that asking it was the fix; that was the same "every form" overclaim the
+// lexer comment already had to retract. Since FG-147 an unparseable parenthesised
+// body is refused rather than guessed at, so the slashy gap is a REFUSAL, not a
+// silent wrong value — but it is a gap, and FG-144 tracks it.
 pipeline {
     agent any
     stages {
