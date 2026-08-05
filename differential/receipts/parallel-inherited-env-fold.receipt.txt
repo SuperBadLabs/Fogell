@@ -1,13 +1,13 @@
 # Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         16081ee25c8edfe8cbe0965a894e8984baa0e908f5ea65cfcf4cc3722ff8c3f2
+seal:         c85749df22efc59dd522d67b8ea569c65f899e289cd4938e3ebed079a6764fe9
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Output comparison notes (6)
   multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 4 jenkins / 4 fogell lines
-  multiset mode: inherited-env canonicalisation touched 2 jenkins / 2 fogell lines
+  multiset mode: inherited-env canonicalisation touched 2 jenkins + 2 fogell = 4 lines, of which 4 DECIDED a comparison (byte-equal rows need no fold)
   compared canonically (multiset, order not meaningful): jenkins ${HOME}
   compared canonically (multiset, order not meaningful): jenkins ${HOME}
   compared canonically (multiset, order not meaningful): fogell ${HOME}
@@ -16,7 +16,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Comparison contract
   compared: terminal result
   compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
-    which compare as a MULTISET; those receipts say so in their fold notes
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:

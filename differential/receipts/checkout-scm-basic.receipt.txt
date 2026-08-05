@@ -12,7 +12,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Comparison contract
   compared: terminal result
   compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
-    which compare as a MULTISET; those receipts say so in their fold notes
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:

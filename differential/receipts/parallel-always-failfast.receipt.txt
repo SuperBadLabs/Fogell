@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6856d2045f71e638a66486e275421f3e503cacd3c4ce86413a6034c675cba38c
+seal:         2f07f1869c540c01ca5397a7ba4e45b1594030ce3f086c7260f6d63e68933962
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,7 +11,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Comparison contract
   compared: terminal result
   compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
-    which compare as a MULTISET; those receipts say so in their fold notes
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
@@ -91,12 +91,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
     | + echo from-slow
     | from-slow
     | + sleep 45
+    | + echo from-quick
+    | from-quick
+    | + sleep 1
     | + exit 3
     | Failed in branch quick-fail
     | Sending interrupt signal to process

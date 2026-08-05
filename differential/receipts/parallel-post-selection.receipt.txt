@@ -1,7 +1,7 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d32c1776350085de05a3261739d28dd95c861a14b23aa4107ff3601b4fd5dd5a
+seal:         886061ee57d877c32f850be4f5975461ca244d4f9f40e5e437dbd1bf3e66396d
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -11,7 +11,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Comparison contract
   compared: terminal result
   compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
-    which compare as a MULTISET; those receipts say so in their fold notes
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
   compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
@@ -87,8 +87,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
-    | + echo fine
     | + exit 6
+    | + echo fine
     | Failed in branch fails
     | + echo correct
   workspace:

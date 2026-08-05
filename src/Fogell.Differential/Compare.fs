@@ -60,7 +60,7 @@ type Receipt =
       /// not a pair, is what was relaxed. The name and this comment said "output pairs"
       /// after FG-151 started storing the second kind here — a field claiming more
       /// than it holds, which is the defect this field exists to prevent.
-      FoldedOutputPairs: string list
+      OutputComparisonNotes: string list
       /// FG-119. Divergences seen on EARLIER attempts of this case that did not
       /// reproduce. Empty for a case proven on its first run.
       ///
@@ -190,12 +190,44 @@ module Compare =
             // listed. I noticed distinct hid multiplicity and talked myself out of it
             // because the count line "already reports multiplicity"; two numbers that
             // contradict each other are not a report.
-            let sideFolds label side =
-                side
-                |> List.filter (fun l -> canon l <> l)
-                |> List.map (fun l -> $"compared canonically (multiset, order not meaningful): {label} {canon l}")
+            // ONLY THE LINES THE FOLD DECIDED. Filtering on `canon l <> l` alone reported a
+            // row as folded whenever it merely CONTAINED an inherited value — including
+            // rows both engines printed identically, which compare byte-equal and never
+            // need the relaxation. The ordered path gets this right for free: `jh = fh`
+            // wins before the canonical branch is reached. Crediting the fold for rows it
+            // did not decide overstates the relaxation in the receipt that discloses it.
+            //
+            // The multiset difference is what the fold actually resolved: rows present on
+            // one side and not the other, byte-for-byte, that only match once canonical.
+            let subtractMultiset (a: string list) (b: string list) =
+                let counts = System.Collections.Generic.Dictionary<string, int>()
 
-            let foldedLines = sideFolds "jenkins" jenkins @ sideFolds "fogell" fogell
+                for x in b do
+                    counts[x] <- (match counts.TryGetValue x with
+                                  | true, v -> v
+                                  | _ -> 0)
+                                 + 1
+
+                a
+                |> List.filter (fun x ->
+                    match counts.TryGetValue x with
+                    | true, v when v > 0 ->
+                        counts[x] <- v - 1
+                        false
+                    | _ -> true)
+
+            let sideFolds label side other =
+                subtractMultiset side other
+                |> List.choose (fun l ->
+                    // `canon` once per line, not once in the filter and again in the map.
+                    let c = canon l
+                    if c <> l then
+                        Some $"compared canonically (multiset, order not meaningful): {label} {c}"
+                    else
+                        None)
+
+            let foldedLines =
+                sideFolds "jenkins" jenkins fogell @ sideFolds "fogell" fogell jenkins
 
             // THE RELAXATION IS DISCLOSED ON EVERY CONCURRENT CASE, not only when
             // canonicalisation happened to touch a line. FG-151.
@@ -220,7 +252,15 @@ module Compare =
             d,
             ($"multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines"
              :: (if jt + ft > 0 then
-                     $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines"
+                     // TOUCHED and DECIDED are different numbers and the receipt must say
+                     // so. `touched` counts lines canonicalisation REWROTE; the list below
+                     // holds only lines the fold DECIDED — rows that differed byte-for-byte
+                     // and matched only once canonical. A row both engines printed
+                     // identically is touched and decides nothing. Without this wording a
+                     // reader sees "touched 2 / 2" above an empty list and reads a
+                     // contradiction, which is the count-vs-list defect already found once
+                     // in this same block.
+                     $"multiset mode: inherited-env canonicalisation touched {jt} jenkins + {ft} fogell = {jt + ft} lines, of which {List.length foldedLines} DECIDED a comparison (byte-equal rows need no fold)"
                      :: foldedLines
                  else
                      foldedLines))
@@ -338,7 +378,7 @@ module Compare =
                      "  a line by. The load-bearing claim for these cases is the workspace hash." ]
                else
                    [])
-          FoldedOutputPairs = folds
+          OutputComparisonNotes = folds
           // Deliberately NOT part of `comparable`, so the seal still hashes what
           // the two engines produced. A case proven on attempt 1 and the same case
           // proven on attempt 2 must seal identically — recovery is provenance
@@ -431,16 +471,16 @@ module Compare =
         // multiset disclosure names no pair, because what was relaxed is ORDERING.
         // This comment said "which output pairs were accepted canonically" after the
         // second kind moved in — describing one of the two things the block prints.
-        if not (List.isEmpty r.FoldedOutputPairs) then
+        if not (List.isEmpty r.OutputComparisonNotes) then
             line ""
             // GENERIC HEADING. This bucket carried only inherited-env folds until FG-151
             // put the concurrent multiset disclosure in it, at which point every
             // parallel receipt announced an env canonicalisation that never happened.
             // The disclosure fix introduced a mislabel of exactly the kind it existed to
             // remove; each note states its own kind, so the heading must not.
-            line $"## Output comparison notes ({r.FoldedOutputPairs.Length})"
+            line $"## Output comparison notes ({r.OutputComparisonNotes.Length})"
 
-            for n in r.FoldedOutputPairs do
+            for n in r.OutputComparisonNotes do
                 line $"  {n}"
 
         line ""

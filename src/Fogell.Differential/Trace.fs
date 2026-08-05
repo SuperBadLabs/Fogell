@@ -622,7 +622,7 @@ module Trace =
           // receipt to say otherwise. FG-151. The per-receipt disclosure is emitted
           // by `Compare.compareOutput`; this states the rule it belongs to.
           "compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,"
-          "  which compare as a MULTISET; those receipts say so in their fold notes"
+          "  which compare as a MULTISET; those receipts say so under `## Output comparison notes`"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines"
           "compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:"
