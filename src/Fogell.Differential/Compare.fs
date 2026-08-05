@@ -216,39 +216,60 @@ module Compare =
                         false
                     | _ -> true)
 
-            let sideFolds label side other =
-                subtractMultiset side other
-                |> List.choose (fun l ->
-                    // `canon` once per line, not once in the filter and again in the map.
+            // A ROW IS DECIDED ONLY IF IT PAIRS. Excluding byte-equal rows was necessary
+            // and not sufficient: a row present on ONE side only, or 2-vs-1 counts, still
+            // reached the `canon` branch and was recorded as "compared canonically" when
+            // nothing matched it — on a case that DIVERGES. The fold cannot have decided a
+            // comparison that never happened.
+            //
+            // Third filter for this list in one branch: `canon l <> l` credited every row
+            // containing an inherited value; the multiset difference credited every row
+            // that differed; only pairing credits the rows the fold actually resolved.
+            let jDiff = subtractMultiset jenkins fogell
+            let fDiff = subtractMultiset fogell jenkins
+
+            // Canonical forms present on BOTH sides of the difference, multiplicity-aware.
+            let pairedCanon =
+                let counts = System.Collections.Generic.Dictionary<string, int>()
+
+                for l in fDiff do
                     let c = canon l
-                    if c <> l then
-                        Some $"compared canonically (multiset, order not meaningful): {label} {c}"
+
+                    counts[c] <- (match counts.TryGetValue c with
+                                  | true, v -> v
+                                  | _ -> 0)
+                                 + 1
+
+                let taken = System.Collections.Generic.Dictionary<string, int>()
+
+                jDiff
+                |> List.choose (fun l ->
+                    let c = canon l
+
+                    let available =
+                        (match counts.TryGetValue c with
+                         | true, v -> v
+                         | _ -> 0)
+                        - (match taken.TryGetValue c with
+                           | true, v -> v
+                           | _ -> 0)
+
+                    if c <> l && available > 0 then
+                        taken[c] <- (match taken.TryGetValue c with
+                                     | true, v -> v
+                                     | _ -> 0)
+                                    + 1
+
+                        Some c
                     else
                         None)
 
             let foldedLines =
-                sideFolds "jenkins" jenkins fogell @ sideFolds "fogell" fogell jenkins
+                pairedCanon
+                |> List.collect (fun c ->
+                    [ $"compared canonically (multiset, order not meaningful): jenkins {c}"
+                      $"compared canonically (multiset, order not meaningful): fogell {c}" ])
 
-            // THE RELAXATION IS DISCLOSED ON EVERY CONCURRENT CASE, not only when
-            // canonicalisation happened to touch a line. FG-151.
-            //
-            // MEASURED: `parallel-always-failfast` stores Jenkins with the `from-quick`
-            // block first and Fogell with `from-slow` first, and reads PROVEN — correctly,
-            // because branch interleaving is not a difference between the engines. But the
-            // contract line said "compared: ORDERED normalised output lines" and no fold
-            // note was emitted (`jt + ft = 0`), so nothing in the receipt told a reader
-            // that ordering had NOT been compared. The receipt is the artifact the claim
-            // rests on; a relaxation it does not mention is a relaxation nobody can weigh.
-            //
-            // The rule this file already states — "every fold is REPORTED, not just
-            // applied ... visible per case instead of buried in the rule" — was written
-            // for the env fold and not carried to the sibling relaxation directly below
-            // it. Same defect as FG-152/FG-153, in the reporting layer.
-            // "COMPARED", NEVER "MATCHED". This note is returned even when `walk` found
-            // an `OutputDiffers`, and the renderer prints notes on divergent receipts
-            // too — so the first word said the lines matched while the verdict beside it
-            // said they did not. Stating what the comparison DID costs nothing and
-            // cannot contradict the verdict.
             d,
             ($"multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines"
              :: (if jt + ft > 0 then
