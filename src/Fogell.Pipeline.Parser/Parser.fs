@@ -596,7 +596,7 @@ stageRef.Value <-
                       // them. When `stepBlock` failed for ANY reason the `attempt` above
                       // backtracked, this catch-all consumed `steps { … }` as an opaque
                       // section, and the stage ran with NO STEPS AT ALL while the build
-                      // reported SUCCESS. MEASURED with `input message: /Deploy; / +
+                      // reported SUCCESS. MEASURED, approval-lane scenario Z, with `input message: /Deploy; / +
                       // env.TARGET`: prompts=0, the gate stage's workspace EMPTY, and the
                       // following stage's `after.txt` present — a human approval skipped
                       // and its guarded work dropped, silently.
