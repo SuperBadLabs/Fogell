@@ -25,7 +25,7 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 ///
 /// The stop set can therefore include `;` without truncating an expression that
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
-/// or a slashy `/; …/`. Five review rounds on FG-134 each found another string
+/// A slashy `/; …/` is NOT protected — `/` is ordinary raw text here (FG-141). Five review rounds on FG-134 each found another string
 /// form a hand-rolled character test had missed, and two of the intermediate
 /// states produced SILENT no-ops. `Lexeme` already knew every form; the fix is to
 /// ask it rather than to enumerate again.

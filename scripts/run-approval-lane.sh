@@ -1230,8 +1230,15 @@ PID=$!
 WID=$(await_pending "$W/approvals") || {
   echo "FAIL: a gate with an expression argument published NO prompt — the build would ship unapproved"
   cat "$W/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+# HELD SHUT for a bounded interval, not sampled once. A single check straight
+# after the prompt appears cannot tell a gate that WAITS from one that publishes
+# and charges on — the marker could land just after the sample. This is the same
+# weakness fixed in scenario Q earlier, and this scenario was written without it.
+sleep 2
 grep -q '^shipped$' "$W/ws/gate/markers.txt" 2>/dev/null && {
   echo "FAIL: the step past the gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the expression-argument prompt was pending"; cat "$W/run.log"; exit 1; }
 printf 'approve wendy\n' > "$W/approvals/$WID.decision"
 set +e; wait "$PID"; set -e
 grep -q 'completed: success' "$W/run.log" || {
