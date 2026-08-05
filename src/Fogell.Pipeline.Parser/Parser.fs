@@ -30,10 +30,33 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 /// states produced SILENT no-ops. `Lexeme` already knew every form; the fix is to
 /// ask it rather than to enumerate again.
 let private rawArgValue (stops: char list) : P<string> =
+    // `/` IS ORDINARY EXPRESSION TEXT HERE, NOT A SLASHY OPENER.
+    //
+    // Treating it as one was an APPROVAL BYPASS. `input message: 10 / 2` — plain
+    // division — sent `/` into `stringSpanRaw`, which found no closing delimiter,
+    // so the argument failed to parse; `steps` is wrapped in `attempt`, that
+    // failure backtracked, the section became EMPTY, and the build reported
+    // SUCCESS having never published a prompt. UNPROVEN BY RECEIPT — the
+    // differential compares OUTPUT and WORKSPACE, and neither shows whether a
+    // prompt was published at all, which is exactly why every receipt passed
+    // while this was live. ASSERTED BY `scripts/run-approval-lane.sh` scenario W,
+    // proven to fail: restoring the slashy assumption gives
+    // `FAIL: a gate with an expression argument published NO prompt`.
+    // Measured against merged main,
+    // which runs the gate and waits (step-started=1, prompts=1) where this
+    // exited 0 with neither.
+    //
+    // A human gate silently skipped is the guarantee FG-046b exists to hold, so
+    // slashy support in a raw argument is not worth any amount of correctness
+    // elsewhere. It never worked here before FG-138 either — `/` was plain text.
+    // Distinguishing a slashy literal from division needs context this scanner
+    // does not have: FG-141.
     let plain: P<string> =
-        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"' && c <> '/')
+        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"')
 
-    many1Strings (stringSpanRaw <|> plain)
+    let quotedSpan: P<string> = attempt (lookAhead (anyOf "'\"") >>. stringSpanRaw)
+
+    many1Strings (quotedSpan <|> plain)
 
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (

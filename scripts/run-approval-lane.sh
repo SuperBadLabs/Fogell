@@ -1200,5 +1200,45 @@ grep -q $'^input-decision\tGate\t1\t1\tapproved\tval$' "$V/build.journal" || {
   echo "FAIL: the settled answer was not journaled"; sed 's/^/  | /' "$V/build.journal"; exit 1; }
 echo "refused while changing, adopted once settled"
 
+# ---------------------------------------------------------------- scenario W
+echo "=== W: a gate whose ARGUMENT is an expression still gates ==="
+# FG-141. An APPROVAL BYPASS, not a parse curiosity: `input message: 10 / 2` sent
+# the `/` into a raw-argument scanner that assumed slashy, no closing delimiter
+# was found, the argument failed to parse, `steps` is wrapped in `attempt` so the
+# failure BACKTRACKED, the section became EMPTY — and the build reported SUCCESS
+# having never published a prompt. A human gate silently skipped.
+#
+# The lane is where that must be caught, because every other check passed: the
+# suite was 115/115 and both gates were green while this was live. What no
+# receipt covers is "a prompt was published at all".
+W="$LANE/w"; mkdir -p "$W/approvals"
+cat > "$W/Jenkinsfile" <<'WJF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: 10 / 2, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+WJF
+"$HOST_BIN" "$W/Jenkinsfile" "$W/ws" gate "$W/build.journal" "$W/approvals" > "$W/run.log" 2>&1 &
+PID=$!
+WID=$(await_pending "$W/approvals") || {
+  echo "FAIL: a gate with an expression argument published NO prompt — the build would ship unapproved"
+  cat "$W/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q '^shipped$' "$W/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+printf 'approve wendy\n' > "$W/approvals/$WID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$W/run.log" || {
+  echo "FAIL: the answered gate did not complete"; cat "$W/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$W/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
+echo "an expression-argument gate published its prompt and waited"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
