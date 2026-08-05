@@ -8,7 +8,8 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Denominator: 79 rejected of 228 corpus files. The remaining 149 were ADMITTED (parsed) — which is not a parity claim, and 0 have proven parity.
+Of 228 corpus files: **0** proven, **149** admitted (parsed — NOT a
+parity claim), **79** rejected. This page covers the rejected set.
 
 ## opaque section
 

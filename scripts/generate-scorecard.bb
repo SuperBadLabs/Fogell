@@ -67,7 +67,15 @@
                     (map (fn [p]
                            (let [n (str/replace (fs/file-name p) ".receipt.txt" "")
                                  body (slurp (fs/file p))]
-                             [n (if (re-find #"(?m)^VERDICT: PROVEN" body) :proven :other)])))
+                             ;; THE EXACT TIER-1 VERDICT, not a prefix. `PROVEN-PARTIAL`
+                             ;; also starts with "PROVEN" and the comparator emits it to
+                             ;; say the workspace could NOT be compared — explicitly not
+                             ;; tier 1. A prefix match would have counted it as proven and,
+                             ;; if its name matched a corpus file, promoted that file to
+                             ;; tier 1: a false tier-1 produced by the very generator built
+                             ;; to prevent false tiers. There are 0 such receipts today, so
+                             ;; the bug was invisible and correct by accident.
+                             [n (if (re-find #"(?m)^VERDICT: PROVEN \(tier 1\)" body) :proven :other)])))
                     (into {}))
 
       tier-of (fn [{:keys [file verdict]}]
@@ -140,8 +148,11 @@
            "index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with its\n"
            "position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a\n"
            "false success.\n\n"
-           "Denominator: " t3 " rejected of " total " corpus files. The remaining " t2
-           " were ADMITTED (parsed) — which is not a parity claim, and " t1 " have proven parity.\n\n"
+           ;; Every tier stated explicitly. "The remaining N were admitted" is arithmetic
+           ;; that holds only while tier 1 is 0 — the moment a corpus file earns a receipt,
+           ;; the remainder after rejections is t1 + t2 and the sentence becomes false.
+           "Of " total " corpus files: **" t1 "** proven, **" t2 "** admitted (parsed — NOT a\n"
+           "parity claim), **" t3 "** rejected. This page covers the rejected set.\n\n"
            (str/join "\n"
                      (map (fn [{:keys [reason count examples]}]
                             (str "## " reason "\n\n"
