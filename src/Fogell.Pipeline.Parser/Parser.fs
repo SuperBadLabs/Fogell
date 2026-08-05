@@ -20,12 +20,39 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
+/// A raw (unquoted) argument value, scanned STRING-AWARE.
+///
+/// FG-134. The terminator set gained `;` so a separator could end an unquoted
+/// argument — and a character-level test cut expressions at a semicolon INSIDE
+/// their own string literal: `sh script: env.PART + '; echo b'` truncated at the
+/// quote's semicolon and the build failed. That worked before the terminator was
+/// added, so it was a regression introduced by fixing the silent stage-drop.
+/// Caught by the pre-push verifier; confirmed a regression by running the same
+/// pipeline against the pre-fix parser, which passed.
+///
+/// Quoted spans are consumed whole, so `,` `)` `}` and `;` inside a literal are
+/// ordinary characters — which is what the surrounding parsers already assume of
+/// every other quote-bearing construct.
+let private rawArgValue (extraStop: char list) : P<string> =
+    let stops = [ ','; ')'; '\n'; '}' ] @ extraStop
+
+    let quoted: P<string> =
+        let span (q: char) =
+            pchar q >>. manyChars (satisfy (fun c -> c <> q && c <> '\n')) .>> pchar q
+            |>> fun inner -> string q + inner + string q
+
+        span '\'' <|> span '"'
+
+    let plain: P<string> = many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"')
+
+    many1Strings (quoted <|> plain)
+
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}' && c <> ';') .>> ws
+            <|> (rawArgValue [ ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -33,7 +60,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}' && c <> ';') .>> ws
+            <|> (rawArgValue [ ';' ] .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -43,13 +70,13 @@ let private positionalArgWithKind: P<string * string * bool> =
     (stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}' && c <> ';') .>> ws
+    <|> (rawArgValue [ '{'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}' && c <> ';') .>> ws
+    <|> (rawArgValue [ '{'; ';' ] .>> ws
          |>> fun s -> s.Trim())
 
 /// FG-134. `;` TERMINATES a raw (unquoted) argument.
