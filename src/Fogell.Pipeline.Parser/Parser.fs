@@ -20,26 +20,47 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-/// A raw (unquoted) argument value, scanned STRING-AWARE.
+/// A raw (unquoted) argument value, scanned STRING- AND ESCAPE-aware.
 ///
-/// FG-134. The terminator set gained `;` so a separator could end an unquoted
-/// argument — and a character-level test cut expressions at a semicolon INSIDE
-/// their own string literal: `sh script: env.PART + '; echo b'` truncated at the
-/// quote's semicolon and the build failed. That worked before the terminator was
-/// added, so it was a regression introduced by fixing the silent stage-drop.
-/// Caught by the pre-push verifier; confirmed a regression by running the same
-/// pipeline against the pre-fix parser, which passed.
+/// FG-134, and this is the fourth shape of one bug. Adding `;` to the terminator
+/// set so a separator could end an unquoted argument broke expressions carrying a
+/// semicolon inside their own literal; making quoted spans skip wholesale then
+/// broke ESCAPED quotes, because the span ended at the `\"` and the `;` after it
+/// terminated — the host exited 0 with `build-finished success`, NO `step-started`
+/// and no output file. A silent no-op: exactly the class this ticket exists to
+/// remove, reintroduced by the fix to the fix.
 ///
-/// Quoted spans are consumed whole, so `,` `)` `}` and `;` inside a literal are
-/// ordinary characters — which is what the surrounding parsers already assume of
-/// every other quote-bearing construct.
+/// So the quote skipping is the SAME logic `Lexeme.balancedRaw` already uses —
+/// `\` consumes the next character, an unterminated single-quote bails at the
+/// newline — rather than a third hand-rolled variant. Three character scanners
+/// disagreeing about what a string is was the actual defect.
 let private rawArgValue (extraStop: char list) : P<string> =
     let stops = [ ','; ')'; '\n'; '}' ] @ extraStop
 
     let quoted: P<string> =
-        let span (q: char) =
-            pchar q >>. manyChars (satisfy (fun c -> c <> q && c <> '\n')) .>> pchar q
-            |>> fun inner -> string q + inner + string q
+        let span (q: char) : P<string> =
+            let inner (stream: CharStream<unit>) =
+                let sb = System.Text.StringBuilder()
+                sb.Append(stream.Read()) |> ignore // opening quote
+                let mutable closed = false
+
+                while not closed && not stream.IsEndOfStream do
+                    let d = stream.Peek()
+
+                    if d = '\\' then
+                        sb.Append(stream.Read()) |> ignore
+                        if not stream.IsEndOfStream then sb.Append(stream.Read()) |> ignore
+                    elif d = q then
+                        sb.Append(stream.Read()) |> ignore
+                        closed <- true
+                    elif d = '\n' && q = '\'' then
+                        closed <- true // unterminated single-quote: bail, as balancedRaw does
+                    else
+                        sb.Append(stream.Read()) |> ignore
+
+                Reply(sb.ToString())
+
+            attempt (lookAhead (pchar q) >>. inner)
 
         span '\'' <|> span '"'
 

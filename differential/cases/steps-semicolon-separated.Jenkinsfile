@@ -19,7 +19,10 @@
 // whole for that reason.
 pipeline {
     agent any
-    environment { PART = 'echo e > e.txt' }
+    environment {
+        PART = 'echo e > e.txt'
+        PART2 = 'echo h > h.txt && '
+    }
     stages {
         stage('one') { steps { sh 'echo a > a.txt'; sh 'echo b > b.txt' } }
         stage('two') {
@@ -31,6 +34,15 @@ pipeline {
         stage('three') {
             steps {
                 sh script: env.PART + '; echo f > f.txt'
+            }
+        }
+        // An ESCAPED quote must not end the literal early. When it did, the `;`
+        // after it terminated the argument and the build reported SUCCESS with
+        // NO step-started record and no file — the silent no-op this ticket
+        // exists to remove, reintroduced by the fix to the fix.
+        stage('four') {
+            steps {
+                sh script: env.PART2 + "printf 'x\"; still literal' > g.txt"
             }
         }
     }
