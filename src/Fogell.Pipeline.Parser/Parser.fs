@@ -70,8 +70,30 @@ let private rawArgValue (stops: char list) : P<string> =
 /// The lookahead is what makes the literal branch honest: it may only claim the
 /// value if what follows is an argument terminator, otherwise the raw scanner
 /// takes the whole expression — quoted spans included, which it now handles.
+/// FG-141/142. A string literal wins ONLY when it is the WHOLE argument. When an
+/// operator follows it, the literal is a PREFIX of a larger expression and must go
+/// to `rawArgValue` instead — otherwise `input "Deploy " + env.TARGET` consumes only
+/// `"Deploy "`, leaves `+ env.TARGET`, backtracks `steps` to EMPTY, and the build
+/// reports SUCCESS having published NO approval prompt. Three separate routes to
+/// that bypass were fixed one at a time before this was stated as a class.
+///
+/// The check is a NEGATIVE one on operators, not a positive one on terminators.
+/// MEASURED, after two wrong fixes: `stringLiteralWithKindBoth` is `lexeme`-wrapped,
+/// so it has ALREADY consumed trailing whitespace — including the newline — before
+/// this guard runs. A terminator whitelist therefore saw the NEXT STEP'S IDENTIFIER
+/// and rejected the literal, sending `sh 'printf "\033[31m"'` through the raw
+/// scanner UNDECODED (`+ printf 033[31mred033[0m`) and undoing FG-122. Only non-last
+/// steps broke, because `}` and `;` were in the whitelist and an identifier was not;
+/// receipts `sh-octal-escape`, `sh-escape-edges` and the two `gstring-*` cases caught
+/// it. Whitespace consumption inside the literal parser was the fact both earlier
+/// fixes assumed away.
 let private wholeValue (p: P<'a>) : P<'a> =
-    attempt (p .>> ws .>> lookAhead (choice [ skipAnyOf ",)}\n;" ; eof ]))
+    // Chars that can CONTINUE an expression after a literal: arithmetic and string
+    // concatenation, member access, indexing, comparison, regex and ternary. A step
+    // name never starts with one, so a following step still terminates the argument.
+    let continuation: P<unit> = skipAnyOf "+-*/%.?:=<>!&|^~["
+
+    attempt (p .>>? notFollowedBy continuation)
 
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (

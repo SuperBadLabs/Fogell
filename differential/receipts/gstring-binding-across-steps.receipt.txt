@@ -1,11 +1,9 @@
 # Differential receipt — gstring-binding-across-steps.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e54b4abf477f8fed16053c176243cfdc27848df5c68829928976f1a744e0b074
+seal:         fc7decc657d35b3edc51ab62f176a41dfce70df99f07b0dd3d7d7a964c409714
 
-VERDICT: DIVERGED (2)
-  - terminal result: jenkins=success fogell=failure
-  - output line 0: jenkins=Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues. fogell=<absent>
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -68,6 +66,9 @@ VERDICT: DIVERGED (2)
     | second:ok
 
 ## Fogell
-  result:         failure
+  result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  output (3 lines):
+    | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
+    | first:ok
+    | second:ok

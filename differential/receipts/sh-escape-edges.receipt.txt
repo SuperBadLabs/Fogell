@@ -1,11 +1,9 @@
 # Differential receipt — sh-escape-edges.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b54b6b4478b88b002da4d39de8e5d21291abd21fcdb761d9e4ec2ae639615459
+seal:         f7f9c27c1e72852749c63f4218ae011e2aba68ca1a6d2e1c2eb547d49b4df677
 
-VERDICT: DIVERGED (2)
-  - output line 0: jenkins=+ printf [ 0] fogell=+ printf [400]
-  - workspace hash: jenkins=6ff607a2ef99 fogell=c32bd78a9b92
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -88,27 +86,27 @@ VERDICT: DIVERGED (2)
 
 ## Fogell
   result:         success
-  workspace-hash: c32bd78a9b92d7dee8faff37a9188e314b0052281a4a4ae81b63ccf6230ee800
+  workspace-hash: 6ff607a2ef99a254891ea05d90be3eb3abe67a3b4f8abf209ab17682352a0ec5
   output (16 lines):
-    | + printf [400]
+    | + printf [ 0]
     | + cat octal-range.txt
-    | [400]
-    | + printf [101102103]
+    | [ 0]
+    | + printf [ABC]
     | + cat octal-plain.txt
-    | [101102103]
-    | + printf [044MISSING]
+    | [ABC]
+    | + printf [$MISSING]
     | + cat octal-dollar.txt
-    | [044MISSING]
-    | + printf AbBfC
+    | [$MISSING]
+    | + printf ABC
     | + od -c simple-bf.txt
-    | 0000000   A   b   B   f   C
+    | 0000000   A  \b   B  \f   C
     | 0000005
     | + printf [A][A]
     | + cat unicode.txt
     | [A][A]
   workspace:
-    6f8a85091a70  octal-dollar.txt
-    5c3fc2f667c3  octal-plain.txt
-    1f401dcea816  octal-range.txt
-    b66547b28421  simple-bf.txt
+    649e8f43c078  octal-dollar.txt
+    275a52d87c0c  octal-plain.txt
+    2de88c4cff1b  octal-range.txt
+    25d2f286d82b  simple-bf.txt
     4d5846bc7ca0  unicode.txt

@@ -1,11 +1,9 @@
 # Differential receipt — sh-octal-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         dc652be37112d82ca45c8998b2720356cf7ac8f2901ef10e44471baf7bef9a1d
+seal:         23629a96eacdf95a2a264738987a70dee3f8920cf4edbb453c74fa8e20260ffd
 
-VERDICT: DIVERGED (2)
-  - output line 0: jenkins=+ printf red fogell=+ printf 033[31mred033[0m
-  - workspace hash: jenkins=80e3bc6b748a fogell=b8303816f059
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -73,12 +71,12 @@ VERDICT: DIVERGED (2)
 
 ## Fogell
   result:         success
-  workspace-hash: b8303816f0591ee9a668104174a604eaa71777977b5a12cdf849dda560ceea45
+  workspace-hash: 80e3bc6b748a967e2a06f6a5fcc56d352aba5151aa9636202cae502ce6222cb6
   output (5 lines):
-    | + printf 033[31mred033[0m
+    | + printf red
     | + cat colour.txt
-    | 033[31mred033[0m
+    | red
     | + printf tab	here
     | tab	here
   workspace:
-    e6eaa0f411e2  colour.txt
+    12c1357a66ef  colour.txt
