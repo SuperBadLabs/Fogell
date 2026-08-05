@@ -10,6 +10,14 @@
 # TIMEOUT SILENTLY DROPPED — measured `completed: success` against a control that
 # aborts. A dropped timeout is a build that runs past a bound Jenkins enforces.
 #
+# COVERAGE, enumerated: stage `options`, top-level `options`, stage `steps`, and
+# `environment` at BOTH levels. The banner this file prints used to say "every
+# acted-on section refuses" while it exercised three cases — and it passed green while
+# a malformed `environment` block was dropped at both levels and the shell ran with the
+# variable UNSET. THE SCRIPT WRITTEN TO STOP ME OVERCLAIMING CARRIED THE OVERCLAIM IN
+# ITS OWN BANNER. The refusal set is now one shared `actedOnSections` in the parser, so
+# what this script asserts and what the code enforces cannot drift apart silently.
+#
 # Every case here is PAIRED WITH A CONTROL that must still run. A parser that
 # refused everything would satisfy the refusal half of this file and fail the
 # controls — the lesson from approval-lane scenario Z4, where four mutation-proven
@@ -120,6 +128,89 @@ expect_refusal top-opts-bad 'pipeline {
     }
 }'
 
+# A dropped environment variable is only visible in the WORKSPACE: the build still
+# reports success, the shell just runs without the value. Asserting the terminal line
+# alone would have missed the very defect these cases exist for.
+#
+# The `sh` body must be SINGLE-quoted so the SHELL expands `${FOO:-dropped}`. Written
+# double-quoted first, it was a Groovy interpolation of a variable that does not exist
+# and both controls failed — my test bug reported as an engine defect for one round.
+expect_env_ok() {
+  local name=$1 log
+  log=$(run_case "$name" "$2")
+  if ! grep -q 'completed: success' <<<"$log"; then
+    echo "  FAIL: control $name did not complete — the engine over-refuses"
+    sed 's/^/    | /' <<<"$log" | head -5
+    FAILED=1
+    return
+  fi
+  local marker
+  marker=$(cat "$LAB/$name/ws"/*/marker.txt 2>/dev/null || echo "<no marker>")
+  if [ "$marker" = "ok" ]; then
+    echo "  control $name: FOO reached the shell"
+  else
+    echo "  FAIL: control $name ran with FOO=[$marker] — the variable was dropped"
+    FAILED=1
+  fi
+}
+
+echo "=== environment, both levels: a dropped var runs the shell without it ==="
+expect_env_ok top-env-ok "pipeline {
+    agent any
+    environment {
+        FOO = \"ok\"
+    }
+    stages {
+        stage(\"one\") {
+            steps {
+                sh 'echo \${FOO:-dropped} > marker.txt'
+            }
+        }
+    }
+}"
+expect_refusal top-env-bad "pipeline {
+    agent any
+    environment {
+        FOO = \"ok\"
+        bogus(/x) y/)
+    }
+    stages {
+        stage(\"one\") {
+            steps {
+                sh 'echo \${FOO:-dropped} > marker.txt'
+            }
+        }
+    }
+}"
+
+expect_env_ok stage-env-ok "pipeline {
+    agent any
+    stages {
+        stage(\"one\") {
+            environment {
+                FOO = \"ok\"
+            }
+            steps {
+                sh 'echo \${FOO:-dropped} > marker.txt'
+            }
+        }
+    }
+}"
+expect_refusal stage-env-bad "pipeline {
+    agent any
+    stages {
+        stage(\"one\") {
+            environment {
+                FOO = \"ok\"
+                bogus(/x) y/)
+            }
+            steps {
+                sh 'echo \${FOO:-dropped} > marker.txt'
+            }
+        }
+    }
+}"
+
 echo "=== stage steps: the original silent fallback (FG-143) ==="
 expect_control stage-steps-ok 'completed: success' 'pipeline {
     agent any
@@ -144,7 +235,7 @@ expect_refusal stage-steps-bad 'pipeline {
 }'
 
 if [ "$FAILED" -eq 0 ]; then
-  echo "SECTION-REFUSAL PROOF: every acted-on section refuses when unparseable, and every control still runs"
+  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse when unparseable at both levels, and every control still runs"
 else
   echo "SECTION-REFUSAL PROOF FAILED"
   exit 1

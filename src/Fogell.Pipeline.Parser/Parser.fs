@@ -578,6 +578,33 @@ let private whenSectionOpaque: P<WhenCondition> =
 // Stages
 // ---------------------------------------------------------------------------
 
+/// FG-153. Sections whose parse result FEEDS THE MODEL. If one of these does not
+/// parse it must be REFUSED — never consumed by a fallback and dropped.
+///
+/// ONE SET, USED BY BOTH FALLBACKS, because two lists is the actual defect. The stage
+/// fallback learned to refuse `steps` (FG-143); the top-level fallback later learned
+/// `options`/`stages` (FG-150); `options` was never carried back to the stage one
+/// (FG-152); and then `environment` was missing from BOTH — a malformed
+/// `environment { FOO = "ok"; bogus(/x) y/) }` completed successfully with `FOO`
+/// UNSET, so the shell ran without a variable the pipeline declares. Four rounds of
+/// the same fix landing on one of two siblings. A shared set cannot drift.
+///
+/// `when` is absent DELIBERATELY: it has an opaque variant of its own, so consuming it
+/// opaquely is a documented degradation rather than a silent loss. Names with no
+/// dedicated parser (`libraries`, `matrix`, `axes`) fall through to opaque as before.
+let private actedOnSections =
+    set
+        [ "agent"
+          "environment"
+          "tools"
+          "options"
+          "parameters"
+          "triggers"
+          "stages"
+          "parallel"
+          "post"
+          "steps" ]
+
 let private stageParser, private stageRef = createParserForwardedToRef<Stage, unit> ()
 
 let private stagesBody: P<Stage list> =
@@ -670,7 +697,7 @@ stageRef.Value <-
                            // `when` is deliberately absent: it has an opaque variant above,
                            // so consuming it opaquely is a documented degradation rather
                            // than a silent loss.
-                           if n = "steps" || n = "options" || n = "stages" || n = "parallel" || n = "post" then
+                           if actedOnSections.Contains n then
                                fail
                                    $"a `{n}` section that does not parse is refused, never consumed opaquely"
                            else
@@ -741,7 +768,7 @@ let private topSection: P<TopSection> =
           // not parse must not be recorded as an opaque section and reported green.
           (identifier
            >>= (fun n ->
-               if n = "options" || n = "stages" then
+               if actedOnSections.Contains n then
                    fail $"a `{n}` section that does not parse is refused, never recorded as an opaque section"
                else
                    (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
