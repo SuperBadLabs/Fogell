@@ -1247,5 +1247,51 @@ grep -q 'completed: success' "$W/run.log" || {
   echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
 echo "an expression-argument gate published its prompt and waited"
 
+# ---------------------------------------------------------------- scenario X
+echo "=== X: a gate whose message is a CONCATENATION still gates ==="
+# FG-142, a SECOND approval bypass by a different route, and pre-existing in
+# merged code rather than introduced by the FG-138 work.
+#
+# `input message: 'Deploy ' + env.TARGET` matched `'Deploy '` as a complete
+# literal, left `+ env.TARGET` unconsumed, and the step block backtracked to
+# EMPTY — no prompt, build SUCCESS, the following stage ran.
+#
+# Scenario W does NOT cover this: `10 / 2` starts with a digit and reaches the
+# raw scanner, while a quoted prefix is claimed by the literal branch first. Two
+# routes to the same silent-empty-section outcome, and one case only ever proves
+# the route it takes.
+X="$LANE/x"; mkdir -p "$X/approvals"
+cat > "$X/Jenkinsfile" <<'XJF'
+pipeline {
+    agent any
+    environment { TARGET = "prod" }
+    stages {
+        stage("Gate") {
+            steps {
+                input message: "Deploy " + env.TARGET, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+XJF
+"$HOST_BIN" "$X/Jenkinsfile" "$X/ws" gate "$X/build.journal" "$X/approvals" > "$X/run.log" 2>&1 &
+PID=$!
+XID=$(await_pending "$X/approvals") || {
+  echo "FAIL: a gate with a CONCATENATED message published NO prompt — the build would ship unapproved"
+  cat "$X/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$X/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the concatenated-message gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the concatenated-message prompt was pending"; cat "$X/run.log"; exit 1; }
+printf 'approve xavier\n' > "$X/approvals/$XID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$X/run.log" || {
+  echo "FAIL: the answered concatenated-message gate did not complete"; cat "$X/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$X/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the gate did not run exactly once"; exit 1; }
+echo "a concatenated-message gate published its prompt and waited"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

@@ -59,10 +59,24 @@ let private rawArgValue (stops: char list) : P<string> =
 
     many1Strings (quotedSpan <|> plain)
 
+/// A string literal wins ONLY when it is the WHOLE value.
+///
+/// FG-142. `input message: 'Deploy ' + env.TARGET` matched `'Deploy '` as a
+/// complete literal, left `+ env.TARGET` unconsumed, and the step block then
+/// backtracked to EMPTY — the gate never published a prompt and the build
+/// reported SUCCESS. An APPROVAL BYPASS, and pre-existing: merged main does the
+/// same. A concatenated prompt message is an ordinary thing to write.
+///
+/// The lookahead is what makes the literal branch honest: it may only claim the
+/// value if what follows is an argument terminator, otherwise the raw scanner
+/// takes the whole expression — quoted spans included, which it now handles.
+let private wholeValue (p: P<'a>) : P<'a> =
+    attempt (p .>> ws .>> lookAhead (choice [ skipAnyOf ",)}\n;" ; eof ]))
+
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
-            (stringLiteralWithKindBoth
+            (wholeValue stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
             <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
