@@ -1,12 +1,12 @@
 # Differential receipt — input-failfast-is-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7f4c28e84b8f33a7c6ceb3b93ac67a772334461d3cb6863143e0712ff33b78d1
+seal:         fc09db7d2965c332a5f7fbe8aafb33338f641800b56ad4978b2b86319c13f247
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output pairs compared canonically — inherited env (1)
-  multiset mode: ORDER NOT COMPARED (concurrent case) — 7 jenkins / 7 fogell lines matched as a multiset
+## Output comparison notes (1)
+  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 7 jenkins / 7 fogell lines
 
 ## Comparison contract
   compared: terminal result

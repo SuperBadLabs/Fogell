@@ -5,7 +5,7 @@ seal:         4f017eff101cb14c54f4deca2d916c47c43ebcccdb216e367d984e8a66361bd2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output pairs compared canonically — inherited env (1)
+## Output comparison notes (1)
   line 8 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract

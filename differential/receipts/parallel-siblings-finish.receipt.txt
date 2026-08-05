@@ -1,12 +1,12 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0c3260ed3265171e6c5d95fc32b1c090a52ae5647d9d434f0b9c98bf46fdf62f
+seal:         95dad3befea4ffba99d4b32ba5b855ce6c3de301823de5903ce208debfd71900
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output pairs compared canonically — inherited env (1)
-  multiset mode: ORDER NOT COMPARED (concurrent case) — 5 jenkins / 5 fogell lines matched as a multiset
+## Output comparison notes (1)
+  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 5 jenkins / 5 fogell lines
 
 ## Comparison contract
   compared: terminal result

@@ -7,7 +7,7 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 timestamps(): jenkins=PARTIAL (1/21) fogell=PARTIAL (1/21) (prefix text excluded, coverage compared and sealed)
 
-## Output pairs compared canonically — inherited env (1)
+## Output comparison notes (1)
   line 9 compared canonically: > git --version # '${GITVERSION}'
 
 ## Comparison contract

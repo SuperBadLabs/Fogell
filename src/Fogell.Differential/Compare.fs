@@ -181,8 +181,13 @@ module Compare =
             // applied ... visible per case instead of buried in the rule" — was written
             // for the env fold and not carried to the sibling relaxation directly below
             // it. Same defect as FG-152/FG-153, in the reporting layer.
+            // "COMPARED", NEVER "MATCHED". This note is returned even when `walk` found
+            // an `OutputDiffers`, and the renderer prints notes on divergent receipts
+            // too — so the first word said the lines matched while the verdict beside it
+            // said they did not. Stating what the comparison DID costs nothing and
+            // cannot contradict the verdict.
             d,
-            ($"multiset mode: ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines matched as a multiset"
+            ($"multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines"
              :: (if jt + ft > 0 then
                      [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
                  else
@@ -392,7 +397,12 @@ module Compare =
         // canonically instead of byte-equal — the relaxation is never invisible.
         if not (List.isEmpty r.FoldedOutputPairs) then
             line ""
-            line $"## Output pairs compared canonically — inherited env ({r.FoldedOutputPairs.Length})"
+            // GENERIC HEADING. This bucket carried only inherited-env folds until FG-151
+            // put the concurrent multiset disclosure in it, at which point every
+            // parallel receipt announced an env canonicalisation that never happened.
+            // The disclosure fix introduced a mislabel of exactly the kind it existed to
+            // remove; each note states its own kind, so the heading must not.
+            line $"## Output comparison notes ({r.FoldedOutputPairs.Length})"
 
             for n in r.FoldedOutputPairs do
                 line $"  {n}"

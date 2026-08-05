@@ -5,7 +5,7 @@ seal:         24b364de6926123291a216249722f4f346d7cc1c7a06a68d764dc7bb7165bd29
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output pairs compared canonically — inherited env (1)
+## Output comparison notes (1)
   line 1 compared canonically: ${HOME}/tail
 
 ## Comparison contract
