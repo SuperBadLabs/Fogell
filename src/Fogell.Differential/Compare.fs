@@ -52,9 +52,14 @@ type Receipt =
       Jenkins: Trace option
       Fogell: Trace option
       ComparisonContract: string list
-      /// Output pairs that compared CANONICALLY (inherited-env fold) rather than
-      /// byte-equal, listed per case so the relaxation is visible in the receipt
-      /// that used it, never only in the rule's statement.
+      /// Notes about how output was compared, listed per case so a relaxation is
+      /// visible in the receipt that used it and never only in the rule's statement.
+      ///
+      /// TWO KINDS, not one. Canonical folds (inherited-env) name the pair they
+      /// resolved; the concurrent MULTISET disclosure names no pair because ordering,
+      /// not a pair, is what was relaxed. The name and this comment said "output pairs"
+      /// after FG-151 started storing the second kind here — a field claiming more
+      /// than it holds, which is the defect this field exists to prevent.
       FoldedOutputPairs: string list
       /// FG-119. Divergences seen on EARLIER attempts of this case that did not
       /// reproduce. Empty for a case proven on its first run.
@@ -163,8 +168,29 @@ module Compare =
             let touched side = side |> List.filter (fun l -> canon l <> l) |> List.length
             let jt, ft = touched jenkins, touched fogell
 
+            // THE FOLDED LINES ARE LISTED, built from the lines themselves rather than
+            // from `walk`. The contract promises "EVERY pair the rule folds is LISTED in
+            // the receipt that used it (sealed)" and this branch reported counts only.
+            //
+            // A first fix kept `walk`'s fold list — AND THAT LIST IS ALWAYS EMPTY HERE.
+            // Both sides are canonicalised BEFORE `walk` in this branch, so `walk` sees
+            // equal strings, takes the byte-equal path, and never records a fold. The fix
+            // added code that could not fire; the receipt was unchanged and the suite
+            // stayed green, which is exactly how an ineffective fix survives. Caught by
+            // adding `parallel-inherited-env-fold` and finding the list still absent.
+            //
+            // Indices are meaningless after sorting, so none are printed; the canonical
+            // TEXT is what the contract promises and what appears.
             let d, _ =
                 walk 0 [] (jenkins |> List.map canon |> List.sort) (fogell |> List.map canon |> List.sort)
+
+            let foldedLines =
+                jenkins @ fogell
+                |> List.filter (fun l -> canon l <> l)
+                |> List.map canon
+                |> List.distinct
+                |> List.sort
+                |> List.map (fun l -> $"compared canonically (multiset, order not meaningful): {l}")
 
             // THE RELAXATION IS DISCLOSED ON EVERY CONCURRENT CASE, not only when
             // canonicalisation happened to touch a line. FG-151.
@@ -189,9 +215,10 @@ module Compare =
             d,
             ($"multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — {List.length jenkins} jenkins / {List.length fogell} fogell lines"
              :: (if jt + ft > 0 then
-                     [ $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines" ]
+                     $"multiset mode: inherited-env canonicalisation touched {jt} jenkins / {ft} fogell lines"
+                     :: foldedLines
                  else
-                     []))
+                     foldedLines))
         else
             walk 0 [] jenkins fogell
 
@@ -392,9 +419,13 @@ module Compare =
                 $"timestamps(): jenkins={show j.Timestamps} fogell={show f.Timestamps} (prefix text excluded, coverage compared and sealed)"
         | _ -> ()
 
-        // Every fold this case USED, printed in the case that used it. A reader
-        // of this receipt alone sees exactly which output pairs were accepted
-        // canonically instead of byte-equal — the relaxation is never invisible.
+        // Every relaxation this case USED, printed in the case that used it, so a
+        // reader of this receipt alone sees them without consulting the rule.
+        //
+        // TWO KINDS: canonical folds name the PAIR they resolved; the concurrent
+        // multiset disclosure names no pair, because what was relaxed is ORDERING.
+        // This comment said "which output pairs were accepted canonically" after the
+        // second kind moved in — describing one of the two things the block prints.
         if not (List.isEmpty r.FoldedOutputPairs) then
             line ""
             // GENERIC HEADING. This bucket carried only inherited-env folds until FG-151

@@ -1,7 +1,7 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         95dad3befea4ffba99d4b32ba5b855ce6c3de301823de5903ce208debfd71900
+seal:         85b2c6de1d26a9541444fded482820464f969b153e44c221d5019cac83e7e2b5
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -72,8 +72,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   output (5 lines):
     | + echo failing
     | + exit 3
-    | Failed in branch quick-fail
     | + sleep 6
+    | Failed in branch quick-fail
     | + echo done
   workspace:
     bfbd1f4027c3  failed.txt
@@ -83,9 +83,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
   output (5 lines):
-    | + sleep 6
     | + echo failing
     | + exit 3
+    | + sleep 6
     | Failed in branch quick-fail
     | + echo done
   workspace:

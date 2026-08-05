@@ -1,12 +1,14 @@
-# Differential receipt — parallel-failfast.Jenkinsfile
+# Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f32f6789cb74b8974d3fad5e42bc2a85365278a5338543c5cb366ae5ace517a3
+seal:         28a6d4362737b4197b62d8b42e020ed97097cf773b093933be9797cde7fcaa65
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
-## Output comparison notes (1)
-  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 9 jenkins / 9 fogell lines
+## Output comparison notes (3)
+  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 4 jenkins / 4 fogell lines
+  multiset mode: inherited-env canonicalisation touched 2 jenkins / 2 fogell lines
+  compared canonically (multiset, order not meaningful): ${HOME}
 
 ## Comparison contract
   compared: terminal result
@@ -67,35 +69,19 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + sleep 1
-    | + echo started
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
-  workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | + echo ${HOME}
+    | /var/jenkins_home
+    | + echo ${HOME}
+    | /var/jenkins_home
 
 ## Fogell
-  result:         failure
-  workspace-hash: 6e441a250848e63f43c610fa34a4b5d22bf993d54de527cadbe1c570c4bdaeaa
-  output (9 lines):
-    | + echo started
-    | + sleep 1
-    | + sleep 45
-    | + echo failing
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
-  workspace:
-    bfbd1f4027c3  failed.txt
-    eff64b343dcb  started.txt
+  result:         success
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (4 lines):
+    | + echo ${HOME}
+    | /home/srikanth
+    | + echo ${HOME}
+    | /home/srikanth
