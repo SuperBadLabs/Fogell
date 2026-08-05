@@ -254,7 +254,18 @@ module Compare =
                            | true, v -> v
                            | _ -> 0)
 
-                    if c <> l && available > 0 then
+                    // NO `c <> l` TEST. Both rows are already in the raw multiset
+                    // difference, so they differ byte-for-byte by construction; if their
+                    // CANONICAL forms match, the fold is what resolved them — regardless
+                    // of which side happened to change. Requiring the JENKINS row to
+                    // change missed the asymmetric case entirely: Jenkins printing the
+                    // literal `${HOME}` against Fogell's `/home/srikanth` compares Proven
+                    // via the relaxation while the receipt claimed 0 decided rows.
+                    //
+                    // FOURTH revision of this filter. Each earlier one tested a property
+                    // of ONE ROW — contains an inherited value, differs, changes under
+                    // canon — when the thing being decided is a PROPERTY OF THE PAIR.
+                    if available > 0 then
                         taken[c] <- (match taken.TryGetValue c with
                                      | true, v -> v
                                      | _ -> 0)

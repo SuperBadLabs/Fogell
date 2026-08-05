@@ -585,6 +585,23 @@ let concurrentFoldAccounting =
                   "one pair = one note per side, never the unmatched leftover"
           }
 
+          test "a pair the fold resolves is recorded even when JENKINS is already canonical" {
+              // The asymmetric shape: Jenkins prints the canonical token literally and
+              // Fogell prints the raw inherited value. The fold decides the comparison,
+              // so the receipt must say so — the filter that required the JENKINS row to
+              // change under `canon` reported 0 decided while relying on the relaxation.
+              let jenkins = mkTrace [ "${HOME}" ]
+              let fogell = mkTrace [ "/home/srikanth" ]
+              let verdict, notes = Compare.traces [ "/home/srikanth", "${HOME}" ] jenkins fogell
+
+              Expect.equal verdict Proven "the pair resolves canonically"
+
+              Expect.equal
+                  (List.length (foldNotes notes))
+                  2
+                  "the decided pair is disclosed even though the jenkins row did not change"
+          }
+
           test "rows both engines printed identically are never recorded" {
               // Byte-equal on both sides: canonicalisation rewrites them, but they would
               // have compared equal anyway, so the fold decided nothing.
