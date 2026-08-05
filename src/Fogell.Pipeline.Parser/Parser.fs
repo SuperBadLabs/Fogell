@@ -136,7 +136,19 @@ let private positionalArgWithKind: P<string * string * bool> =
     // control (timeout alone aborts) and against merged `fe0b095` (aborts), so this
     // was a REGRESSION MY OWN FAIL-CLOSED INTRODUCED, invisible to receipt
     // `options-accept-and-ignore` because that case's options are ignored anyway.
-    <|> attempt (identifier .>>. balancedRaw '(' ')' .>> ws |>> fun (n, raw) -> n + raw, n + raw, false)
+    // MARKED AS AN EXPRESSION (`\u0001`), not a literal. Returning it unmarked kept it
+    // out of `ExpressionArgs`, so rendering treated the SOURCE TEXT as the value: with
+    // `input promptFactory()` the pending file read `prompt\tpromptFactory()` and a human
+    // was asked to approve a function call as if it were the message. The sentinel path
+    // already evaluates — `input 10 / 2` publishes `5` — so this branch was routing
+    // around machinery that was working. MEASURED, approval-lane scenario Z5.
+    //
+    // This is the SEVENTH approval defect on this branch and the FOURTH caused by one of
+    // my own fixes: FG-150 added this branch to stop `buildDiscarder(logRotator(...))`
+    // dropping an options block, and in doing so opened a wrong-prompt path.
+    <|> attempt (
+        identifier .>>. balancedRaw '(' ')' .>> ws
+        |>> fun (n, raw) -> n + raw, "\u0001" + n + raw, false)
     <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 

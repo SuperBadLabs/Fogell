@@ -1574,5 +1574,54 @@ grep -q 'completed: success' "$Z4/run.log" || {
   echo "FAIL: the step past the triple-quoted gate did not run exactly once"; exit 1; }
 echo "a valid triple-quoted gate published its message and waited"
 
+# ---------------------------------------------------------------- scenario Z5
+echo "=== Z5: a gate whose message is a NESTED CALL must not publish its SOURCE ==="
+# FG-157. The seventh approval defect on this branch and the FOURTH from one of my own
+# fixes. FG-150 added a nested-call branch so `buildDiscarder(logRotator(...))` would
+# stop dropping an options block; that branch returned the value UNMARKED, so it never
+# entered `ExpressionArgs` and rendering used the SOURCE TEXT.
+#
+# MEASURED before the fix: `input promptFactory()` published `prompt<TAB>promptFactory()`
+# and WAITED — a human asked to approve a function call as if it were the message. The
+# sentinel path was already correct: `input 10 / 2` publishes `5`. The fix routed around
+# working machinery.
+#
+# Scenarios W through Z4 could not catch it: they cover division, concatenation (named
+# and positional), slashy refusal, mixed args and triple quotes — every spelling I had
+# thought of, and not this one.
+Z5="$LANE/z5"; mkdir -p "$Z5/approvals"
+cat > "$Z5/Jenkinsfile" <<'Z5JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input promptFactory()
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z5JF
+set +e
+timeout 60 "$HOST_BIN" "$Z5/Jenkinsfile" "$Z5/ws" gate "$Z5/build.journal" "$Z5/approvals" > "$Z5/run.log" 2>&1
+Z5_RC=$?
+set -e
+[ "$Z5_RC" -eq 124 ] && {
+  echo "FAIL: the nested-call gate WAITED — it published something as a prompt"
+  cat "$Z5/run.log"; exit 1; }
+for pending in "$Z5/approvals"/*.pending; do
+  [ -e "$pending" ] || continue
+  echo "FAIL: a nested-call gate published a prompt — the operator would approve SOURCE TEXT"
+  cat "$pending"; exit 1
+done
+grep -q 'completed: success' "$Z5/run.log" && {
+  echo "FAIL: a gate whose message could not be evaluated completed successfully"
+  cat "$Z5/run.log"; exit 1; }
+if [ -f "$Z5/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z5/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a gate that never published a prompt"; exit 1
+fi
+echo "a nested-call gate failed closed instead of publishing its source text"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
