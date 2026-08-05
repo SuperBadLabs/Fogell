@@ -1363,8 +1363,15 @@ echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==
 #
 # Fogell does not parse slashy strings in expression arguments. That is a real
 # limit, and this scenario asserts the HONEST behaviour for it: refuse the
-# pipeline. It is deliberately written against the LIMIT, not the spelling, so it
-# keeps holding for any step form the grammar does not yet cover.
+# pipeline.
+#
+# COVERAGE, stated exactly: the UNPARENTHESISED and PARENTHESISED spellings of an
+# unparseable NAMED argument. It does NOT cover "any step form the grammar does not
+# yet cover" — that is what this comment claimed while testing only the first
+# spelling, and the parenthesised one was meanwhile publishing a WRONG PROMPT.
+# Third time on this branch a scenario name has claimed a class and tested one
+# member of it; the pattern is worse here than a plain gap, because the broader
+# claim is what stops the next person looking.
 Z="$LANE/z"; mkdir -p "$Z/approvals"
 cat > "$Z/Jenkinsfile" <<'ZJF'
 pipeline {
@@ -1385,8 +1392,11 @@ pipeline {
 }
 ZJF
 set +e
-"$HOST_BIN" "$Z/Jenkinsfile" "$Z/ws" gate "$Z/build.journal" "$Z/approvals" > "$Z/run.log" 2>&1
+timeout 60 "$HOST_BIN" "$Z/Jenkinsfile" "$Z/ws" gate "$Z/build.journal" "$Z/approvals" > "$Z/run.log" 2>&1
+Z_RC=$?
 set -e
+[ "$Z_RC" -eq 124 ] && {
+  echo "FAIL: an unparseable gate WAITED instead of being refused"; cat "$Z/run.log"; exit 1; }
 grep -q 'completed: success' "$Z/run.log" && {
   echo "FAIL: an UNPARSEABLE gate argument completed successfully — the build shipped unapproved"
   cat "$Z/run.log"; exit 1; }
@@ -1398,6 +1408,58 @@ fi
 grep -qE 'no_stages|refus|parse' "$Z/run.log" || {
   echo "FAIL: the pipeline was dropped without any diagnostic"; cat "$Z/run.log"; exit 1; }
 echo "an unparseable gate argument was refused, not silently skipped"
+
+# Z2, the PARENTHESISED spelling of the same property. Found by the verifier after
+# Z was written and declared to hold for every uncovered form.
+#
+# This one was NOT a bypass, which is why the FG-143 fix did not catch it and why
+# it needs its own assertions: a prompt WAS published and the gate DID wait. The
+# published text was the raw argument body — `message: /Deploy; / + env.TARGET, ok:
+# "Ship it"` — so a human approved words the author never wrote, and `ok` was
+# dropped. A gate that stops the build while showing the wrong prompt still fails
+# the property this lane exists to defend.
+Z2="$LANE/z2"; mkdir -p "$Z2/approvals"
+cat > "$Z2/Jenkinsfile" <<'Z2JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input(message: /Deploy; / + env.TARGET, ok: "Ship it")
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z2JF
+# BOUNDED. A refusal scenario must never WAIT: when the property is broken the
+# downgrade publishes a prompt and the host blocks for a decision nobody writes,
+# so an unbounded run HANGS instead of failing. It did exactly that during this
+# scenario's own mutation proof — the lane sat for minutes and only reported the
+# defect once the host was killed by hand. A checker that hangs is worse than one
+# that fails: in CI it burns the timeout and returns no verdict at all. The same
+# bounded-wait hardening was applied to scenarios Q and W earlier, and this
+# scenario was still written without it.
+set +e
+timeout 60 "$HOST_BIN" "$Z2/Jenkinsfile" "$Z2/ws" gate "$Z2/build.journal" "$Z2/approvals" > "$Z2/run.log" 2>&1
+Z2_RC=$?
+set -e
+[ "$Z2_RC" -eq 124 ] && {
+  echo "FAIL: the parenthesised gate WAITED on a prompt instead of refusing — the raw body became the prompt text"
+  cat "$Z2/run.log"; exit 1; }
+grep -q 'completed: success' "$Z2/run.log" && {
+  echo "FAIL: a parenthesised unparseable gate argument completed successfully"
+  cat "$Z2/run.log"; exit 1; }
+for pending in "$Z2/approvals"/*.pending; do
+  [ -e "$pending" ] || continue
+  grep -q 'message:' "$pending" && {
+    echo "FAIL: the prompt published the RAW ARGUMENT BODY, so the operator approved text the author never wrote"
+    cat "$pending"; exit 1; }
+done
+if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
+fi
+echo "a parenthesised unparseable gate argument was refused, not published as raw text"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

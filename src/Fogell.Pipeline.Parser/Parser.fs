@@ -215,6 +215,40 @@ let private stepBlock: P<Step list> =
     between (symbol "{") (symbol "}") (ws >>. separators >>. many (attempt (stepParser .>> separators)))
 
 /// Whitespace WITHIN a line. Load-bearing: see the step parser below.
+/// FG-145. A parenthesised argument body that FAILS to parse must not be downgraded
+/// to a single positional argument when it plainly carries NAMED arguments.
+///
+/// The same silent-fallback shape as FG-143, one level down and NOT a bypass, which is
+/// why it outlived that fix: a prompt IS published and the gate DOES wait. It publishes
+/// the WRONG ONE. MEASURED, approval-lane scenario Z:
+/// `input(message: /Deploy; / + env.TARGET, ok: "Ship it")` failed to reparse, became one
+/// positional argument, and the human was asked to approve the literal text
+/// `message: /Deploy; / + env.TARGET, ok: "Ship it"` — not Jenkins' message value — while
+/// `ok` was dropped entirely. An approval gate that shows the operator different words
+/// than the pipeline author wrote is not a working gate, even though it stops the build.
+///
+/// The downgrade stays for bodies with NO named-argument syntax, where treating the body
+/// as one positional value is what the step means (`withEnv([...])`, `timeout(5)`).
+let private startsWithNamedArg (body: string) =
+    let t = body.TrimStart()
+    let ident = t |> Seq.takeWhile (fun c -> System.Char.IsLetterOrDigit c || c = '_') |> Seq.length
+
+    ident > 0
+    && (let rest = t.Substring(ident).TrimStart()
+        rest.StartsWith ":" && not (rest.StartsWith "::"))
+
+let private parenArgs (raw: string) =
+    let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+
+    match runParserOnString (ws >>. argList .>> eof) () "args" body with
+    | ParserResult.Success(v, _, _) -> preturn (Choice2Of2 v)
+    | ParserResult.Failure _ ->
+        if startsWithNamedArg body then
+            fail
+                $"named arguments that do not parse are refused, never downgraded to one positional value: ({body})"
+        else
+            preturn (Choice1Of2 raw)
+
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
 stepRef.Value <-
@@ -233,7 +267,7 @@ stepRef.Value <-
             // workspace, nothing else. Any zero-argument call form was affected —
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
-                [ attempt (balancedRaw '(' ')') |>> fun raw -> Choice1Of2 raw
+                [ attempt (balancedRaw '(' ')') >>= parenArgs
                   attempt (hspaces >>. argList) |>> Choice2Of2
                   preturn (Choice2Of2([], [], Set.empty, Set.empty, [], Set.empty, [])) ])
             (fun pos name args -> pos, name, args)
