@@ -52,6 +52,23 @@ let private positionalArg: P<string> =
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
+/// FG-134 / FG-138. A `;` does NOT terminate a raw (unquoted) argument here, and
+/// this comment said it did after the change was reverted.
+///
+/// The step-block separator loop handles the common shape, because a QUOTED value
+/// is consumed by the string-literal parser above and the `;` then reaches the
+/// loop. An UNQUOTED one — `checkout scm; sh 'make'`, `returnStatus: true; sh …`
+/// — is swallowed by the scanners here and the following step is lost. It fails
+/// LOUDLY (`completed: failure`, empty workspace), which is why it is tolerable
+/// while FG-138 is open.
+///
+/// Adding `;` to the terminator set was tried and REVERTED: it needs a complete
+/// enumeration of Groovy string forms, five review rounds found five, and two of
+/// the intermediate states produced SILENT no-ops — a build exiting 0 with no
+/// `step-started` and no files, the exact class FG-134 exists to remove. The fix
+/// is to consume string spans through what `Lexeme` already knows rather than a
+/// fourth character scanner. FG-138.
+
 let private argList
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
     let one =
@@ -104,7 +121,22 @@ let private argList
             named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order
 
 let private stepBlock: P<Step list> =
-    between (symbol "{") (symbol "}") (ws >>. many (attempt stepParser))
+    // SEMICOLONS separate statements in Groovy, and a step block may use them:
+    // `steps { sh 'a'; sh 'b' }` is ordinary Declarative that Jenkins runs.
+    //
+    // Without consuming them the failure was SILENT and total. `many` stopped at
+    // the `;`, `between` then demanded `}` and found `;`, so the whole
+    // `stepBlock` failed — and because the `steps` section is wrapped in
+    // `attempt`, that failure backtracked and the section was simply never
+    // picked. `Steps` defaulted to [], giving a stage with NO steps, no
+    // diagnostic, and a SUCCESSFUL build. Neither step ran and nothing said so.
+    // FG-134.
+    //
+    // Leading and trailing separators are allowed too — `{ ; sh 'a'; }` is legal
+    // Groovy and refusing it would trade one wrong answer for another.
+    let separators = skipMany (symbol ";")
+
+    between (symbol "{") (symbol "}") (ws >>. separators >>. many (attempt (stepParser .>> separators)))
 
 /// Whitespace WITHIN a line. Load-bearing: see the step parser below.
 let private hspaces: P<unit> = skipMany (anyOf " \t")

@@ -1,20 +1,7 @@
-# Differential receipt — withenv-path-augmentation.Jenkinsfile
+# Differential receipt — steps-semicolon-separated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         74ffe1955c159ef3e12edfe4132955698c142f4af2f18cb2768c8f710417ad14
-
-RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.
-  The verdict below is from a re-run. What the earlier attempt showed:
-    output line 0: jenkins=+ printenv PATH fogell=+ + tr : \n
-  NOTE: this block is run provenance and is NOT covered by the seal
-  above, which hashes the compared content so a verdict's evidence cannot
-  be altered undetected. See FG-128.
-  CAUSE UNCLASSIFIED. The FG-119 retry re-runs EVERY divergence, not
-  only the known `sh -x` pipeline interleaving, and nothing here
-  establishes which this was — a genuine intermittent engine mismatch
-  that happened to pass on re-run looks exactly the same. Naming the
-  trace race would let a real defect read as classified noise. A case
-  that recovers REPEATEDLY across runs is a defect report; treat it so.
+seal:         05318058ea06a2d560bdcf05dc248ec6d90f4594b4d1c58884923667a64a44e2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -72,20 +59,28 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
+    | + echo a
+    | + echo b
+    | + echo c
+    | + echo d
   workspace:
-    229ff8957fd0  head.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt
+    a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 644a864514474b1fc28bae2c5cb0af5be1644339ff62fc03f9029e868071db28
-  output (3 lines):
-    | + printenv PATH
-    | + tr : \n
-    | + head -3
+  workspace-hash: 080bfef4f55f65983859beeaf1dca54e115d230b7fc7d52116c42eb674a2269f
+  output (4 lines):
+    | + echo a
+    | + echo b
+    | + echo c
+    | + echo d
   workspace:
-    229ff8957fd0  head.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt
+    a3a5e715f0cc  c.txt
+    8d74beec1be9  d.txt
