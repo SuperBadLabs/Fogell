@@ -20,8 +20,9 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-/// FG-138. A raw (unquoted) argument value: literal SPANS consumed whole via
-/// `Lexeme.stringSpanRaw`, everything else scanned to a stop character.
+/// FG-138. A raw (unquoted) argument value: single- and double-quoted SPANS consumed
+/// whole via `Lexeme.stringSpanRaw`, everything else scanned to a stop character.
+/// Not slashy (FG-141) and not dollar-slashy, which nothing parses.
 ///
 /// The stop set can therefore include `;` without truncating an expression that
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,

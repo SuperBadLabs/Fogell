@@ -253,7 +253,10 @@ let stringLiteral: P<string> =
               attempt (quoted "\"")
               attempt slashyQuoted ])
 
-/// The RAW SOURCE of a Groovy string literal, every form, escapes respected.
+/// The RAW SOURCE of a Groovy string literal — the FIVE forms this lexer knows
+/// (triple-single, triple-double, single, double, slashy), escapes respected.
+/// NOT dollar-slashy `$/.../$`, which nothing here parses; a `;` inside one is
+/// unprotected. "every form" is what this said, and it was never true.
 ///
 /// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
 /// [stringLiteral] above enumerates triple-single, triple-double, single, double
@@ -320,13 +323,15 @@ let stringSpanRaw: P<string> =
                 Reply(Error, expected "a terminated string literal")
         elif c = '/' then
             // SLASHY, ASSUMED NOT DIVISION. This scanner treats any `/` as a slashy
-            // opener; it does NOT decide between a literal and a division operator,
-            // and no caller does either — `rawArgValue` simply excludes `/` from
-            // plain text and tries here. An earlier version of this comment said
-            // "the callers decide", documenting a guard that does not exist, which
-            // is worse than the gap: a reader could rely on it. A raw expression
-            // dividing by something would be mis-scanned, and the forms that would
-            // expose it are the ones FG-139 has yet to isolate.
+            // opener and does NOT decide between a literal and a division operator.
+            //
+            // NO CALLER SENDS `/` HERE ANY MORE. `rawArgValue` reaches this only
+            // after `'` or `"`; it once excluded `/` from plain text and tried
+            // here, and that was an APPROVAL BYPASS — `input message: 10 / 2` found
+            // no closing delimiter, the argument failed to parse, `steps` backtracked
+            // to EMPTY, and the build reported success with no prompt published
+            // (FG-141, approval-lane scenario W). This comment described that
+            // removed caller path for a round after it was gone.
             if readDelimited '/' false then
                 let len = int (stream.Index - start)
                 stream.Seek start
