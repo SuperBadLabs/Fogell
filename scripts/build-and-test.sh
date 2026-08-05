@@ -72,6 +72,15 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # control must still run. The same fix landed on one of two sibling fallbacks three
 # times before this proof existed to notice.
 ./scripts/prove-section-refusals.sh || { echo "SECTION-REFUSAL PROOF FAILED"; exit 1; }
+
+# FG-090/091/092. The published compatibility artifacts are GENERATED. A stale
+# scorecard is a claim nobody regenerated, which is the defect this whole file
+# exists to catch — so the gate fails when they drift from the evidence.
+if [ -d "${FOGELL_CORPUS:-/sn8100/work/exchange/crucible-gate/corpus}" ]; then
+  ./scripts/generate-scorecard.bb --check || { echo "SCORECARD STALE"; exit 1; }
+else
+  echo "scorecard check SKIPPED: corpus not mounted (stated, not silent)"
+fi
 ./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
   || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
 
