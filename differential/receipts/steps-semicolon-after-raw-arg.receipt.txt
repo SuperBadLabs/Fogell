@@ -1,7 +1,7 @@
-# Differential receipt — parallel-siblings-finish.Jenkinsfile
+# Differential receipt — steps-semicolon-after-raw-arg.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         382827878f20ed19e660813042a9e9515487849b3f55f61fa3efa71eb10f956c
+seal:         fdd0c8419bc41d5cb13ec80f2154246df1a98b250fd3907bc679ff626883a9e5
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -56,34 +56,23 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 6bf2bd88dfb78d842a33170f397c2632c2bd57fb1126d2f91d0793ad4c533b79
+  output (2 lines):
+    | + echo a
+    | + echo b
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
-  output (5 lines):
-    | + echo failing
-    | + exit 3
-    | + sleep 6
-    | Failed in branch quick-fail
-    | + echo done
+  result:         success
+  workspace-hash: 6bf2bd88dfb78d842a33170f397c2632c2bd57fb1126d2f91d0793ad4c533b79
+  output (2 lines):
+    | + echo a
+    | + echo b
   workspace:
-    bfbd1f4027c3  failed.txt
-    d117fa006ba9  slow.txt
+    87428fc52280  a.txt
+    0263829989b6  b.txt

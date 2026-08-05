@@ -253,6 +253,78 @@ let stringLiteral: P<string> =
               attempt (quoted "\"")
               attempt slashyQuoted ])
 
+/// The RAW SOURCE of a Groovy string literal, every form, escapes respected.
+///
+/// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
+/// [stringLiteral] above enumerates triple-single, triple-double, single, double
+/// and slashy, and [balancedRaw] below skips them escape-aware so a delimiter
+/// inside one never affects a depth count. `Parser` needed the same knowledge to
+/// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
+/// scanner instead. Five review rounds found five forms it had missed, and two
+/// intermediate states produced SILENT no-ops — a build exiting 0 with no
+/// `step-started` and no files.
+///
+/// Three scanners disagreeing about what a string is was the defect; the
+/// semicolons only exposed it. This is the one implementation, here, where the
+/// other two already live.
+///
+/// Returns the literal's SOURCE including delimiters, because a caller
+/// reassembling a raw expression needs the text back exactly as written —
+/// [stringLiteral] decodes, which is the wrong thing for that job.
+let stringSpanRaw: P<string> =
+    let scan (stream: CharStream<unit>) =
+        let start = stream.Index
+        let c = stream.Peek()
+
+        let readDelimited (q: char) (tripled: bool) =
+            let closer = if tripled then System.String(q, 3) else string q
+            for _ in 1 .. closer.Length do stream.Skip()
+            let mutable closed = false
+
+            while not closed && not stream.IsEndOfStream do
+                let d = stream.Peek()
+
+                if d = '\\' then
+                    stream.Skip()
+                    if not stream.IsEndOfStream then stream.Skip()
+                elif not tripled && d = q then
+                    stream.Skip()
+                    closed <- true
+                elif tripled && stream.PeekString 3 = closer then
+                    for _ in 1 .. 3 do stream.Skip()
+                    closed <- true
+                elif d = '\n' && not tripled && q <> '/' then
+                    // an unterminated single-line literal: bail where balancedRaw does
+                    closed <- true
+                else
+                    stream.Skip()
+
+            closed
+
+        if c = '\'' || c = '"' then
+            let tripled = stream.PeekString 3 = System.String(c, 3)
+            if readDelimited c tripled then
+                let len = int (stream.Index - start)
+                stream.Seek start
+                Reply(stream.Read len)
+            else
+                stream.Seek start
+                Reply(Error, expected "a terminated string literal")
+        elif c = '/' then
+            // slashy: `/` opens only where a raw expression could not be division,
+            // which the callers decide; here it is simply the delimiter.
+            if readDelimited '/' false then
+                let len = int (stream.Index - start)
+                stream.Seek start
+                Reply(stream.Read len)
+            else
+                stream.Seek start
+                Reply(Error, expected "a terminated slashy string")
+        else
+            Reply(Error, expected "a string literal")
+
+    scan
+
 // --- balanced raw capture --------------------------------------------------
 
 /// Capture the raw source of a balanced region, skipping over strings and

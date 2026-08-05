@@ -20,12 +20,27 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
+/// FG-138. A raw (unquoted) argument value: literal SPANS consumed whole via
+/// `Lexeme.stringSpanRaw`, everything else scanned to a stop character.
+///
+/// The stop set can therefore include `;` without truncating an expression that
+/// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
+/// or a slashy `/; …/`. Five review rounds on FG-134 each found another string
+/// form a hand-rolled character test had missed, and two of the intermediate
+/// states produced SILENT no-ops. `Lexeme` already knew every form; the fix is to
+/// ask it rather than to enumerate again.
+let private rawArgValue (stops: char list) : P<string> =
+    let plain: P<string> =
+        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"' && c <> '/')
+
+    many1Strings (stringSpanRaw <|> plain)
+
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+            <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -33,7 +48,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+            <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -43,13 +58,13 @@ let private positionalArgWithKind: P<string * string * bool> =
     (stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim())
 
 /// FG-134 / FG-138. A `;` does NOT terminate a raw (unquoted) argument here, and
