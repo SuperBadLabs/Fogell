@@ -655,8 +655,21 @@ stageRef.Value <-
                       // failure the admission layer reports. FG-134's hazard, at its source.
                       (identifier
                        >>= (fun n ->
-                           if n = "steps" then
-                               fail "a `steps` block that does not parse is refused, never consumed opaquely"
+                           // EVERY SECTION FOGELL ACTS ON, not just `steps`. This refused
+                           // `steps` alone, and the TOP-LEVEL fallback was later taught to
+                           // refuse `options`/`stages` — and the two were never reconciled,
+                           // so a stage's `options { timeout(...); bogus(/x) y/) }` was
+                           // still swallowed whole and its TIMEOUT DROPPED: measured
+                           // `completed: success` against a control that aborts. That is
+                           // the same fix landing on one of two sibling functions, which is
+                           // the pattern this branch has repeated more than any other.
+                           //
+                           // `when` is deliberately absent: it has an opaque variant above,
+                           // so consuming it opaquely is a documented degradation rather
+                           // than a silent loss.
+                           if n = "steps" || n = "options" || n = "stages" || n = "parallel" || n = "post" then
+                               fail
+                                   $"a `{n}` section that does not parse is refused, never consumed opaquely"
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
                                |>> fun _ -> SecOther n)) ])))
