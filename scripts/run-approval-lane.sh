@@ -1365,8 +1365,10 @@ echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==
 # limit, and this scenario asserts the HONEST behaviour for it: refuse the
 # pipeline.
 #
-# COVERAGE, stated exactly: the UNPARENTHESISED and PARENTHESISED spellings of an
-# unparseable NAMED argument. It does NOT cover "any step form the grammar does not
+# COVERAGE, stated exactly: the UNPARENTHESISED spelling (Z), the PARENTHESISED one
+# (Z2), and the MIXED positional+named one (Z3), each with an unparseable NAMED
+# argument. Three spellings, enumerated because each previous statement of this
+# scenario's coverage was broader than what it ran. It does NOT cover "any step form the grammar does not
 # yet cover" — that is what this comment claimed while testing only the first
 # spelling, and the parenthesised one was meanwhile publishing a WRONG PROMPT.
 # Third time on this branch a scenario name has claimed a class and tested one
@@ -1460,6 +1462,48 @@ if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.
   echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
 fi
 echo "a parenthesised unparseable gate argument was refused, not published as raw text"
+
+# Z3, MIXED positional and named. The guard for Z2 tested only a LEADING `ident:`
+# while the ticket and the board row said "the body carries named-argument syntax" —
+# the code was the narrow thing and the claim was the class, one round after that
+# pattern was named on this branch. So `input("Deploy?", ok: /Ship; / + env.TARGET)`
+# still downgraded: the operator was shown `"Deploy?", ok: /Ship; / + env.TARGET`,
+# answered it, and the guarded step ran. Found by the verifier, not by scenario Z2,
+# which asserts the same property one spelling away.
+Z3="$LANE/z3"; mkdir -p "$Z3/approvals"
+cat > "$Z3/Jenkinsfile" <<'Z3JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input("Deploy?", ok: /Ship; / + env.TARGET)
+                sh "echo shipped >> markers.txt"
+            }
+        }
+    }
+}
+Z3JF
+set +e
+timeout 60 "$HOST_BIN" "$Z3/Jenkinsfile" "$Z3/ws" gate "$Z3/build.journal" "$Z3/approvals" > "$Z3/run.log" 2>&1
+Z3_RC=$?
+set -e
+[ "$Z3_RC" -eq 124 ] && {
+  echo "FAIL: a mixed positional+named gate WAITED on a prompt instead of refusing"
+  cat "$Z3/run.log"; exit 1; }
+grep -q 'completed: success' "$Z3/run.log" && {
+  echo "FAIL: a mixed positional+named unparseable gate completed successfully"
+  cat "$Z3/run.log"; exit 1; }
+for pending in "$Z3/approvals"/*.pending; do
+  [ -e "$pending" ] || continue
+  grep -q 'ok:' "$pending" && {
+    echo "FAIL: the prompt published the RAW ARGUMENT BODY of a mixed call"
+    cat "$pending"; exit 1; }
+done
+if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1
+fi
+echo "a mixed positional+named unparseable gate was refused, not published as raw text"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

@@ -229,13 +229,57 @@ let private stepBlock: P<Step list> =
 ///
 /// The downgrade stays for bodies with NO named-argument syntax, where treating the body
 /// as one positional value is what the step means (`withEnv([...])`, `timeout(5)`).
-let private startsWithNamedArg (body: string) =
-    let t = body.TrimStart()
-    let ident = t |> Seq.takeWhile (fun c -> System.Char.IsLetterOrDigit c || c = '_') |> Seq.length
+let private carriesNamedArg (body: string) =
+    // TOP-LEVEL named-argument syntax ANYWHERE in the body, not just at the start.
+    //
+    // The first version of this guard tested only a LEADING `ident:` while the ticket
+    // and the board row both said "the body carries named-argument syntax". The code
+    // was the narrow thing and the claim was the class, one round after that exact
+    // pattern was named on this branch. `input("Deploy?", ok: /Ship; / + env.TARGET)`
+    // therefore still downgraded, and the operator was asked to approve
+    // `"Deploy?", ok: /Ship; / + env.TARGET`. MEASURED, approval-lane scenario Z.
+    //
+    // Quoted spans are skipped so a `:` inside text is not named syntax, and nested
+    // brackets are skipped so a map literal `[a: 1]` is not either. A ternary's `b : c`
+    // CAN be read as named syntax here; that yields a REFUSAL of a body that already
+    // failed to parse, which is the safe direction — loud, not silent.
+    let n = body.Length
+    let mutable i = 0
+    let mutable depth = 0
+    let mutable found = false
 
-    ident > 0
-    && (let rest = t.Substring(ident).TrimStart()
-        rest.StartsWith ":" && not (rest.StartsWith "::"))
+    while i < n && not found do
+        let c = body.[i]
+
+        if c = '\'' || c = '"' then
+            let q = c
+            i <- i + 1
+
+            while i < n && body.[i] <> q do
+                i <- i + (if body.[i] = '\\' then 2 else 1)
+
+            i <- i + 1
+        elif c = '(' || c = '[' || c = '{' then
+            depth <- depth + 1
+            i <- i + 1
+        elif c = ')' || c = ']' || c = '}' then
+            depth <- depth - 1
+            i <- i + 1
+        elif depth = 0 && (System.Char.IsLetter c || c = '_') then
+            while i < n && (System.Char.IsLetterOrDigit body.[i] || body.[i] = '_') do
+                i <- i + 1
+
+            let mutable j = i
+
+            while j < n && (body.[j] = ' ' || body.[j] = '\t') do
+                j <- j + 1
+
+            if j < n && body.[j] = ':' && (j + 1 >= n || body.[j + 1] <> ':') then
+                found <- true
+        else
+            i <- i + 1
+
+    found
 
 let private parenArgs (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
@@ -243,7 +287,7 @@ let private parenArgs (raw: string) =
     match runParserOnString (ws >>. argList .>> eof) () "args" body with
     | ParserResult.Success(v, _, _) -> preturn (Choice2Of2 v)
     | ParserResult.Failure _ ->
-        if startsWithNamedArg body then
+        if carriesNamedArg body then
             fail
                 $"named arguments that do not parse are refused, never downgraded to one positional value: ({body})"
         else
