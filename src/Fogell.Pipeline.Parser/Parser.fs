@@ -52,17 +52,23 @@ let private positionalArg: P<string> =
     <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
          |>> fun s -> s.Trim())
 
-/// FG-134. `;` TERMINATES a raw (unquoted) argument.
+/// FG-134 / FG-138. A `;` does NOT terminate a raw (unquoted) argument here, and
+/// this comment said it did after the change was reverted.
 ///
-/// The step-block separator loop alone was not enough: for a command-form step
-/// with an unquoted argument the `;` never reached it, because these scanners
-/// consumed it INSIDE the argument. `checkout scm; sh 'make'` captured
-/// `scm; sh 'make'` as one value, and
-/// `writeFile file: 'x.txt', text: 'hi'; sh '...'` failed outright with an empty
-/// workspace. The quoted form worked throughout, which is exactly why the first
-/// fix looked complete — `sh 'a'; sh 'b'` is the shape I had in front of me.
+/// The step-block separator loop handles the common shape, because a QUOTED value
+/// is consumed by the string-literal parser above and the `;` then reaches the
+/// loop. An UNQUOTED one — `checkout scm; sh 'make'`, `returnStatus: true; sh …`
+/// — is swallowed by the scanners here and the following step is lost. It fails
+/// LOUDLY (`completed: failure`, empty workspace), which is why it is tolerable
+/// while FG-138 is open.
 ///
-/// Raised as P1 independently by BOTH reviewers on PR #40.
+/// Adding `;` to the terminator set was tried and REVERTED: it needs a complete
+/// enumeration of Groovy string forms, five review rounds found five, and two of
+/// the intermediate states produced SILENT no-ops — a build exiting 0 with no
+/// `step-started` and no files, the exact class FG-134 exists to remove. The fix
+/// is to consume string spans through what `Lexeme` already knows rather than a
+/// fourth character scanner. FG-138.
+
 let private argList
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
     let one =
