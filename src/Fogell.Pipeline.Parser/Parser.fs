@@ -591,7 +591,29 @@ stageRef.Value <-
                       attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
-                      (identifier .>>. (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')')) |>> fun (n, _) -> SecOther n) ])))
+                      // THE OPAQUE FALLBACK MUST NOT CLAIM `steps`. This is the ROOT of
+                      // every approval bypass on this branch, not a fourth instance of
+                      // them. When `stepBlock` failed for ANY reason the `attempt` above
+                      // backtracked, this catch-all consumed `steps { … }` as an opaque
+                      // section, and the stage ran with NO STEPS AT ALL while the build
+                      // reported SUCCESS. MEASURED with `input message: /Deploy; / +
+                      // env.TARGET`: prompts=0, the gate stage's workspace EMPTY, and the
+                      // following stage's `after.txt` present — a human approval skipped
+                      // and its guarded work dropped, silently.
+                      //
+                      // `when` has a DELIBERATE opaque variant above; `steps` has none,
+                      // which is what marks swallowing it as unintended rather than a
+                      // documented degradation. Refusing it here converts every
+                      // unparseable step form — slashy, dollar-slashy, and whatever the
+                      // grammar does not yet cover — from a SILENT BYPASS into a parse
+                      // failure the admission layer reports. FG-134's hazard, at its source.
+                      (identifier
+                       >>= (fun n ->
+                           if n = "steps" then
+                               fail "a `steps` block that does not parse is refused, never consumed opaquely"
+                           else
+                               (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
+                               |>> fun _ -> SecOther n)) ])))
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name

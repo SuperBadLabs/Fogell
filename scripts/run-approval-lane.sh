@@ -1201,7 +1201,14 @@ grep -q $'^input-decision\tGate\t1\t1\tapproved\tval$' "$V/build.journal" || {
 echo "refused while changing, adopted once settled"
 
 # ---------------------------------------------------------------- scenario W
-echo "=== W: a gate whose ARGUMENT is an expression still gates ==="
+echo "=== W: a gate argument that is a NUMERIC DIVISION still gates ==="
+# SCOPE: `10 / 2` ONLY. This scenario said "an expression" and tested one
+# shape of one. It passed green while `input message: /Deploy; / + env.TARGET`
+# — also an expression argument — shipped past its gate unapproved, because
+# that spelling reaches the literal branch and this one reaches the raw
+# scanner. A scenario name is a claim about coverage; scenario Z carries the
+# slashy case, and the two together still do not cover "an expression".
+#
 # FG-141. An APPROVAL BYPASS, not a parse curiosity: `input message: 10 / 2` sent
 # the `/` into a raw-argument scanner that assumed slashy, no closing delimiter
 # was found, the argument failed to parse, `steps` is wrapped in `attempt` so the
@@ -1340,6 +1347,57 @@ grep -q 'completed: success' "$Y/run.log" || {
 [ "$(grep -c '^shipped$' "$Y/ws/gate/markers.txt")" -eq 1 ] || {
   echo "FAIL: the step past the positional gate did not run exactly once"; exit 1; }
 echo "a positional concatenated gate published its prompt and waited"
+
+# ---------------------------------------------------------------- scenario Z
+echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==="
+# FG-143. The ROOT of scenarios W, X and Y rather than a fourth sibling of them.
+#
+# Each of those was a different way to make `stepBlock` fail; what turned a parse
+# failure into a SHIPPED BUILD was the opaque-section fallback, which consumed
+# `steps { … }` as `SecOther` once the `attempt` around it backtracked. The stage
+# then ran with NO STEPS and the build reported SUCCESS.
+#
+# MEASURED before the fix, with the slashy argument below: prompts=0, the gate
+# stage's workspace EMPTY, and the following stage's marker PRESENT — the human
+# approval skipped AND the work it guards dropped, with no diagnostic anywhere.
+#
+# Fogell does not parse slashy strings in expression arguments. That is a real
+# limit, and this scenario asserts the HONEST behaviour for it: refuse the
+# pipeline. It is deliberately written against the LIMIT, not the spelling, so it
+# keeps holding for any step form the grammar does not yet cover.
+Z="$LANE/z"; mkdir -p "$Z/approvals"
+cat > "$Z/Jenkinsfile" <<'ZJF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                input message: /Deploy; / + env.TARGET, ok: "Ship it"
+                sh "echo shipped >> markers.txt"
+            }
+        }
+        stage("After") {
+            steps {
+                sh "echo after >> markers.txt"
+            }
+        }
+    }
+}
+ZJF
+set +e
+"$HOST_BIN" "$Z/Jenkinsfile" "$Z/ws" gate "$Z/build.journal" "$Z/approvals" > "$Z/run.log" 2>&1
+set -e
+grep -q 'completed: success' "$Z/run.log" && {
+  echo "FAIL: an UNPARSEABLE gate argument completed successfully — the build shipped unapproved"
+  cat "$Z/run.log"; exit 1; }
+[ -z "$(ls -A "$Z/approvals" 2>/dev/null)" ] || {
+  echo "FAIL: a refused pipeline published an approval prompt"; exit 1; }
+if [ -f "$Z/ws/gate/markers.txt" ] && grep -qE '^(shipped|after)$' "$Z/ws/gate/markers.txt"; then
+  echo "FAIL: work ran inside a pipeline whose steps did not parse"; cat "$Z/ws/gate/markers.txt"; exit 1
+fi
+grep -qE 'no_stages|refus|parse' "$Z/run.log" || {
+  echo "FAIL: the pipeline was dropped without any diagnostic"; cat "$Z/run.log"; exit 1; }
+echo "an unparseable gate argument was refused, not silently skipped"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
