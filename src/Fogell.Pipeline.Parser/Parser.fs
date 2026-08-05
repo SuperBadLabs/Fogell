@@ -25,7 +25,7 @@ let private namedArgWithKind: P<string * string * string * bool> =
         identifier .>>? symbol ":" .>>. (
             (stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}' && c <> ';') .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -33,7 +33,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}') .>> ws
+            <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '}' && c <> ';') .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -43,15 +43,26 @@ let private positionalArgWithKind: P<string * string * bool> =
     (stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}' && c <> ';') .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}') .>> ws
+    <|> (many1Satisfy (fun c -> c <> ',' && c <> ')' && c <> '\n' && c <> '{' && c <> '}' && c <> ';') .>> ws
          |>> fun s -> s.Trim())
 
+/// FG-134. `;` TERMINATES a raw (unquoted) argument.
+///
+/// The step-block separator loop alone was not enough: for a command-form step
+/// with an unquoted argument the `;` never reached it, because these scanners
+/// consumed it INSIDE the argument. `checkout scm; sh 'make'` captured
+/// `scm; sh 'make'` as one value, and
+/// `writeFile file: 'x.txt', text: 'hi'; sh '...'` failed outright with an empty
+/// workspace. The quoted form worked throughout, which is exactly why the first
+/// fix looked complete — `sh 'a'; sh 'b'` is the shape I had in front of me.
+///
+/// Raised as P1 independently by BOTH reviewers on PR #40.
 let private argList
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
     let one =
