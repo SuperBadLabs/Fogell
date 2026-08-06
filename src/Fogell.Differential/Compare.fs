@@ -373,7 +373,7 @@ module Compare =
 
     let receipt
         (file: string)
-        (caseDigest: string)
+        (caseBytes: byte[])
         (core: string)
         (envReplacements: (string * string) list)
         (jenkins: Result<Trace, string>)
@@ -415,8 +415,13 @@ module Compare =
             // The generator's mtime check was a smoke alarm for exactly this and said so —
             // it catches edit-without-rerun and misses a touched receipt or a back-dated
             // edit. This is the alarm's replacement: the digest is over RAW BYTES, so a
-            // re-encode or an added BOM changes the seal too — see `caseDigest`.
-            $"{file}\n{caseDigest}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
+            // re-encode or an added BOM changes the seal too.
+            //
+            // THE BYTES COME IN, NOT A DIGEST. Taking a caller-supplied digest let a stale
+            // call site pass anything — the seal would bind it and `receipt` could not
+            // tell. Hashing here makes the binding non-bypassable, which is the same
+            // collapse-the-duplication move that ended the fallback and list drift.
+            $"{file}\n{caseDigest caseBytes}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict

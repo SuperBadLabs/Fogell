@@ -551,7 +551,7 @@ let sealBindsCaseSource =
           ReportedFailureReason = false }
 
     let sealOf (source: string) =
-        (Compare.receipt "case.Jenkinsfile" (Compare.caseDigest (System.Text.Encoding.UTF8.GetBytes source)) "2.568.1" []
+        (Compare.receipt "case.Jenkinsfile" (System.Text.Encoding.UTF8.GetBytes source) "2.568.1" []
              (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))
              (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))).Seal
 
