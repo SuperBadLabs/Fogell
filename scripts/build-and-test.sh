@@ -72,6 +72,20 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # control must still run. The same fix landed on one of two sibling fallbacks three
 # times before this proof existed to notice.
 ./scripts/prove-section-refusals.sh || { echo "SECTION-REFUSAL PROOF FAILED"; exit 1; }
+
+# FG-090/091/092. The published compatibility artifacts are GENERATED, and this
+# checks they match the evidence — ONLY ON A HOST THAT HAS THE CORPUS.
+#
+# CI does not: the corpus lives outside the repo (see the workflow header), so on
+# GitHub this check does not run and stale artifacts WOULD pass. That is a real
+# hole, stated here rather than papered over: drift is caught on luigi/HeMan and
+# nowhere else. Hard-failing instead would break every CI run, which trades a
+# gap in coverage for a gate nobody can pass.
+if [ -d "${FOGELL_CORPUS:-/sn8100/work/exchange/crucible-gate/corpus}" ]; then
+  ./scripts/generate-scorecard.bb --check || { echo "SCORECARD STALE"; exit 1; }
+else
+  echo "scorecard check NOT RUN: corpus not mounted — generated artifacts are UNVERIFIED on this host"
+fi
 ./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
   || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
 
