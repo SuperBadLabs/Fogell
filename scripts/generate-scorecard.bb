@@ -193,6 +193,30 @@
       ;; read "118 of 118 proven" with a case unproven. A metric that shrinks its own
       ;; denominator can never report a shortfall.
       case-expected (count expected-receipts)
+      ;; A RECEIPT OLDER THAN ITS CASE PROVES A FILE THAT NO LONGER EXISTS. Editing a
+      ;; case without renaming it leaves the expected receipt name unchanged, so the old
+      ;; `:proven` receipt kept counting and `--check` published the suite as fully
+      ;; proven with the changed case never re-run. The seal binds the file NAME, not its
+      ;; contents, so nothing else catches this.
+      ;;
+      ;; Timestamps are what this script can see; a case-source hash bound INTO the seal
+      ;; is the real fix and belongs in the writer (FG-164). Until then a stale receipt
+      ;; is reported, not silently counted.
+      case-mtime (into {}
+                       (map (fn [f] [(stem-of (fs/file-name f))
+                                     (fs/last-modified-time (fs/file f))])
+                            (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")))
+
+      stale-receipts
+      (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
+           (keep (fn [f]
+                   (let [n (str/replace (fs/file-name f) #"\.receipt\.txt$" "")
+                         case-stem (str/replace n #"\.b\d+$" "")]
+                     (when-let [ct (get case-mtime case-stem)]
+                       (when (pos? (compare ct (fs/last-modified-time f)))
+                         n)))))
+           sort)
+
       ;; CASE receipts only — a corpus receipt is not part of the hand-written suite.
       case-present (count (filter #(contains? expected-receipts (key %)) receipts))
       case-missing (- case-expected case-present)
@@ -293,6 +317,13 @@
            "## Differential case suite (hand-written cases — a DIFFERENT population)\n\n"
            "| Expected | Present | Proven |\n|---|---|---|\n| " case-expected " | " case-present " | "
            case-proven " of " case-expected " |\n\n"
+           (if (seq stale-receipts)
+             (str "**" (count stale-receipts) " receipt(s) STALE** — the case was edited after the "
+                  "receipt was written, so it proves a file that no longer exists: "
+                  (str/join ", " (map #(str "`" % "`") (take 5 stale-receipts)))
+                  (if (> (count stale-receipts) 5) ", …" "")
+                  ". Re-run the differential suite.\n\n")
+             "")
            (if (pos? case-missing)
              (str "**" case-missing " expected receipt(s) MISSING** — a case exists with no receipt. "
                   "The proven count is measured against what the cases expect, so a missing receipt "
@@ -323,7 +354,8 @@
             (System/exit 1))
         (println (str "scorecard artifacts current: tier1=" t1 " admitted=" t2 " tier3=" t3 " of " total
                       " corpus files; " case-proven "/" case-expected " expected case receipts proven"
-                      (if (pos? case-missing) (str " — " case-missing " MISSING") "")))))
+                      (if (pos? case-missing) (str " — " case-missing " MISSING") "")
+                      (if (seq stale-receipts) (str " — " (count stale-receipts) " STALE") "")))))
     (do
       (spit (fs/file root "docs/COMPATIBILITY-LEDGER.tsv") ledger-tsv)
       (spit (fs/file root "docs/COMPATIBILITY-SCORECARD.md") scorecard-md)
@@ -332,4 +364,5 @@
       (println (str "corpus: tier1=" t1 " admitted(not a tier)=" t2 " tier3=" t3 " of " total))
       (println (str "cases:  " case-proven " proven of " case-expected " expected"
                     (if (pos? case-missing) (str " — " case-missing " MISSING") "")
+                    (if (seq stale-receipts) (str " — " (count stale-receipts) " STALE") "")
                     " (separate denominator)")))))
