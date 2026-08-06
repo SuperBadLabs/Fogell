@@ -43,6 +43,13 @@
     (println "FAIL: docs/COMPATIBILITY-LEDGER.tsv missing — board numbers cannot be derived")
     (System/exit 1))
 
+  ;; The board got no such check, so a wrong path threw a raw stack trace out of a
+  ;; check that runs unconditionally in the gate — a crash reads as a broken gate, not
+  ;; as a stated refusal. Same clean failure as the ledger above.
+  (when-not (fs/exists? board-file)
+    (println (str "FAIL: board file not found: " (str board-file)))
+    (System/exit 1))
+
   (let [tiers (->> (str/split-lines (slurp ledger-file))
                    (remove #(or (str/blank? %) (str/starts-with? % "#") (str/starts-with? % "file\t")))
                    (map #(second (str/split % #"\t" -1))))

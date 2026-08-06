@@ -35,7 +35,7 @@ expect_pass() {
     echo "  passed $name"
   else
     echo "  FAIL: $name — the audit REJECTED a compliant state"
-    ./"$AUDIT" "$b" "$l" 2>&1 | sed 's/^/    | /' | head -4
+    { ./"$AUDIT" "$b" "$l" 2>&1 || true; } | sed 's/^/    | /' | head -4
     FAILED=1
   fi
 }
@@ -53,7 +53,7 @@ T3=$(awk -F'\t' '!/^#/ && !/^file\t/ && $2=="3"' "$LEDGER" | wc -l | tr -d ' ')
 # (This comment previously said the live token "is found, not assumed" — describing
 # code I had replaced with token CONSTRUCTION two commits earlier, and left standing.
 # The assertion below now makes the sentence true rather than deleting it.)
-if ! grep -oE '[^"]tier3=\*{0,2}[0-9]+' "$BOARD" >/dev/null 2>&1; then
+if ! grep -oE '(^|[^"])tier3=\*{0,2}[0-9]+' "$BOARD" >/dev/null 2>&1; then
   echo "  FAIL: the board carries no LIVE tier3= token — the audit would pass vacuously"
   exit 1
 fi
@@ -80,7 +80,20 @@ expect_fail "board drift (tier3 off by one)" "$LAB/drift.md" "$LAB/ledger.tsv"
 printf '%s\n> planted claim: tier2=%d admitted files\n' "$BOARD_TXT" "$T3" > "$LAB/tier2.md"
 expect_fail "live tier2= claim" "$LAB/tier2.md" "$LAB/ledger.tsv"
 
-# 3. ledger changes under a fixed board: one tier-3 row becomes admitted
+# 3. EACH audited count planted independently. The ledger-drift case alone moves BOTH
+# tier3 and admitted, and the tier3 token is enough to make the audit fail — so a
+# regression that broke only `admitted` handling would still have looked proven. One
+# planted token per count, each with the others left correct.
+T1=$(awk -F'\t' '!/^#/ && !/^file\t/ && $2=="1"' "$LEDGER" | wc -l | tr -d ' ')
+ADM=$(awk -F'\t' '!/^#/ && !/^file\t/ && $2=="admitted"' "$LEDGER" | wc -l | tr -d ' ')
+
+printf '%s\n> planted drift: admitted=%d\n' "$BOARD_TXT" "$((ADM + 1))" > "$LAB/adm.md"
+expect_fail "admitted drift alone" "$LAB/adm.md" "$LAB/ledger.tsv"
+
+printf '%s\n> planted drift: tier1=%d\n' "$BOARD_TXT" "$((T1 + 1))" > "$LAB/t1.md"
+expect_fail "tier1 drift alone" "$LAB/t1.md" "$LAB/ledger.tsv"
+
+# 4. ledger changes under a fixed board: one tier-3 row becomes admitted
 awk -F'\t' 'BEGIN{OFS="\t"} $2=="3" && !done {$2="admitted"; done=1} {print}' \
   "$LAB/ledger.tsv" > "$LAB/ledger-drift.tsv"
 expect_fail "ledger drift under fixed board" "$LAB/board.md" "$LAB/ledger-drift.tsv"
