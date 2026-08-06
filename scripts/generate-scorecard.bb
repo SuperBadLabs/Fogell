@@ -157,7 +157,14 @@
       ;; because a constant always matches itself. Fourth correct-by-accident claim on
       ;; this branch, and the first inside a generated artifact.
 
-      case-receipts (count receipts)
+      ;; THE DENOMINATOR IS WHAT THE CASES EXPECT, not what happens to be on disk. A
+      ;; case with no receipt — newly added, or its receipt deleted — was absent from
+      ;; `receipts` entirely, so it left BOTH sides of the fraction and the suite still
+      ;; read "118 of 118 proven" with a case unproven. A metric that shrinks its own
+      ;; denominator can never report a shortfall.
+      case-expected (count expected-receipts)
+      case-present (count receipts)
+      case-missing (- case-expected case-present)
       case-proven (count (filter #(= :proven (val %)) receipts))
 
       ledger-tsv
@@ -251,7 +258,13 @@
                   "\n\n")
              "")
            "## Differential case suite (hand-written cases — a DIFFERENT population)\n\n"
-           "| Receipts | Proven |\n|---|---|\n| " case-receipts " | " case-proven " of " case-receipts " |\n\n"
+           "| Expected | Present | Proven |\n|---|---|---|\n| " case-expected " | " case-present " | "
+           case-proven " of " case-expected " |\n\n"
+           (if (pos? case-missing)
+             (str "**" case-missing " expected receipt(s) MISSING** — a case exists with no receipt. "
+                  "The proven count is measured against what the cases expect, so a missing receipt "
+                  "shows as a shortfall instead of quietly leaving the fraction.\n\n")
+             "")
            "**These two sections do not share a denominator.** Corpus files PROVEN by a receipt: "
            "**" t1 "** of " total ". "
            (if (zero? t1)
@@ -276,11 +289,14 @@
             (doseq [f stale] (println "  " f))
             (System/exit 1))
         (println (str "scorecard artifacts current: tier1=" t1 " admitted=" t2 " tier3=" t3 " of " total
-                      " corpus files; " case-proven "/" case-receipts " case receipts proven"))))
+                      " corpus files; " case-proven "/" case-expected " expected case receipts proven"
+                      (if (pos? case-missing) (str " — " case-missing " MISSING") "")))))
     (do
       (spit (fs/file root "docs/COMPATIBILITY-LEDGER.tsv") ledger-tsv)
       (spit (fs/file root "docs/COMPATIBILITY-SCORECARD.md") scorecard-md)
       (spit (fs/file root "docs/KNOWN-LIMITATIONS.md") limitations-md)
       (println (str "wrote docs/COMPATIBILITY-LEDGER.tsv and docs/COMPATIBILITY-SCORECARD.md"))
       (println (str "corpus: tier1=" t1 " admitted(not a tier)=" t2 " tier3=" t3 " of " total))
-      (println (str "cases:  " case-proven " proven of " case-receipts " receipts (separate denominator)")))))
+      (println (str "cases:  " case-proven " proven of " case-expected " expected"
+                    (if (pos? case-missing) (str " — " case-missing " MISSING") "")
+                    " (separate denominator)")))))
