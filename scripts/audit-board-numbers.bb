@@ -26,13 +26,18 @@
 ;;     what a row USED to say, and flagging quoted history would punish the honesty
 ;;     this board practises.
 ;;
-;;   usage: scripts/audit-board-numbers.bb
+;;   usage: scripts/audit-board-numbers.bb [board-file ledger-file]
+;;          The optional paths exist for `prove-board-numbers.sh`, which runs this
+;;          against mutated scratch copies — a checker never proven against known-bad
+;;          state is indistinguishable from a broken one (the FG-158 lesson; my first
+;;          proofs here were manual one-offs the gate could not re-run).
 
 (require '[babashka.fs :as fs] '[clojure.string :as str])
 
 (let [root (str (fs/parent (fs/parent (fs/absolutize *file*))))
-      ledger-file (fs/file root "docs/COMPATIBILITY-LEDGER.tsv")
-      board-file (fs/file root "docs/EXECUTION_BOARD.md")]
+      [board-arg ledger-arg] *command-line-args*
+      ledger-file (if ledger-arg (fs/file ledger-arg) (fs/file root "docs/COMPATIBILITY-LEDGER.tsv"))
+      board-file (if board-arg (fs/file board-arg) (fs/file root "docs/EXECUTION_BOARD.md"))]
 
   (when-not (fs/exists? ledger-file)
     (println "FAIL: docs/COMPATIBILITY-LEDGER.tsv missing — board numbers cannot be derived")
