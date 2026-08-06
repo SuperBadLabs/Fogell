@@ -34,6 +34,7 @@
       root (str (fs/parent (fs/parent (fs/absolutize *file*))))
       corpus (or (System/getenv "FOGELL_CORPUS")
                  "/sn8100/work/exchange/crucible-gate/corpus")
+      expected-core (or (System/getenv "FOGELL_JENKINS_CORE") "2.568.1")
 
       ;; THE CORPUS GATE RUNS FIRST, as its own header demands. A drifted corpus
       ;; invalidates every count below it, so a scorecard generated over one is
@@ -135,9 +136,18 @@
                              ;; still a PREFIX — `PROVEN (tier 1) BUT ACTUALLY NOT` would
                              ;; have matched it — while the comment above claimed it was
                              ;; exact. An overclaim inside the fix for an overclaim.
-                             [n (if (re-find #"(?m)^VERDICT: PROVEN \(tier 1\)(?:\s+—[^\n]*)?$" body)
-                                    :proven
-                                    :other)])))
+                             ;; THE CORE MUST MATCH. ADR 0001's tier 1 is parity against a
+                             ;; PINNED Jenkins version; a receipt records the core it ran
+                             ;; against. Counting the verdict without reading that field
+                             ;; let a suite total — and any corpus promotion — mix evidence
+                             ;; from different Jenkins versions, which is not the claim
+                             ;; tier 1 makes.
+                             [n (let [core-line (second (re-find #"(?m)^jenkins-core:\s*(\S+)" body))
+                                      tier1? (re-find #"(?m)^VERDICT: PROVEN \(tier 1\)(?:\s+—[^\n]*)?$" body)]
+                                  (cond
+                                    (not tier1?) :other
+                                    (not= core-line expected-core) :wrong-core
+                                    :else :proven))])))
                     (into {}))
 
       ;; REJECTION WINS OVER AN OLD RECEIPT. A receipt proves what the engine did when
@@ -207,6 +217,11 @@
                                      (fs/last-modified-time (fs/file f))])
                             (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")))
 
+      ;; MTIME IS ENVIRONMENT STATE AND NEVER ENTERS THE DOCUMENT. A fresh checkout
+      ;; gives arbitrary mtimes, so interpolating this into a byte-compared artifact
+      ;; would make `--check` fail on a clean clone and publish spurious STALE text —
+      ;; the artifact must be a pure function of CONTENT. It is printed as a runtime
+      ;; warning instead, which is where an environment-dependent signal belongs.
       stale-receipts
       (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
            (keep (fn [f]
@@ -317,13 +332,6 @@
            "## Differential case suite (hand-written cases — a DIFFERENT population)\n\n"
            "| Expected | Present | Proven |\n|---|---|---|\n| " case-expected " | " case-present " | "
            case-proven " of " case-expected " |\n\n"
-           (if (seq stale-receipts)
-             (str "**" (count stale-receipts) " receipt(s) STALE** — the case was edited after the "
-                  "receipt was written, so it proves a file that no longer exists: "
-                  (str/join ", " (map #(str "`" % "`") (take 5 stale-receipts)))
-                  (if (> (count stale-receipts) 5) ", …" "")
-                  ". Re-run the differential suite.\n\n")
-             "")
            (if (pos? case-missing)
              (str "**" case-missing " expected receipt(s) MISSING** — a case exists with no receipt. "
                   "The proven count is measured against what the cases expect, so a missing receipt "
@@ -355,14 +363,17 @@
         (println (str "scorecard artifacts current: tier1=" t1 " admitted=" t2 " tier3=" t3 " of " total
                       " corpus files; " case-proven "/" case-expected " expected case receipts proven"
                       (if (pos? case-missing) (str " — " case-missing " MISSING") "")
-                      (if (seq stale-receipts) (str " — " (count stale-receipts) " STALE") "")))))
+))))
     (do
       (spit (fs/file root "docs/COMPATIBILITY-LEDGER.tsv") ledger-tsv)
       (spit (fs/file root "docs/COMPATIBILITY-SCORECARD.md") scorecard-md)
       (spit (fs/file root "docs/KNOWN-LIMITATIONS.md") limitations-md)
       (println (str "wrote docs/COMPATIBILITY-LEDGER.tsv and docs/COMPATIBILITY-SCORECARD.md"))
       (println (str "corpus: tier1=" t1 " admitted(not a tier)=" t2 " tier3=" t3 " of " total))
+      (doseq [n (sort (map key (filter #(= :wrong-core (val %)) receipts)))]
+        (println (str "WARN: receipt " n " was produced against a different jenkins-core — not counted as proven")))
+      (doseq [n stale-receipts]
+        (println (str "WARN: receipt " n " is OLDER than its case — the case was edited after the proof; re-run the suite")))
       (println (str "cases:  " case-proven " proven of " case-expected " expected"
                     (if (pos? case-missing) (str " — " case-missing " MISSING") "")
-                    (if (seq stale-receipts) (str " — " (count stale-receipts) " STALE") "")
                     " (separate denominator)")))))
