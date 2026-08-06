@@ -73,6 +73,12 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # times before this proof existed to notice.
 ./scripts/prove-section-refusals.sh || { echo "SECTION-REFUSAL PROOF FAILED"; exit 1; }
 
+# FG-162. Board rows quoting generated counts are re-derived from the committed
+# ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
+# corpus-dependent scorecard check below.
+./scripts/audit-board-numbers.bb || { echo "BOARD-NUMBER AUDIT FAILED"; exit 1; }
+./scripts/prove-board-numbers.sh || { echo "BOARD-NUMBER PROOF FAILED"; exit 1; }
+
 # FG-090/091/092. The published compatibility artifacts are GENERATED, and this
 # checks they match the evidence — ONLY ON A HOST THAT HAS THE CORPUS.
 #
