@@ -550,8 +550,8 @@ let sealBindsCaseSource =
           EngineNotes = []
           ReportedFailureReason = false }
 
-    let sealOf source =
-        (Compare.receipt "case.Jenkinsfile" source "2.568.1" []
+    let sealOf (source: string) =
+        (Compare.receipt "case.Jenkinsfile" (Compare.caseDigest (System.Text.Encoding.UTF8.GetBytes source)) "2.568.1" []
              (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))
              (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))).Seal
 
@@ -569,6 +569,25 @@ let sealBindsCaseSource =
               // would churn every receipt and the drift signal would be worthless.
               let src = "pipeline { agent any; stages { stage('a') { steps { sh 'echo hi' } } } }"
               Expect.equal (sealOf src) (sealOf src) "identical input, identical seal"
+          }
+
+          test "a BOM changes the digest though the decoded text is identical" {
+              // File.ReadAllText strips a BOM and decodes UTF-16 to the same characters, so
+              // a digest over the DECODED string let a re-encoded case keep its old proof —
+              // while the claim beside it said "any byte". The digest is over raw bytes.
+              let text = "pipeline { agent any }"
+              let plain = System.Text.Encoding.UTF8.GetBytes text
+              let withBom = Array.append [| 0xEFuy; 0xBBuy; 0xBFuy |] plain
+
+              Expect.notEqual
+                  (Compare.caseDigest plain)
+                  (Compare.caseDigest withBom)
+                  "a BOM is a byte of the file, and can change how a shell reads a heredoc"
+          }
+
+          test "the same bytes digest identically" {
+              let bytes = System.Text.Encoding.UTF8.GetBytes "pipeline { agent any }"
+              Expect.equal (Compare.caseDigest bytes) (Compare.caseDigest bytes) "pure function of the bytes"
           }
 
           test "whitespace in the case still changes the seal" {

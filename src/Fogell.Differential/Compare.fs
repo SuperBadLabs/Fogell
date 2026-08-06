@@ -87,6 +87,17 @@ type Receipt =
 
 module Compare =
 
+    /// FG-164. The digest of a case file's RAW BYTES.
+    ///
+    /// The seal first bound `sha256` of the DECODED string, and the claim beside it said
+    /// "any byte of the case changes the seal" — which was false: `File.ReadAllText`
+    /// strips a BOM and decodes UTF-16 and UTF-8 to the same characters, so re-saving a
+    /// case in another encoding kept its old proof. A BOM is not cosmetic either; it can
+    /// change how a shell reads a heredoc. Bytes are what a file IS.
+    let caseDigest (bytes: byte[]) =
+        use sha = SHA256.Create()
+        sha.ComputeHash bytes |> Array.map (fun b -> b.ToString "x2") |> String.concat ""
+
     let private sha256Text (text: string) =
         use h = SHA256.Create()
 
@@ -362,7 +373,7 @@ module Compare =
 
     let receipt
         (file: string)
-        (caseSource: string)
+        (caseDigest: string)
         (core: string)
         (envReplacements: (string * string) list)
         (jenkins: Result<Trace, string>)
@@ -403,8 +414,9 @@ module Compare =
             //
             // The generator's mtime check was a smoke alarm for exactly this and said so —
             // it catches edit-without-rerun and misses a touched receipt or a back-dated
-            // edit. This is the alarm's replacement: any byte of the case changes the seal.
-            $"{file}\n{sha256Text caseSource}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
+            // edit. This is the alarm's replacement: the digest is over RAW BYTES, so a
+            // re-encode or an added BOM changes the seal too — see `caseDigest`.
+            $"{file}\n{caseDigest}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict
