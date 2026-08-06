@@ -180,7 +180,12 @@
                                  (if (> count 3) (str "\n- …and " (- count 3) " more (see the ledger)") "")
                                  "\n"))
                           by-reason))
-           "\n")
+           ;; Exactly one trailing newline. Each reason block ends with one, so appending
+           ;; another left a blank line at EOF that `git diff --check` rejects — and the
+           ;; generator reproduced it faithfully, so `--check` passed while a whitespace
+           ;; hook would not. A generator that regenerates a lint failure is a generator
+           ;; that makes the lint unfixable.
+           "")
 
       scorecard-md
       (str "# Compatibility scorecard\n\n"
