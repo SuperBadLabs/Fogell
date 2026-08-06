@@ -124,6 +124,16 @@
                    (map (fn [[c xs]] [c (count xs)]))
                    (sort-by (comp - second)))
 
+      ;; COMPUTED, never asserted. The scorecard used to state "the name overlap is
+      ;; currently zero" as a literal, in a document whose own classifier promotes a
+      ;; corpus file to tier 1 the moment a receipt matches its stem. The first
+      ;; corpus-backed receipt would have produced a table reading tier1=1 above prose
+      ;; reading overlap=zero, and `--check` would have regenerated and accepted it,
+      ;; because a constant always matches itself. Fourth correct-by-accident claim on
+      ;; this branch, and the first inside a generated artifact.
+      corpus-stems (set (map #(str/replace (:file %) ".Jenkinsfile" "") rows))
+      overlap (count (filter #(contains? corpus-stems (key %)) receipts))
+
       case-receipts (count receipts)
       case-proven (count (filter #(= :proven (val %)) receipts))
 
@@ -219,9 +229,13 @@
              "")
            "## Differential case suite (hand-written cases — a DIFFERENT population)\n\n"
            "| Receipts | Proven |\n|---|---|\n| " case-receipts " | " case-proven " of " case-receipts " |\n\n"
-           "**These two sections do not share a denominator.** The name overlap between the "
-           "corpus and the receipt set is currently **zero**: every receipt proves a "
-           "hand-written case, not a corpus file. Reading the receipt count against the corpus "
+           "**These two sections do not share a denominator.** Corpus files that also have a "
+           "receipt: **" overlap "** of " total ". "
+           (if (zero? overlap)
+             "Every receipt proves a hand-written case, not a corpus file. "
+             (str "Those files appear as tier 1 in the corpus table above and are the only "
+                  "ones whose parity is proven. "))
+           "Reading the receipt count against the corpus "
            "count would produce exactly the false ratio ADR 0001 was written to prevent — the "
            "prior engine's 146 IRs against 5 proven files, which a single percentage would have "
            "reported as 64%.\n")]
