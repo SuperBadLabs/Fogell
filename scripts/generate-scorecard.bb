@@ -75,10 +75,16 @@
       ;; sequence to two and `.b3`/`.b4` survive, map to the live case, and keep counting.
       ;; Deriving the set closes both, because it asks what the cases PRODUCE rather than
       ;; what a receipt name RESEMBLES.
-      ;; FINAL extension only: `str/replace` with a STRING replaces every occurrence, so
-      ;; a case named `foo.Jenkinsfile.Jenkinsfile` derived `foo` while the CLI writes
-      ;; `foo.Jenkinsfile.receipt.txt`. Anchored regex.
-      stem-of (fn [n] (str/replace n #"\.Jenkinsfile$" ""))
+      ;; MIRRORS THE WRITER, deliberately. `Compare.fs` builds the receipt name as
+      ;; `r.File.Replace("/", "_").Replace(".Jenkinsfile", "")` — a GLOBAL replace — so
+      ;; `foo.Jenkinsfile.Jenkinsfile` becomes `foo.receipt.txt`. I "fixed" this to an
+      ;; ANCHORED regex last round, which made the reader disagree with the writer for
+      ;; exactly that name: a correction in the wrong direction, since the reader's job
+      ;; is to predict what the writer produced, not to improve on it.
+      ;;
+      ;; Both are odd for a name containing `.Jenkinsfile` twice; FG-163 carries fixing
+      ;; the writer. Until then they agree, which is the property that matters here.
+      stem-of (fn [n] (-> n (str/replace "/" "_") (str/replace ".Jenkinsfile" "")))
 
       expected-list
       (->> (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")
@@ -110,11 +116,11 @@
 
       receipts (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
                     (filter (fn [f]
-                              (let [n (str/replace (fs/file-name f) ".receipt.txt" "")]
+                              (let [n (str/replace (fs/file-name f) #"\.receipt\.txt$" "")]
                                 (or (contains? expected-receipts n)
                                     (contains? corpus-stems n)))))
                     (map (fn [p]
-                           (let [n (str/replace (fs/file-name p) ".receipt.txt" "")
+                           (let [n (str/replace (fs/file-name p) #"\.receipt\.txt$" "")
                                  body (slurp (fs/file p))]
                              ;; THE TIER-1 VERDICT FIELD, matched to its end. `PROVEN-PARTIAL`
                              ;; also starts with "PROVEN" and the comparator emits it to
