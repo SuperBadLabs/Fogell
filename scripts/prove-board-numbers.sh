@@ -40,8 +40,17 @@ expect_pass() {
   fi
 }
 
-# Derive the true tier3 count from the committed ledger so the mutations are relative.
+# Everything is DERIVED from the committed files — nothing hard-codes today's counts,
+# or the proof silently stops planting drift the moment a real count changes (the very
+# fragility this ticket kills). The live tier3 token in the board is found, not assumed.
 T3=$(awk -F'\t' '!/^#/ && !/^file\t/ && $2=="3"' "$LEDGER" | wc -l | tr -d ' ')
+
+# The planted token is CONSTRUCTED from the derived count, not edited out of the board.
+# Mutating the live token with `sed -E 's/[0-9]+/…/'` replaced the FIRST digit run — the
+# 3 in `tier3` — planting `tier78=79`, which is not a tier3 token at all, so the audit
+# correctly ignored it and the proof reported a false failure. Building the token says
+# exactly what is being planted.
+WRONG_T3="tier3=$((T3 - 1))"
 
 cp "$BOARD" "$LAB/board.md"
 cp "$LEDGER" "$LAB/ledger.tsv"
@@ -50,11 +59,12 @@ echo "=== board-number audit: proven against known-bad states ==="
 expect_pass "compliant board" "$LAB/board.md" "$LAB/ledger.tsv"
 
 # 1. board drift: a live tier3= token that disagrees with the ledger
-sed "s/tier3=79/tier3=$((T3 - 1))/" "$LAB/board.md" > "$LAB/drift.md"
+BOARD_TXT=$(cat "$LAB/board.md")
+printf '%s\n> planted drift: %s\n' "$BOARD_TXT" "$WRONG_T3" > "$LAB/drift.md"
 expect_fail "board drift (tier3 off by one)" "$LAB/drift.md" "$LAB/ledger.tsv"
 
 # 2. a LIVE tier2= claim — forbidden outright, ADR tier 2 is NOT ASSESSED
-sed 's/admitted=149/tier2=149 admitted=149/' "$LAB/board.md" > "$LAB/tier2.md"
+printf '%s\n> planted claim: tier2=%d admitted files\n' "$BOARD_TXT" "$T3" > "$LAB/tier2.md"
 expect_fail "live tier2= claim" "$LAB/tier2.md" "$LAB/ledger.tsv"
 
 # 3. ledger changes under a fixed board: one tier-3 row becomes admitted
