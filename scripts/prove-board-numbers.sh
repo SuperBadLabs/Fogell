@@ -42,8 +42,21 @@ expect_pass() {
 
 # Everything is DERIVED from the committed files — nothing hard-codes today's counts,
 # or the proof silently stops planting drift the moment a real count changes (the very
-# fragility this ticket kills). The live tier3 token in the board is found, not assumed.
+# fragility this ticket kills).
 T3=$(awk -F'\t' '!/^#/ && !/^file\t/ && $2=="3"' "$LEDGER" | wc -l | tr -d ' ')
+
+# THE BOARD MUST ACTUALLY CARRY A LIVE TOKEN, or the audit checks nothing and passes.
+# Its coverage depends on rows using the token form; rewrite the FG-090 row into prose
+# and every drift check becomes vacuous while still reporting green. This asserts the
+# coverage exists before proving the checker behaves — the two are different claims.
+#
+# (This comment previously said the live token "is found, not assumed" — describing
+# code I had replaced with token CONSTRUCTION two commits earlier, and left standing.
+# The assertion below now makes the sentence true rather than deleting it.)
+if ! grep -oE '[^"]tier3=\*{0,2}[0-9]+' "$BOARD" >/dev/null 2>&1; then
+  echo "  FAIL: the board carries no LIVE tier3= token — the audit would pass vacuously"
+  exit 1
+fi
 
 # The planted token is CONSTRUCTED from the derived count, not edited out of the board.
 # Mutating the live token with `sed -E 's/[0-9]+/…/'` replaced the FIRST digit run — the
