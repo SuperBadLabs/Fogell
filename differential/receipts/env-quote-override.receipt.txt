@@ -1,7 +1,7 @@
 # Differential receipt — env-quote-override.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2c1c26b5315f9017a0aee6a9f47fd48ad449ca29ca3acd22d9419bc0f7ca85f9
+seal:         a43231c7b20c519d256c78f7d313613d51159c63d61ce0063771fc623ecaab2b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

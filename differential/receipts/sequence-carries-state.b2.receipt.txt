@@ -1,7 +1,7 @@
 # Differential receipt — sequence-carries-state.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         79aae011b6acc4b56713ce2d394c131e94d2a97a57db7a3f8edef4b222bd21d9
+seal:         cfb7fff0a1742149839f1b69334344b192b5cdb31c6a30fff7cc4a2ad309f113
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

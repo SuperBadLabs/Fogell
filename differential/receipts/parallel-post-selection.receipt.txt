@@ -1,7 +1,7 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d32c1776350085de05a3261739d28dd95c861a14b23aa4107ff3601b4fd5dd5a
+seal:         50738787aa46702d6cc671453cf553e9d7897bb32570b429352017664484aa36
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -76,8 +76,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
     | + exit 6
-    | Failed in branch fails
     | + echo fine
+    | Failed in branch fails
     | + echo correct
   workspace:
     8ecc5f94c57b  fine.txt

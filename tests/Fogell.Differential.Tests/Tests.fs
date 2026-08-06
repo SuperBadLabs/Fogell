@@ -532,6 +532,55 @@ let stringModel =
 /// cannot sit in the differential suite — so the suite can never exercise them. Both
 /// receipts that do exercise the concurrent path are PROVEN cases with matching counts,
 /// which is exactly the blind spot that let two earlier versions of this filter ship.
+/// FG-164. The seal binds the CASE SOURCE, not just its filename.
+///
+/// A seal over the name proves which FILE was compared, never WHAT was: editing a case
+/// without renaming it left the old receipt valid — same expected name, same PROVEN
+/// verdict — and the scorecard published the suite as fully proven with the changed case
+/// never re-run. The generator's mtime check was a stated smoke alarm for this; these
+/// tests are what let it be replaced by evidence rather than a timestamp.
+let sealBindsCaseSource =
+    let mkTrace output =
+        { Result = "success"
+          Output = output
+          WorkspaceHash = "abc123"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let sealOf source =
+        (Compare.receipt "case.Jenkinsfile" source "2.568.1" []
+             (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))
+             (Result.Ok(mkTrace [ "+ echo hi"; "hi" ]))).Seal
+
+    testList
+        "FG-164 the receipt seal binds the case source"
+        [ test "editing the case changes the seal" {
+              let a = sealOf "pipeline { agent any; stages { stage('a') { steps { sh 'echo hi' } } } }"
+              let b = sealOf "pipeline { agent any; stages { stage('b') { steps { sh 'echo hi' } } } }"
+
+              Expect.notEqual a b "a changed case must not keep its old proof"
+          }
+
+          test "an unchanged case seals identically" {
+              // The seal must be a pure function of the evidence — otherwise a re-run
+              // would churn every receipt and the drift signal would be worthless.
+              let src = "pipeline { agent any; stages { stage('a') { steps { sh 'echo hi' } } } }"
+              Expect.equal (sealOf src) (sealOf src) "identical input, identical seal"
+          }
+
+          test "whitespace in the case still changes the seal" {
+              // Nothing about a case is exempt: a reformat is a change the proof did not
+              // cover, and deciding which edits are 'harmless' is how a seal starts lying.
+              let a = sealOf "pipeline { agent any }"
+              let b = sealOf "pipeline {  agent any }"
+
+              Expect.notEqual a b "any byte of the case is bound"
+          }
+        ]
+
 let concurrentFoldAccounting =
     let mkTrace output =
         { Result = "success"
@@ -780,6 +829,7 @@ let main argv =
             "Fogell.Differential"
             [ userOutputSurvives
               stringModel
+              sealBindsCaseSource
               concurrentFoldAccounting
               continuationResolution
               timestampPrefixIsConditional ])

@@ -1,7 +1,7 @@
 # Differential receipt — withenv-comma-value.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4e8fecdf68a109f5ffd5b3dae6e1912f7cc5d97ba9cce3185a1c1498b5d76b42
+seal:         65269ac859a8776fd75ffe156c97844a625b22017f3200cc34f4c3ad338929cd
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

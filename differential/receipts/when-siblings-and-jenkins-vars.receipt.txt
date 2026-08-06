@@ -1,7 +1,7 @@
 # Differential receipt — when-siblings-and-jenkins-vars.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         08bb0a8ead6a1026e28fed9ab171b557acf4a0dd586fcdd5bf5dddd633a0eb55
+seal:         fb26cc7b16372b69444757a07458a78216093d1a1f747070fccddf448acdbdab
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

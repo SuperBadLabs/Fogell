@@ -1,7 +1,7 @@
 # Differential receipt — input-positional-literal.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e899b47ec53ed04c8e39deafe481ce45c9c318f0cec2f1ad4da13ae1e019d5b4
+seal:         2fbe50098ddbc3898b5fa9a6188f72fb2730f21c619f1bb9a697a3d44ab56400
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

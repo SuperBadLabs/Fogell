@@ -1,7 +1,7 @@
 # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3ccd1c4885780e125dc061cfb2dad680c06577eb5912543b1d25aeb1aa8b4dab
+seal:         3572a1a1583ddeeb3393695800ed1fe70c77b753ea71b1759e43cb69b7fb7a3b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

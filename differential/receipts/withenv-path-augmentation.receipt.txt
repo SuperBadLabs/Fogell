@@ -1,7 +1,7 @@
 # Differential receipt — withenv-path-augmentation.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         74ffe1955c159ef3e12edfe4132955698c142f4af2f18cb2768c8f710417ad14
+seal:         7363509d3e4fbfc2b56483e85624c6ac4d00f758fcbfe7f780bc0e9aceac9454
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

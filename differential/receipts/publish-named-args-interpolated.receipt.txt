@@ -1,7 +1,7 @@
 # Differential receipt — publish-named-args-interpolated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         dd9efdea7c114c83201c60ce307478499716f87780b7c9b51703465ecfde7fcf
+seal:         ddf1662a758db0c9b5492fe384d4e8b9fa5641f11379967678d64e0f162714c6
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

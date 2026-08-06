@@ -1,7 +1,7 @@
 # Differential receipt — input-timeout-aborts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         48c371c05188e4cc76e6457fa155ba78d2f0f52fa941ed314677f20243a401fa
+seal:         5d8e3451025d40907d45d745fe5608f0ce84890b46892ff0206392a54d1987e6
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

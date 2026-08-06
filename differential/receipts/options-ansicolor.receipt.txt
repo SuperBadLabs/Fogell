@@ -1,7 +1,7 @@
 # Differential receipt — options-ansicolor.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         468a097d191be55501ef9392bfb9e1dd1538e7de1aed5fad9a77fd55860ba2c7
+seal:         95529420e9ca481434f7d49896c7998ac780c933afd5d054893cd493233e1507
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

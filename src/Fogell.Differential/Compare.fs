@@ -362,6 +362,7 @@ module Compare =
 
     let receipt
         (file: string)
+        (caseSource: string)
         (core: string)
         (envReplacements: (string * string) list)
         (jenkins: Result<Trace, string>)
@@ -393,7 +394,17 @@ module Compare =
             // Folds join the sealed content: a fold section edited after the
             // fact must be as detectable as an edited output line.
             let joinedFolds = String.concat "\n" folds
-            $"{file}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
+
+            // FG-164. THE CASE SOURCE IS IN THE SEAL. It bound the file NAME only, so
+            // editing a case without renaming it left the old receipt valid: the expected
+            // receipt name was unchanged, the verdict line still said PROVEN, and the
+            // scorecard published the suite as fully proven with the changed case never
+            // re-run. A seal over a name proves which FILE was compared, not WHAT was.
+            //
+            // The generator's mtime check was a smoke alarm for exactly this and said so —
+            // it catches edit-without-rerun and misses a touched receipt or a back-dated
+            // edit. This is the alarm's replacement: any byte of the case changes the seal.
+            $"{file}\n{sha256Text caseSource}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict

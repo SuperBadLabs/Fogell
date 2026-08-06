@@ -1,7 +1,7 @@
 # Differential receipt — nonzero-exit.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         71551758b1cf2a8329c3bdaf4c186b5471d1a869d8b6463ae3dce581ca500371
+seal:         ff9b2f285e1137987047fcce417c9e4a2d61e3dde702ded84fe5b6a16956b5a0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

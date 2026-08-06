@@ -1,7 +1,7 @@
 # Differential receipt — junit-passing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5103bd11b4e464923447e8b50a2c61ca224ef18de7f9acee00c30204e33cccf7
+seal:         56b89371e7fb9107aa496eeefb2afd76e633514137542e619f0d6e28df27aeae
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

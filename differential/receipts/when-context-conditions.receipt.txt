@@ -1,7 +1,7 @@
 # Differential receipt — when-context-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f7ab52921bd673977aab44789dc6f52c9a8cdc446d5b3514d83313e4087aaeab
+seal:         9fe37cdff0ceb5bfd4f050c21e6165bbe5bfb2993456dd4f416216060617f106
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

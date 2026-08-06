@@ -1,7 +1,7 @@
 # Differential receipt — cancellation-selects-post-arm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e6220acb0c2b4051ed14fb61062431d5ce258e22ea4fb193dff8f136d7dc8e74
+seal:         e156a1c4f28046bc4a85529d5a034698bab2b291c904fa0adbbc626d5cadfa92
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

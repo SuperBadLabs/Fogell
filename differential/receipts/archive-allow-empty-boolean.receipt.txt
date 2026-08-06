@@ -1,7 +1,7 @@
 # Differential receipt — archive-allow-empty-boolean.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ed7eba24a57d138393ef40ebfe43e2c763ac07e89fad0084fc559eac2c374210
+seal:         83dcf96b35bfdebff89ede5d8a71c41f19f2263634ea8d40c85d51244fa6494d
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

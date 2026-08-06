@@ -1,7 +1,7 @@
 # Differential receipt — sh-octal-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         23629a96eacdf95a2a264738987a70dee3f8920cf4edbb453c74fa8e20260ffd
+seal:         048667fb2a29613a195a2897004e65d80244836b99979d8b41e3dc7eb19fddd4
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

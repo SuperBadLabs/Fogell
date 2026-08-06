@@ -436,7 +436,7 @@ let main argv =
 
                     List.zip jenkinsRuns fogellRuns
                     |> List.mapi (fun bi (jenkins, fogell) ->
-                        Compare.receipt (caseNameFor bi) core envReplacementsAll jenkins fogell)
+                        Compare.receipt (caseNameFor bi) script core envReplacementsAll jenkins fogell)
 
                 let anyDiverged rs =
                     rs |> List.exists (fun (r: Receipt) ->

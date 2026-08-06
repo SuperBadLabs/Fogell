@@ -1,7 +1,7 @@
 # Differential receipt — git-step-clone.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f4f76e576740b6c3534084e6cd26df06addc78bae0963155dc1d73d165dad0db
+seal:         7d9b8b3ebbd6c341451a5a532aaf9a53d1b49a59c99f2fa9eace3e6ec2ea39cd
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

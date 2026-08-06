@@ -1,7 +1,7 @@
 # Differential receipt — stash-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c48292f385878a50233d5b92c4e8c59d069ddbaa220b74a4c154fd9f5fb947dc
+seal:         6138faa5429a5859ebbb217f396936d04eeefc3b7c3904cbddabb25719bc069b
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

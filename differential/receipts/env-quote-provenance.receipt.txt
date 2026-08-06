@@ -1,7 +1,7 @@
 # Differential receipt — env-quote-provenance.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a7e7c53280cb2482d8a44645be3589b9eadb03bf991e915fcbbdb73badb5496f
+seal:         7a03e5b53face63f47aa411e3b6cf471a306d284ef1b3eeacb306f1209229373
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

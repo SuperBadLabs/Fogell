@@ -1,7 +1,7 @@
 # Differential receipt — parallel-literal-not-folded.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ced90703b4cf3f12b4f2811f1f037abb04c34d2cebd6fd1ef37225a2125c378c
+seal:         f1790eb23bd6a09879bf83989c3479f0797eedfc996b778d0b35770079d2c891
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

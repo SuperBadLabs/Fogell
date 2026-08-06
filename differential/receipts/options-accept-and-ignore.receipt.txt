@@ -1,7 +1,7 @@
 # Differential receipt — options-accept-and-ignore.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         68fd0d5d0c9062eda1a7c926047f77ee1a1879bb1aba1c5aab85b06b668d1d28
+seal:         81cd8e4125d027a361469be05b671665848bd6e27a7233fc2ac769c739ef0c75
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

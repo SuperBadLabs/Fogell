@@ -1,7 +1,7 @@
 # Differential receipt — post-history.b4.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         124f7b563cdc0f08bf1631ed20b67c2c0f8632d9667349a4c049566215ed2a87
+seal:         fef5fa5a962e9408c1e87fb7bac0b0ea3ed5ab9b14a6b2e14b9d95a1c10e3854
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

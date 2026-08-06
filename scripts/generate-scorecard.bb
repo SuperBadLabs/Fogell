@@ -209,9 +209,12 @@
       ;; proven with the changed case never re-run. The seal binds the file NAME, not its
       ;; contents, so nothing else catches this.
       ;;
-      ;; Timestamps are what this script can see; a case-source hash bound INTO the seal
-      ;; is the real fix and belongs in the writer (FG-164). Until then a stale receipt
-      ;; is reported, not silently counted.
+      ;; SINCE FG-164 THE SEAL BINDS THE CASE SOURCE, so an edited case no longer keeps a
+      ;; valid proof — that is the real fix and it lives in the writer. This mtime check
+      ;; is kept as a BACKSTOP for a different failure: a receipt that was never
+      ;; regenerated at all. It is still only a timestamp, and would miss a touched
+      ;; receipt or a back-dated edit; what makes those detectable now is the seal, which
+      ;; nothing yet RECOMPUTES (FG-161).
       case-mtime (into {}
                        (map (fn [f] [(stem-of (fs/file-name f))
                                      (fs/last-modified-time (fs/file f))])

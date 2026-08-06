@@ -1,7 +1,7 @@
 # Differential receipt — git-step-default-branch.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8aacdd768828a5dde3750f572a1a9c1de259a00e5f1206b404f49c62962409f6
+seal:         b451cff55dd5914ede47aeb6f32c4e281482555610f1f77b3d7f260903339f0d
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

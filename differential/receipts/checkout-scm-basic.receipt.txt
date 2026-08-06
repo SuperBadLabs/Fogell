@@ -1,7 +1,7 @@
 # Differential receipt — checkout-scm-basic.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d9575a6e44b0db3d051ea25234b34b8026a5bc87c97e7d665b18a6630b7c6da9
+seal:         bc4c7a2df3aab2dbdce74fd0ff97be228d3af54723671f74aa3812c1a3a8eed7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
