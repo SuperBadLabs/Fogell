@@ -34,4 +34,4 @@ counterexample four paragraphs down.
 |---|---|
 | 118 | 118 of 118 |
 
-**These two sections do not share a denominator.** Corpus files that also have a receipt: **0** of 228. Every receipt proves a hand-written case, not a corpus file. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
+**These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **0** of 228. Every receipt proves a hand-written case, not a corpus file. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.

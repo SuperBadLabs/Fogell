@@ -63,7 +63,25 @@
 
       ;; A receipt proves parity for the file it NAMES. Receipts are keyed by case
       ;; name; a corpus file earns tier 1 only if a receipt carries its exact name.
+      ;; ONLY RECEIPTS WITH A LIVE CASE. `run-differential.sh` does not delete the
+      ;; receipt when a case is renamed or removed, so an unfiltered glob keeps
+      ;; publishing an orphan as part of the current suite — inflating the headline
+      ;; metric FG-092 exists to make honest, and doing it silently.
+      live-cases (->> (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")
+                      (map #(str/replace (fs/file-name %) ".Jenkinsfile" ""))
+                      set)
+
+      ;; A MULTI-BUILD CASE EMITS ONE RECEIPT PER BUILD: `post-history.b1` … `.b4` all
+      ;; belong to case `post-history`. Matching the receipt name against the case name
+      ;; directly called all 12 of those orphans and cut the suite from 118 to 106 — a
+      ;; DEFLATED headline metric that I would have reported as confirming the review
+      ;; finding. The `.bN` suffix is stripped before the lookup; measuring which names
+      ;; failed is what caught it.
+      case-of (fn [n] (str/replace n #"\.b\d+$" ""))
+
       receipts (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
+                    (filter #(contains? live-cases
+                                        (case-of (str/replace (fs/file-name %) ".receipt.txt" ""))))
                     (map (fn [p]
                            (let [n (str/replace (fs/file-name p) ".receipt.txt" "")
                                  body (slurp (fs/file p))]
@@ -131,8 +149,6 @@
       ;; reading overlap=zero, and `--check` would have regenerated and accepted it,
       ;; because a constant always matches itself. Fourth correct-by-accident claim on
       ;; this branch, and the first inside a generated artifact.
-      corpus-stems (set (map #(str/replace (:file %) ".Jenkinsfile" "") rows))
-      overlap (count (filter #(contains? corpus-stems (key %)) receipts))
 
       case-receipts (count receipts)
       case-proven (count (filter #(= :proven (val %)) receipts))
@@ -229,9 +245,9 @@
              "")
            "## Differential case suite (hand-written cases — a DIFFERENT population)\n\n"
            "| Receipts | Proven |\n|---|---|\n| " case-receipts " | " case-proven " of " case-receipts " |\n\n"
-           "**These two sections do not share a denominator.** Corpus files that also have a "
-           "receipt: **" overlap "** of " total ". "
-           (if (zero? overlap)
+           "**These two sections do not share a denominator.** Corpus files PROVEN by a receipt: "
+           "**" t1 "** of " total ". "
+           (if (zero? t1)
              "Every receipt proves a hand-written case, not a corpus file. "
              (str "Those files appear as tier 1 in the corpus table above and are the only "
                   "ones whose parity is proven. "))
