@@ -14,10 +14,13 @@ counterexample four paragraphs down.
 | Tier | Meaning | Count |
 |---|---|---|
 | 1 | proven compatible — a differential receipt names this file | 0 of 228 |
-| 2 | admitted — parses; **execution not attempted** (untrusted corpus) | 149 of 228 |
+| 2 | ADR tier 2 (parses **and executes**) | **NOT ASSESSED** — corpus is never executed |
+| — | admitted (parses only; **not an ADR tier**) | 149 of 228 |
 | 3 | rejected — named error code and source position | 79 of 228 |
 
-Tier 2 is NOT a parity claim. It says the file was admitted, nothing more; these files are third-party CI code and are never executed here.
+**The admitted row is not ADR tier 2.** The ADR requires parsing AND executing; this scorer only parses, because corpus files are untrusted third-party CI code and are never run here. Labelling them tier 2 would assert an execution result nobody measured, so ADR tier 2 is published as NOT ASSESSED.
+
+**Receipt seals are not verified by this generator.** A receipt is counted by its verdict line; nothing here recomputes the seal that binds its result, output and workspace evidence (ADR 0004). Reimplementing that hash in a second language is how the three existing copies of the timestamp rule came to disagree, so the gap is stated and filed (FG-161) rather than papered over with a weaker check.
 
 ### Tier-3 rejections by code
 
