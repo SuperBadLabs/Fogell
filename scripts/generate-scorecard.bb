@@ -348,6 +348,19 @@
            "prior engine's 146 IRs against 5 proven files, which a single percentage would have "
            "reported as 64%.\n")]
 
+  ;; WARNINGS BEFORE THE BRANCH. `build-and-test.sh` runs `--check` only, so emitting
+  ;; these in the write branch meant the AUTOMATED path — the one place a stale or
+  ;; wrong-core receipt matters — printed nothing while reporting the suite as fully
+  ;; proven. The warning existed and the gate could not see it.
+  ;;
+  ;; They WARN rather than fail: staleness is an mtime signal, and a fresh clone assigns
+  ;; arbitrary mtimes, so failing `--check` on it would redden a clean checkout for a
+  ;; condition that is not real. FG-164's seal-bound hash is what can justify failing.
+  (doseq [n (sort (map key (filter #(= :wrong-core (val %)) receipts)))]
+    (println (str "WARN: receipt " n " was produced against a different jenkins-core — not counted as proven")))
+  (doseq [n stale-receipts]
+    (println (str "WARN: receipt " n " is OLDER than its case — the case was edited after the proof; re-run the suite")))
+
   (if check?
     (let [lp (fs/file root "docs/COMPATIBILITY-LEDGER.tsv")
           sp (fs/file root "docs/COMPATIBILITY-SCORECARD.md")
@@ -370,10 +383,6 @@
       (spit (fs/file root "docs/KNOWN-LIMITATIONS.md") limitations-md)
       (println (str "wrote docs/COMPATIBILITY-LEDGER.tsv and docs/COMPATIBILITY-SCORECARD.md"))
       (println (str "corpus: tier1=" t1 " admitted(not a tier)=" t2 " tier3=" t3 " of " total))
-      (doseq [n (sort (map key (filter #(= :wrong-core (val %)) receipts)))]
-        (println (str "WARN: receipt " n " was produced against a different jenkins-core — not counted as proven")))
-      (doseq [n stale-receipts]
-        (println (str "WARN: receipt " n " is OLDER than its case — the case was edited after the proof; re-run the suite")))
       (println (str "cases:  " case-proven " proven of " case-expected " expected"
                     (if (pos? case-missing) (str " — " case-missing " MISSING") "")
                     " (separate denominator)")))))
