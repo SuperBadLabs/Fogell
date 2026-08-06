@@ -63,25 +63,32 @@
 
       ;; A receipt proves parity for the file it NAMES. Receipts are keyed by case
       ;; name; a corpus file earns tier 1 only if a receipt carries its exact name.
-      ;; ONLY RECEIPTS WITH A LIVE CASE. `run-differential.sh` does not delete the
-      ;; receipt when a case is renamed or removed, so an unfiltered glob keeps
-      ;; publishing an orphan as part of the current suite — inflating the headline
-      ;; metric FG-092 exists to make honest, and doing it silently.
-      live-cases (->> (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")
-                      (map #(str/replace (fs/file-name %) ".Jenkinsfile" ""))
-                      set)
-
-      ;; A MULTI-BUILD CASE EMITS ONE RECEIPT PER BUILD: `post-history.b1` … `.b4` all
-      ;; belong to case `post-history`. Matching the receipt name against the case name
-      ;; directly called all 12 of those orphans and cut the suite from 118 to 106 — a
-      ;; DEFLATED headline metric that I would have reported as confirming the review
-      ;; finding. The `.bN` suffix is stripped before the lookup; measuring which names
-      ;; failed is what caught it.
-      case-of (fn [n] (str/replace n #"\.b\d+$" ""))
+      ;; THE EXPECTED RECEIPT SET, DERIVED FROM THE CASES THEMSELVES. A case containing
+      ;; `//// NEXT BUILD ////` separators is a SEQUENCE and emits `<case>.b1` … `.bN`
+      ;; for N = separators + 1; every other case emits `<case>`. A receipt counts only
+      ;; if it is a name the current cases would actually produce.
+      ;;
+      ;; Two weaker filters preceded this. Matching receipt name to case name called all
+      ;; 12 per-build receipts orphans and cut the headline from 118 to 106 — a DEFLATED
+      ;; number I would have reported as confirming a review finding. Stripping the `.bN`
+      ;; suffix fixed that and still accepted a STALE BUILD NUMBER: shorten a four-build
+      ;; sequence to two and `.b3`/`.b4` survive, map to the live case, and keep counting.
+      ;; Deriving the set closes both, because it asks what the cases PRODUCE rather than
+      ;; what a receipt name RESEMBLES.
+      expected-receipts
+      (->> (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")
+           (mapcat (fn [f]
+                     (let [stem (str/replace (fs/file-name f) ".Jenkinsfile" "")
+                           builds (inc (count (re-seq #"(?m)^//// NEXT BUILD ////\s*$"
+                                                      (slurp (fs/file f)))))]
+                       (if (= 1 builds)
+                         [stem]
+                         (map #(str stem ".b" %) (range 1 (inc builds)))))))
+           set)
 
       receipts (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
-                    (filter #(contains? live-cases
-                                        (case-of (str/replace (fs/file-name %) ".receipt.txt" ""))))
+                    (filter #(contains? expected-receipts
+                                        (str/replace (fs/file-name %) ".receipt.txt" "")))
                     (map (fn [p]
                            (let [n (str/replace (fs/file-name p) ".receipt.txt" "")
                                  body (slurp (fs/file p))]
