@@ -98,6 +98,26 @@ module Compare =
         use sha = SHA256.Create()
         sha.ComputeHash bytes |> Array.map (fun b -> b.ToString "x2") |> String.concat ""
 
+    /// FG-168. ONE snapshot of a case file: the bytes that get SEALED and the text that
+    /// gets EXECUTED come from the same read.
+    ///
+    /// The CLI took two — `File.ReadAllText` for the script, `File.ReadAllBytes` for the
+    /// digest — and a case edited between them yields a receipt whose seal binds bytes no
+    /// engine ever ran. That is the precise failure `caseDigest` above exists to prevent,
+    /// reintroduced three lines below the fix; a long corpus run with cases being edited
+    /// is exactly when it bites. Raised by review on PR #46.
+    ///
+    /// The decoding deliberately matches `File.ReadAllText` — UTF-8 by default, byte-order
+    /// marks honoured — so replacing the two reads changes WHEN the bytes are read, not
+    /// WHAT the engines are given. A naive `Encoding.UTF8.GetString` would silently mangle
+    /// a UTF-16 case and leave a BOM in the first line of a UTF-8 one; the tests hold that
+    /// line, because this function's whole value is that it is a swap and not a change.
+    let readCaseSnapshot (path: string) : byte[] * string =
+        let bytes = File.ReadAllBytes path
+        use stream = new MemoryStream(bytes)
+        use reader = new StreamReader(stream, Text.Encoding.UTF8, detectEncodingFromByteOrderMarks = true)
+        bytes, reader.ReadToEnd()
+
     let private sha256Text (text: string) =
         use h = SHA256.Create()
 

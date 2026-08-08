@@ -600,6 +600,75 @@ let sealBindsCaseSource =
           }
         ]
 
+let caseSnapshotIsOneRead =
+    // FG-168. `readCaseSnapshot` replaced a `File.ReadAllText` + `File.ReadAllBytes` pair
+    // in the differential CLI so the sealed bytes and the executed text are one snapshot.
+    //
+    // STATED PLAINLY, so a green suite is not misread: these tests do NOT prove the
+    // atomicity. The race needs a file edited between two reads, and there is no seam to
+    // drive that from a unit test — the single read is structural, visible in the source,
+    // not held by a checker. What IS held is the thing that could plausibly break while
+    // making that structural change: the decoding must stay byte-for-byte what
+    // `File.ReadAllText` produced, or the swap silently changes what both engines execute.
+    let withCaseFile (bytes: byte[]) (f: string -> unit) =
+        let path =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-snapshot-{Guid.NewGuid():N}.Jenkinsfile")
+
+        IO.File.WriteAllBytes(path, bytes)
+
+        try
+            f path
+        finally
+            IO.File.Delete path
+
+    let text = "pipeline { agent any\n  // é ✓ non-ascii, so an encoding slip is visible\n}\n"
+
+    testList
+        "FG-168 the case snapshot is one read"
+        [ test "plain UTF-8 decodes exactly as File.ReadAllText" {
+              withCaseFile (Text.Encoding.UTF8.GetBytes text) (fun path ->
+                  let _, decoded = Compare.readCaseSnapshot path
+                  Expect.equal decoded (IO.File.ReadAllText path) "the engines must see the same script as before")
+          }
+
+          test "a UTF-8 BOM is stripped, as File.ReadAllText strips it" {
+              // A naive `Encoding.UTF8.GetString bytes` leaves U+FEFF at the head of the
+              // script, and the parser then fails on a case that used to run.
+              let bom = Array.append [| 0xEFuy; 0xBBuy; 0xBFuy |] (Text.Encoding.UTF8.GetBytes text)
+
+              withCaseFile bom (fun path ->
+                  let _, decoded = Compare.readCaseSnapshot path
+                  Expect.equal decoded (IO.File.ReadAllText path) "a BOM must not reach the parser"
+                  Expect.isFalse (decoded.StartsWith "﻿") "and must not survive as a character")
+          }
+
+          test "a UTF-16 case decodes by its BOM, not as UTF-8" {
+              // The encoding a case is SAVED in is not the harness's business; decoding it
+              // as UTF-8 regardless would turn every second byte into a NUL.
+              let utf16 = Text.Encoding.Unicode.GetPreamble()
+
+              withCaseFile (Array.append utf16 (Text.Encoding.Unicode.GetBytes text)) (fun path ->
+                  let _, decoded = Compare.readCaseSnapshot path
+                  Expect.equal decoded (IO.File.ReadAllText path) "byte-order marks are honoured"
+                  Expect.equal decoded text "and the script survives the round trip")
+          }
+
+          test "the bytes are the file's own, not a re-encoding of the text" {
+              // Returning `Encoding.UTF8.GetBytes decoded` would look right and quietly undo
+              // FG-164: the seal would bind a normalised re-encoding, so a case re-saved as
+              // UTF-16 would keep its old proof again.
+              let bom = Array.append [| 0xEFuy; 0xBBuy; 0xBFuy |] (Text.Encoding.UTF8.GetBytes text)
+
+              withCaseFile bom (fun path ->
+                  let bytes, _ = Compare.readCaseSnapshot path
+
+                  Expect.equal
+                      (Compare.caseDigest bytes)
+                      (Compare.caseDigest (IO.File.ReadAllBytes path))
+                      "the sealed bytes are the file's raw bytes")
+          }
+        ]
+
 let concurrentFoldAccounting =
     let mkTrace output =
         { Result = "success"
@@ -849,6 +918,7 @@ let main argv =
             [ userOutputSurvives
               stringModel
               sealBindsCaseSource
+              caseSnapshotIsOneRead
               concurrentFoldAccounting
               continuationResolution
               timestampPrefixIsConditional ])
