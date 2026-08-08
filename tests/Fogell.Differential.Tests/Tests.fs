@@ -600,6 +600,174 @@ let sealBindsCaseSource =
           }
         ]
 
+let concurrentSealIsOrderStable =
+    // FG-167. MEASURED while resealing for FG-164: on an unchanged tree, 2 of 118 receipts
+    // resealed differently — `parallel-post-selection` and `parallel-siblings-finish` —
+    // and the only content change was a line ORDER change (`+ sleep 6` moving). The seal
+    // bound each engine's literal output, and a concurrent case's branch interleaving is
+    // decided by OS scheduling.
+    //
+    // A seal that cannot tell a re-run from an edit is not detecting tampering. It also
+    // BLOCKED FG-161: a seal verifier would have flagged those two as tampered on every
+    // single run, and a check that cries wolf twice per run is worse than no check.
+    let mkTrace concurrent output =
+        { Result = "success"
+          Output = output
+          WorkspaceHash = "ws-hash"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = concurrent
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let sealOf jConcurrent fConcurrent jOut fOut =
+        (Compare.receipt "parallel.Jenkinsfile" (Text.Encoding.UTF8.GetBytes "pipeline { }") "2.568.1" []
+             (Result.Ok(mkTrace jConcurrent jOut))
+             (Result.Ok(mkTrace fConcurrent fOut))).Seal
+
+    // One interleaving of a two-branch case, and the same lines as another run scheduled
+    // them. Same multiset, different sequence — nothing about the comparison changed.
+    let runA = [ "+ echo alpha"; "alpha"; "+ sleep 6"; "+ echo beta"; "beta" ]
+    let runB = [ "+ echo alpha"; "+ sleep 6"; "alpha"; "+ echo beta"; "beta" ]
+
+    testList
+        "FG-167 a concurrent seal is stable across interleavings"
+        [ test "the same lines in a different order seal identically" {
+              Expect.equal
+                  (sealOf true true runA runA)
+                  (sealOf true true runB runB)
+                  "a re-run that only reordered concurrent output is not an edit"
+          }
+
+          test "one side reporting concurrent is enough to sort BOTH" {
+              // `compareOutput` enters multiset mode on the DISJUNCTION, so a per-trace
+              // test would seal one side sorted and the other literal — and the seal would
+              // still churn on whichever side was left alone.
+              Expect.equal
+                  (sealOf true false runA runA)
+                  (sealOf true false runB runB)
+                  "multiset mode is decided the same way for the seal as for the comparison"
+
+              Expect.equal
+                  (sealOf false true runA runA)
+                  (sealOf false true runB runB)
+                  "and it does not matter which side reported it"
+          }
+
+          test "changed CONTENT still breaks a concurrent seal" {
+              // The whole risk of sorting is that it erases evidence. It must drop ORDER
+              // and nothing else.
+              let edited = runA |> List.map (fun l -> if l = "beta" then "BETA" else l)
+
+              Expect.notEqual
+                  (sealOf true true runA runA)
+                  (sealOf true true edited edited)
+                  "sorting must drop order, not content"
+          }
+
+          test "changed MULTIPLICITY still breaks a concurrent seal" {
+              // A sorted-and-DEDUPLICATED seal would pass the order test and quietly stop
+              // binding how many times a line was printed — which the comparison DOES
+              // compare, as a multiset.
+              //
+              // THE TOTAL LINE COUNT IS HELD FIXED, and that is the whole point of these
+              // two inputs. The first version of this test appended a line, and it passed
+              // against a deduplicating seal — not because the output render bound
+              // multiplicity, but because the multiset DISCLOSURE embeds "N jenkins / N
+              // fogell lines" and the seal binds the folds. The test was reading a number
+              // from a sentence next to the thing it meant to check. Caught by running the
+              // dedupe mutation, which is what the mutation pass is for.
+              //
+              // Same length, same SET of lines, different multiplicity — so only a seal
+              // that binds the multiset can tell these apart.
+              let twoAlpha = [ "alpha"; "alpha"; "beta" ]
+              let twoBeta = [ "alpha"; "beta"; "beta" ]
+
+              Expect.notEqual
+                  (sealOf true true twoAlpha twoAlpha)
+                  (sealOf true true twoBeta twoBeta)
+                  "multiplicity is compared, so it must stay sealed"
+          }
+
+          test "a DROPPED line still breaks a concurrent seal" {
+              // Weaker than it looks, and said so: dropping a line also changes the line
+              // count in the multiset disclosure, which the seal binds — so this passes
+              // even against a seal that renders no output at all. It is here as a
+              // property of the whole receipt, not as evidence about the render; the
+              // multiplicity test above is what isolates that.
+              let missing = runA |> List.filter (fun l -> l <> "+ sleep 6")
+
+              Expect.notEqual
+                  (sealOf true true runA runA)
+                  (sealOf true true missing missing)
+                  "a line removed from a concurrent receipt must break its seal"
+          }
+
+          test "a NON-concurrent case still binds its output ORDER" {
+              // The relaxation is scoped to cases whose order was not compared. Sorting
+              // unconditionally would silently stop sealing sequence for every ordinary
+              // case, where order IS the comparison.
+              Expect.notEqual
+                  (sealOf false false runA runA)
+                  (sealOf false false runB runB)
+                  "an ordered case's order is compared, so it stays sealed"
+          }
+
+          test "the parallel contract DISCLOSES that order is not sealed" {
+              // An unsealed region of a sealed document that nobody names is how a seal
+              // starts being trusted for more than it covers.
+              let r =
+                  Compare.receipt "parallel.Jenkinsfile" (Text.Encoding.UTF8.GetBytes "pipeline { }") "2.568.1" []
+                      (Result.Ok(mkTrace true runA))
+                      (Result.Ok(mkTrace true runA))
+
+              let contract = String.concat "\n" r.ComparisonContract
+
+              Expect.stringContains contract "SEAL binds these output lines SORTED" "the relaxation is stated"
+              Expect.stringContains contract "NOT sealed" "and what it costs is stated"
+
+              let ordered =
+                  Compare.receipt "ordered.Jenkinsfile" (Text.Encoding.UTF8.GetBytes "pipeline { }") "2.568.1" []
+                      (Result.Ok(mkTrace false runA))
+                      (Result.Ok(mkTrace false runA))
+
+              Expect.isFalse
+                  ((String.concat "\n" ordered.ComparisonContract).Contains "SEAL binds these output lines SORTED")
+                  "an ordered case must not claim a relaxation it did not take"
+          }
+
+          test "the FOLD DISCLOSURE is order-stable too" {
+              // Sealing sorted output is not sufficient on its own: the folded-pair list is
+              // built by walking the multiset difference in OUTPUT order, so two runs that
+              // folded exactly the same pairs listed them in different sequences — and the
+              // seal binds the folds. Both sources of churn had to go, and a fix that
+              // closed only the obvious one would still have blocked FG-161.
+              let env = [ "/home/srikanth", "${HOME}"; "/opt/tools", "${TOOLS}" ]
+
+              let jA = [ "+ echo /home/srikanth"; "+ echo /opt/tools" ]
+              let jB = [ "+ echo /opt/tools"; "+ echo /home/srikanth" ]
+              let fA = [ "+ echo ${HOME}"; "+ echo ${TOOLS}" ]
+              let fB = [ "+ echo ${TOOLS}"; "+ echo ${HOME}" ]
+
+              let receiptOf jOut fOut =
+                  Compare.receipt "parallel.Jenkinsfile" (Text.Encoding.UTF8.GetBytes "pipeline { }") "2.568.1" env
+                      (Result.Ok(mkTrace true jOut))
+                      (Result.Ok(mkTrace true fOut))
+
+              let a, b = receiptOf jA fA, receiptOf jB fB
+
+              // The precondition: if nothing folded, this test proves nothing at all.
+              Expect.isNonEmpty a.OutputComparisonNotes "the case must actually record folds"
+
+              Expect.isTrue
+                  (a.OutputComparisonNotes |> List.exists (fun n -> n.Contains "compared canonically"))
+                  "and they must be FOLD entries, not the multiset disclosure alone"
+
+              Expect.equal a.OutputComparisonNotes b.OutputComparisonNotes "the same folds, listed in the same order"
+              Expect.equal a.Seal b.Seal "so the seal does not move either"
+          }
+        ]
+
 let caseSnapshotIsOneRead =
     // FG-168. `readCaseSnapshot` replaced a `File.ReadAllText` + `File.ReadAllBytes` pair
     // in the differential CLI so the sealed bytes and the executed text are one snapshot.
@@ -919,6 +1087,7 @@ let main argv =
               stringModel
               sealBindsCaseSource
               caseSnapshotIsOneRead
+              concurrentSealIsOrderStable
               concurrentFoldAccounting
               continuationResolution
               timestampPrefixIsConditional ])

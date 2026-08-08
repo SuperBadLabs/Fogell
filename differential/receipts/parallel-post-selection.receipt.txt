@@ -1,7 +1,7 @@
 # Differential receipt — parallel-post-selection.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5764026ee2984b6dbcb6e3ee2922c59bc01d43003ce83e72c90210130ac85544
+seal:         9c20040715fa642d81d4156a84823e533768a2e63737b1d199553992709c17ce
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -70,14 +70,20 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     pass or fail on OS scheduling. Line content and multiplicity ARE compared;
     order is NOT, and declarative Jenkins emits no branch prefix to attribute
     a line by. The load-bearing claim for these cases is the workspace hash.
+  PARALLEL: the SEAL binds these output lines SORTED, matching what was
+    compared. So the ORDER of the output printed below is NOT sealed and may
+    be rearranged without breaking the seal — said plainly, because an
+    unsealed region of a sealed document that nobody names is how a seal
+    starts being trusted for more than it covers. Content and multiplicity
+    ARE sealed: change, add or drop a line and the seal breaks.
 
 ## Jenkins
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
     | + exit 6
-    | Failed in branch fails
     | + echo fine
+    | Failed in branch fails
     | + echo correct
   workspace:
     8ecc5f94c57b  fine.txt
@@ -87,8 +93,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
   output (4 lines):
-    | + exit 6
     | + echo fine
+    | + exit 6
     | Failed in branch fails
     | + echo correct
   workspace:

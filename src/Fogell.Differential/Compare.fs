@@ -306,8 +306,15 @@ module Compare =
                     else
                         None)
 
+            // FG-167. SORTED, because this list is built by walking `jDiff` in OUTPUT
+            // order, and a concurrent case's output order is decided by OS scheduling.
+            // Two runs that folded exactly the same pairs emitted them in different
+            // sequences, so the disclosure — and the seal that binds it — churned on a
+            // comparison that had not changed. `List.sort` on the canonical forms, not on
+            // the rendered lines, keeps each pair's jenkins/fogell rows adjacent.
             let foldedLines =
                 pairedCanon
+                |> List.sort
                 |> List.collect (fun c ->
                     [ $"compared canonically (multiset, order not meaningful): jenkins {c}"
                       $"compared canonically (multiset, order not meaningful): fogell {c}" ])
@@ -405,11 +412,40 @@ module Compare =
             | _, Result.Error e -> (NotComparable(FogellFailed e), []), None, None
             | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
 
+        // FG-167. Whether the comparison ran in MULTISET mode, decided exactly as
+        // `compareOutput` decides it — the DISJUNCTION, not per-trace. One engine
+        // reporting a concurrent case puts BOTH sides through multiset mode, so a
+        // per-trace test would seal one side sorted and the other literal.
+        let comparedAsMultiset =
+            [ j; f ] |> List.choose id |> List.exists (fun t -> t.Concurrent)
+
         let comparable =
             let render (t: Trace option) =
                 match t with
                 | Some x ->
-                    let joined = String.concat "\n" x.Output
+                    // FG-167. THE SEAL BINDS WHAT WAS COMPARED. Binding the literal order
+                    // of a concurrent case bound something the comparison deliberately
+                    // ignores, and branch interleaving is decided by OS scheduling — so
+                    // MEASURED, 2 of 118 receipts resealed differently on an unchanged
+                    // tree, both parallel, both an order-only diff:
+                    // parallel-post-selection.receipt.txt and
+                    // parallel-siblings-finish.receipt.txt. That is not a seal detecting
+                    // tampering, it is a seal that cannot tell a re-run from an edit, and
+                    // it would have made FG-161's verifier cry wolf twice per run — worse
+                    // than no verifier at all. Both now reseal identically across two full
+                    // runs.
+                    //
+                    // ONLY THE ORDER is dropped. The lines are NOT canonicalised here even
+                    // though the multiset comparison canonicalises before matching: env
+                    // canonicalisation is deterministic run to run, so it is not a source
+                    // of churn, and sealing the canonical form would stop binding the
+                    // inherited VALUES the engines actually printed. Sorting removes
+                    // exactly the nondeterminism and nothing else — content and
+                    // MULTIPLICITY stay bound.
+                    let sealedOutput =
+                        if comparedAsMultiset then List.sort x.Output else x.Output
+
+                    let joined = String.concat "\n" sealedOutput
                     // The timestamp coverage is IN THE SEAL. It is compared, so a receipt
                     // that did not bind it would let the fact be edited out
                     // without changing the hash — a sealed document asserting
@@ -450,12 +486,18 @@ module Compare =
           Fogell = f
           ComparisonContract =
             Trace.comparisonContract
-            @ (if [ j; f ] |> List.choose id |> List.exists (fun t -> t.Concurrent) then
+            @ (if comparedAsMultiset then
                    [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
                      "  branches interleave nondeterministically, so a sequence comparison would"
                      "  pass or fail on OS scheduling. Line content and multiplicity ARE compared;"
                      "  order is NOT, and declarative Jenkins emits no branch prefix to attribute"
-                     "  a line by. The load-bearing claim for these cases is the workspace hash." ]
+                     "  a line by. The load-bearing claim for these cases is the workspace hash."
+                     "PARALLEL: the SEAL binds these output lines SORTED, matching what was"
+                     "  compared. So the ORDER of the output printed below is NOT sealed and may"
+                     "  be rearranged without breaking the seal — said plainly, because an"
+                     "  unsealed region of a sealed document that nobody names is how a seal"
+                     "  starts being trusted for more than it covers. Content and multiplicity"
+                     "  ARE sealed: change, add or drop a line and the seal breaks." ]
                else
                    [])
           OutputComparisonNotes = folds
