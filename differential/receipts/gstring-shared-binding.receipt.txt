@@ -1,7 +1,7 @@
 # Differential receipt — gstring-shared-binding.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d50997773d4eb57785dd3ccefdbb05afa746b3f7171facc75688d263599a3940
+seal:         11b91f244c309e53bc3178c9dc97f9e6baa0b931d02fef5d1e059280a5cc4b86
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

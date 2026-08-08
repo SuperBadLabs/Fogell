@@ -1,7 +1,7 @@
 # Differential receipt — when-scm-pattern-keys.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2aa2591ebf10e725d93aecf834fe0de1ee0c2371d72b2b2606c72af8a0f680ac
+seal:         a36fc861821d9dbea1810bce94e17fba3ed551d9d5a54ec884e141d76dd461df
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

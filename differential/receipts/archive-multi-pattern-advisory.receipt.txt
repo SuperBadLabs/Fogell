@@ -1,7 +1,7 @@
 # Differential receipt — archive-multi-pattern-advisory.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0e9c700a49f5b41030afa1ef54504be1137bb5edf6d2e290cfd1bc37fb91fc0c
+seal:         64d7f385076b9d06804ed859af03d640c861cffc68312245e454b08277373c81
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

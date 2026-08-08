@@ -1,7 +1,7 @@
 # Differential receipt — git-step-deletedir.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3a3854eb6a8b1360242592822f6db509d249e3279e49a98e8328c8ffa6d5f262
+seal:         ffccfb28ed08758addb1be7a5456cd3dba97b51fd2178440f6ab3bed2ce237ac
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

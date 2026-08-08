@@ -1,7 +1,7 @@
 # Differential receipt — withenv-path-last-wins.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e6d7fcb432c589dbd6b1c4d31d9779435770c40c9a8cb6ffc172b741030d8fbc
+seal:         8481f2830096205d3ad59453bdae896096e6f817e0771e3693f264f6a500c71c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

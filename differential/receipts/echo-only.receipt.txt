@@ -1,7 +1,7 @@
 # Differential receipt — echo-only.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7c2249586d8a038cd2e43e2882d9ebcaacc654f18f217e2129e3a1733aa31448
+seal:         3a6e24cdd75e76303d896319bac75732150b365dc2a178a8971f2d1b78b71191
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

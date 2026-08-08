@@ -1,7 +1,7 @@
 # Differential receipt — options-timestamps-scm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         10ef74c1b2e5153ee9ce2ccd60fe44ad65720b3586590bb2014b3b0b946c52f0
+seal:         35911e2a7aa4b99cad5e42a682c28513b7a3ebf988094cdac6f9c89bc817efc2
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

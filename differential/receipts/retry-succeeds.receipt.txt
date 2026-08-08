@@ -1,7 +1,7 @@
 # Differential receipt — retry-succeeds.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d50cf144d3679e7366a83fb72c3708234ce3eeb4d68fb0571686c35ab35bafdf
+seal:         c24ae1df0542f610881197a6739324e702f01d1f758c6243bde9f98b080462ed
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

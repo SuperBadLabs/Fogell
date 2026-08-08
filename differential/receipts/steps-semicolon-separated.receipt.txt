@@ -1,7 +1,7 @@
 # Differential receipt — steps-semicolon-separated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         05318058ea06a2d560bdcf05dc248ec6d90f4594b4d1c58884923667a64a44e2
+seal:         4d4ee0ed64301c1f602f846d6d2b6906ca2591c7589762ab8f382a5a52831e6a
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — stash-not-carried.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6f8db9832c507328cf9e72445142c1336e7ed77fecc129c74a35c2442fbac008
+seal:         af2076e42642df94a3ae855d05b2554ae405b2a2d5cb1d582fb06f336ba840d7
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

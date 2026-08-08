@@ -1,7 +1,7 @@
 # Differential receipt — gstring-inherited-env-resolves.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ea1f971238e94b2f160f8794990e723304637cf15e698165d144fc2073602556
+seal:         d509b9fabd6a33326e75e068b0cc449bf904601f2d857b05b028df24e0fcbb7a
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — post-order-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         bf8ccd3849ddaf14aa3b64228d92665b378bb61c57be95ebac1193d7f58feed6
+seal:         80cbbfef7c512864c60a0b4eb9fa9533f13c50b4139c6fa45b1ee05f63833cfe
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — env-escaped-and-dotted.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4a5a1a6cd1d60f96bbdfcfe919e8c6de56964cc7e961c1e86c8e58f86a22ce48
+seal:         e3c6113318e1ae4237e6ef5e24e822648bfcda71e8e13aa55daad3939d86e328
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

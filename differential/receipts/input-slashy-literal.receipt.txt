@@ -1,7 +1,7 @@
 # Differential receipt — input-slashy-literal.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6972531198708d4e1058727dcc13c9d9ef83801fec87c71bd64e96b283210eef
+seal:         7205804fa39ef9b6aae583ed5b688d345b0c90975a7fc127cde9d8bbe9d42438
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — when-scm-and-equals.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4fe29229f98f398021b20ffcc0ee5a8f289b86753ff6c71d2b5a157a24626351
+seal:         496367eb1e3331fdb30fdfca1436b0d56ae396cccc4cdbc79455f8dbd696da36
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

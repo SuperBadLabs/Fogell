@@ -209,9 +209,18 @@
       ;; proven with the changed case never re-run. The seal binds the file NAME, not its
       ;; contents, so nothing else catches this.
       ;;
-      ;; Timestamps are what this script can see; a case-source hash bound INTO the seal
-      ;; is the real fix and belongs in the writer (FG-164). Until then a stale receipt
-      ;; is reported, not silently counted.
+      ;; THIS GENERATOR IS MTIME-WARNING ONLY. FG-164 made the seal bind the case bytes,
+      ;; which changed what a seal MEANS — it did not change what any checker DOES. This
+      ;; script still classifies `:proven` from the `jenkins-core` field and the
+      ;; `VERDICT: PROVEN (tier 1)` line, and never recomputes the seal, so a touched
+      ;; receipt or a back-dated case edit STILL PUBLISHES AS PROVEN here.
+      ;;
+      ;; The comment this replaces said an edited case "no longer keeps a valid proof",
+      ;; conflating the binding with its enforcement. Recomputing the seal is FG-161, and
+      ;; FG-161 is blocked by FG-167: a concurrent receipt's seal binds literal per-engine
+      ;; output, so branch interleaving would make two receipts read as tampered on every
+      ;; run. Until then the mtime warning is what there is, and it catches only
+      ;; edit-without-rerun.
       case-mtime (into {}
                        (map (fn [f] [(stem-of (fs/file-name f))
                                      (fs/last-modified-time (fs/file f))])

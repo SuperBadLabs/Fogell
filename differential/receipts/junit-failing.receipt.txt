@@ -1,7 +1,7 @@
 # Differential receipt — junit-failing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e35c2528ac06b4cd41460c8674ab8b969d714d2f28f22a08ff5b5d8a0fb2bb14
+seal:         717b2513aec8eeb773d9d7824bacefd85916ebaaa1110ba4254b08c9e4e58808
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

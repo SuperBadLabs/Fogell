@@ -1,7 +1,7 @@
 # Differential receipt — options-timeout-beside-nested-call.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         198236464d9662ee9797e43fc4ac5dc30a99a148465cc99230c0aed75235d5c3
+seal:         2e1134579ffab9faff2506a895dfd1b19eddc16341a33767b56cda8bb9fc8ed0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

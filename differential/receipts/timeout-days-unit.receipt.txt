@@ -1,7 +1,7 @@
 # Differential receipt — timeout-days-unit.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2248be463a7692ac69279e3060b596b536ab87a5ccb36b9d98b22e40ae771280
+seal:         460db502152013c79a622d9a7645793b3be2b23b73ea027e15aeca3626cd3f16
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

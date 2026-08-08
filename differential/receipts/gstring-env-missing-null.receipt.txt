@@ -1,7 +1,7 @@
 # Differential receipt — gstring-env-missing-null.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9f3afebc9839610d44f5a10a34e98dcd8e9d3a8dbc25bd2fac949ecc86f019fb
+seal:         b3fdf425b2e1649c35c808ae6742d41eff4162a2aebf99794aac0612cf52cea4
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

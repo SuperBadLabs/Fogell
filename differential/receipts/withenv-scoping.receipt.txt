@@ -1,7 +1,7 @@
 # Differential receipt — withenv-scoping.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b5ef8dcbe24cf36637a740f6a33ed9ab580c6be9de8038af11dbb83c0568d874
+seal:         caf312dad2341ca6b3f6bc1bac1c291155eac9e716c18f2eef909b4403bcaaf1
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

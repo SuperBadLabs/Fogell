@@ -239,7 +239,12 @@ let main argv =
             files
             |> List.collect (fun file ->
                 let name = Path.GetFileName file
-                let script = File.ReadAllText file
+                // ONE read for both: the bytes that get SEALED are the bytes that were
+                // decoded and EXECUTED. Two reads could straddle an edit mid-run, sealing
+                // content no engine saw. Bytes rather than the decoded string, because the
+                // seal must move when the file does; `Compare.receipt` hashes them itself,
+                // so this cannot pass a wrong digest.
+                let caseBytes, script = Compare.readCaseSnapshot file
 
                 // FG-053. Read off the SCRIPT and given to BOTH engines. Nothing
                 // in a line's shape distinguishes the engine's timestamp prefix
@@ -436,7 +441,7 @@ let main argv =
 
                     List.zip jenkinsRuns fogellRuns
                     |> List.mapi (fun bi (jenkins, fogell) ->
-                        Compare.receipt (caseNameFor bi) core envReplacementsAll jenkins fogell)
+                        Compare.receipt (caseNameFor bi) caseBytes core envReplacementsAll jenkins fogell)
 
                 let anyDiverged rs =
                     rs |> List.exists (fun (r: Receipt) ->

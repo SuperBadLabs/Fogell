@@ -1,7 +1,7 @@
 # Differential receipt — gstring-string-property-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e08c6ecb47031745d03024e31c09b6f527b02b69d478abb060bd970ece40ff03
+seal:         409047b4c00786e8afa6e9b9e3862e47febc41932e7cea442a2973d5e952b2e6
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

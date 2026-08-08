@@ -1,7 +1,7 @@
 # Differential receipt — gstring-wrapper-args.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         bbdc28f8619ecdb6f28ea9a4cf8fdb74c61c5d64abd3c609065101824572b42b
+seal:         167692a27bf1bc98d1207821d82c640b56fba749270de4d322eb69355b986af4
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

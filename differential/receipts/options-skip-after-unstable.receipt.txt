@@ -1,7 +1,7 @@
 # Differential receipt — options-skip-after-unstable.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5aca3dd75e93ddf5bdb65cb3a9f9fb74682e9b2f2f35f943913664ae85023c07
+seal:         53d666a9a2eac2f78a15d62da0ad39f66b82207f25622252461b3f58a28b71e6
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — retry-timeout-retries.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         df6543dc13756105da685fc6cb6653c6d28e43e1ce43b34d18ce199c6be12526
+seal:         5c05c120a280298b2940c66b72f29a817535e8de129d4fd99dda6c0bad7110ac
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

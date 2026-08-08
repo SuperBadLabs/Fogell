@@ -1,7 +1,7 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2f07f1869c540c01ca5397a7ba4e45b1594030ce3f086c7260f6d63e68933962
+seal:         b036c483319a340052c8d4700e5465a1b75c3253cf66c6fda9aae1b0de927eff
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

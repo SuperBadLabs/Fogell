@@ -1,7 +1,7 @@
 # Differential receipt — options-stage-retry.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         de3e2e666b53cf1fe18845d038db5f71f10c1c77aab1f39a50a8c565e6506d62
+seal:         f67134431665593c63d6f5e5e6a39f7a5a649f4a4224d218a150af304666c5ee
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

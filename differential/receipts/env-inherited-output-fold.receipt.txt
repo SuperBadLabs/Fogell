@@ -1,7 +1,7 @@
 # Differential receipt — env-inherited-output-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         678e7cc74f828c1d191ab5c6411f60e2e43e40ca4fd6f9308b4259fbbd1621e5
+seal:         c974d7d1e3b9a6f06300d37a23b26282c5e00132d9849cbdde2fc675ac6ee04c
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

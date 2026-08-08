@@ -1,7 +1,7 @@
 # Differential receipt — env-escaped-backslash.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b72fe37580d16ac1da074a97cddcef544b65170487ae9bb266eb1cdf18502751
+seal:         79f4776e9e57306f16ba424406cf55effaefacd190830a2855d39680ad91ce80
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

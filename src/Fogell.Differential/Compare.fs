@@ -87,6 +87,37 @@ type Receipt =
 
 module Compare =
 
+    /// FG-164. The digest of a case file's RAW BYTES.
+    ///
+    /// The seal first bound `sha256` of the DECODED string, and the claim beside it said
+    /// "any byte of the case changes the seal" — which was false: `File.ReadAllText`
+    /// strips a BOM and decodes UTF-16 and UTF-8 to the same characters, so re-saving a
+    /// case in another encoding kept its old proof. A BOM is not cosmetic either; it can
+    /// change how a shell reads a heredoc. Bytes are what a file IS.
+    let caseDigest (bytes: byte[]) =
+        use sha = SHA256.Create()
+        sha.ComputeHash bytes |> Array.map (fun b -> b.ToString "x2") |> String.concat ""
+
+    /// FG-168. ONE snapshot of a case file: the bytes that get SEALED and the text that
+    /// gets EXECUTED come from the same read.
+    ///
+    /// The CLI took two — `File.ReadAllText` for the script, `File.ReadAllBytes` for the
+    /// digest — and a case edited between them yields a receipt whose seal binds bytes no
+    /// engine ever ran. That is the precise failure `caseDigest` above exists to prevent,
+    /// reintroduced three lines below the fix; a long corpus run with cases being edited
+    /// is exactly when it bites. Raised by review on PR #46.
+    ///
+    /// The decoding deliberately matches `File.ReadAllText` — UTF-8 by default, byte-order
+    /// marks honoured — so replacing the two reads changes WHEN the bytes are read, not
+    /// WHAT the engines are given. A naive `Encoding.UTF8.GetString` would silently mangle
+    /// a UTF-16 case and leave a BOM in the first line of a UTF-8 one; the tests hold that
+    /// line, because this function's whole value is that it is a swap and not a change.
+    let readCaseSnapshot (path: string) : byte[] * string =
+        let bytes = File.ReadAllBytes path
+        use stream = new MemoryStream(bytes)
+        use reader = new StreamReader(stream, Text.Encoding.UTF8, detectEncodingFromByteOrderMarks = true)
+        bytes, reader.ReadToEnd()
+
     let private sha256Text (text: string) =
         use h = SHA256.Create()
 
@@ -362,6 +393,7 @@ module Compare =
 
     let receipt
         (file: string)
+        (caseBytes: byte[])
         (core: string)
         (envReplacements: (string * string) list)
         (jenkins: Result<Trace, string>)
@@ -393,7 +425,23 @@ module Compare =
             // Folds join the sealed content: a fold section edited after the
             // fact must be as detectable as an edited output line.
             let joinedFolds = String.concat "\n" folds
-            $"{file}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
+
+            // FG-164. THE CASE SOURCE IS IN THE SEAL. It bound the file NAME only, so
+            // editing a case without renaming it left the old receipt valid: the expected
+            // receipt name was unchanged, the verdict line still said PROVEN, and the
+            // scorecard published the suite as fully proven with the changed case never
+            // re-run. A seal over a name proves which FILE was compared, not WHAT was.
+            //
+            // The generator's mtime check was a smoke alarm for exactly this and said so —
+            // it catches edit-without-rerun and misses a touched receipt or a back-dated
+            // edit. This is the alarm's replacement: the digest is over RAW BYTES, so a
+            // re-encode or an added BOM changes the seal too.
+            //
+            // THE BYTES COME IN, NOT A DIGEST. Taking a caller-supplied digest let a stale
+            // call site pass anything — the seal would bind it and `receipt` could not
+            // tell. Hashing here makes the binding non-bypassable, which is the same
+            // collapse-the-duplication move that ended the fallback and list drift.
+            $"{file}\n{caseDigest caseBytes}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
 
         { File = file
           Verdict = verdict

@@ -1,7 +1,7 @@
 # Differential receipt — options-timeout-wraps-post.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d6a938404b08623978882e71acd4240eed624a3d630cf321de9da173ba3a5e7f
+seal:         6f38d5cf3d5b90f2fc5d137ee71367cad60c847a30c7544cd7e232e16fa0fdc4
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

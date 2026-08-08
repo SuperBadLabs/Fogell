@@ -1,7 +1,7 @@
 # Differential receipt — sh-escape-edges.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f7f9c27c1e72852749c63f4218ae011e2aba68ca1a6d2e1c2eb547d49b4df677
+seal:         c1fc1bf59507775d978afaccbc1e5251e222f4896f78577e8e82ea39adda46c1
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

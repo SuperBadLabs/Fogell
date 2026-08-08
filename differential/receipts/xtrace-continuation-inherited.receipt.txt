@@ -1,7 +1,7 @@
 # Differential receipt — xtrace-continuation-inherited.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         24b364de6926123291a216249722f4f346d7cc1c7a06a68d764dc7bb7165bd29
+seal:         02788b9b33e2ecc7050051256669b4bbfd1b19c1da8df57fdd20ef8a5733c0a5
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

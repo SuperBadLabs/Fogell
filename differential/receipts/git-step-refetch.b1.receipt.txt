@@ -1,7 +1,7 @@
 # Differential receipt — git-step-refetch.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4f017eff101cb14c54f4deca2d916c47c43ebcccdb216e367d984e8a66361bd2
+seal:         787888c1e624d823f8bb2366727780431ecab2a20c2e90aaff3995254614ba47
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

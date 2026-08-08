@@ -1,7 +1,7 @@
 # Differential receipt — sh-gstring-interpolation.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ffd568e9c3683ab384ad057273862f25738537e66ec47865991917cbc53fe426
+seal:         4b4d0b79d16ee2a619a69ab1ced26786a97dad80d500c99ff6996f3a6f24a602
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

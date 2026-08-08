@@ -1,7 +1,7 @@
 # Differential receipt — post-arm-reselected.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         51e06945b51ac0f97afacfb235894e1222aec21839d6ae2c45fbad06e094a540
+seal:         2e950172c3b19a3efa52a7f942f58030c7b1e0541b23776aa72d82aaa82b4b97
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

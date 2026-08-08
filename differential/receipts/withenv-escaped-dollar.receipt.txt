@@ -1,7 +1,7 @@
 # Differential receipt — withenv-escaped-dollar.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         aa09497191dd80f991df5396aa58d1a1af5adba2824ea84012ec1620d76b93a0
+seal:         221adc1f7dba7003008d298c27f236d0f609d5ad1eecd010b583b3fc1875e5b5
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

@@ -1,7 +1,7 @@
 # Differential receipt — input-expression-args.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ebc1f3096ff60d82d6e8dfe3d4bbffdd473edef29808ecc377f15b22f84d823a
+seal:         5aa8d3b35c8480e3a84ba51bf589fefdd6e7b767d033f201193a30f88a32ba04
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

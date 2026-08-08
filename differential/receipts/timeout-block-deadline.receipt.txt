@@ -1,7 +1,7 @@
 # Differential receipt — timeout-block-deadline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5f78e8cd703ad2d3aa342dde7b8397961b3b9ec9554756caa89d346b561065e7
+seal:         466b23fcd11e4ec3ca336a4ce95928e4a1a9225bc19c35cceb49d217e0853a36
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 

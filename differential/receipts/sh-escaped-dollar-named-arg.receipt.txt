@@ -1,7 +1,7 @@
 # Differential receipt — sh-escaped-dollar-named-arg.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b655ef22ee3780072dd6fbde594f9eac3aceffb28e28ac7c0e3cc0fedefcc4a8
+seal:         6538f0ea886afc77e486bd40c2a0fbf17f679d435dae139cd2f333a1ed4186e0
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
