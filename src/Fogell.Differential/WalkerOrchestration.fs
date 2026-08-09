@@ -1680,7 +1680,15 @@ module WalkerOrchestration =
                             { Vars = asValues |> Map.add "env" (VMap asValues)
                               Funcs = Map.empty }
 
-                        let outcome = Interpreter.run Budget.defaults scriptStepVocabulary genv body
+                        // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
+                        // unbound name reads as null — kept for consumers modelling scripted
+                        // Groovy's laxer contexts — and a script block is not one of them:
+                        // Jenkins raises MissingPropertyException, which this repo already
+                        // measured in the `gstring-unresolved-property` receipt. With the lax
+                        // mode `script { sh "echo bare:${MISSING}" }` wrote `bare:null` and
+                        // exited 0 where Jenkins FAILS the build. Raised by the pre-push
+                        // verifier; a success where Jenkins fails is the governing defect.
+                        let outcome = Interpreter.runStrictVars Budget.defaults scriptStepVocabulary genv body
 
                         match outcome.Fault with
                         | Some fault ->
