@@ -364,6 +364,31 @@ PYX
   expect_reject "a FABRICATED empty notes section" "$d" "SEAL MISMATCH"
 fi
 
+# 14l. A FORGED SECTION. Heading SHAPE was whitelisted, not heading IDENTITY, so
+# `## Forged claim` plus an indented body sailed through on the catch-all "indented is
+# fine" rule for non-side sections. Raised by the pre-push verifier.
+d=$(lab_with "$SEQ" forgedsection)
+printf '\n## Forged claim\n  this receipt also proves something else\n' >> "$d"/*.receipt.txt
+expect_reject "a FORGED unknown section" "$d" "REFUSED"
+
+# 14m. A `(did not run)` side that carries WORKSPACE or ENGINE-NOTE evidence. The
+# exclusivity check listed three shapes and missed the rest, so a not-comparable receipt
+# — whose seal binds `<none>` — could display fake evidence and verify.
+d=$(lab_with "$SEQ" didnotrun-ws)
+python3 - "$d"/*.receipt.txt <<'PYX'
+import sys
+p=sys.argv[1]; ls=open(p).read().split("\n")
+i=next(k for k,l in enumerate(ls) if l == "## Fogell")
+# replace the whole Fogell body with the marker plus fabricated workspace evidence
+j=i+1
+while j < len(ls) and not ls[j].startswith("## "):
+    j+=1
+ls[i+1:j] = ["  (did not run)", "  workspace:", "    000000000000  fabricated.txt", ""]
+open(p,"w").write("\n".join(ls))
+PYX
+[ $? -eq 0 ] || { echo "  FAIL: could not plant the did-not-run block"; FAILED=1; }
+expect_reject "a '(did not run)' side carrying workspace evidence" "$d" "UNREADABLE"
+
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
 # `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending
 # one line to a diverged receipt verified AND promoted it. Measured: this arm passed

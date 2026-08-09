@@ -961,7 +961,22 @@ module Compare =
                     elif l.StartsWith "RECOVERED:" then
                         inRecovered <- true
                     elif l.StartsWith "## " then
-                        section <- l.Substring 3
+                        // KNOWN HEADINGS ONLY. Accepting any `## ` heading let a forged
+                        // section — `## Forged claim` with an indented body — carry visible
+                        // text through verification, because the body then matched the
+                        // catch-all "indented is fine" rule for non-side sections. I
+                        // whitelisted the SHAPE of a heading and not its IDENTITY.
+                        let h = l.Substring 3
+
+                        if
+                            h = "Jenkins"
+                            || h = "Fogell"
+                            || h = "Comparison contract"
+                            || h.StartsWith "Output comparison notes"
+                        then
+                            section <- h
+                        else
+                            bad <- Some l
                     else
                         let ok =
                             match section with
@@ -1075,13 +1090,14 @@ module Compare =
                     // Tenth instance of one class here: the marker was trusted as a summary
                     // of the block instead of being checked against it. Raised by the
                     // pre-push verifier.
+                    // EVERY side shape, not the three I happened to list. The first
+                    // version missed `  workspace:`, manifest rows and engine notes, so a
+                    // not-comparable receipt whose seal binds `<none>` could still display
+                    // fake workspace and engine-note evidence and verify — while the
+                    // comment beside it said the block was checked as actually empty.
                     let content =
                         block
-                        |> List.filter (fun l ->
-                            l.StartsWith "  result:"
-                            || l.StartsWith "  workspace-hash:"
-                            || l.StartsWith "  output ("
-                            || l.StartsWith "    | ")
+                        |> List.filter (fun l -> l.Trim() <> "" && l.Trim() <> "(did not run)")
 
                     if List.isEmpty content then
                         Ok None
