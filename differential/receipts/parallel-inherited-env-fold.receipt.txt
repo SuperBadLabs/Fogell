@@ -1,7 +1,7 @@
 # Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8de800a2a63777ad5da98fdfbc95bc80c37ceab896629dbfb50b5bbe7c83eccc
+seal:         c65b30debeedcb43a9b9b58e278c9f58e958915f0d905e305a190cde11f605bb
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -75,6 +75,12 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     pass or fail on OS scheduling. Line content and multiplicity ARE compared;
     order is NOT, and declarative Jenkins emits no branch prefix to attribute
     a line by. The load-bearing claim for these cases is the workspace hash.
+  PARALLEL: the SEAL binds these output lines SORTED, matching what was
+    compared. So the ORDER of the output printed below is NOT sealed and may
+    be rearranged without breaking the seal — said plainly, because an
+    unsealed region of a sealed document that nobody names is how a seal
+    starts being trusted for more than it covers. Content and multiplicity
+    ARE sealed: change, add or drop a line and the seal breaks.
 
 ## Jenkins
   result:         success
