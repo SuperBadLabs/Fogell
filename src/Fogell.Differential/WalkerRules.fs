@@ -4,6 +4,8 @@ open System
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
+// FG-172: BranchCtx carries typed hosted arguments, so the interpreter's Value is in scope.
+open Fogell.Groovy.Interpreter
 
 /// FG-036. What one parallel branch (or the single implicit branch of a
 /// sequential pipeline) needs to know about itself.
@@ -69,6 +71,19 @@ type BranchCtx =
       /// body unbounded while announcing a budget: a safety bound defeated, which this
       /// project ranks alongside a bypassed approval.
       HostedDeadline: Deadline option
+      /// FG-172. The arguments of a HOSTED call, still TYPED.
+      ///
+      /// `Step` holds strings by design — ADR 0002 says the interpreter decides what an
+      /// expression means, and the parser must not pre-empt it. But by the time a script
+      /// block calls a step the interpreter HAS decided: `withEnv(['A=1'])` is a list of
+      /// one string, and rendering it to display text turned it into `[A=1]`, which the
+      /// arm's list parser could not read at all.
+      ///
+      /// So the typed form rides HERE rather than on `Step`: this layer already depends on
+      /// the interpreter, `Step` stays a string record, and an arm that wants structure
+      /// asks for it while every other arm is untouched. `None` for an ordinary step,
+      /// where there is no evaluated form to offer.
+      HostedArgs: (Value list * (string * Value) list) option
       /// FG-046b. The (stage, top-level step index) this branch is currently
       /// executing — the key durability records are written under. Carried on
       /// the BRANCH, not in run-scoped state, because parallel branches execute

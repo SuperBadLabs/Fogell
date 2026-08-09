@@ -215,12 +215,12 @@ module WalkerOrchestration =
                   // and `withCredentials` stay out: their arguments are LISTS, and the
                   // bridge renders values to display strings, so `['A=1']` arrives as the
                   // string `[A=1]` and binds nothing.
-                  "dir"; "timeout"; "retry" ]
+                  "dir"; "timeout"; "retry"; "withEnv" ]
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
         /// from a `script { }` rather than a `Step list`. Everything else block-taking is
         /// refused; see the derivation at the refusal site.
-        let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry" ]
+        let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry"; "withEnv" ]
 
         /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
         /// the sandbox's generic denial says a name was not admissible, not why THIS one
@@ -260,7 +260,7 @@ module WalkerOrchestration =
                   // A body-less `dir` is refused by the `dir` ARM before it creates the
                   // directory, not by this list: the rule is Jenkins', and `dir('x')` alone
                   // is just as wrong at stage level.
-                  for w in [ "withEnv"; "withCredentials" ] do
+                  for w in [ "withCredentials" ] do
                       yield
                           w,
                           $"`{w}` takes a block, and a replayed script effect cannot carry one, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
@@ -898,7 +898,32 @@ module WalkerOrchestration =
                 // Group 1 is single-quoted (LITERAL in Groovy), group 2 is
                 // double-quoted (a GString, so it interpolates). Keeping the
                 // distinction here is the same fix as for `environment { }`.
+                // FG-172. A HOSTED call already has its list EVALUATED, so take it typed
+                // rather than re-parsing display text. `Value.toDisplay` of a Groovy list
+                // is `[A=1]` — no quotes — and the regex below matches quoted elements, so
+                // the hosted path bound NOTHING and `withEnv` silently did nothing.
+                //
+                // No interpolation on this path: the interpreter has already expanded any
+                // GString, and interpolating a second time is the defect that re-rendered
+                // an approval prompt earlier in this ticket.
+                let hostedBindings =
+                    match ctx.HostedArgs with
+                    | Some(VList items :: _, _) ->
+                        items
+                        |> List.choose (fun v ->
+                            let entry = Value.toDisplay v
+
+                            match entry.IndexOf '=' with
+                            | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
+                            | _ -> None)
+                        |> Some
+                    | _ -> None
+
                 let bindings =
+                    match hostedBindings with
+                    | Some b -> b
+                    | None ->
+
                     step.Positional
                     |> List.collect (fun raw ->
                         [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
@@ -1877,12 +1902,17 @@ module WalkerOrchestration =
                                     let dispatchCtx =
                                         match runBody with
                                         | Some thunk ->
-                                            { atCtx with HostedBody = Some(runBodyIn thunk) }
+                                            { atCtx with
+                                                HostedBody = Some(runBodyIn thunk)
+                                                HostedArgs = Some(positional, named) }
                                         // CLEARED for a plain step, not merely left alone: a
                                         // stale runner inherited from an enclosing wrapper
                                         // would let a body-less call run some other call's
                                         // block.
-                                        | None -> { atCtx with HostedBody = None }
+                                        | None ->
+                                            { atCtx with
+                                                HostedBody = None
+                                                HostedArgs = Some(positional, named) }
 
                                     // The deadline a hosted `timeout` established wins over
                                     // the one captured when the script started; without this
@@ -2021,6 +2051,7 @@ module WalkerOrchestration =
                                   EnvOverlay = ctx.EnvOverlay
                                   HostedBody = None
                                   HostedDeadline = None
+                                  HostedArgs = None
                                   Secrets = ctx.Secrets
                                   // The stamp must travel WITH the predicate it
                                   // describes. A non-failFast block inherits the
