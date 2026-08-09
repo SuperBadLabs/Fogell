@@ -1,7 +1,9 @@
 # Differential receipt — when-context-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9fe37cdff0ceb5bfd4f050c21e6165bbe5bfb2993456dd4f416216060617f106
+seal:         1c6d79267d92c2154fdb14d925ed7ec364346902f4295c710ba9adabe146d2c0
+case-digest:  0981d949b978653e11ed35ae05fa502dbad7a407429b00ded27f3381bf498c4a
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -62,6 +64,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
+    engine notes. They are printed and trusted but not bound by the seal, so
+    `--verify-seals` passing does NOT mean this document is unaltered — it
+    means the sealed fields are. The workspace HASH is sealed; the listing
+    under it is not. FG-169 binds the whole document minus fenced regions.
 
 ## Jenkins
   result:         success

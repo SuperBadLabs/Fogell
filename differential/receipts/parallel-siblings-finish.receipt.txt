@@ -1,7 +1,9 @@
 # Differential receipt — parallel-siblings-finish.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         bedda9b60a45b540f8a01bc3cf3d64f468941dd4e69c4194be5a65d700e7aaa1
+seal:         9cbdd6eb6fb380b31beac70f9853a6b9886ac812d241d2223f24e3a2d645feac
+case-digest:  cf1fe27694357377696e13993645ee3ef5944cb94af37137aea1d5e0d102c1dc
+sealed-output: multiset
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -65,6 +67,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
+    engine notes. They are printed and trusted but not bound by the seal, so
+    `--verify-seals` passing does NOT mean this document is unaltered — it
+    means the sealed fields are. The workspace HASH is sealed; the listing
+    under it is not. FG-169 binds the whole document minus fenced regions.
   PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
     branches interleave nondeterministically, so a sequence comparison would
     pass or fail on OS scheduling. Line content and multiplicity ARE compared;
@@ -83,8 +90,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   output (5 lines):
     | + echo failing
     | + exit 3
-    | Failed in branch quick-fail
     | + sleep 6
+    | Failed in branch quick-fail
     | + echo done
   workspace:
     bfbd1f4027c3  failed.txt
@@ -94,9 +101,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
   output (5 lines):
+    | + sleep 6
     | + echo failing
     | + exit 3
-    | + sleep 6
     | Failed in branch quick-fail
     | + echo done
   workspace:

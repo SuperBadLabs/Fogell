@@ -16,6 +16,52 @@ open Fogell.Differential
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
+    // FG-161. Recompute every receipt's seal from the receipt itself.
+    //
+    // A MODE ON THIS CLI, not a reimplementation in the scorecard generator: the hash
+    // rule stays in `Compare.sealedContent`, the one place that also writes it. A
+    // babashka copy would be a fourth copy of a rule this file already watched drift.
+    //
+    // Needs no Jenkins, no corpus and no case files, so it runs in CI where the full
+    // differential cannot.
+    | "--verify-seals" :: rest ->
+        let dir =
+            match rest with
+            | d :: _ -> d
+            | [] -> "differential/receipts"
+
+        if not (Directory.Exists dir) then
+            eprintfn $"verify-seals: no such directory: {dir}"
+            2
+        else
+            let receipts = Directory.GetFiles(dir, "*.receipt.txt") |> Array.sort
+
+            // A directory with no receipts is a FAILURE, not a vacuous pass. The check
+            // would otherwise report success loudest at the moment it was checking
+            // nothing — a wrong path, an unbuilt tree, a renamed directory.
+            if receipts.Length = 0 then
+                eprintfn $"verify-seals: no receipts in {dir} — refusing to report a vacuous pass"
+                2
+            else
+                let failures =
+                    receipts
+                    |> Array.choose (fun path ->
+                        match Compare.verifySealedText (File.ReadAllText path) with
+                        | Compare.SealValid -> None
+                        | bad -> Some(Path.GetFileName path, bad.Describe))
+
+                for name, why in failures do
+                    eprintfn $"  {name}: {why}"
+
+                if failures.Length = 0 then
+                    printfn
+                        $"seal verification: {receipts.Length} receipt(s) recomputed from their own content, all match"
+
+                    0
+                else
+                    eprintfn $"SEAL VERIFICATION FAILED: {failures.Length} of {receipts.Length} receipt(s)"
+                    1
+
     | baseUrl :: core :: receiptDir :: (_ :: _ as files) ->
         let jenkinsWorkspace =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE" with

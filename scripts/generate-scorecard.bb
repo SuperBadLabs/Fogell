@@ -209,18 +209,22 @@
       ;; proven with the changed case never re-run. The seal binds the file NAME, not its
       ;; contents, so nothing else catches this.
       ;;
-      ;; THIS GENERATOR IS MTIME-WARNING ONLY. FG-164 made the seal bind the case bytes,
-      ;; which changed what a seal MEANS — it did not change what any checker DOES. This
-      ;; script still classifies `:proven` from the `jenkins-core` field and the
-      ;; `VERDICT: PROVEN (tier 1)` line, and never recomputes the seal, so a touched
-      ;; receipt or a back-dated case edit STILL PUBLISHES AS PROVEN here.
+      ;; FG-161 CLOSED THE ENFORCEMENT GAP, and this generator is no longer the only
+      ;; thing standing between an edited receipt and a published proven count. The gate
+      ;; now runs `--verify-seals`, which recomputes each seal from the receipt's own
+      ;; content — including the VERDICT LINE, which this script reads to classify
+      ;; `:proven` and which the seal did not bind until FG-161.
       ;;
-      ;; The comment this replaces said an edited case "no longer keeps a valid proof",
-      ;; conflating the binding with its enforcement. Recomputing the seal is FG-161, and
-      ;; FG-161 is blocked by FG-167: a concurrent receipt's seal binds literal per-engine
-      ;; output, so branch interleaving would make two receipts read as tampered on every
-      ;; run. Until then the mtime warning is what there is, and it catches only
-      ;; edit-without-rerun.
+      ;; WHAT THIS SCRIPT STILL DOES NOT DO: it does not verify seals itself. That check
+      ;; lives where the hash is computed, because reimplementing it in babashka is how
+      ;; the three copies of the timestamp rule came to disagree. It classifies from the
+      ;; verdict line, which is now sealed, so a doctored line no longer passes the gate
+      ;; as a whole — but it passes THIS script, and the two run together or not at all.
+      ;;
+      ;; The mtime warning survives as the FRESHNESS half: a receipt whose case changed
+      ;; on disk still seals validly, because the seal binds the case digest recorded
+      ;; when it ran. Verification proves the receipt is intact; mtime is what notices
+      ;; the case moved underneath it.
       case-mtime (into {}
                        (map (fn [f] [(stem-of (fs/file-name f))
                                      (fs/last-modified-time (fs/file f))])
@@ -328,11 +332,22 @@
            "scorer only parses, because corpus files are untrusted third-party CI code and are never "
            "run here. Labelling them tier 2 would assert an execution result nobody measured, so ADR "
            "tier 2 is published as NOT ASSESSED.\n\n"
-           "**Receipt seals are not verified by this generator.** A receipt is counted by its verdict "
-           "line; nothing here recomputes the seal that binds its result, output and workspace "
-           "evidence (ADR 0004). Reimplementing that hash in a second language is how the three "
-           "existing copies of the timestamp rule came to disagree, so the gap is stated and filed "
-           "(FG-161) rather than papered over with a weaker check.\n\n"
+           "**Receipt seals are verified, but not by this generator.** A receipt is counted here by "
+           "its verdict line. That line is bound by the seal (FG-161), and the gate recomputes every "
+           "seal from the receipt's own content via `--verify-seals` on the differential CLI — where "
+           "the hash is computed, rather than reimplemented in a second language, which is how the "
+           "three existing copies of the timestamp rule came to disagree. So a doctored receipt fails "
+           "the gate; it does not fail this script, and the two are not independent checks.\n\n"
+           "**What the seal covers is a SUBSET of what a receipt prints.** Bound: verdict, case digest, "
+           "pinned core, output mode, and each engine's result, workspace hash, output lines and comparison "
+           "notes. NOT bound: the comparison-contract block, the printed workspace file listing, engine notes, "
+           "the FG-119 recovery block, and printed line ORDER for concurrent cases. So a doctored receipt fails "
+           "verification only if the doctoring touched a sealed field — each receipt names its own unsealed "
+           "regions, and FG-169 carries the redesign that binds everything not explicitly fenced.\n\n"
+           "What verification does NOT cover, stated so a proven count is not over-read: whether each "
+           "case on disk still matches the digest its receipt recorded (freshness, watched by an mtime "
+           "warning), and the two regions each receipt declares outside its own seal — the FG-119 "
+           "recovery block, and printed line ORDER for concurrent cases compared as a multiset.\n\n"
            (if (seq by-code)
              (str "### Tier-3 rejections by code\n\n| Code | Files |\n|---|---|\n"
                   (str/join "\n" (map (fn [[c n]] (str "| `" c "` | " n " |")) by-code))

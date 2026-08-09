@@ -1,7 +1,9 @@
 # Differential receipt — git-step-deletedir.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ffccfb28ed08758addb1be7a5456cd3dba97b51fd2178440f6ab3bed2ce237ac
+seal:         ee63c122122f30839bc85719c139259a33942cdcc0c9c7b26c37a26f6f0dc86a
+case-digest:  62fa7e313acc5e109d47f758b6f2ad3d8f6665d94ab871355baa014d0a04058f
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -65,6 +67,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
+    engine notes. They are printed and trusted but not bound by the seal, so
+    `--verify-seals` passing does NOT mean this document is unaltered — it
+    means the sealed fields are. The workspace HASH is sealed; the listing
+    under it is not. FG-169 binds the whole document minus fenced regions.
 
 ## Jenkins
   result:         success

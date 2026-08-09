@@ -79,6 +79,18 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 ./scripts/audit-board-numbers.bb || { echo "BOARD-NUMBER AUDIT FAILED"; exit 1; }
 ./scripts/prove-board-numbers.sh || { echo "BOARD-NUMBER PROOF FAILED"; exit 1; }
 
+# FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
+# The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
+# re-derived the hash that claim rests on — a receipt edited with that line left intact
+# inflated the published count and `--check` approved it.
+#
+# Runs EVERYWHERE including CI, unlike the corpus-dependent scorecard check below:
+# verification needs no Jenkins, no corpus and no case files, because the case digest is
+# recorded in the receipt and bound by the seal.
+dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+  -- --verify-seals differential/receipts || { echo "SEAL VERIFICATION FAILED"; exit 1; }
+./scripts/prove-seal-verification.sh || { echo "SEAL VERIFICATION PROOF FAILED"; exit 1; }
+
 # FG-090/091/092. The published compatibility artifacts are GENERATED, and this
 # checks they match the evidence — ONLY ON A HOST THAT HAS THE CORPUS.
 #

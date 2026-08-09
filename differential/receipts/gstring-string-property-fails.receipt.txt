@@ -1,7 +1,9 @@
 # Differential receipt — gstring-string-property-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         409047b4c00786e8afa6e9b9e3862e47febc41932e7cea442a2973d5e952b2e6
+seal:         2e337ddcf04114f25fe089448cb2c917304e4a39c1cb82ead7bef804cc3a5f2c
+case-digest:  f138a8e22bca635be1ce9274a5714efb1c487be0ae69a2e7410ba45d65b04b6a
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -62,6 +64,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
+    engine notes. They are printed and trusted but not bound by the seal, so
+    `--verify-seals` passing does NOT mean this document is unaltered — it
+    means the sealed fields are. The workspace HASH is sealed; the listing
+    under it is not. FG-169 binds the whole document minus fenced regions.
 
 ## Jenkins
   result:         failure

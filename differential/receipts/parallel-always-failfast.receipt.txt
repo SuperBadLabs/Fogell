@@ -1,7 +1,9 @@
 # Differential receipt — parallel-always-failfast.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         fb703f93363841dd89538414739e1ccaaf62af74b0b2bf0ab070a3de8e3d49e9
+seal:         62a74b1f799bc8e4b1f5a467aac35534677f770c3030623bfce67acd62e9cedf
+case-digest:  563592f9f0e34f15ff5f085f4bd875fedb02b9d5c11b357d1cbca139d587f1d9
+sealed-output: multiset
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -65,6 +67,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
+    engine notes. They are printed and trusted but not bound by the seal, so
+    `--verify-seals` passing does NOT mean this document is unaltered — it
+    means the sealed fields are. The workspace HASH is sealed; the listing
+    under it is not. FG-169 binds the whole document minus fenced regions.
   PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
     branches interleave nondeterministically, so a sequence comparison would
     pass or fail on OS scheduling. Line content and multiplicity ARE compared;
@@ -97,11 +104,11 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
-    | + echo from-slow
-    | from-slow
     | + echo from-quick
     | from-quick
     | + sleep 1
+    | + echo from-slow
+    | from-slow
     | + sleep 45
     | + exit 3
     | Failed in branch quick-fail
