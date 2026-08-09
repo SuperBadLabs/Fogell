@@ -210,7 +210,23 @@ module WalkerOrchestration =
         let scriptStepVocabulary =
             set
                 [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "dir"; "git"
-                  "input"; "retry"; "stash"; "timeout"; "unstable"; "unstash"; "withCredentials"; "withEnv" ]
+                  "retry"; "stash"; "timeout"; "unstable"; "unstash"; "withCredentials"; "withEnv" ]
+
+        /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
+        /// the sandbox's generic denial says a name was not admissible, not why THIS one
+        /// never will be.
+        ///
+        /// `input`: DURABLE APPROVAL REPLAY is keyed on the top-level step (`Resume.fs`),
+        /// and a replayed nested effect has no durable identity of its own. REPRODUCED by
+        /// the pre-push verifier — journal `step-started Gate 0 script` plus an
+        /// `input-decision … approved alice`, rewind before `step-finished`, and the
+        /// resume exits 3 with `needs-reconciliation`, LOSING AN APPROVAL A HUMAN ALREADY
+        /// GAVE. That is the guarantee FG-046b exists to protect and the one no receipt
+        /// can cover, so it fails closed until nested effects carry journal identity.
+        let scriptStepsRefusedWithReason =
+            Map.ofList
+                [ "input",
+                  "durable approval replay is keyed on the top-level step, so an approval given inside a script block would be lost on resume (FG-046b); use `input` as a stage step instead" ]
         let postFires = WalkerRules.postFires
         let postRank = WalkerRules.postRank
         let cancellationOf = WalkerCancellation.cancellationOf runCtx
@@ -1667,7 +1683,12 @@ module WalkerOrchestration =
                         let outcome = Interpreter.run Budget.defaults scriptStepVocabulary genv body
 
                         match outcome.Fault with
-                        | Some fault -> fail $"script block: {fault}"
+                        | Some fault ->
+                            match fault with
+                            | Denied d when scriptStepsRefusedWithReason.ContainsKey d.Attempted ->
+                                fail
+                                    $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
+                            | _ -> fail $"script block: {fault}"
                         | None ->
                             // SOURCE ORDER, as `Interpreter.run` returns them: it conses
                             // effects and reverses at every exit. I reversed again here,

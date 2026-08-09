@@ -1623,5 +1623,60 @@ if [ -f "$Z5/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z5/ws/gate/markers.
 fi
 echo "a nested-call gate failed closed instead of publishing its source text"
 
+# === Z6: `input` INSIDE A script BLOCK is refused, not published ===
+#
+# FG-160 made `script { }` run, and its steps replay through the normal dispatcher —
+# but DURABLE APPROVAL REPLAY is keyed on the TOP-LEVEL step (`Resume.fs`), so a
+# replayed nested `input` has no durable identity. REPRODUCED by the pre-push verifier:
+# journal `step-started Gate 0 script` plus an `input-decision … approved alice`, rewind
+# before `step-finished`, and the resume exits 3 with `needs-reconciliation` — losing an
+# approval a human already gave.
+#
+# That is the guarantee this lane exists for, and it is the one no receipt can cover. So
+# the step is refused inside a script until nested effects carry journal identity, and
+# THIS asserts the refusal rather than trusting it: scenario B proves the durable path
+# for a TOP-LEVEL `input` and would pass happily while this one lost approvals.
+Z6="$LANE/z6"; mkdir -p "$Z6/approvals"
+cat > "$Z6/Jenkinsfile" <<'Z6JF'
+pipeline {
+    agent any
+    stages {
+        stage("Gate") {
+            steps {
+                script {
+                    input message: 'Deploy?'
+                    sh "echo shipped >> markers.txt"
+                }
+            }
+        }
+    }
+}
+Z6JF
+set +e
+timeout 60 "$HOST_BIN" "$Z6/Jenkinsfile" "$Z6/ws" gate "$Z6/build.journal" "$Z6/approvals" > "$Z6/run.log" 2>&1
+Z6_RC=$?
+set -e
+[ "$Z6_RC" -eq 124 ] && {
+  echo "FAIL: a script-block input WAITED — it published a gate it cannot durably resume"
+  cat "$Z6/run.log"; exit 1; }
+for pending in "$Z6/approvals"/*.pending; do
+  [ -e "$pending" ] || continue
+  echo "FAIL: a script-block input published a prompt; an answer to it would be lost on resume"
+  cat "$pending"; exit 1
+done
+grep -q 'completed: success' "$Z6/run.log" && {
+  echo "FAIL: a build with an unrunnable script-block input completed successfully"
+  cat "$Z6/run.log"; exit 1; }
+if [ -f "$Z6/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z6/ws/gate/markers.txt"; then
+  echo "FAIL: work ran past a refused script-block gate"; exit 1
+fi
+# THE REASON IS UNASSERTED, and said so rather than quietly dropped: this host does not
+# surface emitted console text to the captured log — `run.log` holds only
+# `completed: failure` — so the lane can prove the REFUSAL but not its WORDING. Same gap
+# as scenarios E, J and O record against FG-114. The message itself is covered by the
+# named-reason map in `WalkerOrchestration`, which a reader can check; what matters here
+# and IS proven is that nothing published and no work ran past the gate.
+echo "a script-block input was refused and nothing published (the reason text is unasserted; FG-114)"
+
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
