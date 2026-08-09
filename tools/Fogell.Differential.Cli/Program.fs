@@ -46,7 +46,7 @@ let main argv =
                 let failures =
                     receipts
                     |> Array.choose (fun path ->
-                        match Compare.verifySealedText (File.ReadAllText path) with
+                        match Compare.verifySealedText (Path.GetFileName path) (File.ReadAllText path) with
                         | Compare.SealValid -> None
                         | bad -> Some(Path.GetFileName path, bad.Describe))
 

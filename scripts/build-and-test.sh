@@ -87,7 +87,7 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # Runs EVERYWHERE including CI, unlike the corpus-dependent scorecard check below:
 # verification needs no Jenkins, no corpus and no case files, because the case digest is
 # recorded in the receipt and bound by the seal.
-dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release --no-build \
   -- --verify-seals differential/receipts || { echo "SEAL VERIFICATION FAILED"; exit 1; }
 ./scripts/prove-seal-verification.sh || { echo "SEAL VERIFICATION PROOF FAILED"; exit 1; }
 

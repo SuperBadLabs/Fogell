@@ -67,11 +67,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
-  NOT SEALED: this contract block, the workspace FILE LISTING below, and any
-    engine notes. They are printed and trusted but not bound by the seal, so
-    `--verify-seals` passing does NOT mean this document is unaltered — it
-    means the sealed fields are. The workspace HASH is sealed; the listing
-    under it is not. FG-169 binds the whole document minus fenced regions.
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
   PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
     branches interleave nondeterministically, so a sequence comparison would
     pass or fail on OS scheduling. Line content and multiplicity ARE compared;
@@ -90,8 +96,8 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   output (5 lines):
     | + echo failing
     | + exit 3
-    | + sleep 6
     | Failed in branch quick-fail
+    | + sleep 6
     | + echo done
   workspace:
     bfbd1f4027c3  failed.txt
@@ -101,9 +107,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
   output (5 lines):
-    | + sleep 6
     | + echo failing
     | + exit 3
+    | + sleep 6
     | Failed in branch quick-fail
     | + echo done
   workspace:

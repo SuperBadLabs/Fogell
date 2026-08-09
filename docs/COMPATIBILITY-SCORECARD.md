@@ -22,9 +22,11 @@ counterexample four paragraphs down.
 
 **Receipt seals are verified, but not by this generator.** A receipt is counted here by its verdict line. That line is bound by the seal (FG-161), and the gate recomputes every seal from the receipt's own content via `--verify-seals` on the differential CLI — where the hash is computed, rather than reimplemented in a second language, which is how the three existing copies of the timestamp rule came to disagree. So a doctored receipt fails the gate; it does not fail this script, and the two are not independent checks.
 
-**What the seal covers is a SUBSET of what a receipt prints.** Bound: verdict, case digest, pinned core, output mode, and each engine's result, workspace hash, output lines and comparison notes. NOT bound: the comparison-contract block, the printed workspace file listing, engine notes, the FG-119 recovery block, and printed line ORDER for concurrent cases. So a doctored receipt fails verification only if the doctoring touched a sealed field — each receipt names its own unsealed regions, and FG-169 carries the redesign that binds everything not explicitly fenced.
+**What the seal covers is a SUBSET of what a receipt prints.** EACH RECEIPT STATES ITS OWN unsealed regions in full, under `## Comparison contract` — this page deliberately does not restate them. It did, and the two lists drifted apart across four review rounds, each fix completing one copy and leaving the other short. A doctored receipt fails verification only if the doctoring touched a sealed field.
 
-What verification does NOT cover, stated so a proven count is not over-read: whether each case on disk still matches the digest its receipt recorded (freshness, watched by an mtime warning), and the two regions each receipt declares outside its own seal — the FG-119 recovery block, and printed line ORDER for concurrent cases compared as a multiset.
+implemented. Each receipt's `## Comparison contract` carries the full list.
+
+What verification does NOT cover: whether each case on disk still matches the digest its receipt recorded (freshness, watched by an mtime warning), and the unsealed regions each receipt names.
 
 ### Tier-3 rejections by code
 

@@ -452,6 +452,37 @@ module Compare =
         | Diverged ds -> $"VERDICT: DIVERGED ({ds.Length})" :: [ for d in ds -> $"  - {d.Describe}" ]
         | NotComparable d -> [ "VERDICT: NOT COMPARABLE"; $"  - {d.Describe}" ]
 
+    /// FG-161. THE ONE LIST of what a receipt prints but its seal does not bind.
+    ///
+    /// One definition because it was three — the receipt contract, the scorecard prose and
+    /// this lane's header — and it drifted in FOUR consecutive verifier rounds: each fix
+    /// completed the copy I was editing and left the others short, then a later round found
+    /// the gap. That is the same collapse-the-duplication move that ended the fallback drift
+    /// and the board-number drift. The scorecard now POINTS at the receipt instead of
+    /// restating it, because a second copy in a second language is how this started.
+    let unsealedRegions =
+        [ "NOT SEALED, in full: this contract block; the workspace FILE LISTING below"
+          "  (the workspace HASH is sealed, the listing under it is not); any engine notes;"
+          "  the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is"
+          "  compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119"
+          "  RECOVERED provenance block, which can be added, removed or fabricated without"
+          "  breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER"
+          "  is unsealed too — see the PARALLEL lines below. Everything else printed here is"
+          "  bound."
+          "  So `--verify-seals` passing does NOT mean this document is unaltered — it means"
+          "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
+          "  minus fenced regions; it is NOT implemented, so this list is what holds today." ]
+
+    /// FG-161. The receipt filename a case name produces. ONE derivation, because the
+    /// writer picks the path and the verifier must check the file it found is the one that
+    /// name would have produced.
+    ///
+    /// (The global `Replace` is FG-163's defect — `foo.Jenkinsfile.Jenkinsfile` strips every
+    /// occurrence, not the extension. No such case exists; kept verbatim here so writer and
+    /// reader agree, and FG-163 fixes both together or neither.)
+    let receiptFileName (file: string) =
+        file.Replace("/", "_").Replace(".Jenkinsfile", "") + ".receipt.txt"
+
     /// FG-161. One side of a comparison, reduced to exactly the facts the seal binds.
     type SealedSide =
         { Result: string
@@ -613,11 +644,7 @@ module Compare =
             // limit and a lie: `--verify-seals` passing means the sealed fields are
             // intact, not that this document is unaltered. FG-169 replaces the whole
             // scheme with one that binds the document minus fenced regions.
-            @ [ "NOT SEALED: this contract block, the workspace FILE LISTING below, and any"
-                "  engine notes. They are printed and trusted but not bound by the seal, so"
-                "  `--verify-seals` passing does NOT mean this document is unaltered — it"
-                "  means the sealed fields are. The workspace HASH is sealed; the listing"
-                "  under it is not. FG-169 binds the whole document minus fenced regions." ]
+            @ unsealedRegions
             @ (if comparedAsMultiset then
                    [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
                      "  branches interleave nondeterministically, so a sequence comparison would"
@@ -795,7 +822,12 @@ module Compare =
         member this.Describe =
             match this with
             | SealValid -> "seal valid"
-            | SealMismatch(s, r) -> $"SEAL MISMATCH — stored {s.Substring(0, 12)}, content hashes to {r.Substring(0, 12)}"
+            | SealMismatch(s, r) ->
+                // NOT `Substring(0, 12)`: a malformed short `seal:` value is present, so the
+                // required-field check passes it through, and formatting the error would
+                // throw out of a checker whose whole job is to report cleanly.
+                let short (h: string) = if h.Length > 12 then h.Substring(0, 12) else h
+                $"SEAL MISMATCH — stored {short s}, content hashes to {short r}"
             | SealUnreadable why -> $"UNREADABLE — {why}"
             | SealRefused why -> $"REFUSED — {why}"
 
@@ -815,7 +847,7 @@ module Compare =
     /// still matches `case-digest` (that is freshness, and it needs the case→receipt
     /// mapping), and the RECOVERED provenance block and printed line ORDER of a multiset
     /// case, both of which the receipt itself declares outside the seal.
-    let verifySealedText (text: string) : SealCheck =
+    let verifySealedText (onDiskName: string) (text: string) : SealCheck =
         let lines = text.Replace("\r\n", "\n").Split '\n' |> Array.toList
 
         let field (prefix: string) =
@@ -923,7 +955,29 @@ module Compare =
             let side (name: string) (cov: string) (sortOutput: bool) =
                 match sideBlock name with
                 | None -> Ok None
-                | Some block when block |> List.exists (fun l -> l.Trim() = "(did not run)") -> Ok None
+                | Some block when block |> List.exists (fun l -> l.Trim() = "(did not run)") ->
+                    // EXCLUSIVE. This returned `Ok None` on sight of the marker, before any
+                    // check that the block was actually empty — so a NOT COMPARABLE receipt,
+                    // whose seal binds `<none>` for the absent side, could be edited to
+                    // DISPLAY full fake side evidence and still verify. The document would
+                    // show a result and output the seal never covered.
+                    //
+                    // Tenth instance of one class here: the marker was trusted as a summary
+                    // of the block instead of being checked against it. Raised by the
+                    // pre-push verifier.
+                    let content =
+                        block
+                        |> List.filter (fun l ->
+                            l.StartsWith "  result:"
+                            || l.StartsWith "  workspace-hash:"
+                            || l.StartsWith "  output ("
+                            || l.StartsWith "    | ")
+
+                    if List.isEmpty content then
+                        Ok None
+                    else
+                        Error
+                            $"{name} says '(did not run)' but carries {List.length content} line(s) of side evidence"
                 | Some block ->
                     let get (prefix: string) =
                         block
@@ -1004,6 +1058,18 @@ module Compare =
                         | None -> []
                         | Some i -> lines |> List.skip i |> List.takeWhile (fun l -> l <> "")
 
+                    // THE FILENAME IS PART OF THE CLAIM. A valid receipt COPIED onto another
+                    // expected name verifies fine on its own terms — and `generate-scorecard.bb`
+                    // attributes evidence by the ON-DISK filename, so copying any proven
+                    // receipt over another case name grants that case tier 1 from a run that
+                    // never tested it. The seal binds which case was compared; nothing bound
+                    // where the document sits. Raised by review on PR #48 — ninth instance of
+                    // one class in this ticket, and the reason FG-169 exists.
+                    if onDiskName <> "" && onDiskName <> receiptFileName file then
+                        SealRefused
+                            $"sealed title '{file}' derives '{receiptFileName file}', but this file is '{onDiskName}'"
+                    else
+
                     let modeText = if ms then "multiset" else "sequence"
 
                     let recomputed =
@@ -1017,7 +1083,6 @@ module Compare =
 
     let seal (directory: string) (r: Receipt) : string =
         Directory.CreateDirectory directory |> ignore
-        let safe = r.File.Replace("/", "_").Replace(".Jenkinsfile", "")
-        let path = Path.Combine(directory, $"{safe}.receipt.txt")
+        let path = Path.Combine(directory, receiptFileName r.File)
         File.WriteAllText(path, render r)
         path

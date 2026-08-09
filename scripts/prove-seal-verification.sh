@@ -6,9 +6,9 @@
 # seal covers an ENUMERATED subset of the rendered document, so the comparison contract,
 # the printed workspace file listing and the engine notes are trusted, printed and
 # UNBOUND: edit a contract line and every seal still matches. Found by the pre-push
-# verifier after six earlier rounds of exactly this shape. FG-169 replaces the whole
-# design with "hash the document minus delimited unsealed regions"; until then this lane
-# proves the arms it lists and nothing wider.
+# verifier after six earlier rounds of exactly this shape. FG-169 is the PLANNED redesign
+# — "hash the document minus delimited unsealed regions" — and is NOT implemented, so this
+# lane proves the arms it lists and nothing wider.
 #
 # A checker never run against known-bad state is indistinguishable from a broken one.
 # This one especially: it is the check that makes every other proven claim mean
@@ -26,13 +26,18 @@ LAB=$(mktemp -d /tmp/fogell-seal-proof.XXXXXX)
 trap 'rm -rf "$LAB"' EXIT
 FAILED=0
 
-verify() { dotnet run --project "$CLI" -- --verify-seals "$1" 2>&1; }
+# `-c Release --no-build` to match the rest of the gate: without it every arm triggers a
+# Debug build, which is slow and can hide Release-only build failures.
+verify() { dotnet run --project "$CLI" -c Release --no-build -- --verify-seals "$1" 2>&1; }
 
 # A fresh directory holding ONE receipt, ready to mutate.
+# KEEPS THE ORIGINAL FILENAME. Renaming the copy to `r.receipt.txt` would trip the
+# filename binding (arm 14g) in every arm, so each arm would "reject" for the wrong
+# reason and prove nothing about the tamper it plants.
 lab_with() {
   local name=$1 dir="$LAB/$2"
   mkdir -p "$dir"
-  cp "$SRC/$name" "$dir/r.receipt.txt"
+  cp "$SRC/$name" "$dir/$name"
   echo "$dir"
 }
 
@@ -83,48 +88,48 @@ expect_accept "the committed receipts, unmodified" "$SRC"
 # The scorecard classifies a receipt as proven by READING THIS LINE. Before FG-161 the
 # seal did not bind it, and this arm passed — measured, not imagined.
 d=$(lab_with "$SEQ" verdict)
-sed -i 's/^VERDICT: PROVEN (tier 1).*/VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash/' "$d/r.receipt.txt"
-sed -i '0,/^VERDICT:/s//VERDICT: DIVERGED (7)\nZZZ/' "$d/r.receipt.txt"
-sed -i '/^ZZZ$/d' "$d/r.receipt.txt"
+sed -i 's/^VERDICT: PROVEN (tier 1).*/VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash/' "$d"/*.receipt.txt
+sed -i '0,/^VERDICT:/s//VERDICT: DIVERGED (7)\nZZZ/' "$d"/*.receipt.txt
+sed -i '/^ZZZ$/d' "$d"/*.receipt.txt
 expect_reject "a FLIPPED VERDICT line" "$d" "SEAL MISMATCH"
 
 # 2. an edited output line
 d=$(lab_with "$SEQ" output)
-sed -i '0,/^    | /s/^    | .*/    | tampered/' "$d/r.receipt.txt"
+sed -i '0,/^    | /s/^    | .*/    | tampered/' "$d"/*.receipt.txt
 expect_reject "an edited OUTPUT line" "$d" "SEAL MISMATCH"
 
 # 3. a DELETED output line
 d=$(lab_with "$SEQ" dropped)
-sed -i '0,/^    | /{/^    | /d}' "$d/r.receipt.txt"
+sed -i '0,/^    | /{/^    | /d}' "$d"/*.receipt.txt
 # Caught by the count check first (the header still declares the old number), which is
 # the more specific rejection. The payload is sealed too, so both guards cover it.
 expect_reject "a DELETED output line" "$d" "UNREADABLE"
 
 # 4. an edited terminal result
 d=$(lab_with "$SEQ" result)
-sed -i '0,/^  result:/s/^  result:.*/  result:         failure/' "$d/r.receipt.txt"
+sed -i '0,/^  result:/s/^  result:.*/  result:         failure/' "$d"/*.receipt.txt
 expect_reject "an edited RESULT" "$d" "SEAL MISMATCH"
 
 # 5. an edited workspace hash — the load-bearing claim for tier 1
 d=$(lab_with "$SEQ" workspace)
-sed -i '0,/^  workspace-hash:/s/^  workspace-hash:.*/  workspace-hash: 0000000000000000000000000000000000000000000000000000000000000000/' "$d/r.receipt.txt"
+sed -i '0,/^  workspace-hash:/s/^  workspace-hash:.*/  workspace-hash: 0000000000000000000000000000000000000000000000000000000000000000/' "$d"/*.receipt.txt
 expect_reject "an edited WORKSPACE HASH" "$d" "SEAL MISMATCH"
 
 # 6. an edited case-digest — swapping which case the receipt claims to prove
 d=$(lab_with "$SEQ" casedigest)
-sed -i 's/^case-digest:.*/case-digest:  1111111111111111111111111111111111111111111111111111111111111111/' "$d/r.receipt.txt"
+sed -i 's/^case-digest:.*/case-digest:  1111111111111111111111111111111111111111111111111111111111111111/' "$d"/*.receipt.txt
 expect_reject "an edited CASE DIGEST" "$d" "SEAL MISMATCH"
 
 # 7. an edited jenkins-core — a receipt reassigned to a different pinned Jenkins
 d=$(lab_with "$SEQ" core)
-sed -i 's/^jenkins-core:.*/jenkins-core: 9.99.9/' "$d/r.receipt.txt"
+sed -i 's/^jenkins-core:.*/jenkins-core: 9.99.9/' "$d"/*.receipt.txt
 expect_reject "an edited JENKINS CORE" "$d" "SEAL MISMATCH"
 
 # 8. a REORDERED output block in a SEQUENCE receipt. Order IS compared for these, so it
 # must be sealed — this is the arm that would fail if FG-167's sort were applied to
 # every receipt instead of only multiset ones.
 d=$(lab_with "$SEQ" reorder-seq)
-python3 - "$d/r.receipt.txt" <<'PY'
+python3 - "$d"/*.receipt.txt <<'PY'
 import sys
 p=sys.argv[1]; ls=open(p).read().split("\n")
 idx=[i for i,l in enumerate(ls) if l.startswith("    | ")]
@@ -140,7 +145,7 @@ expect_reject "a REORDERED output block in a SEQUENCE receipt" "$d" "SEAL MISMAT
 # its own contract block. If this arm ever starts failing, the verifier has begun
 # reporting every re-run as tampering — the false positive that blocked this ticket.
 d=$(lab_with "$MULTI" reorder-multi)
-python3 - "$d/r.receipt.txt" <<'PY'
+python3 - "$d"/*.receipt.txt <<'PY'
 import sys
 p=sys.argv[1]; ls=open(p).read().split("\n")
 idx=[i for i,l in enumerate(ls) if l.startswith("    | ")]
@@ -148,17 +153,29 @@ if len(idx) < 2: sys.exit("fixture has fewer than 2 output lines")
 ls[idx[0]], ls[idx[1]] = ls[idx[1]], ls[idx[0]]
 open(p,"w").write("\n".join(ls))
 PY
-expect_accept "a REORDERED output block in a MULTISET receipt (declared unsealed)" "$d"
+# THE PLANTING MUST BE CHECKED, and the file must actually differ. `set -uo pipefail`
+# does not abort on a failed heredoc, so an arm whose mutation silently failed would
+# verify the ORIGINAL receipt and report "accepted" — a proof arm that proves nothing,
+# which is the precise failure this lane exists to prevent. An ACCEPT arm is where it
+# hides: a rejection arm fails loudly when nothing was planted, this one does not.
+# Raised by the pre-push verifier.
+[ $? -eq 0 ] || { echo "  FAIL: could not plant the multiset reorder"; FAILED=1; }
+if cmp -s "$SRC/$MULTI" "$d"/*.receipt.txt; then
+  echo "  FAIL: the multiset reorder changed nothing — this arm would prove nothing"
+  FAILED=1
+else
+  expect_accept "a REORDERED output block in a MULTISET receipt (declared unsealed)" "$d"
+fi
 
 # 10. ...but changing the CONTENT of a multiset receipt must still be rejected. Without
 # this arm, arm 9 alone is satisfied by a verifier that skips multiset receipts entirely.
 d=$(lab_with "$MULTI" content-multi)
-sed -i '0,/^    | /s/^    | .*/    | tampered/' "$d/r.receipt.txt"
+sed -i '0,/^    | /s/^    | .*/    | tampered/' "$d"/*.receipt.txt
 expect_reject "an edited output line in a MULTISET receipt" "$d" "SEAL MISMATCH"
 
 # 11. an edited comparison NOTE — the disclosure of which relaxations were used
 d=$(lab_with "$MULTI" notes)
-sed -i '0,/^  multiset mode:/s/^  multiset mode:.*/  multiset mode: nothing to see here/' "$d/r.receipt.txt"
+sed -i '0,/^  multiset mode:/s/^  multiset mode:.*/  multiset mode: nothing to see here/' "$d"/*.receipt.txt
 expect_reject "an edited COMPARISON NOTE" "$d" "SEAL MISMATCH"
 
 # 12. a missing sealed-output field is REFUSED, not a pass and not a mismatch. Guessing
@@ -170,25 +187,30 @@ expect_reject "an edited COMPARISON NOTE" "$d" "SEAL MISMATCH"
 # parseable (an unknown sealed-output mode, a malformed timestamps line, a side block
 # with no result). Both fail the gate; only one is a forgery signal.
 d=$(lab_with "$SEQ" nomode)
-sed -i '/^sealed-output:/d' "$d/r.receipt.txt"
+sed -i '/^sealed-output:/d' "$d"/*.receipt.txt
 expect_reject "a receipt with no sealed-output field" "$d" "REFUSED"
 
 # 13. a truncated file is REFUSED (its required fields are gone) rather than silently OK
 d=$(lab_with "$SEQ" truncated)
-head -3 "$SRC/$SEQ" > "$d/r.receipt.txt"
+head -3 "$SRC/$SEQ" > "$d"/*.receipt.txt
 expect_reject "a truncated receipt" "$d" "REFUSED"
 
 # 14. the RECOVERED provenance block is declared outside the seal (FG-128), so adding
 # one must NOT break verification. Stated as a test because it is a real hole and the
 # receipt says so in the file — an accepted, named limit, not an oversight.
 d=$(lab_with "$SEQ" recovered)
-python3 - "$d/r.receipt.txt" <<'PY'
+python3 - "$d"/*.receipt.txt <<'PY'
 import sys
 p=sys.argv[1]; s=open(p).read()
 s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  fabricated\n\nVERDICT:", 1)
 open(p,"w").write(s)
 PY
-expect_accept "an ADDED RECOVERED block (FG-128, declared unsealed)" "$d"
+if cmp -s "$SRC/$SEQ" "$d"/*.receipt.txt; then
+  echo "  FAIL: the RECOVERED block was never added — this arm would prove nothing"
+  FAILED=1
+else
+  expect_accept "an ADDED RECOVERED block (FG-128, declared unsealed)" "$d"
+fi
 
 # 14b. A FLIPPED sealed-output MODE. That field decides HOW the verifier hashes, so
 # leaving it unsealed put a key under the mat: a `sequence` receipt whose output happens
@@ -197,7 +219,7 @@ expect_accept "an ADDED RECOVERED block (FG-128, declared unsealed)" "$d"
 # which substantiated it on archive-empty-fails.receipt.txt — original, mode-flipped, and
 # mode-flipped-plus-reordered all recomputed the same stored seal.
 d=$(lab_with "$SEQ" modeflip)
-sed -i 's/^sealed-output: sequence/sealed-output: multiset/' "$d/r.receipt.txt"
+sed -i 's/^sealed-output: sequence/sealed-output: multiset/' "$d"/*.receipt.txt
 expect_reject "a FLIPPED sealed-output mode" "$d" "SEAL MISMATCH"
 
 # 14c. A BLANK OUTPUT LINE inserted into a ZERO-output receipt. `String.concat "\n"`
@@ -211,7 +233,7 @@ if ! grep -q '^  output (0 lines):' "$SRC/$ZERO"; then
 else
   d=$(lab_with "$ZERO" blankline)
   # insert one blank output line directly under the first `output (0 lines):`
-  python3 - "$d/r.receipt.txt" <<'PY2'
+  python3 - "$d"/*.receipt.txt <<'PY2'
 import sys
 p=sys.argv[1]; ls=open(p).read().split("\n")
 i=next(k for k,l in enumerate(ls) if l.startswith("  output (0 lines):"))
@@ -230,7 +252,7 @@ fi
 # CHECKED rather than sealed: the count is derived from the payload, so the honest test
 # is that the document agrees with itself.
 d=$(lab_with "$SEQ" badcount)
-sed -i '0,/^  output (/s/^  output (.*/  output (999 lines):/' "$d/r.receipt.txt"
+sed -i '0,/^  output (/s/^  output (.*/  output (999 lines):/' "$d"/*.receipt.txt
 expect_reject "a DOCTORED output line count" "$d" "UNREADABLE"
 
 # 14e. A DUPLICATE FIELD INSIDE A SIDE BLOCK. The top-level duplicate check (arm 16)
@@ -240,11 +262,11 @@ expect_reject "a DOCTORED output line count" "$d" "UNREADABLE"
 # instance of one class in this ticket, and the second where the previous fix was scoped
 # to the level I happened to be looking at instead of to the rule.
 d=$(lab_with "$SEQ" dup-side)
-sed -i '0,/^  result:/s/^  result:.*/&\n  result:         failure/' "$d/r.receipt.txt"
+sed -i '0,/^  result:/s/^  result:.*/&\n  result:         failure/' "$d"/*.receipt.txt
 expect_reject "a DUPLICATED result field inside a side block" "$d" "UNREADABLE"
 
 d=$(lab_with "$SEQ" dup-ws)
-sed -i '0,/^  workspace-hash:/s/^  workspace-hash:.*/&\n  workspace-hash: dead/' "$d/r.receipt.txt"
+sed -i '0,/^  workspace-hash:/s/^  workspace-hash:.*/&\n  workspace-hash: dead/' "$d"/*.receipt.txt
 expect_reject "a DUPLICATED workspace-hash inside a side block" "$d" "UNREADABLE"
 
 # 14f. A SECOND, CONFLICTING timestamps() line. It renders a SEALED fact, and extraction
@@ -257,9 +279,27 @@ if [ -z "$TS" ]; then
   FAILED=1
 else
   d=$(lab_with "$(basename "$TS")" duptimestamps)
-  printf 'timestamps(): jenkins=none fogell=none (prefix text excluded, coverage compared and sealed)\n' >> "$d/r.receipt.txt"
+  printf 'timestamps(): jenkins=none fogell=none (prefix text excluded, coverage compared and sealed)\n' >> "$d"/*.receipt.txt
   expect_reject "a SECOND conflicting timestamps() line" "$d" "REFUSED"
 fi
+
+# 14g. A VALID RECEIPT COPIED ONTO ANOTHER CASE'S NAME. It verifies fine on its own
+# terms — the seal binds which case was compared, and nothing bound WHERE the document
+# sits — while `generate-scorecard.bb` attributes evidence by the ON-DISK filename. So
+# copying any proven receipt over another case name grants that case tier 1 from a run
+# that never tested it. Raised by review on PR #48.
+d="$LAB/copied"
+mkdir -p "$d"
+cp "$SRC/$SEQ" "$d/some-other-case.receipt.txt"
+expect_reject "a valid receipt COPIED onto another case name" "$d" "REFUSED"
+
+# 14h. A SIDE MARKED `(did not run)` THAT ALSO CARRIES EVIDENCE. The marker was trusted
+# as a summary of the block rather than checked against it, so a NOT COMPARABLE receipt —
+# whose seal binds `<none>` for the absent side — could be edited to display full fake
+# side evidence and still verify. Raised by the pre-push verifier.
+d=$(lab_with "$SEQ" ranandnot)
+sed -i '0,/^  result:/s/^  result:.*/  (did not run)\n&/' "$d"/*.receipt.txt
+expect_reject "a side claiming '(did not run)' beside real evidence" "$d" "UNREADABLE"
 
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
 # `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending
@@ -267,19 +307,19 @@ fi
 # before the duplicate refusal existed, on the commit that added seal verification.
 # The check that closes a hole shipped with a green tick in front of it.
 d=$(lab_with "$SEQ" second-verdict)
-printf '\nVERDICT: PROVEN (tier 1) — same result, same output, same workspace hash\n' >> "$d/r.receipt.txt"
+printf '\nVERDICT: PROVEN (tier 1) — same result, same output, same workspace hash\n' >> "$d"/*.receipt.txt
 expect_reject "a FORGED SECOND VERDICT line" "$d" "REFUSED"
 
 # 16. the same class, on a header field: every reader takes the FIRST match, so a second
 # copy of any field is unsealed text a later reader can be steered to. Arm 15 alone would
 # be satisfied by a fix that special-cased the verdict.
 d=$(lab_with "$SEQ" second-core)
-printf '\njenkins-core: 9.99.9\n' >> "$d/r.receipt.txt"
+printf '\njenkins-core: 9.99.9\n' >> "$d"/*.receipt.txt
 expect_reject "a DUPLICATED jenkins-core field" "$d" "REFUSED"
 
 # 17. a receipt with NO verdict line at all is refused rather than hashed as if fine
 d=$(lab_with "$SEQ" no-verdict)
-sed -i '/^VERDICT: /d' "$d/r.receipt.txt"
+sed -i '/^VERDICT: /d' "$d"/*.receipt.txt
 expect_reject "a receipt with NO verdict line" "$d" "REFUSED"
 
 # 18. an EMPTY directory must fail, not report a vacuous pass. The check is loudest
