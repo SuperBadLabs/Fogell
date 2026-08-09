@@ -394,9 +394,15 @@ module Compare =
               // way — but the receipt did not say the failure was UNDIAGNOSED, and that is
               // the fact separating a wrong answer from no answer. Each engine is now
               // asked about its OWN result, which is what the sentence above always said.
+              // Written as an explicit condition rather than nested `if`s inside a list
+              // computation expression: that form yields nothing on the false path with no
+              // `else` in sight, and a later refactor that makes either branch return a
+              // value changes the meaning silently. Raised by review on PR #49.
               let explains (t: Trace) (engine: string) =
-                  [ if t.Result = "failure" || t.Result = "aborted" then
-                        if not t.ReportedFailureReason then DiagnosticSilence engine ]
+                  if (t.Result = "failure" || t.Result = "aborted") && not t.ReportedFailureReason then
+                      [ DiagnosticSilence engine ]
+                  else
+                      []
 
               yield! explains fogell "fogell"
               yield! explains jenkins "jenkins"
