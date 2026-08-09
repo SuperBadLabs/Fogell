@@ -412,6 +412,7 @@ module FogellSide =
                   Failed = ref false
                   Sink = bump
                   EnvOverlay = []
+                  HostedBody = None
                   Secrets = []
                   SiblingFailedAt = ref -1L
                   // set per top-level step by runStageBody; nothing outside a

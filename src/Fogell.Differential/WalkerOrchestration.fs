@@ -210,7 +210,14 @@ module WalkerOrchestration =
         let scriptStepVocabulary =
             set
                 [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
-                  "stash"; "unstable"; "unstash" ]
+                  "stash"; "unstable"; "unstash"
+                  // FG-172: readmitted, now that a hosted body reaches its arm.
+                  "dir" ]
+
+        /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
+        /// from a `script { }` rather than a `Step list`. Everything else block-taking is
+        /// refused; see the derivation at the refusal site.
+        let scriptWrappersWithHostedBody = set [ "dir" ]
 
         /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
         /// the sandbox's generic denial says a name was not admissible, not why THIS one
@@ -241,7 +248,12 @@ module WalkerOrchestration =
                   //
                   // Dropping them from the vocabulary answers both spellings at once: with
                   // a body or without, the name is not callable here at all.
-                  for w in [ "dir"; "timeout"; "retry"; "withEnv"; "withCredentials" ] do
+                  // `dir` IS ABSENT: it now runs a hosted body (FG-172). The rest still
+                  // drive off `step.Block` and would silently run with no body, so they
+                  // stay refused until each arm is taught the same trick — one at a time,
+                  // each with a differential case, rather than opening them together and
+                  // finding out which ones lied.
+                  for w in [ "timeout"; "retry"; "withEnv"; "withCredentials" ] do
                       yield
                           w,
                           $"`{w}` takes a block, and a replayed script effect cannot carry one, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
@@ -1651,9 +1663,29 @@ module WalkerOrchestration =
                     // engines agreed on the file CONTENT, so only the workspace
                     // manifest's PATHS caught it — which is precisely why the
                     // manifest is (path, hash) pairs and not a content digest.
-                    for inner in step.Block do
-                        if not (halted ctx) then
-                            runStepDispatch ctx target stage inner deadline
+                    // FG-172. A HOSTED body is Groovy, not a `Step list`, so it is run
+                    // through the runner the script host supplied — and it is handed
+                    // `target`, the directory this arm just established, for the same
+                    // reason the loop below takes `target` rather than `cwd`. That
+                    // distinction cost a defect once already: the body wrote to the stage
+                    // root and only the workspace manifest's PATHS caught it.
+                    match ctx.HostedBody, step.Block with
+                    | Some runBody, _ -> runBody { ctx with HostedBody = None } target
+                    | None, [] ->
+                        // NO BODY AT ALL. Jenkins refuses this outright — "dir step must
+                        // be called with a body" — and creating the directory and carrying
+                        // on is a success where Jenkins fails. Checked at the ARM rather
+                        // than in the script vocabulary, because the rule is Jenkins', not
+                        // the script bridge's: `dir('x')` alone is just as wrong as a
+                        // stage step. Caught by `script-bodyless-dir` the moment `dir`
+                        // rejoined the vocabulary, which is what that case is for.
+                        emit "ERROR: dir step must be called with a body"
+                        ctx.Failed.Value <- true
+                        ctx.Sink BuildStatus.Failure
+                    | None, blockSteps ->
+                        for inner in blockSteps do
+                            if not (halted ctx) then
+                                runStepDispatch ctx target stage inner deadline
 
             // FG-160. `script { … }` — SCRIPTED GROOVY, handed to the engine that
             // understands it. The body arrives verbatim (`ScriptBody`) because parsing it
@@ -1681,7 +1713,17 @@ module WalkerOrchestration =
                     match
                         StepValueUse.findEnvMutations body
                         @ StepValueUse.find scriptStepVocabulary.Contains body
-                        @ StepValueUse.findWrapperCalls scriptStepVocabulary.Contains body
+                        // DERIVED, not a hand-kept list: a block-taking step is refused
+                        // unless its arm has been taught to run a hosted body. Add one to
+                        // the vocabulary without teaching its arm and this fires, rather
+                        // than the step running with its block silently dropped — which is
+                        // what happened to `dir` before FG-172 and is the failure this
+                        // guard exists for. Today `dir` is the only one taught, so the
+                        // predicate is not vacuous: every other block-taking name is
+                        // already outside the vocabulary and denied by the sandbox.
+                        @ StepValueUse.findWrapperCalls
+                            (fun n -> scriptStepVocabulary.Contains n && not (scriptWrappersWithHostedBody.Contains n))
+                            body
                     with
                     | _ :: _ as uses ->
                         for u in uses do
@@ -1718,21 +1760,31 @@ module WalkerOrchestration =
                         // all 123 receipts before anything depends on it. An unexercised
                         // callback that everything is about to be built on is the shape of
                         // dead code this session keeps finding under a passing gate.
+                        // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
+                        // wrapper's body re-enters the interpreter, which calls back here —
+                        // and those inner steps must run in the directory and overlay the
+                        // WRAPPER established, not the ones that existed when the script
+                        // started. Capturing `ctx`/`cwd` in this closure is exactly the bug
+                        // `dir('x') { sh 'pwd' }` had under the batch model, in a new place.
+                        let hostAt = ref (ctx, cwd)
+
+                        // Point the host at a wrapper's context for the duration of its
+                        // body, then restore. `try/finally` because a step inside the body
+                        // can fail the build, and leaving the cell pointing into an
+                        // abandoned wrapper would silently run the REST of the script in
+                        // the wrong directory.
+                        let runBodyIn (thunk: unit -> unit) (inner: BranchCtx) (wd: string) =
+                            let saved = hostAt.Value
+                            hostAt.Value <- (inner, wd)
+
+                            try
+                                thunk ()
+                            finally
+                                hostAt.Value <- saved
+
                         let host: PerformStep =
                             { Perform =
                                 fun name positional named runBody ->
-                                    // The body cannot arrive yet: `findWrapperCalls` refuses
-                                    // every block-taking step above. Asserted rather than
-                                    // ignored, because a silently dropped body is exactly
-                                    // the defect that refusal exists to prevent, and if the
-                                    // refusal ever stops covering a shape this says so
-                                    // instead of running the wrapper without its block.
-                                    match runBody with
-                                    | Some _ ->
-                                        failwith
-                                            $"internal: `{name}` reached the script host with a body, which the wrapper refusal should have rejected"
-                                    | None -> ()
-
                                     let called =
                                         { Name = name
                                           Positional = positional |> List.map Value.toDisplay
@@ -1753,8 +1805,20 @@ module WalkerOrchestration =
                                           ScriptBody = None
                                           Position = step.Position }
 
-                                    if not (halted ctx) then
-                                        runStepDispatch ctx cwd stage called deadline
+                                    let atCtx, atCwd = hostAt.Value
+
+                                    let dispatchCtx =
+                                        match runBody with
+                                        | Some thunk ->
+                                            { atCtx with HostedBody = Some(runBodyIn thunk) }
+                                        // CLEARED for a plain step, not merely left alone: a
+                                        // stale runner inherited from an enclosing wrapper
+                                        // would let a body-less call run some other call's
+                                        // block.
+                                        | None -> { atCtx with HostedBody = None }
+
+                                    if not (halted dispatchCtx) then
+                                        runStepDispatch dispatchCtx atCwd stage called deadline
 
                                     // NULL, still: `runStepDispatch` returns unit, so there is
                                     // no value to hand back and `StepValueUse` keeps refusing
@@ -1878,6 +1942,7 @@ module WalkerOrchestration =
                                   // forwards upward to `bump`.
                                   Sink = ctx.Sink
                                   EnvOverlay = ctx.EnvOverlay
+                                  HostedBody = None
                                   Secrets = ctx.Secrets
                                   // The stamp must travel WITH the predicate it
                                   // describes. A non-failFast block inherits the

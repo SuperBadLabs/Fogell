@@ -48,6 +48,19 @@ type BranchCtx =
       /// shadowed one reverts to its outer value.
       /// Receipt: `withenv-scoping`.
       EnvOverlay: (string * string) list
+      /// FG-172. The body of a HOSTED wrapper — a `script { }` block's
+      /// `dir('x') { … }`, whose body is Groovy rather than a `Step list`.
+      ///
+      /// Takes the context the wrapper established, because that is the whole
+      /// difficulty: the body re-enters the interpreter, which calls back into the
+      /// walker, and those inner steps must run in the wrapper's directory and
+      /// overlay rather than the ones captured when the script started. The wrapper
+      /// hands over what it set up; the runner points the host at it for the
+      /// duration and restores it afterwards.
+      ///
+      /// `None` for every ordinary step, where the body is `step.Block` and this
+      /// question does not arise.
+      HostedBody: (BranchCtx -> string -> unit) option
       /// FG-046b. The (stage, top-level step index) this branch is currently
       /// executing — the key durability records are written under. Carried on
       /// the BRANCH, not in run-scoped state, because parallel branches execute

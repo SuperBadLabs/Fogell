@@ -1,8 +1,8 @@
-# Differential receipt — withenv-path-same-list.Jenkinsfile
+# Differential receipt — script-dir-body.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c637124336b997c156583669e7912eac1e8524e39a7e0037d630928d5206074d
-case-digest:  2a4c98aeb2372289bef4a94ee323068bf000cfae74e7d440bd948ccf82caf462
+seal:         313035967c4a163a128ced65ba51f2185eb4b5d0377f0f4da427a2d31a23f9c7
+case-digest:  7096057743bb78fe9e4f2f9630d621b7359be9db840517508f77bf45db6d2149
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -78,18 +78,20 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: b6ab57a0bba4ce83e48c150aeed28ddd092c91b27535f56b10da0b3819bfb2fb
+  workspace-hash: 5ca197b1d5d04ab28d95f4efddacb2239c58aa76262a97862d8929a2919ac3c2
   output (2 lines):
-    | + echo /opt/tools/bin:/custom-base:/usr/bin:/bin
-    | + cut -d: -f1,2
+    | + echo placed
+    | + echo outside
   workspace:
-    c871225b184c  head.txt
+    bc59dec10c6d  sub/where.txt
+    92a214fa6157  top.txt
 
 ## Fogell
   result:         success
-  workspace-hash: b6ab57a0bba4ce83e48c150aeed28ddd092c91b27535f56b10da0b3819bfb2fb
+  workspace-hash: 5ca197b1d5d04ab28d95f4efddacb2239c58aa76262a97862d8929a2919ac3c2
   output (2 lines):
-    | + echo /opt/tools/bin:/custom-base:/usr/bin:/bin
-    | + cut -d: -f1,2
+    | + echo placed
+    | + echo outside
   workspace:
-    c871225b184c  head.txt
+    bc59dec10c6d  sub/where.txt
+    92a214fa6157  top.txt
