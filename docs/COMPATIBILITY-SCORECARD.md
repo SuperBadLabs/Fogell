@@ -20,7 +20,13 @@ counterexample four paragraphs down.
 
 **The admitted row is not ADR tier 2.** The ADR requires parsing AND executing; this scorer only parses, because corpus files are untrusted third-party CI code and are never run here. Labelling them tier 2 would assert an execution result nobody measured, so ADR tier 2 is published as NOT ASSESSED.
 
-**Receipt seals are not verified by this generator.** A receipt is counted by its verdict line; nothing here recomputes the seal that binds its result, output and workspace evidence (ADR 0004). Reimplementing that hash in a second language is how the three existing copies of the timestamp rule came to disagree, so the gap is stated and filed (FG-161) rather than papered over with a weaker check.
+**Receipt seals are verified, but not by this generator.** A receipt is counted here by its verdict line. That line is bound by the seal (FG-161), and the gate recomputes every seal from the receipt's own content via `--verify-seals` on the differential CLI — where the hash is computed, rather than reimplemented in a second language, which is how the three existing copies of the timestamp rule came to disagree. So a doctored receipt fails the gate; it does not fail this script, and the two are not independent checks.
+
+**What the seal covers is a SUBSET of what a receipt prints.** EACH RECEIPT STATES ITS OWN unsealed regions in full, under `## Comparison contract` — this page deliberately does not restate them. It did, and the two lists drifted apart across four review rounds, each fix completing one copy and leaving the other short. A doctored receipt fails verification only if the doctoring touched a sealed field.
+
+implemented. Each receipt's `## Comparison contract` carries the full list.
+
+What verification does NOT cover: whether each case on disk still matches the digest its receipt recorded (freshness, watched by an mtime warning), and the unsealed regions each receipt names.
 
 ### Tier-3 rejections by code
 

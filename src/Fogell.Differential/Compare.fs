@@ -83,7 +83,23 @@ type Receipt =
       /// committed receipt without breaking the seal. Restoring that guarantee
       /// needs a second provenance hash — FG-128, not smuggled in behind a
       /// comment. Caught by the pre-push verifier's model review.
-      Seal: string }
+      Seal: string
+      /// FG-161. `sha256` of the case file's raw bytes, RECORDED in the receipt as
+      /// well as bound into [Seal].
+      ///
+      /// Written down rather than recomputed on demand because a verifier otherwise
+      /// has to find the case a receipt came from, and that mapping is not invertible:
+      /// receipts `foo.b1`/`foo.b2` both come from one multi-build `foo.Jenkinsfile`,
+      /// and FG-166 already files the reversal as a defect. Recording it makes seal
+      /// verification self-contained — no case files needed at all — and SPLITS the
+      /// check in two, which is the point: seal integrity is "does this document still
+      /// hash to its seal", case freshness is "does that digest still match the case on
+      /// disk". Different failures, different evidence, and only the second needs the
+      /// case→receipt mapping (forward, from the cases, where it is unambiguous).
+      ///
+      /// Recording it is not a weakening: the digest is itself bound by [Seal], so
+      /// editing this line to match a swapped case breaks the seal.
+      CaseDigest: string }
 
 module Compare =
 
@@ -398,6 +414,146 @@ module Compare =
 
         (if List.isEmpty divergences then Proven else Diverged divergences), folds
 
+    /// FG-167. Whether a comparison ran in MULTISET mode, decided exactly as
+    /// `compareOutput` decides it — the DISJUNCTION, not per-trace. One engine reporting
+    /// a concurrent case puts BOTH sides through multiset mode, so a per-trace test would
+    /// seal one side sorted and the other literal.
+    ///
+    /// ONE definition, because FG-161 gave this rule a third reader (the seal, the
+    /// rendered `sealed-output` field, and the verifier) and this file already records
+    /// what happens when a rule gets copies: "compare, seal, render — and two of them
+    /// disagreed".
+    let comparedAsMultisetIn (traces: Trace option list) =
+        traces |> List.choose id |> List.exists (fun t -> t.Concurrent)
+
+    let comparedAsMultiset (r: Receipt) = comparedAsMultisetIn [ r.Jenkins; r.Fogell ]
+
+    /// FG-161. The verdict block, as text — written by `render` and hashed by
+    /// `sealedContent`, from this one definition.
+    ///
+    /// THE VERDICT WAS NOT SEALED. The seal bound the compared CONTENT — results, output,
+    /// workspace hashes, folds — and the verdict is derived from that content, so binding
+    /// it looked redundant. It is not: MEASURED on when-conditions.receipt.txt, editing
+    /// `VERDICT: PROVEN (tier 1)` to `VERDICT: DIVERGED (7)` left the seal valid, and the
+    /// scorecard classifies a receipt as proven by READING THAT LINE. The one edit the
+    /// whole published count rests on was the one edit the seal ignored — and this ticket
+    /// exists because nothing recomputed the seal, so the gap would have shipped behind a
+    /// verifier that passed.
+    ///
+    /// Derived-therefore-safe is only true if something re-derives it. Nothing did.
+    let verdictLines (verdict: Verdict) (workspaceCompared: bool) : string list =
+        match verdict with
+        | Proven when workspaceCompared ->
+            [ "VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash" ]
+        | Proven ->
+            [ "VERDICT: PROVEN-PARTIAL — same result, same output."
+              "  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,"
+              "  so this is NOT a tier-1 claim under ADR 0001. See FG-002b." ]
+        | Diverged ds -> $"VERDICT: DIVERGED ({ds.Length})" :: [ for d in ds -> $"  - {d.Describe}" ]
+        | NotComparable d -> [ "VERDICT: NOT COMPARABLE"; $"  - {d.Describe}" ]
+
+    /// FG-161. THE ONE LIST of what a receipt prints but its seal does not bind.
+    ///
+    /// One definition because it was three — the receipt contract, the scorecard prose and
+    /// this lane's header — and it drifted in FOUR consecutive verifier rounds: each fix
+    /// completed the copy I was editing and left the others short, then a later round found
+    /// the gap. That is the same collapse-the-duplication move that ended the fallback drift
+    /// and the board-number drift. The scorecard now POINTS at the receipt instead of
+    /// restating it, because a second copy in a second language is how this started.
+    let unsealedRegions =
+        [ "NOT SEALED, in full: this contract block; the workspace FILE LISTING below"
+          "  (the workspace HASH is sealed, the listing under it is not); any engine notes;"
+          "  the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is"
+          "  compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119"
+          "  RECOVERED provenance block, which can be added, removed or fabricated without"
+          "  breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER"
+          "  is unsealed too — see the PARALLEL lines below. Everything else printed here is"
+          "  bound."
+          "  So `--verify-seals` passing does NOT mean this document is unaltered — it means"
+          "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
+          "  minus fenced regions; it is NOT implemented, so this list is what holds today." ]
+
+    /// FG-161. The receipt filename a case name produces. ONE derivation, because the
+    /// writer picks the path and the verifier must check the file it found is the one that
+    /// name would have produced.
+    ///
+    /// (The global `Replace` is FG-163's defect — `foo.Jenkinsfile.Jenkinsfile` strips every
+    /// occurrence, not the extension. No such case exists; kept verbatim here so writer and
+    /// reader agree, and FG-163 fixes both together or neither.)
+    let receiptFileName (file: string) =
+        file.Replace("/", "_").Replace(".Jenkinsfile", "") + ".receipt.txt"
+
+    /// FG-161. One side of a comparison, reduced to exactly the facts the seal binds.
+    type SealedSide =
+        { Result: string
+          WorkspaceHash: string
+          TimestampCoverage: string
+          /// Already in SEALED order — sorted for a multiset comparison, literal
+          /// otherwise. The sort belongs to the caller that knows which mode ran.
+          Output: string list }
+
+    /// FG-161. THE ONE DEFINITION of the string a seal hashes.
+    ///
+    /// Extracted so a VERIFIER can rebuild it from a receipt on disk and hash it with
+    /// this same function. The alternative on the table was reimplementing the hash in
+    /// babashka inside the scorecard generator, and this file already records what that
+    /// costs: three copies of the timestamp rule existed — "compare, seal, render" — and
+    /// two of them disagreed, so a proof could compare one fact and seal another. A
+    /// fourth copy, in a second language, is that defect by construction.
+    ///
+    /// So the verifier is a mode on this CLI, and the only thing it implements
+    /// independently is EXTRACTION from the rendered text. Extraction can be wrong; a
+    /// wrong extraction makes seals mismatch loudly rather than pass quietly, which is
+    /// the direction a check should fail in.
+    let sealedContent
+        (file: string)
+        (caseDigestHex: string)
+        (core: string)
+        /// "multiset" or "sequence". IN THE HASH, because it decides HOW the verifier
+        /// hashes the output — an unsealed field that steers verification is a key left
+        /// under the mat. A `sequence` receipt whose output happens to be sorted could be
+        /// relabelled `multiset` without breaking the seal, and from then on its output
+        /// could be reordered freely and still verify. Substantiated by review on
+        /// archive-empty-fails.receipt.txt: original, mode-flipped, and mode-flipped-plus-
+        /// reordered all recomputed the same stored seal.
+        (sealedOutputMode: string)
+        (verdict: string list)
+        (jenkins: SealedSide option)
+        (fogell: SealedSide option)
+        (folds: string list)
+        : string =
+        let render (s: SealedSide option) =
+            match s with
+            | Some x ->
+                // The timestamp coverage is IN THE SEAL. It is compared, so a receipt
+                // that did not bind it would let the fact be edited out without changing
+                // the hash — a sealed document asserting something its seal does not
+                // cover. The prefix TEXT stays out (two clocks), the FACT is bound.
+                // THE COUNT IS IN THE HASH. `String.concat "\n"` serialises [] and [""]
+                // identically, and `render` prints them differently — `output (0 lines):`
+                // versus one `    | ` line the verifier reads back as "". So a zero-output
+                // receipt could gain a blank output line without breaking its seal, while
+                // the contract beside it promised that adding or dropping a line breaks it.
+                // Raised by the pre-push verifier's review; a delimiter that cannot encode
+                // "no elements" apart from "one empty element" is ambiguous by construction.
+                let joined = String.concat "\n" x.Output
+                let n = List.length x.Output
+                $"{x.Result}|{x.WorkspaceHash}|timestamps={x.TimestampCoverage}|lines={n}|{joined}"
+            | None -> "<none>"
+
+        // Folds join the sealed content: a fold section edited after the fact must be as
+        // detectable as an edited output line.
+        // COUNTS, for the same reason the per-side output carries one: `String.concat`
+        // cannot tell [] from [""], so a FABRICATED `## Output comparison notes (1)`
+        // heading over a single two-space line reconstructed an empty list and left the
+        // seal intact. That is finding #4 of this ticket appearing again on a different
+        // list — I bound the output count and not the fold count, fixing the instance
+        // instead of the rule. Every list the seal covers now carries its length.
+        let joinedFolds = String.concat "\n" folds
+        let joinedVerdict = String.concat "\n" verdict
+        let nf, nv = List.length folds, List.length verdict
+        $"{file}\n{caseDigestHex}\n{core}\n{sealedOutputMode}\nverdict={nv}\n{joinedVerdict}\n{render jenkins}\n{render fogell}\nfolds={nf}\n{joinedFolds}"
+
     let receipt
         (file: string)
         (caseBytes: byte[])
@@ -412,15 +568,11 @@ module Compare =
             | _, Result.Error e -> (NotComparable(FogellFailed e), []), None, None
             | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
 
-        // FG-167. Whether the comparison ran in MULTISET mode, decided exactly as
-        // `compareOutput` decides it — the DISJUNCTION, not per-trace. One engine
-        // reporting a concurrent case puts BOTH sides through multiset mode, so a
-        // per-trace test would seal one side sorted and the other literal.
-        let comparedAsMultiset =
-            [ j; f ] |> List.choose id |> List.exists (fun t -> t.Concurrent)
+        let comparedAsMultiset = comparedAsMultisetIn [ j; f ]
+        let caseHex = caseDigest caseBytes
 
         let comparable =
-            let render (t: Trace option) =
+            let sealedSide (t: Trace option) =
                 match t with
                 | Some x ->
                     // FG-167. THE SEAL BINDS WHAT WAS COMPARED. Binding the literal order
@@ -442,25 +594,16 @@ module Compare =
                     // inherited VALUES the engines actually printed. Sorting removes
                     // exactly the nondeterminism and nothing else — content and
                     // MULTIPLICITY stay bound.
-                    let sealedOutput =
-                        if comparedAsMultiset then List.sort x.Output else x.Output
-
-                    let joined = String.concat "\n" sealedOutput
-                    // The timestamp coverage is IN THE SEAL. It is compared, so a receipt
-                    // that did not bind it would let the fact be edited out
-                    // without changing the hash — a sealed document asserting
-                    // something its seal does not cover. The prefix TEXT stays
-                    // out (two clocks), the FACT is bound.
-                    // the SAME classifier the comparison uses. Three copies of
-                    // this rule existed — compare, seal, render — and two of them
-                    // disagreed about `stamped > total`, so a proof could compare
-                    // one fact and seal another.
-                    $"{x.Result}|{x.WorkspaceHash}|timestamps={Trace.timestampCoverage x.Timestamps}|{joined}"
-                | None -> "<none>"
-
-            // Folds join the sealed content: a fold section edited after the
-            // fact must be as detectable as an edited output line.
-            let joinedFolds = String.concat "\n" folds
+                    Some
+                        { Result = x.Result
+                          WorkspaceHash = x.WorkspaceHash
+                          // the SAME classifier the comparison uses. Three copies of
+                          // this rule existed — compare, seal, render — and two of them
+                          // disagreed about `stamped > total`, so a proof could compare
+                          // one fact and seal another.
+                          TimestampCoverage = Trace.timestampCoverage x.Timestamps
+                          Output = if comparedAsMultiset then List.sort x.Output else x.Output }
+                | None -> None
 
             // FG-164. THE CASE SOURCE IS IN THE SEAL. It bound the file NAME only, so
             // editing a case without renaming it left the old receipt valid: the expected
@@ -477,7 +620,22 @@ module Compare =
             // call site pass anything — the seal would bind it and `receipt` could not
             // tell. Hashing here makes the binding non-bypassable, which is the same
             // collapse-the-duplication move that ended the fallback and list drift.
-            $"{file}\n{caseDigest caseBytes}\n{core}\n{render j}\n{render f}\n{joinedFolds}"
+            let workspaceCompared =
+                match j, f with
+                | Some jt, Some ft -> workspaceWasCompared jt ft
+                | _ -> false
+
+            let mode = if comparedAsMultiset then "multiset" else "sequence"
+
+            sealedContent
+                file
+                caseHex
+                core
+                mode
+                (verdictLines verdict workspaceCompared)
+                (sealedSide j)
+                (sealedSide f)
+                folds
 
         { File = file
           Verdict = verdict
@@ -486,6 +644,14 @@ module Compare =
           Fogell = f
           ComparisonContract =
             Trace.comparisonContract
+            // FG-161. WHAT THE SEAL DOES NOT COVER, in the document it does not cover it
+            // in. The seal binds an ENUMERATED subset — verdict, results, workspace
+            // hashes, output, folds, case digest, core, output mode — so everything else
+            // printed here is trusted and unbound. Naming it is the difference between a
+            // limit and a lie: `--verify-seals` passing means the sealed fields are
+            // intact, not that this document is unaltered. FG-169 replaces the whole
+            // scheme with one that binds the document minus fenced regions.
+            @ unsealedRegions
             @ (if comparedAsMultiset then
                    [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
                      "  branches interleave nondeterministically, so a sequence comparison would"
@@ -506,7 +672,8 @@ module Compare =
           // proven on attempt 2 must seal identically — recovery is provenance
           // about the RUN, not about the compared content.
           RecoveredFrom = []
-          Seal = sha256Text comparable }
+          Seal = sha256Text comparable
+          CaseDigest = caseHex }
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
     /// diffed and hashed alongside the code.
@@ -518,6 +685,21 @@ module Compare =
         line ""
         line $"jenkins-core: {r.JenkinsCore}"
         line $"seal:         {r.Seal}"
+        // FG-161. Both are MACHINE-READABLE fields a verifier reads back, not decoration.
+        //
+        // `case-digest` is bound by the seal, so recording it cannot weaken anything, and
+        // it makes verification self-contained — otherwise the verifier must find the
+        // case a receipt came from, and `foo.b1`/`foo.b2` both come from one multi-build
+        // `foo.Jenkinsfile` (the reversal FG-166 files as a defect).
+        //
+        // `sealed-output` states which ORDER was hashed. FG-167 seals a multiset case's
+        // output sorted while the block below prints it literally, so a verifier that
+        // guessed would fail every parallel receipt. Reading the mode from PROSE in the
+        // contract block was the alternative, and coupling a hash check to the wording of
+        // an explanatory sentence is a defect waiting for the first edit.
+        let sealedOutputMode = if comparedAsMultiset r then "multiset" else "sequence"
+        line $"case-digest:  {r.CaseDigest}"
+        line $"sealed-output: {sealedOutputMode}"
         line ""
 
         let workspaceCompared =
@@ -543,21 +725,8 @@ module Compare =
             line "  that recovers REPEATEDLY across runs is a defect report; treat it so."
             line ""
 
-        match r.Verdict with
-        | Proven when workspaceCompared ->
-            line "VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash"
-        | Proven ->
-            line "VERDICT: PROVEN-PARTIAL — same result, same output."
-            line "  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,"
-            line "  so this is NOT a tier-1 claim under ADR 0001. See FG-002b."
-        | Diverged ds ->
-            line $"VERDICT: DIVERGED ({ds.Length})"
-
-            for d in ds do
-                line $"  - {d.Describe}"
-        | NotComparable d ->
-            line "VERDICT: NOT COMPARABLE"
-            line $"  - {d.Describe}"
+        for l in verdictLines r.Verdict workspaceCompared do
+            line l
 
         // The timestamp fact, rendered WHEN THERE IS ANY — and the sentence here
         // used to say "a receipt that compares something must show it", which
@@ -643,9 +812,440 @@ module Compare =
         renderSide "Fogell" r.Fogell
         sb.ToString()
 
+    /// FG-161. The outcome of recomputing a receipt's seal from the receipt itself.
+    type SealCheck =
+        | SealValid
+        | SealMismatch of stored: string * recomputed: string
+        /// The document could not be read as a receipt at all. Kept SEPARATE from a
+        /// mismatch: "this is not a receipt" and "this receipt was altered" are
+        /// different facts, and collapsing them would let a truncated file report as
+        /// tampering — or, far worse, let a parse failure be waved through as noise.
+        | SealUnreadable of reason: string
+        /// The document hashes correctly but its STRUCTURE is not a receipt's: a field
+        /// or section appears more than once. Separate from a mismatch because the hash
+        /// genuinely matches — that is precisely what makes it dangerous.
+        | SealRefused of reason: string
+
+        member this.Describe =
+            match this with
+            | SealValid -> "seal valid"
+            | SealMismatch(s, r) ->
+                // NOT `Substring(0, 12)`: a malformed short `seal:` value is present, so the
+                // required-field check passes it through, and formatting the error would
+                // throw out of a checker whose whole job is to report cleanly.
+                let short (h: string) = if h.Length > 12 then h.Substring(0, 12) else h
+                $"SEAL MISMATCH — stored {short s}, content hashes to {short r}"
+            | SealUnreadable why -> $"UNREADABLE — {why}"
+            | SealRefused why -> $"REFUSED — {why}"
+
+    /// FG-161. Recompute a receipt's seal FROM THE RENDERED RECEIPT and compare.
+    ///
+    /// `generate-scorecard.bb` classifies a receipt as proven from its VERDICT LINE, so a
+    /// receipt edited while that line stays intact inflated the published proven count
+    /// and `--check` approved it. Nothing recomputed the hash that the whole artifact
+    /// rests on. This is the recomputation.
+    ///
+    /// It hashes through `sealedContent`, the same function the writer uses — the hash
+    /// rule is NOT reimplemented here. What IS implemented here is extraction, and
+    /// extraction is the part that can be wrong. It fails toward SealUnreadable or a
+    /// mismatch, never toward a silent pass.
+    ///
+    /// WHAT IT DOES NOT CHECK, so a valid seal is not over-read: whether the case on disk
+    /// still matches `case-digest` (that is freshness, and it needs the case→receipt
+    /// mapping), and the RECOVERED provenance block and printed line ORDER of a multiset
+    /// case, both of which the receipt itself declares outside the seal.
+    let verifySealedText (onDiskName: string) (text: string) : SealCheck =
+        let lines = text.Replace("\r\n", "\n").Split '\n' |> Array.toList
+
+        let field (prefix: string) =
+            lines
+            |> List.tryFind (fun l -> l.StartsWith prefix)
+            |> Option.map (fun l -> l.Substring(prefix.Length).Trim())
+
+        // A section runs from its heading to the next line that is a heading or blank.
+        let sectionBody (heading: string) =
+            match lines |> List.tryFindIndex (fun l -> l.StartsWith heading) with
+            | None -> []
+            | Some i ->
+                lines
+                |> List.skip (i + 1)
+                |> List.takeWhile (fun l -> l.StartsWith "  " && not (l.StartsWith "## "))
+
+        // The engine block for one side, from its heading to the next `## ` heading.
+        let sideBlock (name: string) =
+            match lines |> List.tryFindIndex (fun l -> l = $"## {name}") with
+            | None -> None
+            | Some i -> lines |> List.skip (i + 1) |> List.takeWhile (fun l -> not (l.StartsWith "## ")) |> Some
+
+        // EXACTLY ONE OF EACH. Every reader here — and the scorecard's regex — takes the
+        // FIRST match, so a second copy of a field is unsealed text that a later reader
+        // can be steered to instead.
+        //
+        // MEASURED on when-conditions.receipt.txt: appending a second `VERDICT: PROVEN
+        // (tier 1)` line left `--verify-seals` reporting VALID, because extraction stops at the first verdict
+        // block — while `generate-scorecard.bb` classifies tier 1 with `(?m)^VERDICT:
+        // PROVEN \(tier 1\)`, which matches ANY line. A diverged receipt with one appended
+        // line would have verified AND promoted. Raised by the pre-push verifier's review
+        // on the commit that added seal verification: the fix shipped a green check in
+        // front of the hole it was closing.
+        //
+        // Refusing DUPLICATES rather than teaching the scorecard which block is sealed,
+        // because that would put "which verdict counts" in two languages — the split this
+        // whole design exists to avoid. One verdict per receipt is also just true.
+        let duplicated =
+            [ "# Differential receipt — ", true
+              "jenkins-core:", true
+              "seal:", true
+              "case-digest:", true
+              "sealed-output:", true
+              "VERDICT: ", true
+              // The timestamp line is the RENDERING of a sealed fact, and extraction takes
+              // the first match — so a second, conflicting `timestamps():` line sat under a
+              // valid seal claiming different coverage. It was missing from this list while
+              // the list was described as closing the duplicate class: the class-level fix
+              // was one member short, which is the same failure as scoping a fix to the
+              // level you happen to be looking at.
+              "timestamps(): ", false
+              "## Jenkins", true
+              "## Fogell", true
+              "## Comparison contract", true
+              "## Output comparison notes", false ]
+            |> List.tryPick (fun (prefix, required) ->
+                let n = lines |> List.filter (fun l -> l.StartsWith prefix) |> List.length
+
+                if n > 1 then Some $"{n} lines start with '{prefix}' — a receipt has exactly one"
+                elif required && n = 0 then Some $"no line starts with '{prefix}'"
+                else None)
+
+        match duplicated with
+        | Some why -> SealRefused why
+        | None ->
+        // FG-161. ACCOUNT FOR EVERY LINE.
+        //
+        // Extraction was LENIENT: it collected the lines it recognised and ignored the
+        // rest, so anything it did not understand rode along unbound. Three bypasses of
+        // that one shape reached review — an unindented line inserted inside a sealed
+        // section, arbitrary text behind a recognised timestamp classification, and a
+        // fabricated `## Output comparison notes` heading over a blank-ish line.
+        //
+        // A parser that ignores what it does not recognise cannot be the basis of a
+        // tamper check, because "not recognised" is exactly where tampering lives. Every
+        // nonblank line must now match a shape this reader knows, in the section it
+        // appears in, or the receipt is REFUSED. This is FG-169's principle applied to
+        // the existing extractor.
+        let accountable =
+            let sideShapes (l: string) =
+                l.StartsWith "  result:"
+                || l.StartsWith "  workspace-hash:"
+                || l.StartsWith "  output ("
+                || l.StartsWith "    | "
+                || l = "  workspace:"
+                || l = "  engine notes (not compared):"
+                || l.StartsWith "    ! "
+                || l.Trim() = "(did not run)"
+                // workspace manifest row: <12 hex>  <path>
+                || Text.RegularExpressions.Regex.IsMatch(l, @"^    [0-9a-f]{12}  \S")
+
+            let mutable section = "header"
+            let mutable inRecovered = false
+            let mutable inVerdict = false
+            let mutable bad = None
+
+            for l in lines do
+                if bad.IsNone then
+                    if l = "" then
+                        inRecovered <- false
+                        inVerdict <- false
+                    elif inRecovered then
+                        // the RECOVERED block is a declared-unsealed region; its body is
+                        // indented and ends at the blank line above.
+                        if not (l.StartsWith "  ") then bad <- Some l
+                    elif l.StartsWith "RECOVERED:" then
+                        inRecovered <- true
+                    elif l.StartsWith "## " then
+                        // KNOWN HEADINGS ONLY. Accepting any `## ` heading let a forged
+                        // section — `## Forged claim` with an indented body — carry visible
+                        // text through verification, because the body then matched the
+                        // catch-all "indented is fine" rule for non-side sections. I
+                        // whitelisted the SHAPE of a heading and not its IDENTITY.
+                        let h = l.Substring 3
+
+                        if
+                            h = "Jenkins"
+                            || h = "Fogell"
+                            || h = "Comparison contract"
+                            || h.StartsWith "Output comparison notes"
+                        then
+                            section <- h
+                        else
+                            bad <- Some l
+                    else
+                        let ok =
+                            match section with
+                            | "Jenkins"
+                            | "Fogell" -> sideShapes l
+                            | "header" ->
+                                // NO INDENTATION CATCH-ALL. `StartsWith "  "` accepted any
+                                // indented line here, and nothing in the header is hashed
+                                // except the named fields and the VERDICT block — so
+                                // `  forged header claim` inserted after `sealed-output:`
+                                // verified fine and was bound by nothing. The ONLY indented
+                                // lines the header may carry are VERDICT continuations,
+                                // which are sealed, so that is the only thing allowed.
+                                //
+                                // Fourth time in this ticket that a catch-all "and anything
+                                // that looks roughly right" clause turned out to be the
+                                // hole. The rule is: name what is allowed, never what is
+                                // shaped like it.
+                                if l.StartsWith "VERDICT: " then
+                                    inVerdict <- true
+                                    true
+                                else
+                                    l.StartsWith "# Differential receipt — "
+                                    || l.StartsWith "jenkins-core: "
+                                    || l.StartsWith "seal:"
+                                    || l.StartsWith "case-digest:"
+                                    || l.StartsWith "sealed-output:"
+                                    || l.StartsWith "timestamps(): "
+                                    || (inVerdict && l.StartsWith "  ")
+                            // notes and contract bodies are indented; the notes body is
+                            // hashed, so altering it breaks the seal, and the contract is
+                            // a declared-unsealed region.
+                            | _ -> l.StartsWith "  "
+
+                        if not ok then bad <- Some l
+
+            bad
+
+        match accountable with
+        | Some l ->
+            SealRefused $"unrecognised line, so it was never bound: {l.Trim()}"
+        | None ->
+
+        // The notes heading declares a count; a fabricated heading over a blank-ish line
+        // reconstructed an empty list and left the seal intact.
+        let notesCountMismatch =
+            match lines |> List.tryFind (fun l -> l.StartsWith "## Output comparison notes") with
+            | None -> None
+            | Some h ->
+                let m = Text.RegularExpressions.Regex.Match(h, @"^## Output comparison notes \((\d+)\)$")
+
+                if not m.Success then
+                    Some $"malformed notes heading: {h}"
+                else
+                    let declared =
+                        match Int32.TryParse m.Groups[1].Value with
+                        | true, n -> n
+                        | _ -> -1
+
+                    let actual =
+                        lines
+                        |> List.skipWhile (fun l -> not (l.StartsWith "## Output comparison notes"))
+                        |> List.skip 1
+                        |> List.takeWhile (fun l -> l.StartsWith "  " && not (l.StartsWith "## "))
+                        |> List.length
+
+                    if declared <> actual then
+                        Some $"notes heading declares {declared} but carries {actual}"
+                    else
+                        None
+
+        match notesCountMismatch with
+        | Some why -> SealRefused why
+        | None ->
+
+
+        match field "# Differential receipt — ", field "jenkins-core: ", field "seal:", field "case-digest:" with
+        | Some file, Some core, Some storedSeal, Some caseHex ->
+            let multiset =
+                match field "sealed-output:" with
+                | Some "multiset" -> Ok true
+                | Some "sequence" -> Ok false
+                | Some other -> Error $"unknown sealed-output mode: {other}"
+                // NOT DEFAULTED. Guessing `sequence` would make every parallel receipt
+                // read as tampered, and guessing `multiset` would stop binding order for
+                // ordinary cases. An absent field means this predates the field, which is
+                // a fact to report, not to paper over.
+                | None -> Error "no sealed-output field — cannot know which order was hashed"
+
+            // Absent timestamp line means neither side stamped a line, and
+            // `Trace.timestampCoverage` returns "none" whenever stamped = 0. So the
+            // absence is unambiguous, not a gap — verified against the classifier rather
+            // than assumed, because assuming it would have been a silent wrong answer for
+            // every receipt that never mentions the option.
+            let coverage =
+                match lines |> List.tryFind (fun l -> l.StartsWith "timestamps(): ") with
+                | None -> Some("none", "none")
+                | Some l ->
+                    // EXACT SHAPES, not prefixes. `StartsWith "all"` accepted `alligator...`,
+                    // so arbitrary text could ride along behind a recognised classification
+                    // and the receipt would display a coverage claim the seal never saw.
+                    // Raised by review on PR #48.
+                    let word (s: string) =
+                        let s = s.Trim()
+
+                        if Text.RegularExpressions.Regex.IsMatch(s, @"^PARTIAL \(\d+/\d+\)$") then "partial"
+                        elif Text.RegularExpressions.Regex.IsMatch(s, @"^all \(\d+\)$") then "all"
+                        elif s = "none" then "none"
+                        else "<unparseable>"
+
+                    // THE WHOLE LINE, anchored at both ends. The pattern stopped at
+                    // "prefix text excluded", leaving the rest of the sentence — and
+                    // anything appended after it — unmatched and therefore unchecked on a
+                    // line the receipt presents as a sealed fact.
+                    let m =
+                        Text.RegularExpressions.Regex.Match(
+                            l,
+                            @"^timestamps\(\): jenkins=(.+?) fogell=(.+?) \(prefix text excluded, coverage compared and sealed\)$")
+
+                    if m.Success then
+                        Some(word m.Groups[1].Value, word m.Groups[2].Value)
+                    else
+                        None
+
+            let side (name: string) (cov: string) (sortOutput: bool) =
+                match sideBlock name with
+                | None -> Ok None
+                | Some block when block |> List.exists (fun l -> l.Trim() = "(did not run)") ->
+                    // EXCLUSIVE. This returned `Ok None` on sight of the marker, before any
+                    // check that the block was actually empty — so a NOT COMPARABLE receipt,
+                    // whose seal binds `<none>` for the absent side, could be edited to
+                    // DISPLAY full fake side evidence and still verify. The document would
+                    // show a result and output the seal never covered.
+                    //
+                    // Tenth instance of one class here: the marker was trusted as a summary
+                    // of the block instead of being checked against it. Raised by the
+                    // pre-push verifier.
+                    // EVERY side shape, not the three I happened to list. The first
+                    // version missed `  workspace:`, manifest rows and engine notes, so a
+                    // not-comparable receipt whose seal binds `<none>` could still display
+                    // fake workspace and engine-note evidence and verify — while the
+                    // comment beside it said the block was checked as actually empty.
+                    let content =
+                        block
+                        |> List.filter (fun l -> l.Trim() <> "" && l.Trim() <> "(did not run)")
+
+                    if List.isEmpty content then
+                        Ok None
+                    else
+                        Error
+                            $"{name} says '(did not run)' but carries {List.length content} line(s) of side evidence"
+                | Some block ->
+                    let get (prefix: string) =
+                        block
+                        |> List.tryFind (fun l -> l.StartsWith prefix)
+                        |> Option.map (fun l -> l.Substring(prefix.Length).Trim())
+
+                    // EXACTLY the lines the renderer wrote with the `    | ` prefix, and
+                    // no trimming: an output line that is empty renders as the prefix
+                    // alone, and trimming would silently drop it from the hash.
+                    let output =
+                        block
+                        |> List.filter (fun l -> l.StartsWith "    | ")
+                        |> List.map (fun l -> l.Substring 6)
+
+                    // THE PRINTED COUNT MUST MATCH THE LINES ACTUALLY THERE. It is a
+                    // printed fact the seal does not bind — the seal binds the payload —
+                    // so editing `output (2 lines):` to `output (999 lines):` passed
+                    // verification while the receipt read as something it was not.
+                    // Raised by the pre-push verifier. Checked rather than sealed: the
+                    // count is DERIVED from the payload, so the honest check is that the
+                    // document agrees with itself.
+                    // `int` THROWS on a value above Int32.MaxValue, and a tampered
+                    // receipt supplies that value for free — a checker that crashes on
+                    // malformed input is a checker that stops reporting. TryParse, and an
+                    // unparseable count is simply not a valid header.
+                    let headers =
+                        block
+                        |> List.choose (fun l ->
+                            let m = Text.RegularExpressions.Regex.Match(l, @"^  output \((\d+) lines\):$")
+
+                            if m.Success then
+                                match Int32.TryParse m.Groups[1].Value with
+                                | true, n -> Some(Some n)
+                                | _ -> Some None
+                            else
+                                None)
+                        |> List.map (fun o -> defaultArg o -1)
+
+                    // DUPLICATES INSIDE THE SIDE BLOCK TOO. The top-level duplicate check
+                    // covered receipt fields and stopped there, so a second visible
+                    // `  result:  failure` line inside a side block still verified — the
+                    // reader takes the first match and hashes that, while the document
+                    // shows two conflicting engine results. Sixth instance of one class in
+                    // this ticket: I fixed the level I was looking at instead of the rule.
+                    let dupField =
+                        [ "  result:"; "  workspace-hash:" ]
+                        |> List.tryPick (fun prefix ->
+                            match block |> List.filter (fun l -> l.StartsWith prefix) |> List.length with
+                            | 1 -> None
+                            | n -> Some $"{name} has {n} '{prefix.Trim()}' lines — expected exactly one")
+
+                    match dupField with
+                    | Some why -> Error why
+                    | None ->
+
+                    match headers with
+                    | [ declared ] when declared <> List.length output ->
+                        Error $"{name} declares {declared} output lines but carries {List.length output}"
+                    | [ _ ] ->
+                        match get "  result:", get "  workspace-hash:" with
+                        | Some result, Some ws ->
+                            Ok(
+                                Some
+                                    { Result = result
+                                      WorkspaceHash = ws
+                                      TimestampCoverage = cov
+                                      Output = if sortOutput then List.sort output else output }
+                            )
+                        | _ -> Error $"{name} block has no result/workspace-hash"
+                    | hs -> Error $"{name} has {List.length hs} output headers — expected exactly one"
+
+            match multiset, coverage with
+            | Error why, _ -> SealUnreadable why
+            | _, None -> SealUnreadable "timestamps() line present but unparseable"
+            | Ok ms, Some(jCov, fCov) ->
+                match side "Jenkins" jCov ms, side "Fogell" fCov ms with
+                | Error why, _
+                | _, Error why -> SealUnreadable why
+                | Ok j, Ok f ->
+                    let folds =
+                        sectionBody "## Output comparison notes" |> List.map (fun l -> l.Substring 2)
+
+                    // The VERDICT BLOCK, from the line to the blank that ends it. Sealing
+                    // the verdict is the point of this ticket: the scorecard reads that
+                    // line to classify a receipt as proven, and before FG-161 that line
+                    // could be rewritten without breaking the seal.
+                    let verdictBlock =
+                        match lines |> List.tryFindIndex (fun l -> l.StartsWith "VERDICT: ") with
+                        | None -> []
+                        | Some i -> lines |> List.skip i |> List.takeWhile (fun l -> l <> "")
+
+                    // THE FILENAME IS PART OF THE CLAIM. A valid receipt COPIED onto another
+                    // expected name verifies fine on its own terms — and `generate-scorecard.bb`
+                    // attributes evidence by the ON-DISK filename, so copying any proven
+                    // receipt over another case name grants that case tier 1 from a run that
+                    // never tested it. The seal binds which case was compared; nothing bound
+                    // where the document sits. Raised by review on PR #48 — ninth instance of
+                    // one class in this ticket, and the reason FG-169 exists.
+                    if onDiskName <> "" && onDiskName <> receiptFileName file then
+                        SealRefused
+                            $"sealed title '{file}' derives '{receiptFileName file}', but this file is '{onDiskName}'"
+                    else
+
+                    let modeText = if ms then "multiset" else "sequence"
+
+                    let recomputed =
+                        sha256Text (sealedContent file caseHex core modeText verdictBlock j f folds)
+
+                    if recomputed = storedSeal then
+                        SealValid
+                    else
+                        SealMismatch(storedSeal, recomputed)
+        | _ -> SealUnreadable "missing one of: title, jenkins-core, seal, case-digest"
+
     let seal (directory: string) (r: Receipt) : string =
         Directory.CreateDirectory directory |> ignore
-        let safe = r.File.Replace("/", "_").Replace(".Jenkinsfile", "")
-        let path = Path.Combine(directory, $"{safe}.receipt.txt")
+        let path = Path.Combine(directory, receiptFileName r.File)
         File.WriteAllText(path, render r)
         path

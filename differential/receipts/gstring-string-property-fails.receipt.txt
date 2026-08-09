@@ -1,7 +1,9 @@
 # Differential receipt — gstring-string-property-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         409047b4c00786e8afa6e9b9e3862e47febc41932e7cea442a2973d5e952b2e6
+seal:         3bc5fb305cf1dd457d0117ebf198b5ed7d56d413837e748b2225c16f553cd388
+case-digest:  f138a8e22bca635be1ce9274a5714efb1c487be0ae69a2e7410ba45d65b04b6a
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -62,6 +64,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
 
 ## Jenkins
   result:         failure

@@ -1,7 +1,9 @@
 # Differential receipt — git-step-deletedir.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ffccfb28ed08758addb1be7a5456cd3dba97b51fd2178440f6ab3bed2ce237ac
+seal:         6fccc7924ae85a910e2e841c65a8b0dd59d4e6d98af99732c83a962ca3b5769a
+case-digest:  62fa7e313acc5e109d47f758b6f2ad3d8f6665d94ab871355baa014d0a04058f
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
@@ -65,6 +67,17 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
     the reported reason; the wording comes from whichever plugin implements the step
   not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
 
 ## Jenkins
   result:         success
