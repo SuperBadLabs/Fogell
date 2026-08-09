@@ -1707,7 +1707,69 @@ module WalkerOrchestration =
                         // mode `script { sh "echo bare:${MISSING}" }` wrote `bare:null` and
                         // exited 0 where Jenkins FAILS the build. Raised by the pre-push
                         // verifier; a success where Jenkins fails is the governing defect.
-                        let outcome = Interpreter.runStrictVars Budget.defaults scriptStepVocabulary genv body
+                        // FG-172. LIVE, via the callback seam: the host performs each step
+                        // where the script reaches it, instead of collecting requests and
+                        // replaying them afterwards.
+                        //
+                        // No observable change YET — the refusals above still exclude every
+                        // shape that needed the boundary moved (return values, wrapper
+                        // bodies, `env` mutation, `input`) — and that is the point of doing
+                        // it as its own step: the seam becomes LOAD-BEARING and exercised by
+                        // all 123 receipts before anything depends on it. An unexercised
+                        // callback that everything is about to be built on is the shape of
+                        // dead code this session keeps finding under a passing gate.
+                        let host: PerformStep =
+                            { Perform =
+                                fun name positional named runBody ->
+                                    // The body cannot arrive yet: `findWrapperCalls` refuses
+                                    // every block-taking step above. Asserted rather than
+                                    // ignored, because a silently dropped body is exactly
+                                    // the defect that refusal exists to prevent, and if the
+                                    // refusal ever stops covering a shape this says so
+                                    // instead of running the wrapper without its block.
+                                    match runBody with
+                                    | Some _ ->
+                                        failwith
+                                            $"internal: `{name}` reached the script host with a body, which the wrapper refusal should have rejected"
+                                    | None -> ()
+
+                                    let called =
+                                        { Name = name
+                                          Positional = positional |> List.map Value.toDisplay
+                                          Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
+                                          Block = []
+                                          // ALREADY EVALUATED by the interpreter, so no
+                                          // further interpolation: see the literal marking
+                                          // that fixed the re-rendered approval prompt.
+                                          LiteralNamedArgs = named |> List.map fst |> Set.ofList
+                                          LiteralPositionalArgs =
+                                            positional |> List.mapi (fun i _ -> i) |> Set.ofList
+                                          InterpolationSource = []
+                                          ExpressionArgs = Set.empty
+                                          ArgumentOrder =
+                                            (positional |> List.mapi (fun i _ -> $"#{i}"))
+                                            @ (named |> List.map fst)
+                                          RawArgs = ""
+                                          ScriptBody = None
+                                          Position = step.Position }
+
+                                    if not (halted ctx) then
+                                        runStepDispatch ctx cwd stage called deadline
+
+                                    // NULL, still: `runStepDispatch` returns unit, so there is
+                                    // no value to hand back and `StepValueUse` keeps refusing
+                                    // bodies that would consume one. Wiring a real return
+                                    // value is the next piece of FG-172, not this one.
+                                    VNull
+                              SetEnv =
+                                fun name _ ->
+                                    // Refused above by `findEnvMutations`; the same
+                                    // fail-loud reasoning as the body.
+                                    failwith
+                                        $"internal: `env.{name}` assignment reached the script host, which the env-mutation refusal should have rejected" }
+
+                        let outcome =
+                            Interpreter.runHosted host Budget.defaults scriptStepVocabulary genv body
 
                         match outcome.Fault with
                         | Some fault ->
@@ -1717,50 +1779,16 @@ module WalkerOrchestration =
                                     $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
                             | _ -> fail $"script block: {fault}"
                         | None ->
-                            // SOURCE ORDER, as `Interpreter.run` returns them: it conses
-                            // effects and reverses at every exit. I reversed again here,
-                            // and the two-step case ran SECOND-STEP first while the comment
-                            // above it claimed to be preventing exactly that. A one-step
-                            // case cannot see it — which is why the committed case has two.
-                            // DURABILITY, stated where it bites: these replayed steps go
-                            // straight to the dispatcher, so the WHOLE BLOCK is one
-                            // durability unit — a crash between two of them re-runs both on
-                            // resume, where Jenkins resumes after the completed one. FG-171.
-                            // `input` is refused here precisely because it is the only step
-                            // that reads `DurabilityKey`; what remains is duplicated side
-                            // effects, not a misattributed answer.
-                            for effect in outcome.Effects do
-                                if not (halted ctx) then
-                                    match effect with
-                                    | StepCall(name, positional, named) ->
-                                        // ALREADY EVALUATED, so EVERY argument is
-                                        // literal. The interpreter resolved these values
-                                        // — GString interpolation included — before
-                                        // handing them over. Leaving them unmarked let
-                                        // `renderStepArgs` interpolate a SECOND time, so
-                                        // `script { input message: 'Deploy ${TARGET}?' }`,
-                                        // single-quoted and literal on Jenkins, had its
-                                        // `${TARGET}` re-rendered before the gate was
-                                        // published to a human. Raised by the pre-push
-                                        // verifier.
-                                        let called =
-                                            { Name = name
-                                              Positional = positional |> List.map Value.toDisplay
-                                              Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
-                                              Block = []
-                                              LiteralNamedArgs = named |> List.map fst |> Set.ofList
-                                              LiteralPositionalArgs =
-                                                positional |> List.mapi (fun i _ -> i) |> Set.ofList
-                                              InterpolationSource = []
-                                              ExpressionArgs = Set.empty
-                                              ArgumentOrder =
-                                                (positional |> List.mapi (fun i _ -> $"#{i}"))
-                                                @ (named |> List.map fst)
-                                              RawArgs = ""
-                                              ScriptBody = None
-                                              Position = step.Position }
-
-                                        runStepDispatch ctx cwd stage called deadline
+                            // NOTHING TO REPLAY: the steps ran as the script reached them.
+                            // `Outcome.Effects` is empty in hosted mode by construction.
+                            //
+                            // DURABILITY still bites here and FG-171 stays open: these
+                            // steps go through the dispatcher without their own
+                            // `OnStepStarted`/`OnStepFinished`, so the whole block remains
+                            // one durability unit and a crash mid-block re-runs it. Moving
+                            // the boundary was the prerequisite for fixing that, not the
+                            // fix itself.
+                            ()
 
             | _ -> runStepInner ctx stage cwd step deadline
 
