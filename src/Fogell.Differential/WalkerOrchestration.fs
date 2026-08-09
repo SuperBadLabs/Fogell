@@ -1679,7 +1679,8 @@ module WalkerOrchestration =
                 | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
                 | Result.Ok body ->
                     match
-                        StepValueUse.find scriptStepVocabulary.Contains body
+                        StepValueUse.findEnvMutations body
+                        @ StepValueUse.find scriptStepVocabulary.Contains body
                         @ StepValueUse.findWrapperCalls scriptStepVocabulary.Contains body
                     with
                     | _ :: _ as uses ->
