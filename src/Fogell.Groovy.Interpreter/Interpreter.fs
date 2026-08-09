@@ -588,6 +588,29 @@ module Interpreter =
             evalExpr st env target |> ignore
             let value = evalExpr st env v
             st.LastValue <- Some value
+
+            // FG-172. `env.X = …` IS TOLD TO THE HOST, at the assignment itself.
+            //
+            // A STATIC PRE-SCAN CANNOT DO THIS JOB. The `findEnvMutations` scanner this
+            // replaces walked statements
+            // and missed `[1].each { env.FOO = 'x' }`, because the assignment lives inside
+            // a closure the scanner did not enter — and closure and control-flow shapes
+            // will keep escaping any incomplete scan of a dynamic language. The pre-scan
+            // was replaced by this, which sees every assignment that actually EXECUTES,
+            // whatever syntax reached it. Raised by the pre-push verifier as the fifth of
+            // its class, with exactly that argument.
+            //
+            // The host decides what it means: today it fails the build, because Fogell's
+            // environment overlay does not yet cross the script boundary. That refusal is
+            // now COMPLETE rather than best-effort.
+            match st.Host, target with
+            | Some host, EProp(EVar "env", name) -> host.SetEnv name (Value.toDisplay value)
+            | Some host, EIndex(EVar "env", idx) ->
+                // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
+                // the pre-scan only recognised a literal string.
+                host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
+            | _ -> ()
+
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
         // returned TRUE, because `true` set the trailing value and the untaken `if`

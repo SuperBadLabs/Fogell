@@ -1774,8 +1774,11 @@ module WalkerOrchestration =
                               a hosted body yet, so the block would be dropped and its semantics lost"
 
                     match
-                        (StepValueUse.findEnvMutations body |> List.map (describe "env"))
-                        @ (StepValueUse.find scriptStepVocabulary.Contains body |> List.map (describe "value"))
+                        // The env pre-scan is GONE, not merely supplemented: it missed
+                        // assignments inside closures, and the interpreter now reports every
+                        // one that executes through `SetEnv`. A scanner that catches some
+                        // shapes reads as coverage while leaving the rest silent.
+                        (StepValueUse.find scriptStepVocabulary.Contains body |> List.map (describe "value"))
                         // DERIVED, not a hand-kept list: a block-taking step is refused
                         // unless its arm has been taught to run a hosted body. Add one to
                         // the vocabulary without teaching its arm and this fires, rather
@@ -1898,10 +1901,12 @@ module WalkerOrchestration =
                                     VNull
                               SetEnv =
                                 fun name _ ->
-                                    // Refused above by `findEnvMutations`; the same
-                                    // fail-loud reasoning as the body.
-                                    failwith
-                                        $"internal: `env.{name}` assignment reached the script host, which the env-mutation refusal should have rejected" }
+                                    // THE REFUSAL ITSELF, at the moment the assignment runs.
+                                    // Jenkins applies `env.X` to every later step; Fogell's
+                                    // overlay does not yet cross the script boundary, so
+                                    // accepting it would silently do nothing.
+                                    fail
+                                        $"script block assigns `env.{name}`; Jenkins applies that to every later step, and Fogell's environment overlay does not yet cross the script boundary. Refusing rather than accepting an assignment that does nothing" }
 
                         let outcome =
                             Interpreter.runHosted host Budget.defaults scriptStepVocabulary genv body
