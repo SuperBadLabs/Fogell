@@ -948,12 +948,14 @@ module Compare =
 
             let mutable section = "header"
             let mutable inRecovered = false
+            let mutable inVerdict = false
             let mutable bad = None
 
             for l in lines do
                 if bad.IsNone then
                     if l = "" then
                         inRecovered <- false
+                        inVerdict <- false
                     elif inRecovered then
                         // the RECOVERED block is a declared-unsealed region; its body is
                         // indented and ends at the blank line above.
@@ -983,14 +985,29 @@ module Compare =
                             | "Jenkins"
                             | "Fogell" -> sideShapes l
                             | "header" ->
-                                l.StartsWith "# Differential receipt — "
-                                || l.StartsWith "jenkins-core: "
-                                || l.StartsWith "seal:"
-                                || l.StartsWith "case-digest:"
-                                || l.StartsWith "sealed-output:"
-                                || l.StartsWith "VERDICT: "
-                                || l.StartsWith "timestamps(): "
-                                || l.StartsWith "  "
+                                // NO INDENTATION CATCH-ALL. `StartsWith "  "` accepted any
+                                // indented line here, and nothing in the header is hashed
+                                // except the named fields and the VERDICT block — so
+                                // `  forged header claim` inserted after `sealed-output:`
+                                // verified fine and was bound by nothing. The ONLY indented
+                                // lines the header may carry are VERDICT continuations,
+                                // which are sealed, so that is the only thing allowed.
+                                //
+                                // Fourth time in this ticket that a catch-all "and anything
+                                // that looks roughly right" clause turned out to be the
+                                // hole. The rule is: name what is allowed, never what is
+                                // shaped like it.
+                                if l.StartsWith "VERDICT: " then
+                                    inVerdict <- true
+                                    true
+                                else
+                                    l.StartsWith "# Differential receipt — "
+                                    || l.StartsWith "jenkins-core: "
+                                    || l.StartsWith "seal:"
+                                    || l.StartsWith "case-digest:"
+                                    || l.StartsWith "sealed-output:"
+                                    || l.StartsWith "timestamps(): "
+                                    || (inVerdict && l.StartsWith "  ")
                             // notes and contract bodies are indented; the notes body is
                             // hashed, so altering it breaks the seal, and the contract is
                             // a declared-unsealed region.

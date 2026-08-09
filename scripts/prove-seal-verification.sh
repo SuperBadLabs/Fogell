@@ -389,6 +389,19 @@ PYX
 [ $? -eq 0 ] || { echo "  FAIL: could not plant the did-not-run block"; FAILED=1; }
 expect_reject "a '(did not run)' side carrying workspace evidence" "$d" "UNREADABLE"
 
+# 14n. An INDENTED line in the HEADER. The header accepted any indented line via a
+# `StartsWith "  "` catch-all, and nothing there is hashed except the named fields and the
+# VERDICT block — so a forged indented claim after `sealed-output:` verified and was bound
+# by nothing. Only VERDICT continuations may be indented in the header. Raised by the
+# pre-push verifier; fourth catch-all in this ticket that turned out to be the hole.
+d=$(lab_with "$SEQ" indentedheader)
+sed -i '0,/^sealed-output:/s//&\n  forged header claim not covered by seal/' "$d"/*.receipt.txt
+expect_reject "an INDENTED forged line in the header" "$d" "REFUSED"
+
+# ...and a real VERDICT continuation must still be accepted, or the rule above would be
+# satisfied by refusing every PROVEN-PARTIAL and DIVERGED receipt in the suite.
+expect_accept "the committed receipts, still, after the header rule" "$SRC"
+
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
 # `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending
 # one line to a diverged receipt verified AND promoted it. Measured: this arm passed
