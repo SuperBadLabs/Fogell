@@ -209,8 +209,8 @@ module WalkerOrchestration =
         // nothing when replayed.
         let scriptStepVocabulary =
             set
-                [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "dir"; "git"
-                  "retry"; "stash"; "timeout"; "unstable"; "unstash"; "withCredentials"; "withEnv" ]
+                [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
+                  "stash"; "unstable"; "unstash" ]
 
         /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
         /// the sandbox's generic denial says a name was not admissible, not why THIS one
@@ -225,8 +225,26 @@ module WalkerOrchestration =
         /// can cover, so it fails closed until nested effects carry journal identity.
         let scriptStepsRefusedWithReason =
             Map.ofList
-                [ "input",
-                  "durable approval replay is keyed on the top-level step, so an approval given inside a script block would be lost on resume (FG-046b); use `input` as a stage step instead" ]
+                [ yield
+                      "input",
+                      "durable approval replay is keyed on the top-level step, so an approval given inside a script block would be lost on resume (FG-046b); use `input` as a stage step instead"
+
+                  // EVERY BLOCK-TAKING STEP, BOTH SPELLINGS. `findWrapperCalls` refuses
+                  // these WITH a body because the replay cannot carry one — but the
+                  // BODY-LESS spelling stayed admitted, and `dir("child")` with no body
+                  // CREATED THE DIRECTORY and exited 0 where Jenkins fails with "dir step
+                  // must be called with a body". I refused one half of a shape and left
+                  // the other running: the same defect as scoping a fix to the level in
+                  // front of me, which this ticket has now done three times. Raised by the
+                  // pre-push verifier, which named it the SECOND of its class — a script
+                  // shape Jenkins rejects being accepted as success.
+                  //
+                  // Dropping them from the vocabulary answers both spellings at once: with
+                  // a body or without, the name is not callable here at all.
+                  for w in [ "dir"; "timeout"; "retry"; "withEnv"; "withCredentials" ] do
+                      yield
+                          w,
+                          $"`{w}` takes a block, and a replayed script effect cannot carry one, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
         let postFires = WalkerRules.postFires
         let postRank = WalkerRules.postRank
         let cancellationOf = WalkerCancellation.cancellationOf runCtx
