@@ -854,7 +854,13 @@ module WalkerOrchestration =
             // after the block an added variable is UNSET and a shadowed one
             // reverts, so the binding is an overlay on the inner scope only.
             // Receipt: `withenv-scoping`.
-            | "withEnv", _ when not (List.isEmpty step.Block) ->
+            // FG-172. `|| ctx.HostedBody.IsSome`: a hosted body leaves `Block` EMPTY, so a
+            // guard keyed on `Block` alone never matched and the call fell through to the
+            // fallback — the wrapper silently did nothing while the build reported success.
+            // Measured on `script { withEnv([...]) { sh ... } }`, which produced no output
+            // at all. `dir` escaped this only because its guard keys on the positional
+            // argument instead; the same trap waits on every other Block-keyed arm.
+            | "withEnv", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
                 // The argument is a Groovy LIST literal, handed over as one
                 // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
                 // keeps ADR 0002's rule that expression-shaped text stays text
@@ -955,9 +961,16 @@ module WalkerOrchestration =
 
                 let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
 
-                for st in step.Block do
-                    if not (halted inner) then
-                        runStepDispatch inner cwd stage st deadline
+                // FG-172. A HOSTED body gets the same `inner` — the overlay is the whole
+                // point of the wrapper, and handing over `ctx` would run the body without
+                // the bindings while reporting success. `HostedBody = None` on the way in,
+                // so a nested wrapper inside the body cannot re-run this one's block.
+                match ctx.HostedBody with
+                | Some runBody -> runBody { inner with HostedBody = None } cwd
+                | None ->
+                    for st in step.Block do
+                        if not (halted inner) then
+                            runStepDispatch inner cwd stage st deadline
 
                 if inner.Failed.Value then ctx.Failed.Value <- true
 
