@@ -274,7 +274,7 @@ expect_reject "a DUPLICATED workspace-hash inside a side block" "$d" "UNREADABLE
 # takes the first match, so a receipt could carry two incompatible coverage claims under a
 # valid seal. It was missing from the duplicate-field list while that list was described as
 # closing the class. Raised by the pre-push verifier.
-TS=$(rg -l '^timestamps\(\): ' "$SRC"/*.receipt.txt | head -1)
+TS=$(grep -l '^timestamps(): ' "$SRC"/*.receipt.txt 2>/dev/null | sort | head -1)
 if [ -z "$TS" ]; then
   echo "  FAIL: no receipt carries a timestamps() line — this arm proves nothing"
   FAILED=1
@@ -323,7 +323,12 @@ expect_reject "an UNRECOGNISED line inside a sealed section" "$d" "REFUSED"
 
 # (ii) arbitrary text riding behind a recognised coverage word. `StartsWith "all"`
 # accepted `alligator`, so the receipt displayed a coverage claim the seal never saw.
-TSF=$(rg -l '^timestamps\(\): ' "$SRC"/*.receipt.txt | head -1)
+# SORTED, and selected on the shape the mutation actually needs. `rg -l ... | head -1`
+# picked a different receipt on the CI runner than on this box — ripgrep walks
+# directories in PARALLEL, so "the first match" is not a stable choice — and the one it
+# picked there had no `jenkins=all (N)` to rewrite. The sed changed nothing and the arm
+# would have proved nothing; the guard below caught it, which is what guards are for.
+TSF=$(grep -l 'jenkins=all (' "$SRC"/*.receipt.txt 2>/dev/null | sort | head -1)
 if [ -z "$TSF" ]; then
   echo "  FAIL: no receipt carries a timestamps() line — this arm proves nothing"
   FAILED=1
