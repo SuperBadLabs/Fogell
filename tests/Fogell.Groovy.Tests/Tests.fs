@@ -275,6 +275,83 @@ let predicateValues =
               Expect.equal (run "[1].any { it == 1 }").Returned (Some(VBool true)) "implicit closure return"
           } ]
 
+let stepValueUse =
+    // FG-160. The interpreter is a BATCH model: it collects StepCall effects and the call
+    // evaluates to VNull on the spot. Order survives, VALUES do not — so a body that uses
+    // a step's return value would run with null and decide branches wrongly. `script { }`
+    // is fail-closed at runtime today, so wiring it up without this check would trade an
+    // honest failure for a quiet wrong answer.
+    let uses src =
+        Fogell.Groovy.Interpreter.StepValueUse.find steps.Contains (parseOk src)
+
+    let usedSteps src = uses src |> List.map (fun u -> u.Step)
+
+    testList
+        "FG-160 step calls whose value is used"
+        [ test "a bare step statement is NOT a value use" {
+              // The whole point: the common shape must still run. If this fires, the
+              // refusal rejects the corpus it was meant to admit.
+              Expect.isEmpty (uses "sh 'make'\necho 'done'") "a discarded call is safe"
+          }
+
+          test "a step in a variable initialiser IS a value use" {
+              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: true)") [ "sh" ] "def RHS"
+          }
+
+          test "a step in an if condition IS a value use" {
+              Expect.equal (usedSteps "if (sh(script: 'x', returnStatus: true) == 0) { echo 'ok' }") [ "sh" ] "condition"
+          }
+
+          test "a step in an ASSIGNMENT is a value use" {
+              Expect.equal (usedSteps "x = sh(script: 'x', returnStdout: true)") [ "sh" ] "assignment RHS"
+          }
+
+          test "a step nested in a string interpolation is a value use" {
+              // The sneakiest shape, and the one a naive statement-level check misses.
+              Expect.equal (usedSteps "echo \"got ${sh(script: 'x', returnStdout: true)}\"") [ "sh" ] "interpolation"
+          }
+
+          test "a step as an ARGUMENT to a bare statement call is a value use" {
+              // The outer call is a discarded statement; the inner one is not. A check
+              // that only asked "is this statement a call" would pass this.
+              Expect.equal (usedSteps "echo sh(script: 'x', returnStdout: true)") [ "sh" ] "argument"
+          }
+
+          test "a step inside a TRAILING BLOCK is not a value use" {
+              // `timeout(5) { sh 'x' }` discards the inner value exactly as a statement
+              // does. Flagging it would refuse a large and perfectly runnable shape.
+              Expect.isEmpty (uses "node { sh 'make' }") "a trailing block holds statements"
+          }
+
+          test "a step in a RETURN is a value use" {
+              Expect.equal (usedSteps "return sh(script: 'x', returnStdout: true)") [ "sh" ] "return value"
+          }
+
+          test "a step in a for-in SOURCE is a value use" {
+              Expect.equal
+                  (usedSteps "for (f in sh(script: 'ls', returnStdout: true).split()) { echo f }")
+                  [ "sh" ]
+                  "loop source"
+          }
+
+          test "a NON-step call is never flagged" {
+              // `isStep` decides, not call shape. A user function or builtin returning a
+              // value is ordinary Groovy and must not be refused.
+              Expect.isEmpty (uses "def x = someHelper()") "only registered steps batch their effects"
+          }
+
+          test "the position is NAMED, not just the step" {
+              // A refusal that says only "a step value is used" sends someone hunting.
+              let u = uses "def out = sh(script: 'x', returnStdout: true)" |> List.exactlyOne
+              Expect.equal u.Where "a variable initialiser" "the position is reported"
+          }
+
+          test "several uses are all reported, in source order" {
+              let src = "def a = sh(script: '1', returnStdout: true)\nif (sh(script: '2', returnStatus: true) == 0) { echo a }"
+              Expect.equal (usedSteps src) [ "sh"; "sh" ] "every use, not the first"
+          }
+        ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse ])
