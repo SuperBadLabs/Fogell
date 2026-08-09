@@ -5,6 +5,8 @@ open System.IO
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
+// FG-160: `script { }` bodies are scripted Groovy, evaluated by the interpreter.
+open Fogell.Groovy.Interpreter
 
 /// FG-046b. A human's answer to an `input` prompt. Deliberately NOT a bool: the
 /// two outcomes narrate and terminate differently (MEASURED on Jenkins 2.568.1 —
@@ -198,6 +200,17 @@ module WalkerOrchestration =
         let timeoutMs = WalkerRules.timeoutMs
         let retryCount = WalkerRules.retryCount
         let halted = WalkerRules.halted
+
+        // FG-160. The step names a `script { }` body may call. DERIVED FROM THE DISPATCH
+        // TABLE below plus the two the inner runner handles, deliberately CLOSED: a name
+        // outside it is refused by `Sandbox.admitCall`, the script faults, and the build
+        // fails with a reason. That is the fail-closed direction — an open vocabulary
+        // would let an unimplemented step be collected as an effect and then silently do
+        // nothing when replayed.
+        let scriptStepVocabulary =
+            set
+                [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "dir"; "git"
+                  "input"; "retry"; "stash"; "timeout"; "unstable"; "unstash"; "withCredentials"; "withEnv" ]
         let postFires = WalkerRules.postFires
         let postRank = WalkerRules.postRank
         let cancellationOf = WalkerCancellation.cancellationOf runCtx
@@ -1607,6 +1620,78 @@ module WalkerOrchestration =
                     for inner in step.Block do
                         if not (halted ctx) then
                             runStepDispatch ctx target stage inner deadline
+
+            // FG-160. `script { … }` — SCRIPTED GROOVY, handed to the engine that
+            // understands it. The body arrives verbatim (`ScriptBody`) because parsing it
+            // as Declarative steps read `if (cond)` as a step named `if`, which is why
+            // this never ran.
+            //
+            // THE REFUSAL COMES FIRST, and it is the reason this is safe to ship. The
+            // interpreter is a BATCH model: it collects `StepCall` effects for us to
+            // perform afterwards and the call evaluates to null on the spot. Order
+            // survives; VALUES do not. So a body reading a step's return value would run
+            // with null and decide branches wrongly — a silent wrong answer, worse under
+            // ADR 0001 than the honest failure this replaces. `StepValueUse.find` names
+            // every such position and we refuse the build instead.
+            | "script", _ when step.ScriptBody.IsSome ->
+                let src = Option.get step.ScriptBody
+
+                let fail (why: string) =
+                    emit $"ERROR: {why}"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+
+                match Fogell.Groovy.Parser.Parser.parse src with
+                | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
+                | Result.Ok body ->
+                    match StepValueUse.find scriptStepVocabulary.Contains body with
+                    | _ :: _ as uses ->
+                        for u in uses do
+                            fail
+                                $"script block uses the return value of `{u.Step}` in {u.Where}; \
+                                  Fogell performs a script's steps after the script runs, so it cannot \
+                                  supply one mid-script. Refusing rather than binding null"
+                    | [] ->
+                        let envMap = envForWith ctx.EnvOverlay stage |> Map.ofList
+                        let asValues = envMap |> Map.map (fun _ v -> VStr v)
+
+                        // Both spellings bound, as `when { expression { … } }` learned to:
+                        // a bare name AND `env.NAME`.
+                        let genv =
+                            { Vars = asValues |> Map.add "env" (VMap asValues)
+                              Funcs = Map.empty }
+
+                        let outcome = Interpreter.run Budget.defaults scriptStepVocabulary genv body
+
+                        match outcome.Fault with
+                        | Some fault -> fail $"script block: {fault}"
+                        | None ->
+                            // SOURCE ORDER, as `Interpreter.run` returns them: it conses
+                            // effects and reverses at every exit. I reversed again here,
+                            // and the two-step case ran SECOND-STEP first while the comment
+                            // above it claimed to be preventing exactly that. A one-step
+                            // case cannot see it — which is why the committed case has two.
+                            for effect in outcome.Effects do
+                                if not (halted ctx) then
+                                    match effect with
+                                    | StepCall(name, positional, named) ->
+                                        let called =
+                                            { Name = name
+                                              Positional = positional |> List.map Value.toDisplay
+                                              Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
+                                              Block = []
+                                              LiteralNamedArgs = Set.empty
+                                              LiteralPositionalArgs = Set.empty
+                                              InterpolationSource = []
+                                              ExpressionArgs = Set.empty
+                                              ArgumentOrder =
+                                                (positional |> List.mapi (fun i _ -> $"#{i}"))
+                                                @ (named |> List.map fst)
+                                              RawArgs = ""
+                                              ScriptBody = None
+                                              Position = step.Position }
+
+                                        runStepDispatch ctx cwd stage called deadline
 
             | _ -> runStepInner ctx stage cwd step deadline
 

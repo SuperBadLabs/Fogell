@@ -194,6 +194,7 @@ let stringModel =
           ExpressionArgs = Set.ofList exprArgs
           InterpolationSource = sources
           RawArgs = ""
+          ScriptBody = None
           Position = Position.zero }
 
     testList

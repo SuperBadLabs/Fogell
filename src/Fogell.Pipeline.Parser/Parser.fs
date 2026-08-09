@@ -307,8 +307,19 @@ stepRef.Value <-
                   attempt (hspaces >>. argList)
                   preturn ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
             (fun pos name args -> pos, name, args)
-    .>>. opt (attempt stepBlock)
-    |>> fun ((pos, name, args), block) ->
+    >>= (fun (pos, name, args) ->
+        // FG-160. `script { … }` HOLDS SCRIPTED GROOVY, so its body is captured
+        // VERBATIM instead of being parsed as Declarative steps. Parsing it as steps
+        // read `if (cond)` as a step named `if` with a block, and `def x = 1` as a step
+        // named `def` — structurally accepted, semantically nonsense, and the reason the
+        // walker could never run one. `Fogell.Groovy.Parser` is what understands this
+        // text; the walker hands it over at execution.
+        if name = "script" then
+            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], Some raw)
+            <|> preturn (pos, name, args, [], None)
+        else
+            opt (attempt stepBlock) |>> fun b -> pos, name, args, defaultArg b [], None)
+    |>> fun (pos, name, args, block, scriptBody) ->
             // The DOWNGRADE THAT USED TO LIVE HERE IS GONE, not merely guarded. It
             // re-parsed the paren body and, on failure, invented a single positional
             // argument from the raw text — which is how an approval prompt came to
@@ -325,11 +336,12 @@ stepRef.Value <-
               InterpolationSource = interpolationSource
               ExpressionArgs = expressionArgs
               ArgumentOrder = argOrder
-              Block = defaultArg block []
+              Block = block
               // Only ever populated on the OPAQUE paren path, which no longer exists.
               // No code reads this field — `rg RawArgs` finds the record definition,
               // this assignment and one test literal — so emptying it drops nothing.
               RawArgs = ""
+              ScriptBody = scriptBody
               Position = pos }
 
 // ---------------------------------------------------------------------------
