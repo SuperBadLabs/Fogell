@@ -543,9 +543,16 @@ module Compare =
 
         // Folds join the sealed content: a fold section edited after the fact must be as
         // detectable as an edited output line.
+        // COUNTS, for the same reason the per-side output carries one: `String.concat`
+        // cannot tell [] from [""], so a FABRICATED `## Output comparison notes (1)`
+        // heading over a single two-space line reconstructed an empty list and left the
+        // seal intact. That is finding #4 of this ticket appearing again on a different
+        // list — I bound the output count and not the fold count, fixing the instance
+        // instead of the rule. Every list the seal covers now carries its length.
         let joinedFolds = String.concat "\n" folds
         let joinedVerdict = String.concat "\n" verdict
-        $"{file}\n{caseDigestHex}\n{core}\n{sealedOutputMode}\n{joinedVerdict}\n{render jenkins}\n{render fogell}\n{joinedFolds}"
+        let nf, nv = List.length folds, List.length verdict
+        $"{file}\n{caseDigestHex}\n{core}\n{sealedOutputMode}\nverdict={nv}\n{joinedVerdict}\n{render jenkins}\n{render fogell}\nfolds={nf}\n{joinedFolds}"
 
     let receipt
         (file: string)
@@ -913,6 +920,105 @@ module Compare =
         match duplicated with
         | Some why -> SealRefused why
         | None ->
+        // FG-161. ACCOUNT FOR EVERY LINE.
+        //
+        // Extraction was LENIENT: it collected the lines it recognised and ignored the
+        // rest, so anything it did not understand rode along unbound. Three bypasses of
+        // that one shape reached review — an unindented line inserted inside a sealed
+        // section, arbitrary text behind a recognised timestamp classification, and a
+        // fabricated `## Output comparison notes` heading over a blank-ish line.
+        //
+        // A parser that ignores what it does not recognise cannot be the basis of a
+        // tamper check, because "not recognised" is exactly where tampering lives. Every
+        // nonblank line must now match a shape this reader knows, in the section it
+        // appears in, or the receipt is REFUSED. This is FG-169's principle applied to
+        // the existing extractor.
+        let accountable =
+            let sideShapes (l: string) =
+                l.StartsWith "  result:"
+                || l.StartsWith "  workspace-hash:"
+                || l.StartsWith "  output ("
+                || l.StartsWith "    | "
+                || l = "  workspace:"
+                || l = "  engine notes (not compared):"
+                || l.StartsWith "    ! "
+                || l.Trim() = "(did not run)"
+                // workspace manifest row: <12 hex>  <path>
+                || Text.RegularExpressions.Regex.IsMatch(l, @"^    [0-9a-f]{12}  \S")
+
+            let mutable section = "header"
+            let mutable inRecovered = false
+            let mutable bad = None
+
+            for l in lines do
+                if bad.IsNone then
+                    if l = "" then
+                        inRecovered <- false
+                    elif inRecovered then
+                        // the RECOVERED block is a declared-unsealed region; its body is
+                        // indented and ends at the blank line above.
+                        if not (l.StartsWith "  ") then bad <- Some l
+                    elif l.StartsWith "RECOVERED:" then
+                        inRecovered <- true
+                    elif l.StartsWith "## " then
+                        section <- l.Substring 3
+                    else
+                        let ok =
+                            match section with
+                            | "Jenkins"
+                            | "Fogell" -> sideShapes l
+                            | "header" ->
+                                l.StartsWith "# Differential receipt — "
+                                || l.StartsWith "jenkins-core: "
+                                || l.StartsWith "seal:"
+                                || l.StartsWith "case-digest:"
+                                || l.StartsWith "sealed-output:"
+                                || l.StartsWith "VERDICT: "
+                                || l.StartsWith "timestamps(): "
+                                || l.StartsWith "  "
+                            // notes and contract bodies are indented; the notes body is
+                            // hashed, so altering it breaks the seal, and the contract is
+                            // a declared-unsealed region.
+                            | _ -> l.StartsWith "  "
+
+                        if not ok then bad <- Some l
+
+            bad
+
+        match accountable with
+        | Some l ->
+            SealRefused $"unrecognised line, so it was never bound: {l.Trim()}"
+        | None ->
+
+        // The notes heading declares a count; a fabricated heading over a blank-ish line
+        // reconstructed an empty list and left the seal intact.
+        let notesCountMismatch =
+            match lines |> List.tryFind (fun l -> l.StartsWith "## Output comparison notes") with
+            | None -> None
+            | Some h ->
+                let m = Text.RegularExpressions.Regex.Match(h, @"^## Output comparison notes \((\d+)\)$")
+
+                if not m.Success then
+                    Some $"malformed notes heading: {h}"
+                else
+                    let declared = int m.Groups[1].Value
+
+                    let actual =
+                        lines
+                        |> List.skipWhile (fun l -> not (l.StartsWith "## Output comparison notes"))
+                        |> List.skip 1
+                        |> List.takeWhile (fun l -> l.StartsWith "  " && not (l.StartsWith "## "))
+                        |> List.length
+
+                    if declared <> actual then
+                        Some $"notes heading declares {declared} but carries {actual}"
+                    else
+                        None
+
+        match notesCountMismatch with
+        | Some why -> SealRefused why
+        | None ->
+
 
         match field "# Differential receipt — ", field "jenkins-core: ", field "seal:", field "case-digest:" with
         | Some file, Some core, Some storedSeal, Some caseHex ->
@@ -936,13 +1042,17 @@ module Compare =
                 match lines |> List.tryFind (fun l -> l.StartsWith "timestamps(): ") with
                 | None -> Some("none", "none")
                 | Some l ->
+                    // EXACT SHAPES, not prefixes. `StartsWith "all"` accepted `alligator...`,
+                    // so arbitrary text could ride along behind a recognised classification
+                    // and the receipt would display a coverage claim the seal never saw.
+                    // Raised by review on PR #48.
                     let word (s: string) =
                         let s = s.Trim()
 
-                        if s.StartsWith "PARTIAL" then "partial"
-                        elif s.StartsWith "all" then "all"
-                        elif s.StartsWith "none" then "none"
-                        else s
+                        if Text.RegularExpressions.Regex.IsMatch(s, @"^PARTIAL \(\d+/\d+\)$") then "partial"
+                        elif Text.RegularExpressions.Regex.IsMatch(s, @"^all \(\d+\)$") then "all"
+                        elif s = "none" then "none"
+                        else "<unparseable>"
 
                     let m =
                         Text.RegularExpressions.Regex.Match(l, @"jenkins=(.*?) fogell=(.*?) \(prefix text excluded")

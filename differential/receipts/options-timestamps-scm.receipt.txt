@@ -1,7 +1,7 @@
 # Differential receipt — options-timestamps-scm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9dc1326a1d14a7d7435dcca396067777803bb2678e40f1d24b2e14373a16457c
+seal:         423658e833480b325d867b4b518d08ec6ae7a9418fb465d8528e2c9d275bf3a8
 case-digest:  58892846b09c1c0b66f7ce37308ea32eae32fecb72b93c01b5cca44c471b29b5
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — env-escaped-and-dotted.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c2f1ce3be01196758aef8e795033001a3978181d35babe77d0e7cb57e7946bf8
+seal:         bb464d99ab441faa263b77aecd1571009a396abc40d230e83a2d585506520e31
 case-digest:  908d36744b81369fe02e6cc026645ba4c7a93563c753851c9308d3b4720b3923
 sealed-output: sequence
 

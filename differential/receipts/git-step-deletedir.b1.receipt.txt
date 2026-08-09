@@ -1,7 +1,7 @@
 # Differential receipt — git-step-deletedir.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ee63c122122f30839bc85719c139259a33942cdcc0c9c7b26c37a26f6f0dc86a
+seal:         6fccc7924ae85a910e2e841c65a8b0dd59d4e6d98af99732c83a962ca3b5769a
 case-digest:  62fa7e313acc5e109d47f758b6f2ad3d8f6665d94ab871355baa014d0a04058f
 sealed-output: sequence
 

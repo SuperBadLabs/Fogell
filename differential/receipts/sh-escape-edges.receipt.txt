@@ -1,7 +1,7 @@
 # Differential receipt — sh-escape-edges.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c6b9233529c39ffb212d93897a3be9df6b622243fcb4f4ad0433c4fb46fbce78
+seal:         37eefc5403186ae2dc1e21ab696ba4cb8bad2b4577059a6066564997b5947767
 case-digest:  83a3edd24e7e2c40879684d0399e82c33dee949deec0def0051c39f3f42a061e
 sealed-output: sequence
 

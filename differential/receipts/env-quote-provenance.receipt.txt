@@ -1,7 +1,7 @@
 # Differential receipt — env-quote-provenance.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2fed3a2184f4d41ce4692cb63d8761b1bbc4817e4fd4c6c367ada692872ddfbe
+seal:         dd1aa0b664a66d9628675bf4fdf401601daf4bf3e9e9f66a2894be3a4bac7eea
 case-digest:  2066cba105ecf9498d57a0b0bd650c1c6041439729f221c104e5da20d5b6401b
 sealed-output: sequence
 

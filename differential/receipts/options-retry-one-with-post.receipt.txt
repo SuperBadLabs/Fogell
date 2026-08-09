@@ -1,7 +1,7 @@
 # Differential receipt — options-retry-one-with-post.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7739f67230756c7c7089f8719112f53fdaa64a404995a8f26962ae6b7a6f4f27
+seal:         e7dd57a59c4a78a8cc72faa888d897fa4be53888573d8428eade4ac883329c47
 case-digest:  4f39d78db9dd6e96407abd74d7b623097b62cd00279edf7e0d73435ed11db2b3
 sealed-output: sequence
 

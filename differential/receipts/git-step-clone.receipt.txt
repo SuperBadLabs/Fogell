@@ -1,7 +1,7 @@
 # Differential receipt — git-step-clone.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         cc56f386783eda6e97563b30e64e8d613203f46eaf4ed1bb38b010758e34b0d8
+seal:         4b21ae4791bc3a006c687334d12453e2dfb232a45747bd137372d6174ec700f2
 case-digest:  0090ccd2ddd1af693f2f86ba1fcaee56c732b63adab0794864ec1a43770cb07a
 sealed-output: sequence
 

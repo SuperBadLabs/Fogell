@@ -1,7 +1,7 @@
 # Differential receipt — nested-wrappers.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d6ee897ec181eb42747442471d9384637704626eb2eead3df93d211f77886c73
+seal:         56262412a130e6ad3119529d985040fdae7d224167b0d88e675dc27445de6450
 case-digest:  4af805a0454154cf57c782574abc91f7067276e3d96a0c84d241f6eebd4dceb6
 sealed-output: sequence
 

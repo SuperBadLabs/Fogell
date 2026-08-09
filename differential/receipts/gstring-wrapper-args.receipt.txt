@@ -1,7 +1,7 @@
 # Differential receipt — gstring-wrapper-args.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d0d682f5e29458ba3c3e34fd18c8c3c5afc4c82c92af186ebd5235c093587726
+seal:         103f0b09e02ed5cae4f192b0fa93b0200c78c55e910d67cb334f1014cbaa1d40
 case-digest:  275e2d8b456874d11169f696ebdf432f6b218d011e692d818b12b687cb781f4e
 sealed-output: sequence
 

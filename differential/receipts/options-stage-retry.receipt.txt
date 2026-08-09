@@ -1,7 +1,7 @@
 # Differential receipt — options-stage-retry.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f8b77c7b5eadd98e06e5ea18181c89b5ffe497274fa26af6dc7d85aeb86b27c6
+seal:         a3be36cf218b6c92fb29ad179bccb7e0414e1f874b22b6327b4f3a2536634664
 case-digest:  031db808d5c655d92be2e0816ffc39b1d8080491fd537e4fbf98d7b34667072b
 sealed-output: sequence
 

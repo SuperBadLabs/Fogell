@@ -1,7 +1,7 @@
 # Differential receipt — checkout-scm-env-layering.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7f2544da637780d3a94a58a4f90181942efe22952247121d7c3f475de65bde05
+seal:         7bf8f94ada14f2523e8a9c164264f620ab4fefaedb09c4cf8c5195a27654f575
 case-digest:  344f278a0e58c3988a088229d36f986f7d185f2a135d39a1bacacd3fcbae55c8
 sealed-output: sequence
 

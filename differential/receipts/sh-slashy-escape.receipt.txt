@@ -1,7 +1,7 @@
 # Differential receipt — sh-slashy-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5ce07272dc70570ba899d25069884136646ca02a78b3426cacd356e9f21d196d
+seal:         7cb458bdf5fd71aca129292254b94dff4339a2913f26d32751379a5ed397492c
 case-digest:  bc1a57b367ee78cd1ae3e8b99b5900883ff8cb872a949a961c144e30c72707a9
 sealed-output: sequence
 

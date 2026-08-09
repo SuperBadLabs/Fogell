@@ -1,7 +1,7 @@
 # Differential receipt — junit-passing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ed489a337661c2aa3d0ea7134862143aa10e068e4c9ef2ba472c7909d8bc8352
+seal:         0fe1c8877b50b316e1774a151fee74e3466f2c989cb3e7f846c9fc32f02d906b
 case-digest:  9ca2c1ca43e10c9960c0c731a5a00da044170b33d7538e6f3fa0988cd44b4b83
 sealed-output: sequence
 

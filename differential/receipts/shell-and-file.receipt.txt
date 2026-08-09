@@ -1,7 +1,7 @@
 # Differential receipt — shell-and-file.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6666fd263a7f6a917e0423f8718565ebcf2356a101f20d7885c01f6d0c3ce969
+seal:         b01e79bc027082623b39493fa8577a035c6dd0ec548302a41aff295882da8955
 case-digest:  2fd3068a3e8a163127756f3c821a1819eaf081a2cf8a78050fafae7b5e144154
 sealed-output: sequence
 

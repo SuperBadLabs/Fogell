@@ -1,7 +1,7 @@
 # Differential receipt — gstring-binding-across-steps.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         71371ece3960bdb4f73558f2406ecb224e7494506aa02f647fbd13530e577d4a
+seal:         d92bb90b1a4811a5a6baa453759398068b848b78eddef1b1be29cf61ec468dcc
 case-digest:  588dc2e246170d239af2b98b8528426a5b150863cb517002d1c8c56b68a9d49a
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — cancellation-selects-post-arm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6fbda5293ea043910181a38d982c474a3513e189fd2fa0823a881d25035e87f2
+seal:         6fcd4a069c06cd1a5513b8cc243752836f8f6cfc3d4b79d5699128de6df6c8cd
 case-digest:  c28aceafad7ac5a53309577b76cf95aca49066fcc6f30681115499426baa0f44
 sealed-output: sequence
 

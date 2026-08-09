@@ -1,7 +1,7 @@
 # Differential receipt — post-history.b1.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         12be44ce74dc165423c3bc4bd578407efff66c3acc77acdeed2b2b7cc536a909
+seal:         9b7e1c1307127f2f39b661c9321bf794441fce1cd6f9835b7dedcac31725ac27
 case-digest:  56cd2f9d9fc2559a32c51ae8af79a3ad2573d6a82465f5d8b45886d794dc5874
 sealed-output: sequence
 

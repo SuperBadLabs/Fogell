@@ -1,7 +1,7 @@
 # Differential receipt — publish-named-args-interpolated.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         da07936827d77b0e12ad824a6c94450aa797447aa17e3323c53697b2841b99f6
+seal:         9439b283ce7517637bc38cb32fbf97413846dc56abe4f4c67e44a73ea11f1ae1
 case-digest:  10e733239c0049edfd7164c7943e265d2c63890cc5404146c0a1b1ef8ead2d09
 sealed-output: sequence
 

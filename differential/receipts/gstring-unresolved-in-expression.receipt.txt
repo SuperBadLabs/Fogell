@@ -1,7 +1,7 @@
 # Differential receipt — gstring-unresolved-in-expression.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         dfea8d7ecbdff85223d7bf6af420add81433e567d04ef36f0b230a5c973b1d84
+seal:         adeed6f693795d4818f21297d5eb818da5ed7a14fd7b38630a7d67d16a9cc085
 case-digest:  9cc0cda3520c16faf3c2f962e68248538621969e22084f8a58725c22043b5ffd
 sealed-output: sequence
 

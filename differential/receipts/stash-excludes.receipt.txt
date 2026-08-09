@@ -1,7 +1,7 @@
 # Differential receipt — stash-excludes.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3467049c9798e63587a63dbea4617a81e09f60aa710e5b77e3fdf95cc5a0984b
+seal:         1208c9cface60c856319cf9a9bb85a44392e0dc300484987843237e1d12d3da3
 case-digest:  296479bbde89c124533433a5cadcdb43611e9327ea346bf3b44883f8ecc42bfa
 sealed-output: sequence
 

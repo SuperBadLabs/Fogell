@@ -1,7 +1,7 @@
 # Differential receipt — input-timeout-aborts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         73993629948634b46483d25b395897c9f26a47d88afbae6b1f14cba7cfb50176
+seal:         06fba310cb82d4d181078740811ff18f1cc56a501b9157502e2d7ae276334dc2
 case-digest:  a2f3c32fec50889a86acacd95aa48b34712992bf2c4d58fc4476aa5bb5ea24c7
 sealed-output: sequence
 

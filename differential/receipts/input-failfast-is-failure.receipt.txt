@@ -1,7 +1,7 @@
 # Differential receipt — input-failfast-is-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5c64fe4727ae7cb5371331075a033de866101d5e34213a37f0622d591b3e031d
+seal:         6acb049fbae95daa26e2418ce057dc6cc98d449d54ee85c4e793cf0057ee6808
 case-digest:  768d545aedaabd2d9daf081456d45154bc9baee4e4c8ed041f28bd338636082a
 sealed-output: multiset
 

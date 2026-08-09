@@ -1,7 +1,7 @@
 # Differential receipt — when-scm-and-equals.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         492febf4e11db9e5d310925ae6e288e54804a76ee2a7cf149d44c724ed0588a1
+seal:         fb15553a01bbd135f8f32c519133d249b5635b755a4cfebe189fd4ac8ab67356
 case-digest:  628d3b8b7fd6f7f30287cf4ad73176abfe17e03372a751bbca9dfbba401c105e
 sealed-output: sequence
 

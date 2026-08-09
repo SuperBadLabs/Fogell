@@ -1,7 +1,7 @@
 # Differential receipt — stash-not-carried.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         ff19ebe44b032255cc65a97dd8ce480c96cd449f42fd7841aad8dba242453777
+seal:         edf78506dbf04e6adb57cf6af5b69b663796b0cbc1f80a72d7dc0ddc9ce30ab3
 case-digest:  853f0d564c758f88b8c0e1deebbd96713d3faa165385d5a1edd0892ef6329692
 sealed-output: sequence
 

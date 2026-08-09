@@ -1,7 +1,7 @@
 # Differential receipt — timeout-seconds.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         5f984a239bd7a3d0f07f471da5d4b2cdd3ecc275d39cbaebb8bbb29d5f2f8048
+seal:         695b64a742287ca77b960733cd74b74ff6305eb0725e649e2fd44c3d4124d6fe
 case-digest:  8c4d2de66b15e2b036fd790cb1c506badd0dc8b3dd619215d53c6960dd61345d
 sealed-output: sequence
 

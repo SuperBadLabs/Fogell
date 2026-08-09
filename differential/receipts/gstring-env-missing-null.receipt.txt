@@ -1,7 +1,7 @@
 # Differential receipt — gstring-env-missing-null.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a89655a71cd029d78ab133aef295d7b19b87e34bbdcc349b5c4adbe96d0b01de
+seal:         8c527f8e474c6412d0dbbd4eb73e0cebf99837773db02b75669a6881b31dbe7c
 case-digest:  36a1756bddb12c6ce4e1fb2b25e40a12c9ebb9d98ae0d8bf89ccc86f19e83c7e
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — options-unstable-runs-on.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d5fe1e8668f609eb738532157f480f96bf241b20d9e156919ba84e5a27ddf683
+seal:         ab6b51f9976f99c5aa1b4891a04419237fdba82af962cf99ad196cd170614c18
 case-digest:  2038a795b225c8c1d6d0af1a3e6185ca77ad79f62e3a992aaf4b0e62b2011460
 sealed-output: sequence
 

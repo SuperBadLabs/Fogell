@@ -1,7 +1,7 @@
 # Differential receipt — withenv-scoping.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d2b82de073300003177544ef8adb6edd881ec4682101d2b10dc60ec215a5b592
+seal:         ae5350a1879fd4c676053ecb51bb1036f714278f4d5d33b80651654167bed942
 case-digest:  f28b6a3afbe45a00c6114cf08c51db7e65f3e8d42c4bd6db988f7cdcf3b63829
 sealed-output: sequence
 

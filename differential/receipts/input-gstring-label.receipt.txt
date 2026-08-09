@@ -1,7 +1,7 @@
 # Differential receipt — input-gstring-label.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         38ed723bdb0129cc0d7454175753a120d50b70976c17e85d23e038f86f1c3a14
+seal:         2c374e08f230ebfcd44d5f30d565a345f01b20ce711d7c4425f92a280f0830c8
 case-digest:  eb24b325e87919da16196286ca2e703ed1f0b0df79871760d61997b01201aec2
 sealed-output: sequence
 

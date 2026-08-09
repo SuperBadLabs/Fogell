@@ -1,7 +1,7 @@
 # Differential receipt — sh-octal-escape.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6a7591a84b207f6f9e68cd068dfef55fa3ef0a5165a90dbdc356ec47e055112f
+seal:         8cbb863a042451b63350a7f6bfb5494a2387d93e587362e2f304e3f60828e4c0
 case-digest:  fccdb575b3efa75c0df27d1daac655b63e771f7f7b3c2606d14a371333eba09c
 sealed-output: sequence
 

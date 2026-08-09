@@ -1,7 +1,7 @@
 # Differential receipt — sequence-carries-state.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         dc21bd06e7fbce21447ee3937b668e651404f0af1e206bad49869b1c4ff98fb1
+seal:         3e7d1ba636d756ba6e4a9eb4cbd6ee186ae08ca579878905b895410ce55f2705
 case-digest:  13cc9a5965f01797b7ec29ab4c76526fb7e7d21028f3a6bca8bed245a486348d
 sealed-output: sequence
 

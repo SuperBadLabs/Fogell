@@ -1,7 +1,7 @@
 # Differential receipt — options-accept-and-ignore.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f7c916a7541ddbe47a44ae27e091969d01ff564e5aa636885fe2354e4da9ccb8
+seal:         758b92cbc02b52b73e35bb939a06fce81ef3c0eb27d33427775edd9079509313
 case-digest:  57b56173a0079e1f6aecb976f21cba923991ea5b4a19a16a72a8f97b19fe4c95
 sealed-output: sequence
 

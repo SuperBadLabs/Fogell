@@ -1,7 +1,7 @@
 # Differential receipt — git-step-refetch.b2.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0fb4e5e243bd096d113047b58bd1115555e56a551b65ea475a65edffbcbf97b1
+seal:         d40fe4f06823468c685c4df75eb0f163309c818b72f82e6efdd96bcbe038cf19
 case-digest:  dc0d2f977e917a42246abaa640dd7facb7446e683bcba9f5e82a7a1b245cb43e
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — withenv-comma-value.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         76495372c1c4db8b8d3029d2a0ebb0d2e8987a323d3d7aad269d2dc6feee6b6a
+seal:         43907eb2ffa5836f24b070a3ce80851f5e2ff63796e660a496a60d1a0d3cacc2
 case-digest:  c9f1ebbe9a1224a56986e34b8d38a85b9ffc8a080c2d5d43fe7b378e6680cab5
 sealed-output: sequence
 

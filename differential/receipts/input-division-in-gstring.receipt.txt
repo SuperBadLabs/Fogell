@@ -1,7 +1,7 @@
 # Differential receipt — input-division-in-gstring.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         60a822a6c7f3f28cc4e837d79cf278c7010503d969061f1ab3b306cee2bb988f
+seal:         05dfef53f1674971b5dc62d25b3951be5e5289e8fc92779edc0c0fe49efaeb4b
 case-digest:  f230670deb386b7e1b8ec8c3940ecef226acc6dd6625a36af8da9b3b0b2275ab
 sealed-output: sequence
 

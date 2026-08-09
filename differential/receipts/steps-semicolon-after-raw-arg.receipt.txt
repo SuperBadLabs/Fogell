@@ -1,7 +1,7 @@
 # Differential receipt — steps-semicolon-after-raw-arg.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b31d20cc2f72d5f15a13885f8140c45db8e1f6aa89c8a4db36b44488e3e3a0b6
+seal:         57151d3c1a88d9dd456b99bb62b6512553a0a8dd85e7e87410ec2e64b3d5695e
 case-digest:  4c8c09b30715f2cc0fb6bbdd3e828b820cd4805e01ce3afcdf10d4ad962e989d
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — sh-gstring-interpolation.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         980894fe9df5ee7a1c88f0194383274c0389b304fee71c620602123734dea542
+seal:         edd9001500c446d4add17d70ab2273fac00209eeffdae8027f6b56d640898928
 case-digest:  41f2c05a45389c4512f175b17e9657ae435fc1c997747d02c698f8abc2cfff7e
 sealed-output: sequence
 

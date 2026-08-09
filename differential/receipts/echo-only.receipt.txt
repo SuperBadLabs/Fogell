@@ -1,7 +1,7 @@
 # Differential receipt — echo-only.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b5d78e15e1484039eb6d28233448992693b0c1a1c117e304957b59175f85ae18
+seal:         c9710619af6baecfd60cbe39e78b4af54131b1a38ed7e6c52319c9a36c406aff
 case-digest:  dabbf61c148923d1a5ac3cc940dad2e0d402f3f76c00730c93e5dee0869766b6
 sealed-output: sequence
 

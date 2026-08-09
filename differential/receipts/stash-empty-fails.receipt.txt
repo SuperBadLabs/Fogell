@@ -1,7 +1,7 @@
 # Differential receipt — stash-empty-fails.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3abed992ddfe23d072a5e072af5ff846b855627a064bf9914437ffa4a225ef06
+seal:         94b457336949814082aaf79e4907b9e42bedc341ff0ab707065f779d278f4c08
 case-digest:  25bf6565767516d7b7087beef43fd426290e1e8e40a75ada844f198831b31d42
 sealed-output: sequence
 

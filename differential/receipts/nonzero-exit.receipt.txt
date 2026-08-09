@@ -1,7 +1,7 @@
 # Differential receipt — nonzero-exit.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d6a05d3df5f460c322f96bbff8b72a9f813d85eb68a6d6fd41259bab19b1d454
+seal:         857e0aa786e9e16866bae77543be46629cce54ebdbd65141a7f9f42471211124
 case-digest:  4f193dc859e6f1b2b5e170245df1f20e801b45f3750049b5166c8ef3fb90f792
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — when-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         883a747543bd4ddd0f3d9774c29227cff5608b95639f39d7329f25ea39771b25
+seal:         089aaa27d1ba98886d9998aba47769b15849bce45605b07382c4f4814f088012
 case-digest:  09f77c148774e4366e79fb31e988cd66afa4609fb4a7b0d8dadade9c7277ac50
 sealed-output: sequence
 

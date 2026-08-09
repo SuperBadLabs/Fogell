@@ -1,7 +1,7 @@
 # Differential receipt — input-positional-literal.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         eac65b0c2e2eba42014610b9803de88732118602ab2b96e101d18c6c73c13737
+seal:         d69d5ee6920e5c7c86d65be0d0c30fa52b2cd782edb0fdb481ee7c3dd30a8c60
 case-digest:  e054a0d511d450fc1af0d1aeca0510027888838422ff9f4ba1a78975f1c6aab3
 sealed-output: sequence
 

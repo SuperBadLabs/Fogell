@@ -1,7 +1,7 @@
 # Differential receipt — retry-timeout-retries.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d0caf7f3c67369f16e3ffce3c2e07449beee1ab193083aa1b0b97b1e865ea6a4
+seal:         2ebdffebf58fb56d4085992fa13e09b03a6e16edb227cfd20149dea23c589246
 case-digest:  b1a16166d8bb4d636e33d3763fa9a93811963172dc0f5d81a08624701a3a2466
 sealed-output: sequence
 

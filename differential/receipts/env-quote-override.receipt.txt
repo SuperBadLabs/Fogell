@@ -1,7 +1,7 @@
 # Differential receipt — env-quote-override.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e143b61fdce49e2824ec210d4f00c4afc11ce04cf02f0074ed229c9fde000ad9
+seal:         5b5b3640e0df5a969f5dfc444276b1a9b34025c97d90ca0cbc185ea23afb3bc2
 case-digest:  f30bbc2b61277ef2355037b80d89d8323e35a64d34e929b7a9897793e29b95e3
 sealed-output: sequence
 

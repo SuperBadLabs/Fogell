@@ -1,7 +1,7 @@
 # Differential receipt — withenv-path-same-list.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7a1cde421b780f9e95b0ba1aa94c86c16e888955203c3e632ae0721e8a5b097a
+seal:         c637124336b997c156583669e7912eac1e8524e39a7e0037d630928d5206074d
 case-digest:  2a4c98aeb2372289bef4a94ee323068bf000cfae74e7d440bd948ccf82caf462
 sealed-output: sequence
 

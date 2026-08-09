@@ -1,7 +1,7 @@
 # Differential receipt — gstring-inherited-env-resolves.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         3b72153078367e1c098561c976c22e3f7b82b35b34f62d428dae22c7c4cd17de
+seal:         60e87efae0a69608441164e731076b4b73e49eff709130ee6807c40750c9b484
 case-digest:  c1798e004870725ffcf767b6318ef22f6bcd90b553fa84315552c9d415173a6b
 sealed-output: sequence
 

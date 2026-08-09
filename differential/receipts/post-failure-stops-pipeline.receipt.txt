@@ -1,7 +1,7 @@
 # Differential receipt — post-failure-stops-pipeline.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         884085e7ca15b29153b8c05402fd88a1dd687938ee3c82abc8ccec93ceecf025
+seal:         8866d40bb2f775369457ea9b3aef3a69d86559eac808b53b2a771eaa5b325984
 case-digest:  d8e867e89e70c0d933b805c5e9f05ace22b5dc14a56a9d663782993ffa3c882a
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — xtrace-continuation-inherited.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         245b030097edd379e006a9c204432af403e26834d5a65acbc16df18ec9636339
+seal:         d8c470ef831b51bba916c7221cb6e83f7a24077fa1f845459a1bb15c98b8aed0
 case-digest:  5246a5235ba67c3e2145c9368f0af1e1c388a607a0de20d8c04e469b8c444993
 sealed-output: sequence
 

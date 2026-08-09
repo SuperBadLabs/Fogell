@@ -1,7 +1,7 @@
 # Differential receipt — parallel-inherited-env-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         17c1db6c77870a21f5cdfc21e235ecfc66225209888f10ba52a4565491e373ae
+seal:         0956a0bfa2bee83b1787c832f022a20ea8a6443f4f269df3746ba3c3f27ac106
 case-digest:  e5a074d0798be112a511e275650926224240439173fe78090c48bcae6c1de29d
 sealed-output: multiset
 

@@ -1,7 +1,7 @@
 # Differential receipt — archive-artifacts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         4246c9f05fab5804b7a63116885ea72e1f2e3ec3a3a11f252beab1fbcbce3af3
+seal:         616803c8b5f1d027ad856b45b238cb81e0f6af6b35309dda07f7ada6f034a784
 case-digest:  1571d4dba630a957639d6cd6b884764bd99957ad54aae8ddce34f0555f8c7b23
 sealed-output: sequence
 

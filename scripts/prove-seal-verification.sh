@@ -88,9 +88,10 @@ expect_accept "the committed receipts, unmodified" "$SRC"
 # The scorecard classifies a receipt as proven by READING THIS LINE. Before FG-161 the
 # seal did not bind it, and this arm passed — measured, not imagined.
 d=$(lab_with "$SEQ" verdict)
-sed -i 's/^VERDICT: PROVEN (tier 1).*/VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash/' "$d"/*.receipt.txt
-sed -i '0,/^VERDICT:/s//VERDICT: DIVERGED (7)\nZZZ/' "$d"/*.receipt.txt
-sed -i '/^ZZZ$/d' "$d"/*.receipt.txt
+# ONE substitution. The three-sed dance this replaces inserted and deleted a marker
+# line, which strict line accounting now rejects on its own — so the arm reported a
+# rejection for the marker rather than for the flipped verdict it meant to test.
+sed -i '0,/^VERDICT:/s//VERDICT: DIVERGED (7)/' "$d"/*.receipt.txt
 expect_reject "a FLIPPED VERDICT line" "$d" "SEAL MISMATCH"
 
 # 2. an edited output line
@@ -300,6 +301,68 @@ expect_reject "a valid receipt COPIED onto another case name" "$d" "REFUSED"
 d=$(lab_with "$SEQ" ranandnot)
 sed -i '0,/^  result:/s/^  result:.*/  (did not run)\n&/' "$d"/*.receipt.txt
 expect_reject "a side claiming '(did not run)' beside real evidence" "$d" "UNREADABLE"
+
+# 14i-k. THE LENIENT-PARSER FAMILY. Extraction collected the lines it recognised and
+# ignored the rest, so anything it did not understand rode along unbound. Three bypasses
+# of that one shape reached review; a parser that ignores what it does not recognise
+# cannot be the basis of a tamper check, because "not recognised" is where tampering
+# lives. Every nonblank line must now match a shape the reader knows, in the section it
+# appears in.
+
+# (i) an UNINDENTED line inserted inside a sealed section
+d=$(lab_with "$MULTI" extraline)
+python3 - "$d"/*.receipt.txt <<'PYX'
+import sys
+p=sys.argv[1]; ls=open(p).read().split("\n")
+i=next(k for k,l in enumerate(ls) if l.startswith("## Output comparison notes"))
+ls.insert(i+1, "UNSEALED EXTRA — inserted")
+open(p,"w").write("\n".join(ls))
+PYX
+[ $? -eq 0 ] || { echo "  FAIL: could not plant the extra line"; FAILED=1; }
+expect_reject "an UNRECOGNISED line inside a sealed section" "$d" "REFUSED"
+
+# (ii) arbitrary text riding behind a recognised coverage word. `StartsWith "all"`
+# accepted `alligator`, so the receipt displayed a coverage claim the seal never saw.
+TSF=$(rg -l '^timestamps\(\): ' "$SRC"/*.receipt.txt | head -1)
+if [ -z "$TSF" ]; then
+  echo "  FAIL: no receipt carries a timestamps() line — this arm proves nothing"
+  FAILED=1
+else
+  d=$(lab_with "$(basename "$TSF")" alligator)
+  sed -i 's/jenkins=all (\([0-9]*\))/jenkins=alligator (\1)/' "$d"/*.receipt.txt
+  if cmp -s "$TSF" "$d"/*.receipt.txt; then
+    echo "  FAIL: the coverage word was never altered — this arm would prove nothing"
+    FAILED=1
+  else
+    # SEAL MISMATCH, not UNREADABLE: an unrecognised coverage string hashes as
+    # `<unparseable>`, which cannot equal the classification that was sealed. It fails
+    # closed and loudly, which is the direction that matters.
+    expect_reject "arbitrary text behind a recognised coverage word" "$d" "SEAL MISMATCH"
+  fi
+fi
+
+# (iii) a FABRICATED notes heading over a single two-space line. It reconstructed an
+# EMPTY list — `String.concat` cannot tell [] from [""] — and left the seal intact. This
+# is the zero-output finding appearing again on a different list, so every list the seal
+# covers now carries its length.
+NONOTES=""
+for f in "$SRC"/*.receipt.txt; do
+  rg -q '^## Output comparison notes' "$f" || { NONOTES="$f"; break; }
+done
+if [ -z "$NONOTES" ]; then
+  echo "  FAIL: every receipt has a notes section — this arm proves nothing"
+  FAILED=1
+else
+  d=$(lab_with "$(basename "$NONOTES")" fakenotes)
+  python3 - "$d"/*.receipt.txt <<'PYX'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("\n## Comparison contract", "\n## Output comparison notes (1)\n  \n\n## Comparison contract", 1)
+open(p,"w").write(s)
+PYX
+  [ $? -eq 0 ] || { echo "  FAIL: could not plant the fake notes heading"; FAILED=1; }
+  expect_reject "a FABRICATED empty notes section" "$d" "SEAL MISMATCH"
+fi
 
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
 # `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending

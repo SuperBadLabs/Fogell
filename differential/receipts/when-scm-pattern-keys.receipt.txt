@@ -1,7 +1,7 @@
 # Differential receipt — when-scm-pattern-keys.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         62b877fd0fd6b76939ab0bacbee67ca3e365f0774d8159a835b381eeb2b9608f
+seal:         ab49c5ea2b821ed3f98fadaba7ac3363188e5375ebddc1836fdb52af1f19d0c1
 case-digest:  5c67e35792440cd861b681b8889c3b346b328578882099c65327225b35855d1d
 sealed-output: sequence
 

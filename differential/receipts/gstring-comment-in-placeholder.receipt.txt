@@ -1,7 +1,7 @@
 # Differential receipt — gstring-comment-in-placeholder.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         94d70b3d5cbe96ba90e8fab56f6e39176131d59214356d9a45ada8d37ca3459d
+seal:         cbcac72baef21fe7e6df917abeece83aa5730f7bd4ea64825bf1159fd2898ea4
 case-digest:  9964d771be4359f074621aceb3d3518f81b8d3386b2a0e78411ec16691b100e4
 sealed-output: sequence
 

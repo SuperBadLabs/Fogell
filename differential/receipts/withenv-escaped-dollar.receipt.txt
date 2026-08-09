@@ -1,7 +1,7 @@
 # Differential receipt — withenv-escaped-dollar.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9dd0ce5b656fe0f89dcf9142cb00071203e0f8f84aecf31f85e1adc1c40a75dc
+seal:         9fcb229aa32ba624077f49813bacbec43c487b95ea875771d44fa50017e1f7eb
 case-digest:  e150c28f5391cc5e449599e7867471a4162f642d571c04d4cfd3e00b9845c5be
 sealed-output: sequence
 

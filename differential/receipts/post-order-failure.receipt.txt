@@ -1,7 +1,7 @@
 # Differential receipt — post-order-failure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         587f881ffe249dc15729573bda307236ad3cb066b0a166d71674c1dd534c667e
+seal:         6c866cb7dabdb373b8da18c8e385374e5d6fc5d74b277c9d2d7685b9350f0c1a
 case-digest:  269e64fb0c38afbe76483929224626979528f3c2cb8ded755bbb903e5ee9a468
 sealed-output: sequence
 

@@ -1,7 +1,7 @@
 # Differential receipt — env-inherited-output-fold.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         aa651d6038dc39873a838a5d92a302ffc5613d3aa9d7bd7c0d2483c07ffc3f7d
+seal:         05d420125af4a437fdd8ccc7d00270849590717f7b2daed5d16596b645cc9528
 case-digest:  2be42e1965167cd42ff31dd8ec3af26c5a8895732f0bab2e31953f9214d2ccd8
 sealed-output: sequence
 

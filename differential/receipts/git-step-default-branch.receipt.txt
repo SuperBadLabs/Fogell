@@ -1,7 +1,7 @@
 # Differential receipt — git-step-default-branch.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         a7aaa0acd260adcc7c8f263d2af7f56827431a93c262024a55e2110dc404f07a
+seal:         1c098bc6103e4fd14efe8591abf25fd3c914cc724bd28f71c2923116bc2649ad
 case-digest:  ebaa7be1cc2b2f7d38111dbb20fa647f5243019884b6a2f28052e032bbf88247
 sealed-output: sequence
 
