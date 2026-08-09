@@ -1644,7 +1644,10 @@ module WalkerOrchestration =
                 match Fogell.Groovy.Parser.Parser.parse src with
                 | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
                 | Result.Ok body ->
-                    match StepValueUse.find scriptStepVocabulary.Contains body with
+                    match
+                        StepValueUse.find scriptStepVocabulary.Contains body
+                        @ StepValueUse.findWrapperCalls scriptStepVocabulary.Contains body
+                    with
                     | _ :: _ as uses ->
                         for u in uses do
                             fail
@@ -1675,13 +1678,24 @@ module WalkerOrchestration =
                                 if not (halted ctx) then
                                     match effect with
                                     | StepCall(name, positional, named) ->
+                                        // ALREADY EVALUATED, so EVERY argument is
+                                        // literal. The interpreter resolved these values
+                                        // — GString interpolation included — before
+                                        // handing them over. Leaving them unmarked let
+                                        // `renderStepArgs` interpolate a SECOND time, so
+                                        // `script { input message: 'Deploy ${TARGET}?' }`,
+                                        // single-quoted and literal on Jenkins, had its
+                                        // `${TARGET}` re-rendered before the gate was
+                                        // published to a human. Raised by the pre-push
+                                        // verifier.
                                         let called =
                                             { Name = name
                                               Positional = positional |> List.map Value.toDisplay
                                               Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
                                               Block = []
-                                              LiteralNamedArgs = Set.empty
-                                              LiteralPositionalArgs = Set.empty
+                                              LiteralNamedArgs = named |> List.map fst |> Set.ofList
+                                              LiteralPositionalArgs =
+                                                positional |> List.mapi (fun i _ -> i) |> Set.ofList
                                               InterpolationSource = []
                                               ExpressionArgs = Set.empty
                                               ArgumentOrder =

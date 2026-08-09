@@ -83,8 +83,9 @@ module StepValueUse =
                     | APos x -> expr "a call argument" true x
                     | ANamed(_, v) -> expr "a call argument" true v
 
-                // A trailing block is STATEMENTS, not a value — `timeout(5) { sh 'x' }`
-                // discards the inner call's value exactly as a bare statement does.
+                // A trailing block is STATEMENTS, not a VALUE — so it is not recorded
+                // here. It is not therefore RUNNABLE: see `findWrapperCalls` below, which
+                // refuses it for an entirely different reason.
                 trailing |> Option.iter (fun c -> stmts c.Body)
 
         and stmt (s: Stmt) =
@@ -107,6 +108,125 @@ module StepValueUse =
                 stmts body
             | SReturn e -> e |> Option.iter (expr "a return value" true)
             | SThrow e -> expr "a thrown value" true e
+            | STry(body, catch, fin) ->
+                stmts body
+                catch |> Option.iter (fun (_, _, c) -> stmts c)
+                stmts fin
+            | SFunc(_, _, body) -> stmts body
+            | SBreak
+            | SContinue -> ()
+
+        and stmts (xs: Stmt list) = for x in xs do stmt x
+
+        stmts script
+        List.ofSeq found
+
+    /// FG-160. Step calls that carry a TRAILING BLOCK — `dir('x') { … }`,
+    /// `timeout(5) { … }`, `withEnv([…]) { … }`.
+    ///
+    /// These cannot be replayed. The interpreter executes a trailing closure IMMEDIATELY
+    /// and flattens whatever it contains into the same effect list, so a replayed
+    /// `StepCall` arrives with no body — and the walker's wrappers are driven ENTIRELY by
+    /// `step.Block`: `dir` only changes directory for its block, `timeout` only enforces a
+    /// deadline when its block is non-empty. So `script { dir('x') { sh 'pwd' } }` would
+    /// run `sh` in the STAGE root while reporting success, and a bounded approval would
+    /// silently lose its bound.
+    ///
+    /// That is a wrong answer delivered quietly, so these are REFUSED. Raised by the
+    /// pre-push verifier, which also caught the comment above claiming a trailing block
+    /// was "perfectly runnable" — it is safe from the VALUE question and unsafe from this
+    /// one, and one sentence cannot answer both.
+    ///
+    /// Fixing it properly needs a tree-structured `Effect` that preserves nested bodies;
+    /// until then the refusal is the honest answer.
+    let findWrapperCalls (isStep: string -> bool) (script: Script) : Use list =
+        let found = ResizeArray<Use>()
+
+        let rec expr (e: Expr) =
+            match e with
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EVar _ -> ()
+            | EGString parts ->
+                for p in parts do
+                    match p with
+                    | GLit _ -> ()
+                    | GExpr x -> expr x
+            | EList xs -> for x in xs do expr x
+            | EMap kvs -> for (_, v) in kvs do expr v
+            | EProp(t, _)
+            | ESafeProp(t, _) -> expr t
+            | EIndex(t, i) ->
+                expr t
+                expr i
+            | EUnary(_, o) -> expr o
+            | EBinary(_, l, r) ->
+                expr l
+                expr r
+            | ETernary(c, a, b) ->
+                expr c
+                expr a
+                expr b
+            | EElvis(a, b) ->
+                expr a
+                expr b
+            | EClosure c -> stmts c.Body
+            | ECall(target, args, trailing) ->
+                // EITHER REPRESENTATION. A block can reach a call as `trailing` OR as a
+                // closure ARGUMENT depending on which parser path matched, and a finder
+                // that knows only one of them refuses half the shapes while believing it
+                // covers all — measured: matching `trailing` alone found nothing for
+                // `node { sh 'make' }`. Asking "is there a block anywhere in this call"
+                // is representation-independent and errs toward refusing.
+                let hasBlock =
+                    trailing.IsSome
+                    || args
+                       |> List.exists (fun a ->
+                           match a with
+                           | APos(EClosure _) -> true
+                           | ANamed(_, EClosure _) -> true
+                           | _ -> false)
+
+                (match target with
+                 | FreeCall n when isStep n && hasBlock ->
+                     found.Add
+                         { Step = n
+                           Where = "a trailing block, whose body the replay cannot carry" }
+                 | _ -> ())
+
+                (match target with
+                 | FreeCall _ -> ()
+                 | MethodCall(t, _)
+                 | SafeMethodCall(t, _) -> expr t)
+
+                for a in args do
+                    match a with
+                    | APos x -> expr x
+                    | ANamed(_, v) -> expr v
+
+                trailing |> Option.iter (fun c -> stmts c.Body)
+
+        and stmt (st: Stmt) =
+            match st with
+            | SExpr e -> expr e
+            | SDef(_, v) -> v |> Option.iter expr
+            | SAssign(t, v) ->
+                expr t
+                expr v
+            | SIf(c, a, b) ->
+                expr c
+                stmts a
+                stmts b
+            | SForIn(_, src, body) ->
+                expr src
+                stmts body
+            | SWhile(c, body) ->
+                expr c
+                stmts body
+            | SReturn e -> e |> Option.iter expr
+            | SThrow e -> expr e
             | STry(body, catch, fin) ->
                 stmts body
                 catch |> Option.iter (fun (_, _, c) -> stmts c)

@@ -317,10 +317,42 @@ let stepValueUse =
               Expect.equal (usedSteps "echo sh(script: 'x', returnStdout: true)") [ "sh" ] "argument"
           }
 
-          test "a step inside a TRAILING BLOCK is not a value use" {
+          test "a step inside a TRAILING BLOCK is not a VALUE use" {
               // `timeout(5) { sh 'x' }` discards the inner value exactly as a statement
-              // does. Flagging it would refuse a large and perfectly runnable shape.
-              Expect.isEmpty (uses "node { sh 'make' }") "a trailing block holds statements"
+              // does — so this finder, which answers only the VALUE question, says
+              // nothing about it.
+              //
+              // IT IS NOT THEREFORE RUNNABLE. This comment claimed a trailing block was a
+              // "perfectly runnable shape", and the pre-push verifier showed it is not:
+              // the interpreter runs the closure immediately and flattens it, so a
+              // replayed wrapper arrives with no body and `dir('x') { sh 'pwd' }` runs in
+              // the wrong directory. `findWrapperCalls` refuses it. One sentence cannot
+              // answer both questions, and the old one tried.
+              Expect.isEmpty (uses "node { sh 'make' }") "a trailing block holds statements, not a value"
+          }
+
+          test "a WRAPPER call is refused, because replay cannot carry its body" {
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+                  |> List.map (fun u -> u.Step)
+
+              Expect.equal (wrappers "node { sh 'make' }") [ "node" ] "a step with a trailing block"
+          }
+
+          test "a wrapper NESTED in control flow is still found" {
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+                  |> List.map (fun u -> u.Step)
+
+              Expect.equal (wrappers "if (true) { node { sh 'make' } }") [ "node" ] "the walk reaches into branches"
+          }
+
+          test "a bare step with NO trailing block is not a wrapper" {
+              // The refusal must not swallow the shape FG-160 exists to run.
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+
+              Expect.isEmpty (wrappers "sh 'make'\necho 'done'") "plain steps stay runnable"
           }
 
           test "a step in a RETURN is a value use" {
