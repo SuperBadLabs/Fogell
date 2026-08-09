@@ -249,13 +249,17 @@ module WalkerOrchestration =
                   // pre-push verifier, which named it the SECOND of its class — a script
                   // shape Jenkins rejects being accepted as success.
                   //
-                  // Dropping them from the vocabulary answers both spellings at once: with
-                  // a body or without, the name is not callable here at all.
-                  // `dir` IS ABSENT: it now runs a hosted body (FG-172). The rest still
-                  // drive off `step.Block` and would silently run with no body, so they
-                  // stay refused until each arm is taught the same trick — one at a time,
-                  // each with a differential case, rather than opening them together and
-                  // finding out which ones lied.
+                  // THE RULE AS IT STANDS after FG-172, replacing an earlier note that
+                  // still said every block-taking step was absent: a wrapper is admitted
+                  // ONLY when its walker arm accepts a `HostedBody`. `dir`, `timeout` and
+                  // `retry` do, each with a differential case. `withEnv` and
+                  // `withCredentials` do not — not because their arms are untaught but
+                  // because their arguments are LISTS, and the bridge renders values to
+                  // display strings, so `['A=1']` arrives as `[A=1]` and binds nothing.
+                  //
+                  // A body-less `dir` is refused by the `dir` ARM before it creates the
+                  // directory, not by this list: the rule is Jenkins', and `dir('x')` alone
+                  // is just as wrong at stage level.
                   for w in [ "withEnv"; "withCredentials" ] do
                       yield
                           w,
@@ -1748,9 +1752,30 @@ module WalkerOrchestration =
                 match Fogell.Groovy.Parser.Parser.parse src with
                 | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
                 | Result.Ok body ->
+                    // ONE MESSAGE PER KIND. A single sentence covered all three refusals
+                    // and said every one of them "uses the return value" and that Fogell
+                    // "performs a script's steps after the script runs" — false for an
+                    // `env` mutation, and stale for ALL of them since FG-172 made steps run
+                    // live. A refusal that misreports its own reason sends an author to fix
+                    // the wrong thing, and this project counts an overclaim as a defect in
+                    // itself. Raised by the pre-push verifier.
+                    let describe (kind: string) (u: StepValueUse.Use) =
+                        match kind with
+                        | "value" ->
+                            $"script block uses the return value of `{u.Step}` in {u.Where}; the walker's step \
+                              dispatch returns no value, so Fogell cannot supply one. Refusing rather than \
+                              binding null"
+                        | "env" ->
+                            $"script block assigns `{u.Step}` in {u.Where}; Jenkins applies that to every later \
+                              step, and Fogell's environment overlay does not yet cross the script boundary. \
+                              Refusing rather than accepting an assignment that does nothing"
+                        | _ ->
+                            $"script block calls `{u.Step}` with {u.Where}; that wrapper's walker arm cannot run \
+                              a hosted body yet, so the block would be dropped and its semantics lost"
+
                     match
-                        StepValueUse.findEnvMutations body
-                        @ StepValueUse.find scriptStepVocabulary.Contains body
+                        (StepValueUse.findEnvMutations body |> List.map (describe "env"))
+                        @ (StepValueUse.find scriptStepVocabulary.Contains body |> List.map (describe "value"))
                         // DERIVED, not a hand-kept list: a block-taking step is refused
                         // unless its arm has been taught to run a hosted body. Add one to
                         // the vocabulary without teaching its arm and this fires, rather
@@ -1759,16 +1784,16 @@ module WalkerOrchestration =
                         // guard exists for. Today `dir` is the only one taught, so the
                         // predicate is not vacuous: every other block-taking name is
                         // already outside the vocabulary and denied by the sandbox.
-                        @ StepValueUse.findWrapperCalls
-                            (fun n -> scriptStepVocabulary.Contains n && not (scriptWrappersWithHostedBody.Contains n))
-                            body
+                        @ (StepValueUse.findWrapperCalls
+                               (fun n ->
+                                   scriptStepVocabulary.Contains n
+                                   && not (scriptWrappersWithHostedBody.Contains n))
+                               body
+                           |> List.map (describe "wrapper"))
                     with
-                    | _ :: _ as uses ->
-                        for u in uses do
-                            fail
-                                $"script block uses the return value of `{u.Step}` in {u.Where}; \
-                                  Fogell performs a script's steps after the script runs, so it cannot \
-                                  supply one mid-script. Refusing rather than binding null"
+                    | _ :: _ as reasons ->
+                        for r in reasons do
+                            fail r
                     | [] ->
                         let envMap = envForWith ctx.EnvOverlay stage |> Map.ofList
                         let asValues = envMap |> Map.map (fun _ v -> VStr v)
