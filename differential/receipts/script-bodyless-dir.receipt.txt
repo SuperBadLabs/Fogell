@@ -1,8 +1,8 @@
 # Differential receipt — script-bodyless-dir.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7d1e3241476e2fdb7db760a325c6ce4085d1980d1a622015e2f414ce46e0f0e3
-case-digest:  ca73f5bfe885fe075b18844d26a01b1d46e2376454703e8404d986d8ead786e5
+seal:         afdac1bd5eb1393955b9c67ba4a0ff7a9fdc914be07224133daa1cbffbcccc80
+case-digest:  ab28e214c8180013ea6657ec6abffc327fb995afbec1ee996dc7a1cd361d2d89
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash

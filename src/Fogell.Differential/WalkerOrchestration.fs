@@ -1689,6 +1689,18 @@ module WalkerOrchestration =
                     emit $"dir refused: {e.Describe}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
+                // BEFORE the directory is created. Jenkins rejects a body-less `dir`
+                // before establishing any context, and creating `child/` and THEN failing
+                // leaves a side effect behind on a build that should not have touched the
+                // workspace. Ordering matters here in a way the receipt cannot see: the
+                // manifest hashes FILES, so an extra EMPTY directory is invisible to it —
+                // which is also why the case below no longer claims to prove agreement on
+                // side effects. Raised by the pre-push verifier, which was careful to note
+                // this is a side-effect blind spot rather than another false success.
+                | Result.Ok _ when Option.isNone ctx.HostedBody && List.isEmpty step.Block ->
+                    emit "ERROR: dir step must be called with a body"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
                 | Result.Ok target ->
                     Directory.CreateDirectory target |> ignore
 
@@ -1704,21 +1716,12 @@ module WalkerOrchestration =
                     // reason the loop below takes `target` rather than `cwd`. That
                     // distinction cost a defect once already: the body wrote to the stage
                     // root and only the workspace manifest's PATHS caught it.
-                    match ctx.HostedBody, step.Block with
-                    | Some runBody, _ -> runBody { ctx with HostedBody = None } target
-                    | None, [] ->
-                        // NO BODY AT ALL. Jenkins refuses this outright — "dir step must
-                        // be called with a body" — and creating the directory and carrying
-                        // on is a success where Jenkins fails. Checked at the ARM rather
-                        // than in the script vocabulary, because the rule is Jenkins', not
-                        // the script bridge's: `dir('x')` alone is just as wrong as a
-                        // stage step. Caught by `script-bodyless-dir` the moment `dir`
-                        // rejoined the vocabulary, which is what that case is for.
-                        emit "ERROR: dir step must be called with a body"
-                        ctx.Failed.Value <- true
-                        ctx.Sink BuildStatus.Failure
-                    | None, blockSteps ->
-                        for inner in blockSteps do
+                    // The body-less case is refused ABOVE, before the directory exists,
+                    // so only the two real shapes reach here.
+                    match ctx.HostedBody with
+                    | Some runBody -> runBody { ctx with HostedBody = None } target
+                    | None ->
+                        for inner in step.Block do
                             if not (halted ctx) then
                                 runStepDispatch ctx target stage inner deadline
 
