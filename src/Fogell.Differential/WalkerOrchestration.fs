@@ -1703,6 +1703,13 @@ module WalkerOrchestration =
                             // and the two-step case ran SECOND-STEP first while the comment
                             // above it claimed to be preventing exactly that. A one-step
                             // case cannot see it — which is why the committed case has two.
+                            // DURABILITY, stated where it bites: these replayed steps go
+                            // straight to the dispatcher, so the WHOLE BLOCK is one
+                            // durability unit — a crash between two of them re-runs both on
+                            // resume, where Jenkins resumes after the completed one. FG-171.
+                            // `input` is refused here precisely because it is the only step
+                            // that reads `DurabilityKey`; what remains is duplicated side
+                            // effects, not a misattributed answer.
                             for effect in outcome.Effects do
                                 if not (halted ctx) then
                                     match effect with
