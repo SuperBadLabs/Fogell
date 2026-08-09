@@ -20,9 +20,16 @@ type Effect =
 /// identity (the journal only wraps the outer step). Each was refused in turn until the
 /// supported surface was a fraction of `script { }`.
 ///
-/// A callback answers all four at the source: the host runs the step where it appears, so
-/// it can return a value, execute a body in its own context, mutate the environment the
-/// interpreter goes on to read, and journal each step as its own unit.
+/// A callback makes all four ANSWERABLE at the source, which is not the same as answered.
+/// WHAT IS TRUE TODAY, audited rather than asserted:
+///   - a body executes in the host's own context — DONE, `dir`/`timeout`/`retry`;
+///   - an `env` mutation is reported at the assignment — DONE, and the host currently
+///     REFUSES it, because Fogell's overlay does not yet cross the script boundary;
+///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
+///     host returns null and value uses stay refused;
+///   - per-step journaling is POSSIBLE here — FG-171 is open; the hooks are keyed
+///     `stage -> stepIndex` and a nested identity needs a journal format change.
+/// The earlier wording claimed all four as delivered.
 ///
 /// [RunBody] is present when the call had a trailing block; invoking it evaluates that
 /// block, so a wrapper can set up its context, call it, and tear down.
@@ -372,8 +379,26 @@ module Interpreter =
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
+                // ONE NORMALISED BODY, from either representation. A block reaches a call
+                // as `trailing` OR as a FINAL CLOSURE ARGUMENT depending on which parser
+                // path matched — `dir('sub') { … }` versus `dir 'sub', { … }` — and taking
+                // it only from `trailing` meant the second spelling stringified its closure
+                // into a positional argument and the wrapper then rejected itself as
+                // body-less. `StepValueUse.findWrapperCalls` already had to learn this
+                // exact lesson; the interpreter had not. Normalising HERE means every host
+                // sees one shape instead of each host rediscovering the two.
+                let trailingArg, positionalArgs =
+                    match trailing, List.rev positionalLazy.Value with
+                    | None, VClosure(c, _) :: rest -> Some c, List.rev rest
+                    | _ -> None, positionalLazy.Value
+
+                let bodyClosure =
+                    match trailing with
+                    | Some c -> Some c
+                    | None -> trailingArg
+
                 let runBody =
-                    trailing
+                    bodyClosure
                     |> Option.map (fun c ->
                         fun () ->
                             st.Depth <- st.Depth + 1
@@ -387,7 +412,7 @@ module Interpreter =
                     // whatever context it establishes — the batch model evaluated it
                     // immediately and flattened it, which is how `dir('x') { … }` lost its
                     // directory.
-                    host.Perform s positionalLazy.Value namedLazy.Value runBody
+                    host.Perform s positionalArgs namedLazy.Value runBody
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects

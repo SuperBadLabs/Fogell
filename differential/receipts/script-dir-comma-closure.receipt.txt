@@ -1,14 +1,11 @@
-# Differential receipt — parallel-always-failfast.Jenkinsfile
+# Differential receipt — script-dir-comma-closure.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9f00cbf2d4ea78bc4045e3162edc00f0b666cebbbe7a6b93667a5cf9bb620fec
-case-digest:  563592f9f0e34f15ff5f085f4bd875fedb02b9d5c11b357d1cbca139d587f1d9
-sealed-output: multiset
+seal:         baf65108ebaaf8d74dd8e020d413342723ca5e72be348e465e95b953c14cf5d3
+case-digest:  d01e79c48d8f0510a0200513e91a1efbace794caa5b10f49f547a79ce8ce4e31
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
-
-## Output comparison notes (1)
-  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 11 jenkins / 11 fogell lines
 
 ## Comparison contract
   compared: terminal result
@@ -78,46 +75,23 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     So `--verify-seals` passing does NOT mean this document is unaltered — it means
     the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
     minus fenced regions; it is NOT implemented, so this list is what holds today.
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
-  PARALLEL: the SEAL binds these output lines SORTED, matching what was
-    compared. So the ORDER of the output printed below is NOT sealed and may
-    be rearranged without breaking the seal — said plainly, because an
-    unsealed region of a sealed document that nobody names is how a seal
-    starts being trusted for more than it covers. Content and multiplicity
-    ARE sealed: change, add or drop a line and the seal breaks.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: 5ca197b1d5d04ab28d95f4efddacb2239c58aa76262a97862d8929a2919ac3c2
+  output (2 lines):
+    | + echo placed
+    | + echo outside
+  workspace:
+    bc59dec10c6d  sub/where.txt
+    92a214fa6157  top.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (11 lines):
-    | + echo from-quick
-    | from-quick
-    | + sleep 1
-    | + echo from-slow
-    | from-slow
-    | + sleep 45
-    | + exit 3
-    | Failed in branch quick-fail
-    | Sending interrupt signal to process
-    | Terminated
-    | Failed in branch interrupted
+  result:         success
+  workspace-hash: 5ca197b1d5d04ab28d95f4efddacb2239c58aa76262a97862d8929a2919ac3c2
+  output (2 lines):
+    | + echo placed
+    | + echo outside
+  workspace:
+    bc59dec10c6d  sub/where.txt
+    92a214fa6157  top.txt

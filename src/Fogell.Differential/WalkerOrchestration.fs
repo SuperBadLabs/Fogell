@@ -1819,13 +1819,14 @@ module WalkerOrchestration =
                         // where the script reaches it, instead of collecting requests and
                         // replaying them afterwards.
                         //
-                        // No observable change YET — the refusals above still exclude every
-                        // shape that needed the boundary moved (return values, wrapper
-                        // bodies, `env` mutation, `input`) — and that is the point of doing
-                        // it as its own step: the seam becomes LOAD-BEARING and exercised by
-                        // all 123 receipts before anything depends on it. An unexercised
-                        // callback that everything is about to be built on is the shape of
-                        // dead code this session keeps finding under a passing gate.
+                        // WHAT THE HOST DOES TODAY, corrected from a note that still said
+                        // "no observable change yet" long after there was one: hosted
+                        // WRAPPER BODIES run here (`dir`, `timeout`, `retry`), and an `env`
+                        // assignment is reported at the moment it executes and refused.
+                        // Still refused: a step's RETURN VALUE (dispatch yields unit),
+                        // `input` (durable identity is per top-level step, FG-171), and
+                        // list-argument wrappers (`withEnv`, `withCredentials`) whose
+                        // arguments the bridge would render to display strings.
                         // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
                         // wrapper's body re-enters the interpreter, which calls back here —
                         // and those inner steps must run in the directory and overlay the
