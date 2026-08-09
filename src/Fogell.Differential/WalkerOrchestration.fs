@@ -211,13 +211,16 @@ module WalkerOrchestration =
             set
                 [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
                   "stash"; "unstable"; "unstash"
-                  // FG-172: readmitted, now that a hosted body reaches its arm.
-                  "dir" ]
+                  // FG-172: readmitted, now that a hosted body reaches their arms. `withEnv`
+                  // and `withCredentials` stay out: their arguments are LISTS, and the
+                  // bridge renders values to display strings, so `['A=1']` arrives as the
+                  // string `[A=1]` and binds nothing.
+                  "dir"; "timeout"; "retry" ]
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
         /// from a `script { }` rather than a `Step list`. Everything else block-taking is
         /// refused; see the derivation at the refusal site.
-        let scriptWrappersWithHostedBody = set [ "dir" ]
+        let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry" ]
 
         /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
         /// the sandbox's generic denial says a name was not admissible, not why THIS one
@@ -253,7 +256,7 @@ module WalkerOrchestration =
                   // stay refused until each arm is taught the same trick — one at a time,
                   // each with a differential case, rather than opening them together and
                   // finding out which ones lied.
-                  for w in [ "timeout"; "retry"; "withEnv"; "withCredentials" ] do
+                  for w in [ "withEnv"; "withCredentials" ] do
                       yield
                           w,
                           $"`{w}` takes a block, and a replayed script effect cannot carry one, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
@@ -809,7 +812,7 @@ module WalkerOrchestration =
 
             // JB-FAIL-001/002: timeout and abort share one interrupt path,
             // and the interrupt is a trappable SIGTERM with a grace window.
-            | "timeout", _ when not (List.isEmpty step.Block) ->
+            | "timeout", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
                 match timeoutMs (renderStepArgs ctx stage step) with
                 | Error why ->
                     emit $"ERROR: {why}; refusing to guess a deadline"
@@ -830,9 +833,19 @@ module WalkerOrchestration =
                     // logs COMPARE where these sentences were suppressed before.
                     emit ("Timeout set to expire in " + humanizeSpan ms)
 
-                    for inner in step.Block do
-                        if not (halted ctx) then
-                            runStepDispatch ctx cwd stage inner (Some effective)
+                    // FG-172. A hosted body runs under the SAME effective deadline the
+                    // block below would impose — the bound is the wrapper's entire purpose,
+                    // and handing over a body without it is a safety bound defeated, which
+                    // this project ranks with a bypassed approval.
+                    match ctx.HostedBody with
+                    | Some runBody ->
+                        // The deadline travels on the dispatch, not on the context, so it
+                        // is threaded through the host cell by the runner rather than here.
+                        runBody { ctx with HostedBody = None; HostedDeadline = Some effective } cwd
+                    | None ->
+                        for inner in step.Block do
+                            if not (halted ctx) then
+                                runStepDispatch ctx cwd stage inner (Some effective)
 
                     // OWN deadline, not the effective one: under a shorter outer
                     // bound this block's budget may be untouched when the outer
@@ -844,11 +857,20 @@ module WalkerOrchestration =
             // first, and there is no backoff. `retry(3)` around a step that always
             // fails runs it exactly three times. The loop itself is `runWithRetry`,
             // shared with a stage's `options { retry(N) }`.
-            | "retry", _ when not (List.isEmpty step.Block) ->
+            | "retry", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
+                let hosted = ctx.HostedBody
+
                 runWithRetry ctx (retryCount (renderStepArgs ctx stage step)) (fun attemptCtx ->
-                    for inner in step.Block do
-                        if not (halted attemptCtx) then
-                            runStepDispatch attemptCtx cwd stage inner deadline)
+                    // FG-172. EACH ATTEMPT re-runs the body, which is the point of `retry`
+                    // and the reason the interpreter hands it over as a THUNK rather than
+                    // pre-evaluated: the batch model had already run it once by the time
+                    // the wrapper saw it, so N attempts were impossible to express.
+                    match hosted with
+                    | Some runBody -> runBody { attemptCtx with HostedBody = None } cwd
+                    | None ->
+                        for inner in step.Block do
+                            if not (halted attemptCtx) then
+                                runStepDispatch attemptCtx cwd stage inner deadline)
 
             // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
             // after the block an added variable is UNSET and a shadowed one
@@ -1830,8 +1852,16 @@ module WalkerOrchestration =
                                         // block.
                                         | None -> { atCtx with HostedBody = None }
 
+                                    // The deadline a hosted `timeout` established wins over
+                                    // the one captured when the script started; without this
+                                    // the bound is announced and not applied.
+                                    let effectiveDeadline =
+                                        match atCtx.HostedDeadline with
+                                        | Some d -> Some d
+                                        | None -> deadline
+
                                     if not (halted dispatchCtx) then
-                                        runStepDispatch dispatchCtx atCwd stage called deadline
+                                        runStepDispatch dispatchCtx atCwd stage called effectiveDeadline
 
                                     // NULL, still: `runStepDispatch` returns unit, so there is
                                     // no value to hand back and `StepValueUse` keeps refusing
@@ -1956,6 +1986,7 @@ module WalkerOrchestration =
                                   Sink = ctx.Sink
                                   EnvOverlay = ctx.EnvOverlay
                                   HostedBody = None
+                                  HostedDeadline = None
                                   Secrets = ctx.Secrets
                                   // The stamp must travel WITH the predicate it
                                   // describes. A non-failFast block inherits the

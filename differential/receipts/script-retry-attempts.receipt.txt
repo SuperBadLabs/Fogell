@@ -1,14 +1,11 @@
-# Differential receipt — parallel-post-selection.Jenkinsfile
+# Differential receipt — script-retry-attempts.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         6deabd85c4eec4f4f906ec983d7d8f9dba8826cadeeae9aaabd84c8c16fea0de
-case-digest:  974ab5becf4d4c89f7e240597fc11e7209f224bf7dbc64bcba4ac53f44aa8802
-sealed-output: multiset
+seal:         907f101cb481da482779458ddefc22525612e67de0c71423e603caa91625cca5
+case-digest:  e36ff49b628874d48dee78100d23110c21e9f54c506fa576c19d286ec3e54ed7
+sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
-
-## Output comparison notes (1)
-  multiset mode: compared as a MULTISET, ORDER NOT COMPARED (concurrent case) — 4 jenkins / 4 fogell lines
 
 ## Comparison contract
   compared: terminal result
@@ -78,38 +75,33 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     So `--verify-seals` passing does NOT mean this document is unaltered — it means
     the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
     minus fenced regions; it is NOT implemented, so this list is what holds today.
-  PARALLEL: output compared as a sorted multiset, not a sequence — concurrent
-    branches interleave nondeterministically, so a sequence comparison would
-    pass or fail on OS scheduling. Line content and multiplicity ARE compared;
-    order is NOT, and declarative Jenkins emits no branch prefix to attribute
-    a line by. The load-bearing claim for these cases is the workspace hash.
-  PARALLEL: the SEAL binds these output lines SORTED, matching what was
-    compared. So the ORDER of the output printed below is NOT sealed and may
-    be rearranged without breaking the seal — said plainly, because an
-    unsealed region of a sealed document that nobody names is how a seal
-    starts being trusted for more than it covers. Content and multiplicity
-    ARE sealed: change, add or drop a line and the seal breaks.
 
 ## Jenkins
   result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + exit 6
-    | + echo fine
-    | Failed in branch fails
-    | + echo correct
+  workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
+  output (8 lines):
+    | + echo attempt
+    | + exit 1
+    | Retrying
+    | + echo attempt
+    | + exit 1
+    | Retrying
+    | + echo attempt
+    | + exit 1
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    a3b4240ea304  attempts.txt
 
 ## Fogell
   result:         failure
-  workspace-hash: 06cf831a103795104ac3739782c66955986f782e5b0ee2e8852a647b415779f7
-  output (4 lines):
-    | + echo fine
-    | + exit 6
-    | Failed in branch fails
-    | + echo correct
+  workspace-hash: 4cefd61d3f3139ade7a327766af74cda6e5a0e5ceb7f81844a695337284a8c8e
+  output (8 lines):
+    | + echo attempt
+    | + exit 1
+    | Retrying
+    | + echo attempt
+    | + exit 1
+    | Retrying
+    | + echo attempt
+    | + exit 1
   workspace:
-    8ecc5f94c57b  fine.txt
-    844cd17a64df  right-arm.txt
+    a3b4240ea304  attempts.txt

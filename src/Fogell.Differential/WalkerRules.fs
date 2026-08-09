@@ -61,6 +61,14 @@ type BranchCtx =
       /// `None` for every ordinary step, where the body is `step.Block` and this
       /// question does not arise.
       HostedBody: (BranchCtx -> string -> unit) option
+      /// FG-172. The deadline a hosted body must run under.
+      ///
+      /// Carried on the context ONLY because a deadline normally travels as a dispatch
+      /// ARGUMENT, and a hosted body's inner steps are dispatched by the script host — which
+      /// has no way to be told. Without it `timeout(1) { … }` inside a `script` would run its
+      /// body unbounded while announcing a budget: a safety bound defeated, which this
+      /// project ranks alongside a bypassed approval.
+      HostedDeadline: Deadline option
       /// FG-046b. The (stage, top-level step index) this branch is currently
       /// executing — the key durability records are written under. Carried on
       /// the BRANCH, not in run-scoped state, because parallel branches execute
