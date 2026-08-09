@@ -407,6 +407,31 @@ expect_reject "an INDENTED forged line in the header" "$d" "REFUSED"
 # satisfied by refusing every PROVEN-PARTIAL and DIVERGED receipt in the suite.
 expect_accept "the committed receipts, still, after the header rule" "$SRC"
 
+# 14o. AN OVERSIZED COUNT. `int` throws above Int32.MaxValue, and a tampered receipt
+# supplies that for free — a checker that crashes on malformed input is a checker that
+# stops reporting. Raised by review on PR #48.
+d=$(lab_with "$SEQ" hugecount)
+sed -i '0,/^  output (/s/^  output (.*/  output (99999999999 lines):/' "$d"/*.receipt.txt
+expect_reject "an OVERSIZED output count" "$d" "UNREADABLE"
+
+# 14p. The timestamp line's EXPLANATORY SUFFIX. The pattern stopped at "prefix text
+# excluded", so the rest of the sentence was unmatched and could be altered or extended
+# on a line the receipt presents as a sealed fact.
+TSF2=$(grep -l '^timestamps(): ' "$SRC"/*.receipt.txt 2>/dev/null | sort | head -1)
+if [ -z "$TSF2" ]; then
+  echo "  FAIL: no receipt carries a timestamps() line — this arm proves nothing"
+  FAILED=1
+else
+  d=$(lab_with "$(basename "$TSF2")" tssuffix)
+  sed -i 's/(prefix text excluded, coverage compared and sealed)/(prefix text excluded, coverage compared and sealed) AND ALSO APPROVED/' "$d"/*.receipt.txt
+  if cmp -s "$TSF2" "$d"/*.receipt.txt; then
+    echo "  FAIL: the timestamp suffix was never altered — this arm would prove nothing"
+    FAILED=1
+  else
+    expect_reject "an ALTERED timestamps() explanatory suffix" "$d" "UNREADABLE"
+  fi
+fi
+
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
 # `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending
 # one line to a diverged receipt verified AND promoted it. Measured: this arm passed

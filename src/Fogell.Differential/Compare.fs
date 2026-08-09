@@ -1033,7 +1033,10 @@ module Compare =
                 if not m.Success then
                     Some $"malformed notes heading: {h}"
                 else
-                    let declared = int m.Groups[1].Value
+                    let declared =
+                        match Int32.TryParse m.Groups[1].Value with
+                        | true, n -> n
+                        | _ -> -1
 
                     let actual =
                         lines
@@ -1086,8 +1089,14 @@ module Compare =
                         elif s = "none" then "none"
                         else "<unparseable>"
 
+                    // THE WHOLE LINE, anchored at both ends. The pattern stopped at
+                    // "prefix text excluded", leaving the rest of the sentence — and
+                    // anything appended after it — unmatched and therefore unchecked on a
+                    // line the receipt presents as a sealed fact.
                     let m =
-                        Text.RegularExpressions.Regex.Match(l, @"jenkins=(.*?) fogell=(.*?) \(prefix text excluded")
+                        Text.RegularExpressions.Regex.Match(
+                            l,
+                            @"^timestamps\(\): jenkins=(.+?) fogell=(.+?) \(prefix text excluded, coverage compared and sealed\)$")
 
                     if m.Success then
                         Some(word m.Groups[1].Value, word m.Groups[2].Value)
@@ -1142,11 +1151,22 @@ module Compare =
                     // Raised by the pre-push verifier. Checked rather than sealed: the
                     // count is DERIVED from the payload, so the honest check is that the
                     // document agrees with itself.
+                    // `int` THROWS on a value above Int32.MaxValue, and a tampered
+                    // receipt supplies that value for free — a checker that crashes on
+                    // malformed input is a checker that stops reporting. TryParse, and an
+                    // unparseable count is simply not a valid header.
                     let headers =
                         block
                         |> List.choose (fun l ->
                             let m = Text.RegularExpressions.Regex.Match(l, @"^  output \((\d+) lines\):$")
-                            if m.Success then Some(int m.Groups[1].Value) else None)
+
+                            if m.Success then
+                                match Int32.TryParse m.Groups[1].Value with
+                                | true, n -> Some(Some n)
+                                | _ -> Some None
+                            else
+                                None)
+                        |> List.map (fun o -> defaultArg o -1)
 
                     // DUPLICATES INSIDE THE SIDE BLOCK TOO. The top-level duplicate check
                     // covered receipt fields and stopped there, so a second visible
