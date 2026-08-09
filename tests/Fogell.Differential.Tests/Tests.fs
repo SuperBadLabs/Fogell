@@ -768,6 +768,72 @@ let concurrentSealIsOrderStable =
           }
         ]
 
+let silenceIsPerEngine =
+    // FG-170. `DiagnosticSilence` was raised inside `if jenkins.Result = "failure" ||
+    // "aborted"`, and that guard wrapped BOTH engines' checks — so a silent FOGELL failure
+    // against a Jenkins SUCCESS could never be named, which is the shape most likely to be
+    // a Fogell defect. Measured with a `script { sh ... }` probe: fogell=failure, zero
+    // output, no DiagnosticSilence in the receipt.
+    let trace result reported output =
+        { Result = result
+          Output = output
+          WorkspaceHash = "ws"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = reported }
+
+    let silences j f =
+        let verdict, _ = Compare.traces [] j f
+
+        match verdict with
+        | Diverged ds ->
+            ds
+            |> List.choose (fun d ->
+                match d with
+                | DiagnosticSilence e -> Some e
+                | _ -> None)
+        | _ -> []
+
+    testList
+        "FG-170 diagnostic silence is judged per engine"
+        [ test "a silent FOGELL failure is named even when Jenkins SUCCEEDED" {
+              // The regression case, and the one the old guard could not reach.
+              let names = silences (trace "success" true [ "+ echo hi"; "hi" ]) (trace "failure" false [])
+              Expect.contains names "fogell" "an engine that failed without a reason must be named"
+          }
+
+          test "a silent JENKINS failure is named even when Fogell SUCCEEDED" {
+              // The mirror. Written because the fix could have been applied to one arm and
+              // left the other keyed on the wrong engine — the exact habit this session
+              // kept catching.
+              let names = silences (trace "failure" false []) (trace "success" true [ "+ echo hi"; "hi" ])
+              Expect.contains names "jenkins" "the rule is symmetric or it is not a rule"
+          }
+
+          test "an engine that SUCCEEDED is never asked to explain itself" {
+              // Judging on the other engine's result is precisely the defect; judging a
+              // successful engine at all would be its twin.
+              let names = silences (trace "success" false []) (trace "failure" false [])
+              Expect.contains names "fogell" "the failing engine is named"
+              Expect.isFalse (List.contains "jenkins" names) "a successful engine has nothing to explain"
+          }
+
+          test "a failure WITH a reported reason is not flagged" {
+              let names = silences (trace "success" true [ "+ echo hi"; "hi" ]) (trace "failure" true [ "ERROR: boom" ])
+              Expect.isEmpty names "a diagnosed failure is not silence"
+          }
+
+          test "UNSTABLE is still excluded, on both sides" {
+              // Jenkins marks a build unstable from a test report and prints no ERROR line;
+              // requiring one fired symmetrically and was the signature of a wrong rule.
+              // Making the check per-engine must not quietly widen it.
+              let names = silences (trace "unstable" false []) (trace "unstable" false [])
+              Expect.isEmpty names "unstable is explained by the test report, not an ERROR line"
+          }
+        ]
+
 let caseSnapshotIsOneRead =
     // FG-168. `readCaseSnapshot` replaced a `File.ReadAllText` + `File.ReadAllBytes` pair
     // in the differential CLI so the sealed bytes and the executed text are one snapshot.
@@ -1087,6 +1153,7 @@ let main argv =
               stringModel
               sealBindsCaseSource
               caseSnapshotIsOneRead
+              silenceIsPerEngine
               concurrentSealIsOrderStable
               concurrentFoldAccounting
               continuationResolution

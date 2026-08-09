@@ -372,15 +372,40 @@ module Compare =
               | Some d -> d
               | None -> ()
 
-              // A FAILED or ABORTED build must be explained by both engines.
+              // A FAILED or ABORTED build must be explained BY THE ENGINE THAT FAILED.
               // `unstable` is excluded deliberately: Jenkins marks a build
               // unstable from a test report and prints no ERROR line — the report
               // is the explanation. Requiring one there fired symmetrically on
               // both engines, which is the signature of a wrong rule rather than
               // a real divergence.
-              if jenkins.Result = "failure" || jenkins.Result = "aborted" then
-                  if not fogell.ReportedFailureReason then DiagnosticSilence "fogell"
-                  if not jenkins.ReportedFailureReason then DiagnosticSilence "jenkins"
+              //
+              // FG-170. THIS WAS KEYED ON JENKINS' RESULT, for both engines. The guard
+              // read as "if the build failed" but named ONE engine, so the case where a
+              // silent failure is most likely to be a Fogell defect — Jenkins succeeds,
+              // Fogell fails — was exactly the case it could not fire in. Seen with a
+              // `script { sh 'echo INSIDE-SCRIPT' }` probe: fogell=failure with ZERO output
+              // lines and no DiagnosticSilence in the receipt. UNPROVEN in-repo, stated
+              // rather than dressed up: that probe DIVERGES, and a diverging case cannot
+              // join a suite that requires 118/118 proven, so the receipt lives in scratch
+              // until FG-160 makes `script` blocks run. The unit tests below are the
+              // committed evidence, and they hold the property directly.
+              //
+              // Not a missed divergence — the case diverges on result and output either
+              // way — but the receipt did not say the failure was UNDIAGNOSED, and that is
+              // the fact separating a wrong answer from no answer. Each engine is now
+              // asked about its OWN result, which is what the sentence above always said.
+              // Written as an explicit condition rather than nested `if`s inside a list
+              // computation expression: that form yields nothing on the false path with no
+              // `else` in sight, and a later refactor that makes either branch return a
+              // value changes the meaning silently. Raised by review on PR #49.
+              let explains (t: Trace) (engine: string) =
+                  if (t.Result = "failure" || t.Result = "aborted") && not t.ReportedFailureReason then
+                      [ DiagnosticSilence engine ]
+                  else
+                      []
+
+              yield! explains fogell "fogell"
+              yield! explains jenkins "jenkins"
 
               // COMPARED, not excluded. `normaliseLine` strips the prefix so the
               // instants never have to agree; this is what stops that strip from
