@@ -9,6 +9,30 @@ open Fogell.Admission
 type Effect =
     | StepCall of name: string * positional: Value list * named: (string * Value) list
 
+/// FG-160 slice 2. The host performing a step DURING evaluation, rather than receiving a
+/// batch of requests afterwards.
+///
+/// WHY THE BATCH MODEL WAS THE WRONG BOUNDARY, measured over six review rounds on one
+/// ticket: collecting `StepCall` effects and replaying them afterwards preserves ORDER and
+/// loses everything else that crosses the boundary — a step's RETURN VALUE (the call
+/// evaluates to null on the spot), a wrapper's BODY (the closure runs immediately and
+/// flattens), `env` MUTATION (the host's overlay never sees it), and per-step DURABLE
+/// identity (the journal only wraps the outer step). Each was refused in turn until the
+/// supported surface was a fraction of `script { }`.
+///
+/// A callback answers all four at the source: the host runs the step where it appears, so
+/// it can return a value, execute a body in its own context, mutate the environment the
+/// interpreter goes on to read, and journal each step as its own unit.
+///
+/// [RunBody] is present when the call had a trailing block; invoking it evaluates that
+/// block, so a wrapper can set up its context, call it, and tear down.
+type PerformStep =
+    { Perform: string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
+      /// `env.NAME = value` inside the script. The interpreter updates its own binding
+      /// either way; this tells the host so that steps AFTER the block see it too, which
+      /// is what Jenkins does and what the batch model could not express.
+      SetEnv: string -> string -> unit }
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
@@ -67,6 +91,10 @@ module Interpreter =
           mutable Effects: Effect list
           Budget: Budget
           RegisteredSteps: Set<string>
+          /// None keeps the BATCH model — effects are collected and the call yields null.
+          /// Existing consumers (`when { expression }`, the tests) rely on that and are
+          /// deliberately unchanged; only a caller that supplies this gets live steps.
+          Host: PerformStep option
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -344,16 +372,27 @@ module Interpreter =
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
-                // a step is a request to the host, not something we perform
-                st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
+                let runBody =
+                    trailing
+                    |> Option.map (fun c ->
+                        fun () ->
+                            st.Depth <- st.Depth + 1
+                            execBlock st env c.Body |> ignore
+                            st.Depth <- st.Depth - 1)
 
-                trailing
-                |> Option.iter (fun c ->
-                    st.Depth <- st.Depth + 1
-                    execBlock st env c.Body |> ignore
-                    st.Depth <- st.Depth - 1)
-
-                VNull
+                match st.Host with
+                | Some host ->
+                    // LIVE: the host performs it here and its value is the call's value.
+                    // The body is handed over UNEVALUATED so a wrapper can run it inside
+                    // whatever context it establishes — the batch model evaluated it
+                    // immediately and flattened it, which is how `dir('x') { … }` lost its
+                    // directory.
+                    host.Perform s positionalLazy.Value namedLazy.Value runBody
+                | None ->
+                    // BATCH: a step is a request, not something we perform.
+                    st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
+                    runBody |> Option.iter (fun run -> run ())
+                    VNull
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
                 | Some(ps, body) ->
@@ -666,7 +705,7 @@ module Interpreter =
     /// Evaluate a script. `registeredSteps` is the host's step vocabulary;
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
-    let private runWith (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+    let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
         let st =
@@ -675,6 +714,7 @@ module Interpreter =
               Effects = []
               Budget = budget
               RegisteredSteps = registeredSteps
+              Host = host
               Defined = defined
               LastValue = None
               StrictVars = strictVars
@@ -721,13 +761,24 @@ module Interpreter =
 
     /// Groovy's late-binding default: an unknown name reads as null.
     let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        runWith false budget registeredSteps env script
+        runWith None false budget registeredSteps env script
 
     /// Groovy's property-lookup contract for GStrings in step arguments: an unknown
     /// name faults with [UnknownProperty]. Enforced at READ time because laziness
     /// makes the read set undecidable statically — `${c ? A : B}` reads one arm.
+    /// FG-160 slice 2. Evaluate with the host performing steps LIVE, strict variable
+    /// reads included — a script block is a Jenkins context, where an unbound name raises
+    /// MissingPropertyException rather than reading null.
+    ///
+    /// `Outcome.Effects` is EMPTY in this mode, and that is not an oversight: the steps
+    /// already happened. A caller that reads `Effects` after this has misunderstood which
+    /// model it asked for, so leaving the list empty makes that mistake visible rather
+    /// than handing back a replayable-looking log of work already done.
+    let runHosted (host: PerformStep) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith (Some host) true budget registeredSteps env script
+
     let runStrictVars (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        runWith true budget registeredSteps env script
+        runWith None true budget registeredSteps env script
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script

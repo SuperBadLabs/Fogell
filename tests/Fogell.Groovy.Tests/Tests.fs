@@ -384,6 +384,124 @@ let stepValueUse =
           }
         ]
 
+let hostedSteps =
+    // FG-160 slice 2. The callback boundary, holding the four things the BATCH model
+    // could not express — each one a refusal in slice 1, each found by review:
+    //   a step's RETURN VALUE, a wrapper's BODY, `env` MUTATION, and per-step ordering
+    //   the host can hang durability on.
+    // These test the seam, not the walker; the walker side is separate work.
+    let hostThat perform setEnv =
+        { Perform = perform
+          SetEnv = setEnv }
+
+    /// Records what the host was asked to do, in order.
+    let recording () =
+        let log = ResizeArray<string>()
+
+        let host =
+            hostThat
+                (fun name positional _named runBody ->
+                    let args = positional |> List.map Value.toDisplay |> String.concat ","
+                    log.Add $"{name}({args})"
+
+                    match runBody with
+                    | Some run ->
+                        log.Add $"{name}:body-start"
+                        run ()
+                        log.Add $"{name}:body-end"
+                    | None -> ()
+
+                    VNull)
+                (fun k v -> log.Add $"env:{k}={v}")
+
+        host, log
+
+    let runIt host src =
+        Interpreter.runHosted host Budget.defaults steps (Env.empty) (parseOk src)
+
+    testList
+        "FG-160 slice 2 the host performs steps live"
+        [ test "steps are performed IN ORDER, as they are reached" {
+              let host, log = recording ()
+              let outcome = runIt host "sh 'a'\nsh 'b'"
+
+              Expect.isNone outcome.Fault "the script ran"
+              Expect.equal (List.ofSeq log) [ "sh(a)"; "sh(b)" ] "source order, live"
+          }
+
+          test "Effects is EMPTY in hosted mode, because the steps already happened" {
+              // A caller reading Effects here has asked for the wrong model; an empty list
+              // makes that visible instead of handing back a replayable-looking log.
+              let host, _ = recording ()
+              let outcome = runIt host "sh 'a'"
+              Expect.isEmpty outcome.Effects "hosted mode performs, it does not collect"
+          }
+
+          test "a step's RETURN VALUE reaches the script" {
+              // The defect that started the refusals: batch mode evaluated every call to
+              // null, so `def out = sh(...)` bound null and every branch on it was wrong.
+              let host =
+                  hostThat (fun _ _ _ _ -> VStr "deadbeef") (fun _ _ -> ())
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk "def out = sh(script: 'git rev-parse HEAD', returnStdout: true)\nreturn out")
+
+              Expect.isNone outcome.Fault "no fault"
+              Expect.equal outcome.Returned (Some(VStr "deadbeef")) "the host's value is the call's value"
+          }
+
+          test "a WRAPPER's body runs INSIDE the wrapper, not flattened before it" {
+              // Batch mode evaluated a trailing closure immediately and flattened its
+              // effects, so `dir('x') { sh 'pwd' }` ran `sh` outside `x`. The body arrives
+              // as a thunk the host invokes where it chooses.
+              let host, log = recording ()
+              let outcome = runIt host "node('linux') { sh 'pwd' }"
+
+              Expect.isNone outcome.Fault "no fault"
+
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "node(linux)"; "node:body-start"; "sh(pwd)"; "node:body-end" ]
+                  "the inner step runs between the wrapper's setup and teardown"
+          }
+
+          test "a wrapper body is NOT run when the host declines to run it" {
+              // `retry`, `timeout` and a skipped `when` all need this: the host decides
+              // whether and how many times the body runs. Batch mode had already run it.
+              let host = hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ())
+              let ran = ref false
+
+              let counting =
+                  { host with
+                      Perform =
+                        fun name _ _ _ ->
+                            if name = "sh" then ran.Value <- true
+                            VNull }
+
+              let outcome =
+                  Interpreter.runHosted counting Budget.defaults steps Env.empty (parseOk "node('linux') { sh 'pwd' }")
+
+              Expect.isNone outcome.Fault "no fault"
+              Expect.isFalse ran.Value "an unrun body performs no steps"
+          }
+
+          test "a host FAULT stops the script where it happened" {
+              // A failing step must not let the rest of the block run — batch mode could
+              // not fail mid-script at all, because nothing had run yet.
+              let host =
+                  hostThat
+                      (fun name _ _ _ ->
+                          if name = "sh" then failwith "step failed"
+                          VNull)
+                      (fun _ _ -> ())
+
+              Expect.throws
+                  (fun () -> Interpreter.runHosted host Budget.defaults steps Env.empty (parseOk "sh 'a'\nsh 'b'") |> ignore)
+                  "a host exception propagates rather than being swallowed"
+          }
+        ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps ])
