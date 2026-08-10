@@ -2025,14 +2025,25 @@ module WalkerOrchestration =
                                         | Some d -> Some d
                                         | None -> deadline
 
-                                    if not (halted dispatchCtx) then
-                                        runStepDispatch dispatchCtx atCwd stage called effectiveDeadline
+                                    // FG-174. A fresh slot PER CALL: reusing one would let a
+                                    // step that returns nothing hand back the previous
+                                    // step's value, which is worse than null because it
+                                    // looks plausible.
+                                    let slot = ref VNull
 
-                                    // NULL, still: `runStepDispatch` returns unit, so there is
-                                    // no value to hand back and `StepValueUse` keeps refusing
-                                    // bodies that would consume one. Wiring a real return
-                                    // value is the next piece of FG-172, not this one.
-                                    VNull
+                                    if not (halted dispatchCtx) then
+                                        runStepDispatch
+                                            { dispatchCtx with HostedResult = Some slot }
+                                            atCwd
+                                            stage
+                                            called
+                                            effectiveDeadline
+
+                                    // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
+                                    // stdout, `sh(returnStatus: true)` its exit code as an
+                                    // Integer, and `VNull` for everything else, which is
+                                    // still every step that does not opt in.
+                                    slot.Value
                               SetEnv =
                                 fun name _ ->
                                     // THE REFUSAL ITSELF, at the moment the assignment runs.
@@ -2155,6 +2166,7 @@ module WalkerOrchestration =
                                   HostedBody = None
                                   HostedDeadline = None
                                   HostedArgs = None
+                                  HostedResult = None
                                   Secrets = ctx.Secrets
                                   // The stamp must travel WITH the predicate it
                                   // describes. A non-failFast block inherits the

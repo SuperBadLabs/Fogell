@@ -2,6 +2,8 @@ namespace Fogell.Differential
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
+// FG-174: a step's return value is published typed, so `returnStatus` yields an Integer.
+open Fogell.Groovy.Interpreter
 
 /// FG-105. ONE step's execution: render its arguments, hand it to the
 /// executor with the branch's deadline/interrupt wiring, then classify and
@@ -124,6 +126,27 @@ module WalkerStep =
         // status: on success nothing else would print them, and on failure
         // the composed ERROR line is normalised away — either way the
         // receipt stayed silent until this carried them separately (FG-103).
+        // FG-174. `returnStdout` / `returnStatus`, measured against pinned Jenkins:
+        //   returnStdout -> stdout VERBATIM, trailing newline INCLUDED. `printf 'value\n'`
+        //     through `od -c` gives `[ v a l u e \n ]`, which is why pipelines call
+        //     `.trim()`. Stripping it "helpfully" would silently change every script that
+        //     already does. Receipt: script-sh-returnstdout.
+        //   returnStatus -> the exit code, and the build DOES NOT FAIL. Receipt:
+        //     script-sh-returnstatus. Getting this wrong turns a deliberate status check
+        //     into a failed build; getting it wrong the other way hides a real failure.
+        let flagged (key: string) =
+            renderedNamed
+            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
+
+        let wantsStdout = flagged "returnStdout"
+        let wantsStatus = flagged "returnStatus"
+
+        ctx.HostedResult
+        |> Option.iter (fun slot ->
+            if wantsStdout then slot.Value <- VStr result.Stdout
+            elif wantsStatus then slot.Value <- VInt(int64 (defaultArg result.ExitCode 0))
+            else slot.Value <- VNull)
+
         result.EngineNote
         |> Option.iter (fun n -> runCtx.NoteEngine $"step '{step.Name}': {n}")
 
@@ -133,7 +156,9 @@ module WalkerStep =
         // requires the same: a diagnostic the user cannot see is not a
         // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
         // opaque `exit code -1`, and we promised to be clearer, not quieter).
-        if result.Status <> BuildStatus.Success then
+        // `returnStatus` ASKED for the code, so a non-zero exit is the ANSWER rather than a
+        // failure — Jenkins runs the following steps and reports success.
+        if result.Status <> BuildStatus.Success && not wantsStatus then
             // Was this step stopped because a failFast SIBLING failed?
             // MEASURED (FG-036): Jenkins reports such a build as FAILURE,
             // not ABORTED — the sibling's failure is the cause and the

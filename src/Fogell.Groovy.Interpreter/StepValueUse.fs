@@ -76,10 +76,39 @@ module StepValueUse =
                 expr where true b
             | EClosure c -> stmts c.Body
             | ECall(target, args, trailing) ->
+                // FG-174. A call that OPTS IN to returning a value is no longer refused:
+                // `sh(returnStdout: true)` and `sh(returnStatus: true)` now carry one back
+                // through the host. Everything else still yields null.
+                //
+                // The flag must be a LITERAL `true`. `sh(returnStdout: someVar)` cannot be
+                // decided here — a static reader does not know what `someVar` holds — so it
+                // is left refused rather than assumed, which is the direction that fails
+                // safe. This is a property of THIS CALL's own arguments, visible without
+                // guessing, unlike the env pre-scan that had to be replaced.
+                // STILL REFUSED, and the flag detection is kept because the plumbing is
+                // done and only the SEMANTICS are wrong. Two gaps measured after lifting it
+                // once, both of which made the value wrong rather than absent:
+                //   - Jenkins does NOT echo captured stdout to the console; Fogell streams
+                //     it, so the compared output gained lines Jenkins never printed;
+                //   - `result.Stdout` includes the `sh -x` TRACE, so `out` came back as
+                //     "+ printf value\nvalue" instead of "value\n".
+                // A returned value that is wrong is worse than one refused, so this goes
+                // back to refusing until `sh` can capture program output alone and stay
+                // quiet while doing it. FG-174 carries that.
+                let returnsAValue = false
+
+                ignore (
+                    args
+                    |> List.exists (fun a ->
+                        match a with
+                        | ANamed(("returnStdout" | "returnStatus"), EBool true) -> true
+                        | _ -> false)
+                )
+
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with
                  | FreeCall n when isStep n ->
-                     if valuePos then
+                     if valuePos && not returnsAValue then
                          found.Add { Step = n; Where = where }
                  | FreeCall _ -> ()
                  | MethodCall(t, _)

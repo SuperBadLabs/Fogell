@@ -84,6 +84,17 @@ type BranchCtx =
       /// asks for it while every other arm is untouched. `None` for an ordinary step,
       /// where there is no evaluated form to offer.
       HostedArgs: (Value list * (string * Value) list) option
+      /// FG-174. Where a step puts its RETURN VALUE for a hosted caller.
+      ///
+      /// A ref cell rather than a return type because `runStepDispatch` returns unit and
+      /// every wrapper arm calls it — threading a value back through all of them to serve
+      /// one caller is the invasive change, and this is the same shape `HostedBody` already
+      /// uses. `None` outside a script block, where nothing is listening.
+      ///
+      /// TYPED, not text: `returnStatus` must yield a Groovy INTEGER or `if (code == 0)`
+      /// compares an Integer to a String and is quietly false — a wrong answer of exactly
+      /// the kind this ticket exists to prevent.
+      HostedResult: Value ref option
       /// FG-046b. The (stage, top-level step index) this branch is currently
       /// executing — the key durability records are written under. Carried on
       /// the BRANCH, not in run-scoped state, because parallel branches execute

@@ -415,6 +415,7 @@ module FogellSide =
                   HostedBody = None
                   HostedDeadline = None
                   HostedArgs = None
+                  HostedResult = None
                   Secrets = []
                   SiblingFailedAt = ref -1L
                   // set per top-level step by runStageBody; nothing outside a
