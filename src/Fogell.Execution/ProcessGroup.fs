@@ -73,6 +73,20 @@ type RunRequest =
       /// Called with each output line as it arrives, so a running build streams
       /// rather than materialising at the end (FG-040 / JB-LOG-002 parity).
       OnLine: (string -> unit) option
+      /// FG-174. `sh(returnStdout: true)` CAPTURES stdout instead of printing it.
+      ///
+      /// Seen on pinned Jenkins: the xtrace line still appears in the console — Jenkins
+      /// prints `+ printf value` — while the program's own output does NOT. UNPROVEN
+      /// in-repo, and said so: the probe diverges because Fogell cannot yet reproduce it,
+      /// so it has no receipt until the trace moves off stdout. So this
+      /// suppresses the ECHO of stdout only; stderr, which is where `sh -x` writes the
+      /// trace, keeps streaming. Both sinks are still filled, so the captured value is
+      /// unaffected.
+      ///
+      /// Without this the compared output gained lines Jenkins never produced, and the
+      /// captured value picked up the trace as well — measured by lifting the refusal and
+      /// running it, not by reading the code.
+      SuppressStdoutEcho: bool
       /// Set when the step's group should be reaped even on success. Jenkins does
       /// NOT do this — measured: `nohup`ed children survive both success and
       /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
@@ -101,6 +115,7 @@ type RunRequest =
           TimeoutMs = None
           GraceMs = 2_000
           OnLine = None
+          SuppressStdoutEcho = false
           ReapGroup = true
           Interrupt = None
           InterruptBeatsDeadline = None
@@ -314,7 +329,15 @@ module ProcessGroup =
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 request.OnLine |> Option.iter (fun f -> f line)
 
-        proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
+        // CAPTURED, not echoed. The sink is still filled — the value depends on it — but
+        // the line does not reach the console, which is what Jenkins does under
+        // `returnStdout`. stderr is untouched, so the `sh -x` trace still streams.
+        let emitCaptured (sink: Text.StringBuilder) (line: string) =
+            if line <> null then
+                lock sink (fun () -> sink.AppendLine line |> ignore)
+
+        proc.OutputDataReceived.Add(fun e ->
+            if request.SuppressStdoutEcho then emitCaptured stdout e.Data else emit stdout e.Data)
 
         proc.ErrorDataReceived.Add(fun e ->
             match e.Data with

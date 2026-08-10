@@ -19,6 +19,9 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int64 option
+      /// FG-174. `sh(returnStdout: true)` captures stdout rather than printing it.
+      /// The trace on stderr still streams, which is what Jenkins does.
+      CaptureStdout: bool
       /// The WORKSPACE root (not the step's cwd): durable-task roots its script
       /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
       /// executed script's $0 is observable.
@@ -150,7 +153,8 @@ module Executor =
                         WorkspaceRoot = request.WorkspaceRoot
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
-                        OnLine = onLine }
+                        OnLine = onLine
+                        SuppressStdoutEcho = request.CaptureStdout }
 
             // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
             // streaming callback, so a step with no OnLine — or one that wrote a

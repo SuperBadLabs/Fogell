@@ -86,6 +86,13 @@ module WalkerStep =
                   Workspace = cwd
                   WorkspaceRoot = Some workspace
                   Environment = envForWith ctx.EnvOverlay stage
+                  // FG-174. NOT SET YET, deliberately. `SuppressStdoutEcho` works, but
+                  // Fogell's `sh -x` writes its trace to STDOUT, so suppressing that echo
+                  // also hides the trace line Jenkins prints. Turning this on before the
+                  // trace moves to stderr would trade a missing value for missing output —
+                  // and it would do so for every `sh(returnStdout:)` anywhere, not just in
+                  // a script block.
+                  CaptureStdout = false
                   TimeoutMs =
                     match WalkerCancellation.remainingMs runCtx deadline with
                     | Some ms -> Some ms

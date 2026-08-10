@@ -95,15 +95,14 @@ module StepValueUse =
                 // A returned value that is wrong is worse than one refused, so this goes
                 // back to refusing until `sh` can capture program output alone and stay
                 // quiet while doing it. FG-174 carries that.
+                // STILL REFUSED. Plumbing and echo-suppression are done; the blocker is
+                // that Fogell's `sh -x` writes its TRACE TO STDOUT, where Jenkins writes it
+                // to stderr. So stdout cannot be captured alone: suppressing its echo also
+                // swallowed the `+ printf value` line Jenkins prints, and the captured
+                // value still contained the trace. Separating them changes how the shell is
+                // invoked for EVERY step and every one of the 129 receipts, which is its
+                // own piece of work — FG-174 carries it.
                 let returnsAValue = false
-
-                ignore (
-                    args
-                    |> List.exists (fun a ->
-                        match a with
-                        | ANamed(("returnStdout" | "returnStatus"), EBool true) -> true
-                        | _ -> false)
-                )
 
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with
