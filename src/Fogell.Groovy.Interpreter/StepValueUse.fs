@@ -41,12 +41,18 @@ module StepValueUse =
     /// the batch model. It is the nested occurrences that lie — and the ARGUMENTS of a
     /// bare call are themselves value positions, so `echo sh(returnStdout: true, …)` is
     /// caught even though the outer call is a statement.
-    /// `honoursReturnFlags` decides WHICH steps `returnStdout`/`returnStatus` belong to.
-    /// It is a parameter rather than a list here because those flags are the shell
-    /// steps' own contract and this layer must not hold a step vocabulary — see
-    /// `WalkerRules.stepsHonouringReturnFlags` for the set and why treating them as
-    /// universal was a false success.
-    let find (isStep: string -> bool) (honoursReturnFlags: string -> bool) (script: Script) : Use list =
+    /// `callAnswers name hasReturnStdout hasReturnStatus` decides whether a call can
+    /// supply a value at all. It is a PARAMETER, and it takes the flags rather than just
+    /// the step name, because the answer depends on the COMBINATION — see
+    /// `WalkerRules.returnContract`, which is the single definition both this refusal and
+    /// the runtime publisher read. Passing a bare `honoursReturnFlags` predicate was the
+    /// previous shape and it could not express precedence, which let the two ends resolve
+    /// `returnStdout: true, returnStatus: true` differently.
+    let find
+        (isStep: string -> bool)
+        (callAnswers: string -> bool -> bool -> bool)
+        (script: Script)
+        : Use list =
         let found = ResizeArray<Use>()
 
         let rec expr (where: string) (valuePos: bool) (e: Expr) =
@@ -112,14 +118,14 @@ module StepValueUse =
                         | ANamed(k, EBool true) -> k = flag
                         | _ -> false)
 
-                // AND THE FLAGS MUST BE THIS STEP'S OWN. They are the durable-task shell
-                // steps' contract, not a mechanism any step can opt into by naming it.
-                // Treating them as universal admitted `def got = echo(message: 'hello',
-                // returnStdout: true)`, which handed the script "hello\n" where Jenkins'
-                // `echo` returns null — so a branch on `got == null` took the wrong arm
-                // and skipped work Jenkins runs, while reporting success.
+                // WHETHER THE CALL ANSWERS IS NOT DECIDED HERE. The step and the
+                // COMBINATION of flags decide it together, and that rule lives in one
+                // place the runtime publisher reads too. Two findings came from deciding
+                // it locally: the flags are not universal (`echo(returnStdout: true)`
+                // returned a value where Jenkins returns null), and they are not
+                // orthogonal (`returnStatus` wins when both are set).
                 let returnsAValue (n: string) =
-                    honoursReturnFlags n && (optsIn "returnStdout" || optsIn "returnStatus")
+                    callAnswers n (optsIn "returnStdout") (optsIn "returnStatus")
 
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with

@@ -1898,7 +1898,10 @@ module WalkerOrchestration =
                         // assignments inside closures, and the interpreter now reports every
                         // one that executes through `SetEnv`. A scanner that catches some
                         // shapes reads as coverage while leaving the rest silent.
-                        (StepValueUse.find scriptStepVocabulary.Contains WalkerRules.stepsHonouringReturnFlags.Contains body
+                        (StepValueUse.find
+                             scriptStepVocabulary.Contains
+                             (fun n so st -> WalkerRules.returnContract n so st <> WalkerRules.NoValue)
+                             body
                          |> List.map (describe "value"))
                         // DERIVED, not a hand-kept list: a block-taking step is refused
                         // unless its arm has been taught to run a hosted body. Add one to

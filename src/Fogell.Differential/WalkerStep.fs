@@ -91,17 +91,24 @@ module WalkerStep =
         // A divergence admitted quietly, which is the shape of every finding on this
         // branch. Deciding capture BEFORE dispatch is what makes the option affect the
         // run instead of the report.
-        // AND ONLY FOR THE STEPS WHOSE CONTRACT THEY ARE. This end must agree with the
-        // static refusal about which steps answer, so both read the one set — see
-        // `WalkerRules.stepsHonouringReturnFlags`. When it was every step, `echo(message:
-        // 'hello', returnStdout: true)` returned "hello\n" where Jenkins returns null.
+        // WHAT THIS CALL RETURNS comes from `WalkerRules.returnContract`, the same
+        // function the static refusal reads. This end deciding for itself is what
+        // produced two findings: the flags treated as universal, then as orthogonal.
         let flagged (key: string) =
-            WalkerRules.stepsHonouringReturnFlags.Contains step.Name
-            && renderedNamed
-               |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
+            renderedNamed
+            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
 
-        let wantsStdout = flagged "returnStdout"
-        let wantsStatus = flagged "returnStatus"
+        let contract =
+            WalkerRules.returnContract step.Name (flagged "returnStdout") (flagged "returnStatus")
+
+        // CAPTURE KEYS ON THE REQUEST, NOT ON WHO WINS. durable-task calls
+        // `captureOutput()` because `returnStdout` was ASKED FOR, so with both flags set
+        // the output is still captured and the STATUS is what comes back. Receipt:
+        // script-sh-return-both.
+        let wantsStdout =
+            WalkerRules.stepsHonouringReturnFlags.Contains step.Name && flagged "returnStdout"
+
+        let wantsStatus = contract = WalkerRules.ExitStatus
 
         let result =
             Executor.runStep
@@ -195,16 +202,21 @@ module WalkerStep =
         let statusAvailable = result.ExitCode.IsSome
         let statusIsTheAnswer = wantsStatus && statusAvailable
 
+        // PUBLISHED STRAIGHT FROM THE CONTRACT, so precedence is decided once. The
+        // status arm is FIRST because `returnContract` already resolved the combination —
+        // testing `wantsStdout` first is what returned a String for
+        // `sh(returnStdout: true, returnStatus: true)`, where Jenkins returns Integer 7.
         ctx.HostedResult
         |> Option.iter (fun slot ->
-            if wantsStdout then slot.Value <- VStr result.Stdout
+            match contract with
             // NO FABRICATED ZERO. `defaultArg result.ExitCode 0` handed an interrupted
             // step the value 0 — a killed step reporting success to the script, which is
             // the false-success shape ADR 0001 calls worse than an explicit rejection.
-            // The build now fails here anyway; publishing null keeps the two consistent
+            // The build fails here anyway; publishing null keeps the two consistent
             // rather than relying on that.
-            elif statusIsTheAnswer then slot.Value <- VInt(int64 result.ExitCode.Value)
-            else slot.Value <- VNull)
+            | WalkerRules.ExitStatus when statusAvailable -> slot.Value <- VInt(int64 result.ExitCode.Value)
+            | WalkerRules.CapturedStdout -> slot.Value <- VStr result.Stdout
+            | _ -> slot.Value <- VNull)
 
         result.EngineNote
         |> Option.iter (fun n -> runCtx.NoteEngine $"step '{step.Name}': {n}")

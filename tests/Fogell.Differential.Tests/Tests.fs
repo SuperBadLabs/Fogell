@@ -1142,6 +1142,53 @@ let timestampPrefixIsConditional =
                   "an engine's prefix is at column zero; a build's is not"
           } ]
 
+/// FG-174. `WalkerRules.returnContract` is the ONE answer to "what does this call
+/// return", read by the static refusal and by the runtime publisher. It exists because
+/// deciding it at each site produced three separate review findings, so the rule is
+/// pinned here rather than inferred from either caller.
+let returnFlagContract =
+    let contract = WalkerRules.returnContract
+
+    testList
+        "FG-174 the return-flag contract"
+        [ test "no flags means no value" {
+              Expect.equal (contract "sh" false false) WalkerRules.NoValue "a plain sh answers nothing"
+          }
+
+          test "returnStdout alone captures stdout" {
+              Expect.equal (contract "sh" true false) WalkerRules.CapturedStdout "stdout"
+          }
+
+          test "returnStatus alone gives the exit status" {
+              Expect.equal (contract "sh" false true) WalkerRules.ExitStatus "status"
+          }
+
+          test "returnStatus WINS when both are set" {
+              // MEASURED on a disposable 2.568.1 container by the pre-push verifier, and
+              // held since by receipt `script-sh-return-both`:
+              // `sh(script: 'exit 7', returnStdout: true, returnStatus: true)` returns
+              // Integer 7 and the build continues. Fogell returned the stdout, so a
+              // following `if (code == 7)` compared String to Integer, took the other
+              // arm, and skipped work Jenkins runs while reporting success. The flags
+              // are not orthogonal, and a boolean per call site cannot say so.
+              Expect.equal (contract "sh" true true) WalkerRules.ExitStatus "status takes precedence"
+          }
+
+          test "the flags belong to the shell steps only" {
+              // `echo(message: 'hello', returnStdout: true)` returned "hello\n" where
+              // Jenkins' echo returns null, so a `got == null` branch was skipped.
+              for step in [ "echo"; "error"; "dir"; "withEnv" ] do
+                  Expect.equal (contract step true true) WalkerRules.NoValue $"{step} answers nothing"
+          }
+
+          test "bat carries the same contract as sh" {
+              // On CONTRACT, not on evidence: there is no Windows lane and no receipt
+              // covers it. This pins the two ends AGREEING about bat, which is all it
+              // claims — see WalkerRules for why that is not coverage.
+              Expect.equal (contract "bat" true true) WalkerRules.ExitStatus "same durable-task options"
+              Expect.equal (contract "bat" true false) WalkerRules.CapturedStdout "same durable-task options"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -1158,4 +1205,5 @@ let main argv =
               concurrentSealIsOrderStable
               concurrentFoldAccounting
               continuationResolution
+              returnFlagContract
               timestampPrefixIsConditional ])

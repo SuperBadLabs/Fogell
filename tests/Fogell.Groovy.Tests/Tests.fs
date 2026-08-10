@@ -290,7 +290,16 @@ let stepValueUse =
     // `sh(script: 'x', returnStdout: true)`. Left alone they would have kept passing on
     // the day the refusal was lifted, asserting a rule the code no longer has.
     let uses src =
-        Fogell.Groovy.Interpreter.StepValueUse.find steps.Contains (fun n -> n = "sh" || n = "bat") (parseOk src)
+        // A STUB of the real contract, deliberately. This assembly must not depend on
+        // `Fogell.Differential` — keeping the step vocabulary out of the interpreter layer
+        // is why `find` takes a predicate at all. These tests assert that `find` CONSULTS
+        // the rule and walks every value position; the rule ITSELF (which steps, and
+        // `returnStatus` winning when both are set) is `WalkerRules.returnContract` and is
+        // tested against that function in Fogell.Differential.Tests.
+        Fogell.Groovy.Interpreter.StepValueUse.find
+            steps.Contains
+            (fun n so st -> (n = "sh" || n = "bat") && (so || st))
+            (parseOk src)
 
     let usedSteps src = uses src |> List.map (fun u -> u.Step)
 

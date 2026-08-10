@@ -147,6 +147,38 @@ module WalkerRules =
     /// nothing in the suite exercises it today, and it should not be read as coverage.
     let stepsHonouringReturnFlags = set [ "sh"; "bat" ]
 
+    /// FG-174. WHAT A CALL RETURNS — the whole contract in one function, because three
+    /// review rounds running it was NOT one.
+    ///
+    /// The flags went in as independent booleans, and each round found another way that
+    /// assumption is wrong: they are not universal (finding 12), and they are not
+    /// ORTHOGONAL either (finding 13). MEASURED on a disposable 2.568.1 container and
+    /// held by receipt `script-sh-return-both`:
+    /// `sh(script: 'exit 7', returnStdout: true, returnStatus: true)` returns Integer 7
+    /// and the build continues. Fogell returned the STDOUT, so a following `if (code == 7)`
+    /// compared a String to an Integer, took the other arm, and skipped work Jenkins runs
+    /// while reporting success.
+    ///
+    /// So `returnStatus` WINS. Stating it as a total function over (step, flags) is the
+    /// point: a boolean at each call site cannot express precedence, and the two readers
+    /// were free to resolve the combination differently — which is exactly what they did.
+    type ReturnContract =
+        /// The call evaluates to null, and a VALUE USE of it must be refused.
+        | NoValue
+        /// A Groovy Integer. `if (code == 0)` must compare Integer to Integer, or the
+        /// branch is quietly false.
+        | ExitStatus
+        /// stdout, byte-verbatim, trailing newline included.
+        | CapturedStdout
+
+    /// `returnStdout`/`returnStatus` are LITERAL-true here; a non-literal flag cannot be
+    /// decided statically and its caller must treat it as absent, which fails safe.
+    let returnContract (stepName: string) (returnStdout: bool) (returnStatus: bool) : ReturnContract =
+        if not (stepsHonouringReturnFlags.Contains stepName) then NoValue
+        elif returnStatus then ExitStatus
+        elif returnStdout then CapturedStdout
+        else NoValue
+
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
     /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,
     /// `5 min 0 sec`, and `1 mo 0 days` for thirty DAYS (months are 30 days).
