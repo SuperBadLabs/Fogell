@@ -205,16 +205,13 @@ module WalkerOrchestration =
         // TABLE below plus the two the inner runner handles, deliberately CLOSED: a name
         // outside it is refused by `Sandbox.admitCall`, the script faults, and the build
         // fails with a reason. That is the fail-closed direction — an open vocabulary
-        // would let an unimplemented step be collected as an effect and then silently do
-        // nothing when replayed.
+        // would let an unimplemented name reach the walker's dispatch and silently do
+        // nothing.
         let scriptStepVocabulary =
             set
                 [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
                   "stash"; "unstable"; "unstash"
-                  // FG-172: readmitted, now that a hosted body reaches their arms. `withEnv`
-                  // and `withCredentials` stay out: their arguments are LISTS, and the
-                  // bridge renders values to display strings, so `['A=1']` arrives as the
-                  // string `[A=1]` and binds nothing.
+                  // FG-172: readmitted, now that a hosted body reaches their arms.
                   "dir"; "timeout"; "retry"; "withEnv" ]
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
@@ -227,7 +224,7 @@ module WalkerOrchestration =
         /// never will be.
         ///
         /// `input`: DURABLE APPROVAL REPLAY is keyed on the top-level step (`Resume.fs`),
-        /// and a replayed nested effect has no durable identity of its own. REPRODUCED by
+        /// and a nested hosted step has no durable identity of its own. REPRODUCED by
         /// the pre-push verifier — journal `step-started Gate 0 script` plus an
         /// `input-decision … approved alice`, rewind before `step-finished`, and the
         /// resume exits 3 with `needs-reconciliation`, LOSING AN APPROVAL A HUMAN ALREADY
@@ -252,10 +249,16 @@ module WalkerOrchestration =
                   // THE RULE AS IT STANDS after FG-172, replacing an earlier note that
                   // still said every block-taking step was absent: a wrapper is admitted
                   // ONLY when its walker arm accepts a `HostedBody`. `dir`, `timeout` and
-                  // `retry` do, each with a differential case. `withEnv` and
-                  // `withCredentials` do not — not because their arms are untaught but
-                  // because their arguments are LISTS, and the bridge renders values to
-                  // display strings, so `['A=1']` arrives as `[A=1]` and binds nothing.
+                  // `retry` and `withEnv` do, each with a differential case — `withEnv`
+                  // through TYPED arguments on `BranchCtx.HostedArgs`, because rendering its
+                  // list to display text produced `[A=1]` and bound nothing.
+                  //
+                  // `withCredentials` does NOT, and not for the marshalling reason this
+                  // note used to give: its argument is a DSL OF NESTED CALLS
+                  // (`string(credentialsId: …)`), which the interpreter would try to
+                  // EVALUATE — those names are neither steps nor `Sandbox.builtins`, so the
+                  // script faults at the inner call before marshalling arises. Fail-closed,
+                  // and a bigger piece than typed args.
                   //
                   // A body-less `dir` is refused by the `dir` ARM before it creates the
                   // directory, not by this list: the rule is Jenkins', and `dir('x')` alone
@@ -263,7 +266,7 @@ module WalkerOrchestration =
                   for w in [ "withCredentials" ] do
                       yield
                           w,
-                          $"`{w}` takes a block, and a replayed script effect cannot carry one, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
+                          $"`{w}` takes a block, and its walker arm cannot yet run one from a script, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
         let postFires = WalkerRules.postFires
         let postRank = WalkerRules.postRank
         let cancellationOf = WalkerCancellation.cancellationOf runCtx
@@ -1850,8 +1853,8 @@ module WalkerOrchestration =
                         // assignment is reported at the moment it executes and refused.
                         // Still refused: a step's RETURN VALUE (dispatch yields unit),
                         // `input` (durable identity is per top-level step, FG-171), and
-                        // list-argument wrappers (`withEnv`, `withCredentials`) whose
-                        // arguments the bridge would render to display strings.
+                        // and `withCredentials`, whose nested-call argument DSL the
+                        // interpreter cannot evaluate.
                         // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
                         // wrapper's body re-enters the interpreter, which calls back here —
                         // and those inner steps must run in the directory and overlay the

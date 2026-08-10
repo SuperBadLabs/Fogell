@@ -124,21 +124,26 @@ module StepValueUse =
     /// FG-160. Step calls that carry a TRAILING BLOCK — `dir('x') { … }`,
     /// `timeout(5) { … }`, `withEnv([…]) { … }`.
     ///
-    /// These cannot be replayed. The interpreter executes a trailing closure IMMEDIATELY
-    /// and flattens whatever it contains into the same effect list, so a replayed
-    /// `StepCall` arrives with no body — and the walker's wrappers are driven ENTIRELY by
-    /// `step.Block`: `dir` only changes directory for its block, `timeout` only enforces a
-    /// deadline when its block is non-empty. So `script { dir('x') { sh 'pwd' } }` would
-    /// run `sh` in the STAGE root while reporting success, and a bounded approval would
-    /// silently lose its bound.
+    /// WHY THIS EXISTED, and what it means now. Under the BATCH model the interpreter
+    /// executed a trailing closure immediately and flattened it into the same effect list,
+    /// so a replayed `StepCall` arrived with no body — and the walker's wrappers are driven
+    /// entirely by `step.Block`. `script { dir('x') { sh 'pwd' } }` ran `sh` in the STAGE
+    /// root while reporting success.
+    ///
+    /// FG-172 replaced that: the body is handed over as a THUNK and `dir`, `timeout`,
+    /// `retry` and `withEnv` run it inside the context they establish. So this finder is
+    /// no longer "wrappers cannot work" — it is the guard for wrappers whose ARM has not
+    /// been taught to accept a `HostedBody`, and the caller derives that set rather than
+    /// hard-coding it.
     ///
     /// That is a wrong answer delivered quietly, so these are REFUSED. Raised by the
     /// pre-push verifier, which also caught the comment above claiming a trailing block
     /// was "perfectly runnable" — it is safe from the VALUE question and unsafe from this
     /// one, and one sentence cannot answer both.
     ///
-    /// Fixing it properly needs a tree-structured `Effect` that preserves nested bodies;
-    /// until then the refusal is the honest answer.
+    /// The batch-model fix once described here — a tree-structured `Effect` preserving
+    /// nested bodies — was overtaken by the callback: there is no effect list to make a
+    /// tree of any more.
     let findWrapperCalls (isStep: string -> bool) (script: Script) : Use list =
         let found = ResizeArray<Use>()
 
@@ -193,7 +198,7 @@ module StepValueUse =
                  | FreeCall n when isStep n && hasBlock ->
                      found.Add
                          { Step = n
-                           Where = "a trailing block, whose body the replay cannot carry" }
+                           Where = "a trailing block, and this wrapper's arm cannot yet run one" }
                  | _ -> ())
 
                 (match target with

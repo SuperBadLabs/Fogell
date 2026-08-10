@@ -1,8 +1,8 @@
 # Differential receipt — script-block-runs.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d733b426b93e76466623dd3b227a0491beb0bdb0bddfeb1e38b2bcac0c72c2e7
-case-digest:  8a08e172b28e7fde82ddfa6e217d1fcf2bf88b0997d765a6564d60709d59690b
+seal:         3e8808a739399912f5da2577abbc942df424205b06a00dac19288e5beabe97e3
+case-digest:  c45aa238fe9abbf33087d442105207a940ca45ddf562a80a406fb48ed08b0a9b
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
