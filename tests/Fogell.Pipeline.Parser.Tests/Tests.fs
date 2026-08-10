@@ -184,6 +184,40 @@ let structure =
               | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
           }
 
+          test "FG-175 gap: a duplicate in when-changeset lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { changeset pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          // AND A SECOND ROUTE TO THE SAME GAP, which this test found by being WRONG.
+          //
+          // Four review rounds went on enumerations of mine that were each missing one
+          // more condition — `equals`, then the single-key ones, then `changeset` — so
+          // this was written to assert the PROPERTY instead: that leftover arguments
+          // always end in `whenSectionOpaque`. They do not. `changeRequest` accepts only
+          // empty parens here, and `changeRequest target: 'a', target: 'b'` parses as TWO
+          // conditions implicitly ANDed — `WhenAllOf [WhenChangeRequest; WhenUnmodelled
+          // ("target", ": 'a', target: 'b'")]`. Stray argument text becomes an extra
+          // condition rather than a parse failure.
+          //
+          // The USER-VISIBLE outcome is identical (unmodelled -> fail closed -> the stage
+          // SKIPS, where Jenkins rejects the pipeline), but the mechanism is different, so
+          // a FG-175 fix aimed only at the opaque fallback would leave this route open.
+          // Recorded here because the enumeration was never the hard part.
+          test "FG-175 gap: leftover named args become a second, implicitly ANDed condition" {
+              let p = ok (mk "    stage('B') { when { changeRequest target: 'a', target: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenAllOf parts) ->
+                  Expect.isTrue
+                      (parts |> List.exists (function WhenUnmodelled _ -> true | _ -> false))
+                      "the leftover arrives as an unmodelled sibling condition, so the stage fails closed"
+              | other -> failtestf "expected an implicit AllOf, got %A" other
+          }
+
           test "the ORDINARY single-key conditions still parse" {
               // What the tripwires above must not be confused with.
               ok (mk "    stage('B') { when { tag pattern: 'v1' }\n steps { sh 'x' } }") |> ignore
