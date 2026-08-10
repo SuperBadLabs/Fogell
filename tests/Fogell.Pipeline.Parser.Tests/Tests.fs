@@ -148,6 +148,32 @@ let structure =
               | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
           }
 
+          // The SINGLE-KEY conditions reach the same place by a different route: the
+          // second pair is left UNCONSUMED, the condition fails, and the opaque fallback
+          // absorbs the section. An earlier comment of mine claimed these "cannot
+          // duplicate" a named argument — they can, and review caught the sentence.
+          test "FG-175 gap: a duplicate in when-tag lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { tag pattern: 'v1', pattern: 'v2' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-branch lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { branch pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "the ORDINARY single-key conditions still parse" {
+              // What the tripwires above must not be confused with.
+              ok (mk "    stage('B') { when { tag pattern: 'v1' }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { branch 'main' }\n steps { sh 'x' } }") |> ignore
+          }
+
           test "FG-175 gap: a duplicate in when-environment PARSES, and the condition is unmodelled" {
               let p = ok (mk "    stage('B') { when { environment name: 'T', value: 'a', value: 'b' }\n steps { sh 'x' } }")
 

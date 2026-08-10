@@ -111,10 +111,22 @@ let private wholeValue (p: P<'a>) : P<'a> =
 ///
 /// IT LIVES HERE, ABOVE EVERY CALLER, ON PURPOSE. The first version of this fix guarded
 /// only step arguments, and the review found `when { equals actual: 1, actual: 2 }` the
-/// very next round — the same defect on a surface I had not enumerated. Enumerating them
-/// was the actual work: the surfaces that parse a LIST are step arguments, `equals` and
-/// `environment`; `tag`, `branch`, `changelog` and `triggeredBy` take a SINGLE named
-/// argument and cannot duplicate one. A new list-shaped surface must call this.
+/// very next round — the same defect on a surface I had not enumerated.
+///
+/// WHICH SURFACES THIS RULE REACHES, corrected after the sentence here claimed more than
+/// the code delivers — the enumeration was right about the SHAPES and wrong about their
+/// consequence, which is the overclaim class this project treats as a defect:
+///   - STEP ARGUMENTS: guarded, and the refusal REACHES the caller. That path has no
+///     fallback above it, so the pipeline is rejected — which is what Jenkins does.
+///   - `when { equals … }` and `when { environment … }`: guarded here, but the refusal is
+///     swallowed by `whenSectionOpaque` and the stage merely fails closed. FG-175.
+///   - `tag`, `branch`, `changelog`, `triggeredBy`: these parse ONE named argument, and I
+///     wrote that they therefore "cannot duplicate one". They can. `when { tag pattern:
+///     'v1', pattern: 'v2' }` leaves the second pair UNCONSUMED, the condition fails, and
+///     the same opaque fallback absorbs the section — identical outcome, reached by a
+///     different route. Not guarded, and guarding them here would change nothing while
+///     the fallback stands. FG-175 covers them, with tripwire tests.
+/// A new list-shaped surface must call this.
 let private firstDuplicateName (names: string list) : string option =
     names
     |> List.countBy id
