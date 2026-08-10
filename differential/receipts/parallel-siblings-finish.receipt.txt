@@ -107,9 +107,9 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   result:         failure
   workspace-hash: 4db450f2df6cce44c5abc929d245344382cd2831e85530f49c332070abc5a0a3
   output (5 lines):
+    | + sleep 6
     | + echo failing
     | + exit 3
-    | + sleep 6
     | Failed in branch quick-fail
     | + echo done
   workspace:

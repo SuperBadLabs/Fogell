@@ -214,6 +214,42 @@ module WalkerOrchestration =
                   // FG-172: readmitted, now that a hosted body reaches their arms.
                   "dir"; "timeout"; "retry"; "withEnv" ]
 
+        /// FG-172. The SIGNATURE a hosted step must be called with, checked centrally
+        /// before dispatch.
+        ///
+        /// WHY CENTRAL AND NOT PER-ARM. The first attempt validated `withEnv` inside its
+        /// own arm and only when the first argument was a list — so `withEnv('A=1')`, the
+        /// WRONG SHAPE entirely, fell past it: no list, no raw entries, empty bindings, and
+        /// the body RAN while Jenkins rejects the call outright (`EnvStep(List<String>)`).
+        /// Every newly admitted hosted step would otherwise get its own signature bypass,
+        /// one per arm, discovered one review round at a time. Raised by the pre-push
+        /// verifier as the eighth of its class, with exactly that argument.
+        ///
+        /// A step absent from this table is not validated here — its arm is responsible,
+        /// as before. Adding a hosted step SHOULD add a line here.
+        let hostedSignatureError (name: string) (positional: Value list) (named: (string * Value) list) =
+            let wrongShape expected = Some $"`{name}` {expected}"
+
+            match name with
+            | "withEnv" ->
+                match positional, named with
+                | [ VList items ], [] ->
+                    items
+                    |> List.map Value.toDisplay
+                    |> List.tryFind (fun e -> e.IndexOf '=' <= 0)
+                    |> Option.map (fun bad ->
+                        $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
+                | _ -> wrongShape "takes exactly one list argument of NAME=VALUE strings"
+            | "dir" ->
+                match positional, named with
+                | [ _ ], [] -> None
+                | _ -> wrongShape "takes exactly one path argument"
+            | "retry" ->
+                match positional, named with
+                | [ _ ], [] -> None
+                | _ -> wrongShape "takes exactly one count argument"
+            | _ -> None
+
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
         /// from a `script { }` rather than a `Step list`. Everything else block-taking is
         /// refused; see the derivation at the refusal site.
@@ -1803,13 +1839,13 @@ module WalkerOrchestration =
             // as Declarative steps read `if (cond)` as a step named `if`, which is why
             // this never ran.
             //
-            // THE REFUSAL COMES FIRST, and it is the reason this is safe to ship. The
-            // interpreter is a BATCH model: it collects `StepCall` effects for us to
-            // perform afterwards and the call evaluates to null on the spot. Order
-            // survives; VALUES do not. So a body reading a step's return value would run
-            // with null and decide branches wrongly — a silent wrong answer, worse under
-            // ADR 0001 than the honest failure this replaces. `StepValueUse.find` names
-            // every such position and we refuse the build instead.
+            // THE REFUSALS COME FIRST, and they are why this is safe to ship. Steps run
+            // LIVE through `Interpreter.runHosted` (FG-172) — the batch model this comment
+            // used to describe is gone — but the walker's dispatch still returns UNIT, so
+            // a step call yields null and a body reading a step's RETURN VALUE would decide
+            // branches wrongly. `StepValueUse.find` names every such position and refuses.
+            // FG-174 carries implementing `returnStdout`/`returnStatus`, which is what
+            // would let that refusal be lifted.
             | "script", _ when step.ScriptBody.IsSome ->
                 let src = Option.get step.ScriptBody
 
@@ -1853,9 +1889,11 @@ module WalkerOrchestration =
                         // the vocabulary without teaching its arm and this fires, rather
                         // than the step running with its block silently dropped — which is
                         // what happened to `dir` before FG-172 and is the failure this
-                        // guard exists for. Today `dir` is the only one taught, so the
-                        // predicate is not vacuous: every other block-taking name is
-                        // already outside the vocabulary and denied by the sandbox.
+                        // guard exists for. Taught today: `dir`, `timeout`, `retry`,
+                        // `withEnv`. The predicate is not vacuous — `withCredentials` is
+                        // still outside the vocabulary and denied by the sandbox — and it
+                        // stays honest as arms are taught, because it is derived rather
+                        // than listed.
                         @ (StepValueUse.findWrapperCalls
                                (fun n ->
                                    scriptStepVocabulary.Contains n
@@ -1940,6 +1978,12 @@ module WalkerOrchestration =
                                           RawArgs = ""
                                           ScriptBody = None
                                           Position = step.Position }
+
+                                    match hostedSignatureError name positional named with
+                                    | Some why ->
+                                        fail $"script block: {why}"
+                                        VNull
+                                    | None ->
 
                                     let atCtx, atCwd = hostAt.Value
 
