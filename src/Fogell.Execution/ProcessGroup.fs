@@ -344,7 +344,7 @@ module ProcessGroup =
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 request.OnLine |> Option.iter (fun f -> f line)
 
-        // CAPTURED STDOUT IS READ AS BYTES, NOT REASSEMBLED FROM LINES.
+        // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
         // The first version of this filled the same StringBuilder through `AppendLine`,
         // and MEASURED AGAINST JENKINS it was wrong: `printf value` emits five bytes and
@@ -356,7 +356,9 @@ module ProcessGroup =
         //
         // A line reader CANNOT fix this — `OutputDataReceived` never says whether the
         // final line carried a terminator, so the information is gone before the sink
-        // sees it. Capture mode therefore skips the line reader for stdout entirely,
+        // sees it. `ReadToEndAsync` still DECODES to a string; what it preserves is the
+        // terminator, not the raw bytes, and an earlier version of this comment said
+        // "as bytes" and overstated it (raised in review on PR #53). Capture mode therefore skips the line reader for stdout entirely,
         // which costs nothing: nothing is echoing those lines anyway. stderr keeps its
         // event reader, so the xtrace still streams while this runs, and the two are read
         // CONCURRENTLY — reading one to completion before draining the other is how a
@@ -559,10 +561,17 @@ module ProcessGroup =
         // otherwise block the engine here forever — the one failure mode that would be
         // worse than a wrong value. The captured value is best-effort by construction,
         // and `returnStdout` on a step that timed out is discarded anyway, since an
-        // abort propagates rather than becoming a value.
+        // abort propagates rather than becoming a value. "Best-effort" means the READ is
+        // abandoned, NOT that a partial value is salvaged: see the fallback below.
+        // THE FALLBACK IS EMPTY, AND SAYS SO. It read `stdout.ToString()`, which in
+        // capture mode is ALWAYS "" — the line handler is not attached at all, so that
+        // sink is never filled — while the comment above called the value "best-effort",
+        // implying partial output survives a stuck read. It does not, and a fallback that
+        // reads like recovered data is worse than one that admits it recovered nothing.
+        // Raised in review on PR #53.
         let capturedText =
             capturedStdout
-            |> Option.map (fun t -> if t.Wait 5_000 then t.Result else stdout.ToString())
+            |> Option.map (fun t -> if t.Wait 5_000 then t.Result else "")
 
         { Outcome = outcome
           Stdout = defaultArg capturedText (stdout.ToString())

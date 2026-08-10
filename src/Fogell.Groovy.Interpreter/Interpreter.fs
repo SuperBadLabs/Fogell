@@ -415,7 +415,16 @@ module Interpreter =
                     host.Perform s positionalArgs namedLazy.Value runBody
                 | None ->
                     // BATCH: a step is a request, not something we perform.
-                    st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
+                    //
+                    // `positionalArgs`, NOT `positionalLazy.Value` — the NORMALISED list.
+                    // This recorded the raw one, so `dir 'sub', { … }` logged the trailing
+                    // closure as a positional argument AND ran it through `runBody` below:
+                    // the same block counted twice, once as data and once as an effect.
+                    // The comment above says normalising here means every host sees ONE
+                    // shape, and then this branch did not use it — raised in review on
+                    // PR #53. No walker path was affected, since only batch consumers read
+                    // `Effects`; a future one would have inherited the defect.
+                    st.Effects <- StepCall(s, positionalArgs, namedLazy.Value) :: st.Effects
                     runBody |> Option.iter (fun run -> run ())
                     VNull
             | Ok(Builtin b) ->

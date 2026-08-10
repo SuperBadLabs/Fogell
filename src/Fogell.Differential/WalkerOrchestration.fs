@@ -263,12 +263,40 @@ module WalkerOrchestration =
                 | [ VInt _ ], [] -> None
                 | [ other ], [] -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
                 | _ -> wrongShape "takes exactly one count argument"
-            | _ -> None
+            | "timeout" ->
+                // MEASURED on the pinned lab, not inferred from the other arms, and held
+                // by receipt `script-timeout-two-positionals`: Jenkins accepts ONE
+                // positional (minutes) or named arguments, and `timeout(1, 2)` raises
+                // `IllegalArgumentException: Expected named arguments but got [1, 2]`. Fogell read the FIRST positional as one
+                // minute, silently dropped the `2`, ran the body and reported SUCCESS.
+                //
+                // The probe also decided WHERE this belongs: Jenkins ran the earlier
+                // STAGE before failing, so this is a RUNTIME signature rejection and not
+                // a compile-time one like a duplicated named argument. Refusing at
+                // dispatch is therefore right here, where it was wrong there.
+                //
+                // ARITY ONLY. `timeoutMs` already reads `time`/`unit` and a bare
+                // positional, and the TYPE of a single argument is left alone
+                // deliberately — refusing a shape Jenkins accepts is the false-refusal
+                // error `retry(0)` taught, and nothing here has been measured.
+                match positional with
+                | _ :: _ :: _ ->
+                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+                    wrongShape $"takes one positional argument or named ones; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+                | _ -> None
+            | _ ->
+                // NOT A SILENT PASS. Reaching here means a hosted wrapper was admitted
+                // without a signature case, which is the bypass this function exists to
+                // close — `timeout` did exactly that and shipped a false success. The
+                // pairing is asserted by a test over
+                // `WalkerRules.hostedWrappersWithSignatureCase`; this arm stays total for
+                // the many NON-hosted steps that legitimately reach it.
+                None
 
-        /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy
-        /// from a `script { }` rather than a `Step list`. Everything else block-taking is
-        /// refused; see the derivation at the refusal site.
-        let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry"; "withEnv" ]
+        /// FG-172. Block-taking steps whose walker arm can run a HOSTED body. Defined in
+        /// `WalkerRules` so a test can hold it against the set of wrappers that actually
+        /// have a signature case — see the note there.
+        let scriptWrappersWithHostedBody = WalkerRules.scriptWrappersWithHostedBody
 
         /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
         /// the sandbox's generic denial says a name was not admissible, not why THIS one

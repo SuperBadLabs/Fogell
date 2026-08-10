@@ -1215,6 +1215,25 @@ let returnFlagContract =
               | other -> failtestf "expected a rejection, got %A" other
           }
 
+          // FG-174. THE PAIRING THAT TURNS THE NEXT BYPASS INTO A FAILING TEST.
+          //
+          // `hostedSignatureError` ends in a `| _ -> None` catch-all, so a hosted wrapper
+          // admitted WITHOUT a case is validated by nothing and accepts any shape.
+          // `timeout` sat in the hosted set with no case and shipped a false success:
+          // `script { timeout(1, 2) { … } }` ran its body and reported success where
+          // Jenkins raises `IllegalArgumentException: Expected named arguments but got
+          // [1, 2]`. That was the ninth finding of a class whose own comment already
+          // predicted it — "every newly admitted hosted step would have got its own
+          // signature bypass, one per arm, found one review round at a time".
+          //
+          // Admitting a wrapper without validating it now fails HERE instead.
+          test "every hosted wrapper has a signature case" {
+              Expect.equal
+                  WalkerRules.scriptWrappersWithHostedBody
+                  WalkerRules.hostedWrappersWithSignatureCase
+                  "a wrapper admitted without a signature case is validated by nothing"
+          }
+
           test "bat carries the same contract as sh" {
               // On CONTRACT, not on evidence: there is no Windows lane and no receipt
               // covers it. This pins the two ends AGREEING about bat, which is all it

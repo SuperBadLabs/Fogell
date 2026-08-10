@@ -235,22 +235,19 @@ let private argList
     // in the first step, and plainly wrong for a duplicate in a later stage. That
     // difference is between matching Jenkins and matching one example of it.
     sepBy one (symbol ",")
+    // ONE implementation, not a second copy of the same rule. This inlined the check and
+    // its error message, so the two could drift in wording or in keying — raised in
+    // review on PR #53. Positionals cannot collide, so only the named ones are keyed,
+    // and `rejectingDuplicates` is fed exactly those.
     >>= fun items ->
-        // Positionals cannot collide, so only the named ones are keyed.
-        match
-            firstDuplicateName (
-                items
-                |> List.choose (function
-                    | Choice1Of2(n, _, _, _) -> Some n
-                    | _ -> None)
-            )
-        with
-        | Some name ->
-            fail
-                $"duplicate named argument `{name}`: Groovy builds named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
-        | None ->
-
-        preturn (
+        items
+        |> List.choose (function
+            | Choice1Of2(n, _, _, _) -> Some n
+            | _ -> None)
+        |> rejectingDuplicates id
+        |> fun guard ->
+            guard
+            >>. preturn (
             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
             let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList

@@ -171,6 +171,25 @@ module WalkerRules =
         /// stdout, byte-verbatim, trailing newline included.
         | CapturedStdout
 
+    /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy from a
+    /// `script { }` rather than a `Step list`. Everything else block-taking is refused.
+    let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry"; "withEnv" ]
+
+    /// FG-174. The hosted wrappers whose CALL SHAPE is validated before dispatch.
+    ///
+    /// THIS EXISTS TO BE COMPARED WITH THE SET ABOVE, and the comparison is a test.
+    /// `hostedSignatureError` ends in a `| _ -> None` catch-all, so a wrapper admitted
+    /// without a case is validated by NOTHING and silently accepts any shape. That is not
+    /// hypothetical: `timeout` sat in the hosted set with no case, and
+    /// `script { timeout(1, 2) { … } }` ran its body and reported SUCCESS while Jenkins
+    /// raised `IllegalArgumentException: Expected named arguments but got [1, 2]` — the
+    /// ninth finding of a class whose own comment already said "every newly admitted
+    /// hosted step would have got its own signature bypass, one per arm, found one review
+    /// round at a time". It was, and it was.
+    ///
+    /// Keeping the two sets equal turns that from a review finding into a failing test.
+    let hostedWrappersWithSignatureCase = set [ "dir"; "timeout"; "retry"; "withEnv" ]
+
     /// FG-174. Whether a return flag is set — and, when it is written in a form Fogell
     /// will not guess at, a reason to refuse BEFORE the step runs.
     type FlagState =

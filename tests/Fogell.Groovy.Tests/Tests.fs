@@ -126,6 +126,20 @@ let sandbox =
               Expect.isNone o.Fault "no fault"
           }
 
+          test "a trailing closure ARGUMENT is a body, not a positional (batch mode)" {
+              // The normalisation above the host split existed for the LIVE path only:
+              // batch recorded the raw positional list, so this logged the closure as an
+              // argument AND ran it as a body — the same block counted twice. Raised in
+              // review on PR #53. Nothing in the walker read `Effects`, so no receipt
+              // could have caught it; this is the only thing that can.
+              let o = run "node 'label', { sh 'make' }\n"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "node", [ "label" ]; "sh", [ "make" ] ]
+                  "the closure is the body, and its contents are their own effects"
+          }
+
           test "denial happens before the step is emitted" {
               let o = run "sh 'ok'\nnew File('/etc/passwd')\nsh 'never'\n"
               Expect.equal (stepNames o) [ "sh" ] "the second sh is never reached"
