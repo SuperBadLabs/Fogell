@@ -107,6 +107,15 @@ module Executor =
           AbortedBySibling = None
           DurableId = None }
 
+    /// FG-174. A step REFUSED before it ran: no process, no output, no workspace change.
+    ///
+    /// Built here rather than by the caller so it cannot drift from `ok` — a hand-rolled
+    /// record that quietly gained a field would be a `StepResult` nobody else produces.
+    /// `ExitCode` stays None, which is load-bearing: `returnStatus` suppression keys on
+    /// an exit code EXISTING, so a refusal can never be converted into a status answer.
+    let refusedBeforeRunning (why: string) =
+        { ok Failure with Diagnostic = Some why }
+
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
     ///

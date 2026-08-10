@@ -171,6 +171,56 @@ module WalkerRules =
         /// stdout, byte-verbatim, trailing newline included.
         | CapturedStdout
 
+    /// FG-174. Whether a return flag is set — and, when it is written in a form Fogell
+    /// will not guess at, a reason to refuse BEFORE the step runs.
+    type FlagState =
+        | FlagOn
+        | FlagOff
+        /// Named, and rejected with this reason. Never "assume off": that is how
+        /// `returnStatus: 1` ran the shell and reported success.
+        | FlagRejected of string
+
+    /// These are BOOLEAN setters on durable-task's `ShellStep`, and the value's TYPE
+    /// decides — which the rendered TEXT cannot, since `returnStatus: true` and
+    /// `returnStatus: 'true'` both render to "true".
+    ///
+    /// MEASURED on the pinned lab by scratch probe — and UNPROVEN in-repo, deliberately:
+    /// neither shape can become a receipt, because Fogell refuses where Jenkins RUNS the
+    /// doomed shell (first case) or answers with a Java stack trace no engine can match
+    /// (second). Both agree on terminal result AND workspace hash; they differ only in
+    /// output text, which is exactly the shape FG-129 describes. What the probes found,
+    /// after the previous version compared `Trim().ToLowerInvariant()` against "true":
+    ///   - `returnStatus: ' true '` — Jenkins treats it as FALSE, so `exit 7` FAILS the
+    ///     build. Fogell trimmed, suppressed the exit, and ran the following step.
+    ///   - `returnStatus: 1` — Jenkins REJECTS the call before running anything:
+    ///     `IllegalArgumentException: Could not instantiate {script=…, returnStatus=1}
+    ///     for ShellStep`, workspace empty. Fogell ran the shell and reported success.
+    /// Both are false successes, and the second is one Jenkins refuses outright.
+    ///
+    /// SO ONLY A LITERAL BOOLEAN COUNTS, and everything else is REFUSED rather than
+    /// coerced. That is deliberately NARROWER than Jenkins, which would accept the string
+    /// `'true'` through `Boolean.valueOf`. The narrowing is declared rather than hidden,
+    /// and it is measured to cost nothing: across the 228-file corpus every one of the
+    /// 134 uses is the literal `true` form (117 `returnStdout: true`, 11
+    /// `returnStatus: true`, plus 6 written without a space). Reproducing Java's coercion
+    /// from rendered text would mean guessing at semantics I would then have to keep in
+    /// step, to serve a spelling nobody writes — and guessing WRONG in the permissive
+    /// direction is what this whole class of finding has been.
+    ///
+    /// `isLiteralBoolean` is the caller's answer to "was this written as a bare `true`
+    /// or `false`, not as text": `Step.ExpressionArgs` at stage level, and the typed
+    /// `HostedArgs` value inside a `script` block.
+    let returnFlag (isLiteralBoolean: bool) (rendered: string) : FlagState =
+        match isLiteralBoolean, rendered with
+        | true, "true" -> FlagOn
+        | true, "false" -> FlagOff
+        | true, other ->
+            FlagRejected
+                $"expects a boolean and got `{other}`; Jenkins rejects the call before running the step (IllegalArgumentException from ShellStep)"
+        | false, other ->
+            FlagRejected
+                $"expects a boolean literal and got the text `{other}`; Fogell refuses rather than reproduce Jenkins' string coercion, which treats `' true '` as FALSE"
+
     /// `returnStdout`/`returnStatus` are LITERAL-true here; a non-literal flag cannot be
     /// decided statically and its caller must treat it as absent, which fails safe.
     let returnContract (stepName: string) (returnStdout: bool) (returnStatus: bool) : ReturnContract =

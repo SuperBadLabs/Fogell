@@ -94,9 +94,46 @@ module WalkerStep =
         // WHAT THIS CALL RETURNS comes from `WalkerRules.returnContract`, the same
         // function the static refusal reads. This end deciding for itself is what
         // produced two findings: the flags treated as universal, then as orthogonal.
-        let flagged (key: string) =
+        //
+        // AND THE VALUE'S TYPE DECIDES, NOT ITS RENDERED TEXT. `returnStatus: true` and
+        // `returnStatus: 'true'` both render to "true", and Jenkins treats them
+        // differently — see `WalkerRules.returnFlag`. The type survives in two places
+        // depending on how the step was reached: `ExpressionArgs` records a stage-level
+        // argument written UNQUOTED, and inside a `script` block the typed `HostedArgs`
+        // value is the argument itself.
+        let writtenAsLiteralBoolean (key: string) =
+            match ctx.HostedArgs with
+            | Some(_, named) ->
+                named
+                |> List.exists (fun (k, v) ->
+                    k = key
+                    && match v with
+                       | VBool _ -> true
+                       | _ -> false)
+            | None -> step.ExpressionArgs.Contains key
+
+        let flagState (key: string) =
             renderedNamed
-            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
+            |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+            |> Option.map (fun v -> WalkerRules.returnFlag (writtenAsLiteralBoolean key) v)
+
+        // A REJECTED FLAG STOPS THE STEP, and stops it BEFORE it runs. Jenkins refuses
+        // `returnStatus: 1` at instantiation with an empty workspace, so a Fogell that
+        // ran the shell and then complained would already have done the work Jenkins
+        // never started. Only the shell steps are checked: on any other step these are
+        // unknown parameters that Jenkins ignores with a warning, and refusing them here
+        // would be stricter than Jenkins for no gain.
+        let flagRejection =
+            if not (WalkerRules.stepsHonouringReturnFlags.Contains step.Name) then
+                None
+            else
+                [ "returnStdout"; "returnStatus" ]
+                |> List.tryPick (fun key ->
+                    match flagState key with
+                    | Some(WalkerRules.FlagRejected why) -> Some $"step '{step.Name}' argument `{key}` {why}"
+                    | _ -> None)
+
+        let flagged (key: string) = flagState key = Some WalkerRules.FlagOn
 
         let contract =
             WalkerRules.returnContract step.Name (flagged "returnStdout") (flagged "returnStatus")
@@ -111,6 +148,14 @@ module WalkerStep =
         let wantsStatus = contract = WalkerRules.ExitStatus
 
         let result =
+            match flagRejection with
+            // REFUSED WITHOUT RUNNING. `Executor.runStep` is not reached, so no shell
+            // starts and no file is written — which is the observable part: Jenkins
+            // leaves the workspace EMPTY here, so an engine that ran the shell first and
+            // complained afterwards would still differ on the workspace hash.
+            | Some why -> Executor.refusedBeforeRunning why
+            | None ->
+
             Executor.runStep
                 { Name = step.Name
                   Script = script

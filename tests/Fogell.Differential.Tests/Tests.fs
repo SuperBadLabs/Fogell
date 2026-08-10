@@ -1181,6 +1181,40 @@ let returnFlagContract =
                   Expect.equal (contract step true true) WalkerRules.NoValue $"{step} answers nothing"
           }
 
+          // FG-174. THE VALUE'S TYPE, not its rendered text. `returnStatus: true` and
+          // `returnStatus: 'true'` both render to "true"; Jenkins treats them
+          // differently, and comparing `Trim().ToLowerInvariant()` got two shapes wrong.
+          test "a literal boolean true turns the flag on" {
+              Expect.equal (WalkerRules.returnFlag true "true") WalkerRules.FlagOn "bare true"
+          }
+
+          test "a literal boolean false turns it off, and is not an error" {
+              Expect.equal (WalkerRules.returnFlag true "false") WalkerRules.FlagOff "bare false"
+          }
+
+          test "a non-boolean literal is REJECTED, never treated as absent" {
+              // MEASURED on the pinned lab: `sh script: '…', returnStatus: 1` makes
+              // Jenkins throw `IllegalArgumentException: Could not instantiate … for
+              // ShellStep` BEFORE running anything, leaving the workspace empty. Fogell
+              // ran the shell and reported success. Treating an unusable flag as "off"
+              // is what made that a false success, so the state is explicit.
+              // UNPROVEN by receipt: Jenkins answers with a Java stack trace no engine
+              // can match, so the case diverges on output text — scratch probe only.
+              match WalkerRules.returnFlag true "1" with
+              | WalkerRules.FlagRejected why -> Expect.stringContains why "boolean" "says what it wanted"
+              | other -> failtestf "expected a rejection, got %A" other
+          }
+
+          test "a QUOTED value is refused rather than coerced" {
+              // Narrower than Jenkins on purpose, and declared: Jenkins would run this
+              // through `Boolean.valueOf`, which makes `' true '` FALSE — measured. Every
+              // one of the 134 uses in the 228-file corpus is the literal form, so this
+              // costs nothing real and avoids importing Java coercion semantics.
+              match WalkerRules.returnFlag false "true" with
+              | WalkerRules.FlagRejected _ -> ()
+              | other -> failtestf "expected a rejection, got %A" other
+          }
+
           test "bat carries the same contract as sh" {
               // On CONTRACT, not on evidence: there is no Windows lane and no receipt
               // covers it. This pins the two ends AGREEING about bat, which is all it
