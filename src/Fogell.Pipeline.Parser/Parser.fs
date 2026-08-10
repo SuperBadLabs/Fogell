@@ -98,6 +98,36 @@ let private wholeValue (p: P<'a>) : P<'a> =
 
     attempt (p .>>? notFollowedBy continuation)
 
+/// FG-174. THE ONE DUPLICATE RULE, for every named-argument surface in this parser.
+///
+/// Groovy assembles named arguments into a MAP LITERAL and a duplicate key does not
+/// survive it, so Jenkins rejects the pipeline at COMPILE time and runs NOTHING.
+/// MEASURED on the pinned lab across four spellings — a step call parenthesised and in
+/// command form, `when { equals … }`, and `when { environment … }` — each failing with
+/// nothing in the log but `Started by user unknown or anonymous` and an EMPTY workspace.
+/// Fogell took the FIRST matching key every time, and in the `when` cases ran the earlier
+/// stage before quietly skipping the gated one. UNPROVEN by receipt: a compile-shaped
+/// refusal emits nothing comparable (FG-129).
+///
+/// IT LIVES HERE, ABOVE EVERY CALLER, ON PURPOSE. The first version of this fix guarded
+/// only step arguments, and the review found `when { equals actual: 1, actual: 2 }` the
+/// very next round — the same defect on a surface I had not enumerated. Enumerating them
+/// was the actual work: the surfaces that parse a LIST are step arguments, `equals` and
+/// `environment`; `tag`, `branch`, `changelog` and `triggeredBy` take a SINGLE named
+/// argument and cannot duplicate one. A new list-shaped surface must call this.
+let private firstDuplicateName (names: string list) : string option =
+    names
+    |> List.countBy id
+    |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
+
+/// Refuses the list if any key repeats, naming the key.
+let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a list> =
+    match firstDuplicateName (items |> List.map keyOf) with
+    | Some name ->
+        fail
+            $"duplicate named argument `{name}`: Groovy builds named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+    | None -> preturn items
+
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
@@ -192,20 +222,20 @@ let private argList
     // EARLIER stage run first — indistinguishable on this probe, where the duplicate sits
     // in the first step, and plainly wrong for a duplicate in a later stage. That
     // difference is between matching Jenkins and matching one example of it.
-    let duplicateNamed items =
-        items
-        |> List.choose (function
-            | Choice1Of2(n, _, _, _) -> Some n
-            | _ -> None)
-        |> List.countBy id
-        |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
-
     sepBy one (symbol ",")
     >>= fun items ->
-        match duplicateNamed items with
+        // Positionals cannot collide, so only the named ones are keyed.
+        match
+            firstDuplicateName (
+                items
+                |> List.choose (function
+                    | Choice1Of2(n, _, _, _) -> Some n
+                    | _ -> None)
+            )
+        with
         | Some name ->
             fail
-                $"duplicate named argument `{name}`: Groovy builds a call's named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+                $"duplicate named argument `{name}`: Groovy builds named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
         | None ->
 
         preturn (
@@ -449,7 +479,7 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// Receipt: `when-conditions`.
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
-    >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
+    >>. (sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",") >>= rejectingDuplicates fst)
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
 
@@ -486,6 +516,7 @@ let private whenEqualsCondition: P<WhenCondition> =
                    // unmodelled — so the stage failed closed over one character.
                    <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)))
             (symbol ",")
+    >>= rejectingDuplicates fst
     .>> ws
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)

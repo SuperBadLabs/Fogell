@@ -123,6 +123,45 @@ let structure =
               Expect.equal p.Stages.[0].Steps.Length 2 "both steps parse"
           }
 
+          // FG-175. A KNOWN GAP, PINNED SO IT CANNOT BE MISTAKEN FOR COVERAGE.
+          //
+          // The duplicate rule is wired into `equals` and `environment` too, but it
+          // CANNOT REACH the caller there: `when` falls back to `whenSectionOpaque`,
+          // which consumes any unparseable body as raw text and marks the condition
+          // UNMODELLED. So the refusal backtracks into that fallback and the stage merely
+          // fails closed and SKIPS.
+          //
+          // That is still a divergence, MEASURED by scratch probe and UNPROVEN by receipt
+          // (FG-129 — a compile-shaped refusal emits nothing comparable): Jenkins rejects
+          // the pipeline at compile time and runs NOTHING, while Fogell runs the earlier
+          // stage and reports SUCCESS. Closing it means changing how section fallbacks handle a REFUSAL as
+          // opposed to an unmodelled shape — the fallback is deliberate (FG-152) and
+          // load-bearing, so this is a design change, not a patch. FG-175 carries it.
+          //
+          // These tests assert TODAY'S behaviour on purpose. When FG-175 lands they will
+          // fail, which is the point: they are the tripwire, not an endorsement.
+          test "FG-175 gap: a duplicate in when-equals PARSES, and the condition is unmodelled" {
+              let p = ok (mk "    stage('B') { when { equals expected: 1, actual: 1, actual: 2 }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-environment PARSES, and the condition is unmodelled" {
+              let p = ok (mk "    stage('B') { when { environment name: 'T', value: 'a', value: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "the ORDINARY when conditions still parse" {
+              // Both are in the corpus and are what the refusal must not touch.
+              ok (mk "    stage('B') { when { equals expected: 1, actual: 1 }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { environment name: 'T', value: 'a' }\n steps { sh 'x' } }") |> ignore
+          }
+
           test "stages and steps are recovered" {
               let p = ok (mk "    stage('Build') { steps { sh 'make'\n echo 'done' } }")
               Expect.equal p.Stages.Length 1 "one stage"
