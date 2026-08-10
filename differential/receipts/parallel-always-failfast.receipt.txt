@@ -111,10 +111,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (11 lines):
     | + echo from-slow
-    | from-slow
-    | + sleep 45
     | + echo from-quick
+    | from-slow
     | from-quick
+    | + sleep 45
     | + sleep 1
     | + exit 3
     | Failed in branch quick-fail

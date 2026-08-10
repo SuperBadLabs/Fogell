@@ -922,6 +922,47 @@ module WalkerOrchestration =
                         |> Some
                     | _ -> None
 
+                // EVERY ENTRY MUST BE `NAME=VALUE`, on BOTH paths.
+                //
+                // `List.choose` dropped a malformed entry silently, so
+                // `withEnv(['BADENTRY']) { … }` ran its body and reported success. Seen at
+                // STAGE level against the pinned Jenkins, which raises
+                // `IllegalArgumentException` from `EnvStep` and fails the build. UNPROVEN
+                // in-repo, and said so rather than dressed up: the probe DIVERGES on
+                // output text — Jenkins prints a Java stack trace no engine can match — so
+                // it cannot join a suite that requires 128/128. Result and workspace DO
+                // agree now, which is the part that matters. That was a
+                // PRE-EXISTING false success in the ordinary path, not something the script
+                // bridge introduced; the hosted path merely inherited it. Fixed here, at
+                // the rule, rather than in the hosted branch that happened to surface it —
+                // the same call the body-less `dir` needed. Raised by the pre-push
+                // verifier as the seventh of its class.
+                let malformed (entry: string) = entry.IndexOf '=' <= 0
+
+                let hostedMalformed =
+                    match ctx.HostedArgs with
+                    | Some(VList items :: _, _) -> items |> List.map Value.toDisplay |> List.filter malformed
+                    | _ -> []
+
+                let rawMalformed =
+                    if Option.isSome hostedBindings then
+                        []
+                    else
+                        step.Positional
+                        |> List.collect (fun raw ->
+                            [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
+                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ])
+                        |> List.filter malformed
+
+                match hostedMalformed @ rawMalformed with
+                | bad :: _ ->
+                    emit
+                        $"ERROR: withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='"
+
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | [] ->
+
                 let bindings =
                     match hostedBindings with
                     | Some b -> b
