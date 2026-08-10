@@ -245,8 +245,23 @@ module WalkerOrchestration =
                 | [ _ ], [] -> None
                 | _ -> wrongShape "takes exactly one path argument"
             | "retry" ->
+                // THE TYPE, not just the arity — and NOT the sign. MEASURED against pinned
+                // Jenkins rather than assumed, because the review that raised this said
+                // Jenkins "rejects the count" for both shapes and that is only half true:
+                //   retry(0)       -> Jenkins SUCCEEDS and runs the body once (clamped).
+                //                     Receipt: script-retry-zero.receipt.txt.
+                //   retry('nope')  -> Jenkins FAILS, IllegalArgumentException from RetryStep.
+                //                     UNPROVEN in-repo: that probe diverges on Jenkins'
+                //                     Java stack trace, so it cannot be a suite case.
+                // A first fix refused non-positive counts too and made Fogell STRICTER than
+                // Jenkins, which is a false refusal — the opposite error, still a
+                // divergence. Probed both before settling on this.
+                //
+                // Negative counts are UNTESTED and treated like 0; `runWithRetry` clamps to
+                // one attempt, which is what Jenkins does with 0.
                 match positional, named with
-                | [ _ ], [] -> None
+                | [ VInt _ ], [] -> None
+                | [ other ], [] -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
                 | _ -> wrongShape "takes exactly one count argument"
             | _ -> None
 

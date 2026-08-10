@@ -4,17 +4,25 @@ open Fogell.Groovy
 
 /// FG-160. Finds step calls whose VALUE is used.
 ///
-/// WHY THIS EXISTS BEFORE `script { }` RUNS ANYTHING. The interpreter is a BATCH model:
-/// `Interpreter.run` collects `StepCall` effects for the host to perform later, and the
-/// call evaluates to `VNull` on the spot. Order is preserved; VALUES are not. So
+/// WHY IT STILL EXISTS, restated after FG-172 — this header described the BATCH model
+/// long after `script { }` stopped using it, which is the overclaim class this project
+/// treats as a defect.
+///
+/// TWO MODES NOW. `Interpreter.run` is the batch consumer (`when { expression }`, the
+/// tests): it collects `StepCall` effects and a call evaluates to `VNull`. `script { }`
+/// uses `Interpreter.runHosted`, where the host performs each step LIVE and its return
+/// value is the call's value.
+///
+/// The refusal survives the change because of the HOST, not the interpreter: the walker's
+/// dispatch returns unit, so the host has no value to hand back and yields null anyway. So
 ///
 ///     def out = sh(script: 'git rev-parse HEAD', returnStdout: true)
 ///     if (out.startsWith('abc')) { … }
 ///
-/// would proceed with `out = null` and decide the branch wrongly — a silent wrong answer,
-/// which ADR 0001 calls worse than explicit rejection. `script { }` is fail-closed at
-/// runtime TODAY, so shipping the wiring without this check would be a REGRESSION from an
-/// honest failure into a quiet one.
+/// would still proceed with `out = null` and decide the branch wrongly — a silent wrong
+/// answer, which ADR 0001 calls worse than explicit rejection. FG-174 makes `sh` honour
+/// `returnStdout`/`returnStatus` and carries a value back; THAT is when this refusal can
+/// be lifted, and not before.
 ///
 /// `when { expression { … } }` never needed this: `WalkerWhen` passes
 /// `registeredSteps = Set.empty`, so `Sandbox.admitCall` refuses a step call outright
