@@ -23,6 +23,7 @@ it. See `docs/adr/0002-interpret-not-lower.md`.
 
     docs/adr/           numbered decisions, each citing measured evidence
     docs/architecture/  contracts
+    docs/related-work/  sibling-project dossiers (McLoving), informational only
     src/                F# projects
     tests/              unit + differential
     corpus/             pinned Jenkinsfile corpus reference (hashes only)
