@@ -125,7 +125,7 @@ let private wholeValue (p: P<'a>) : P<'a> =
 ///     'v1', pattern: 'v2' }` leaves the second pair UNCONSUMED, the condition fails, and
 ///     the same opaque fallback absorbs the section — identical outcome, reached by a
 ///     different route. Not guarded, and guarding them here would change nothing while
-///     the fallback stands. FG-175 covers them, with tripwire tests.
+///     the fallback stands. FG-175 covers them, and each has a tripwire test.
 /// A new list-shaped surface must call this.
 let private firstDuplicateName (names: string list) : string option =
     names

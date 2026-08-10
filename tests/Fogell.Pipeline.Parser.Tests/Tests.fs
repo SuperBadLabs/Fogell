@@ -168,6 +168,22 @@ let structure =
               | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
           }
 
+          test "FG-175 gap: a duplicate in when-changelog lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { changelog pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-triggeredBy lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { triggeredBy cause: 'a', cause: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
           test "the ORDINARY single-key conditions still parse" {
               // What the tripwires above must not be confused with.
               ok (mk "    stage('B') { when { tag pattern: 'v1' }\n steps { sh 'x' } }") |> ignore
