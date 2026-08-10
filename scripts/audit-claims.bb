@@ -371,7 +371,12 @@
       ;; UNCHECKED. Proven: the "glob matching nothing" arm passed until this was split
       ;; in two. The hyphen stays required for the non-glob form, because that is what
       ;; keeps ordinary prose words out of a backticked list.
-      cite-name #"[a-z][a-z0-9]*(?:-[a-z0-9]+)*-?\*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:[./][a-z0-9]+)*"
+      ;; `[./]+` and not `[./]`: a COMPACT citation writes the second build as
+      ;; `multi-case.b1/.b9`, where the separator is `/.` — two characters. Requiring
+      ;; one stopped the match at `multi-case.b1` and the `.b9` was never extracted,
+      ;; so a citation naming a build that does not exist passed while this check
+      ;; claimed every named receipt was verified. Raised in review on PR #53.
+      cite-name #"[a-z][a-z0-9]*(?:-[a-z0-9]+)*-?\*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:[./]+[a-z0-9]+)*"
       ;; TWO REAL SPELLINGS, learned from the citations already in the tree rather than
       ;; assumed — the first draft called six of them dangling and every one was mine
       ;; being wrong about the naming, not the comment being wrong:
@@ -382,6 +387,18 @@
       ;;   - A FAMILY is cited as a glob: `checkout-scm-*` covers four receipts. That is
       ;;     the honest way to cite four things, so it resolves when the prefix matches
       ;;     something — and still fails when it matches nothing.
+      ;; A compact citation names SEVERAL receipts: `multi-case.b1/.b9` is `.b1` AND
+      ;; `.b9` on one base. Expanding it here means the resolver below answers for one
+      ;; name at a time and cannot silently check only the first.
+      expand-citation
+      (fn [tok]
+        (let [parts (str/split tok #"/")]
+          (if (< (count parts) 2)
+            [tok]
+            (let [base (str/replace (first parts) #"\.b\d+$" "")]
+              (cons (first parts)
+                    (map (fn [p] (if (str/starts-with? p ".") (str base p) p)) (rest parts)))))))
+
       resolves?
       (fn [tok]
         ;; `.receipt.txt` is the third real spelling: some comments cite the FILE.
@@ -432,7 +449,8 @@
       dangling
       (for [{:keys [file line text]} blocks
             [_ lst] (concat (re-seq cite-backticked text) (re-seq cite-colon text))
-            name (re-seq cite-name lst)
+            token (re-seq cite-name lst)
+            name (expand-citation token)
             :when (not (resolves? name))]
         {:file (str (fs/relativize root file)) :line line :name name})]
 

@@ -525,7 +525,14 @@ module ProcessGroup =
                 // still in flight would land after the snapshot, read as post-signal
                 // shell narration, and wrongly suppress the synthetic line below.
                 flushReaders 300
+                // BOTH BUFFERS. A trapping script's `Terminated` lands wherever its
+                // stderr is pointed, and in CAPTURE mode the two streams are no longer
+                // merged — so a stdout-only snapshot stopped seeing it and the engine
+                // synthesised a SECOND line beside the shell's own. Raised in review on
+                // PR #53; the split that caused it is FG-174's, so the check has to know
+                // about it.
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
+                let stderrBeforeSignal = lock stderr (fun () -> stderr.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
 
@@ -535,11 +542,13 @@ module ProcessGroup =
                 // position. UNLESS the script trapped the signal and said it itself:
                 // synthesising unconditionally doubled the line for a trapping shell.
                 let shellSaidIt =
-                    let afterSignal =
-                        (lock stdout (fun () -> stdout.ToString())).Substring outputBeforeSignal.Length
+                    let since (sink: Text.StringBuilder) (before: string) =
+                        (lock sink (fun () -> sink.ToString())).Substring before.Length
 
-                    afterSignal.Replace("\r\n", "\n").Split '\n'
-                    |> Array.exists (fun l -> l.Trim() = "Terminated")
+                    [ since stdout outputBeforeSignal; since stderr stderrBeforeSignal ]
+                    |> List.exists (fun afterSignal ->
+                        afterSignal.Replace("\r\n", "\n").Split '\n'
+                        |> Array.exists (fun l -> l.Trim() = "Terminated"))
 
                 if not shellSaidIt then
                     request.OnLine |> Option.iter (fun f -> f "Terminated")

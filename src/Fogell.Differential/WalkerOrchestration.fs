@@ -259,10 +259,31 @@ module WalkerOrchestration =
                 //
                 // Negative counts are UNTESTED and treated like 0; `runWithRetry` clamps to
                 // one attempt, which is what Jenkins does with 0.
-                match positional, named with
-                | [ VInt _ ], [] -> None
-                | [ other ], [] -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
-                | _ -> wrongShape "takes exactly one count argument"
+                //
+                // NAMED `count:` IS VALID JENKINS, and refusing it was a FALSE REFUSAL —
+                // the opposite error to everything else in this function, and the one
+                // `retry(0)` already taught. MEASURED: `script { retry(count: 2) { … } }`
+                // succeeds on Jenkins and failed here, with the ordinary stage-level
+                // reader (`WalkerRules.retryCountOpt`) already accepting the same spelling.
+                // An arm stricter than the reader it guards is a refusal with no rule
+                // behind it. Raised in review on PR #53.
+                let countArg =
+                    match positional, named |> List.tryFind (fun (k, _) -> k = "count") with
+                    | [ v ], None -> Some v
+                    | [], Some(_, v) -> Some v
+                    // Both spellings at once is not a shape Jenkins takes either.
+                    | _ -> None
+
+                match countArg with
+                | None -> wrongShape "takes one attempt count, either positionally or as `count:`"
+                | Some(VInt _) ->
+                    // `conditions:` is real Jenkins and NOT implemented here. Refusing it
+                    // by name beats accepting it and retrying unconditionally, which would
+                    // retry on failures the pipeline asked to leave alone.
+                    match named |> List.filter (fun (k, _) -> k <> "count") with
+                    | [] -> None
+                    | (k, _) :: _ -> wrongShape $"does not support `{k}`; only the attempt count is implemented"
+                | Some other -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
             | "timeout" ->
                 // MEASURED on the pinned lab, not inferred from the other arms, and held
                 // by receipt `script-timeout-two-positionals`: Jenkins accepts ONE

@@ -114,6 +114,17 @@ module Planted
 let x = 1
 EOF
 
+# THE FIXTURE THAT COULD NOT FAIL. The accept arm below cites `multi-case.b1/.b2`
+# and BOTH exist, so it passed whether the checker validated one suffix or both — and
+# it validated one. Raised in review on PR #53, and it is the same weakness the ACCEPT
+# arms had when they were passing on zero scanned files: a fixture that cannot
+# distinguish the right answer from the wrong one is not evidence.
+expect reject "a compact citation whose SECOND build does not exist" <<'EOF'
+module Planted
+// Behaviour held by receipts `multi-case.b1/.b9`.
+let x = 1
+EOF
+
 expect reject "a glob matching nothing" <<'EOF'
 module Planted
 // Proven by receipts `nosuchfamily-*`.
