@@ -276,11 +276,19 @@ let predicateValues =
           } ]
 
 let stepValueUse =
-    // FG-160. The interpreter is a BATCH model: it collects StepCall effects and the call
-    // evaluates to VNull on the spot. Order survives, VALUES do not — so a body that uses
-    // a step's return value would run with null and decide branches wrongly. `script { }`
-    // is fail-closed at runtime today, so wiring it up without this check would trade an
-    // honest failure for a quiet wrong answer.
+    // FG-160/FG-174. A step call in a VALUE position is refused unless the step can
+    // actually supply a value.
+    //
+    // The original reason was the batch model: it collected `StepCall` effects and every
+    // call evaluated to `VNull`, so a body using a return value decided branches on null.
+    // FG-172 replaced that with a live host and FG-174 taught `sh` to answer
+    // `returnStdout`/`returnStatus`, so the rule is now narrower and the exemplars below
+    // had to change with it: a call that OPTS IN is admitted, and a call that does not is
+    // still refused — the walker's dispatch returns unit, so there is nothing to hand back.
+    //
+    // Which is why these tests use `sh(script: 'x')` where they once used
+    // `sh(script: 'x', returnStdout: true)`. Left alone they would have kept passing on
+    // the day the refusal was lifted, asserting a rule the code no longer has.
     let uses src =
         Fogell.Groovy.Interpreter.StepValueUse.find steps.Contains (parseOk src)
 
@@ -295,26 +303,26 @@ let stepValueUse =
           }
 
           test "a step in a variable initialiser IS a value use" {
-              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: true)") [ "sh" ] "def RHS"
+              Expect.equal (usedSteps "def out = sh(script: 'x')") [ "sh" ] "def RHS"
           }
 
           test "a step in an if condition IS a value use" {
-              Expect.equal (usedSteps "if (sh(script: 'x', returnStatus: true) == 0) { echo 'ok' }") [ "sh" ] "condition"
+              Expect.equal (usedSteps "if (sh(script: 'x') == 0) { echo 'ok' }") [ "sh" ] "condition"
           }
 
           test "a step in an ASSIGNMENT is a value use" {
-              Expect.equal (usedSteps "x = sh(script: 'x', returnStdout: true)") [ "sh" ] "assignment RHS"
+              Expect.equal (usedSteps "x = sh(script: 'x')") [ "sh" ] "assignment RHS"
           }
 
           test "a step nested in a string interpolation is a value use" {
               // The sneakiest shape, and the one a naive statement-level check misses.
-              Expect.equal (usedSteps "echo \"got ${sh(script: 'x', returnStdout: true)}\"") [ "sh" ] "interpolation"
+              Expect.equal (usedSteps "echo \"got ${sh(script: 'x')}\"") [ "sh" ] "interpolation"
           }
 
           test "a step as an ARGUMENT to a bare statement call is a value use" {
               // The outer call is a discarded statement; the inner one is not. A check
               // that only asked "is this statement a call" would pass this.
-              Expect.equal (usedSteps "echo sh(script: 'x', returnStdout: true)") [ "sh" ] "argument"
+              Expect.equal (usedSteps "echo sh(script: 'x')") [ "sh" ] "argument"
           }
 
           test "a step inside a TRAILING BLOCK is not a VALUE use" {
@@ -356,12 +364,12 @@ let stepValueUse =
           }
 
           test "a step in a RETURN is a value use" {
-              Expect.equal (usedSteps "return sh(script: 'x', returnStdout: true)") [ "sh" ] "return value"
+              Expect.equal (usedSteps "return sh(script: 'x')") [ "sh" ] "return value"
           }
 
           test "a step in a for-in SOURCE is a value use" {
               Expect.equal
-                  (usedSteps "for (f in sh(script: 'ls', returnStdout: true).split()) { echo f }")
+                  (usedSteps "for (f in sh(script: 'ls').split()) { echo f }")
                   [ "sh" ]
                   "loop source"
           }
@@ -374,13 +382,43 @@ let stepValueUse =
 
           test "the position is NAMED, not just the step" {
               // A refusal that says only "a step value is used" sends someone hunting.
-              let u = uses "def out = sh(script: 'x', returnStdout: true)" |> List.exactlyOne
+              let u = uses "def out = sh(script: 'x')" |> List.exactlyOne
               Expect.equal u.Where "a variable initialiser" "the position is reported"
           }
 
           test "several uses are all reported, in source order" {
-              let src = "def a = sh(script: '1', returnStdout: true)\nif (sh(script: '2', returnStatus: true) == 0) { echo a }"
+              let src = "def a = sh(script: '1')\nif (sh(script: '2') == 0) { echo a }"
               Expect.equal (usedSteps src) [ "sh"; "sh" ] "every use, not the first"
+          }
+
+          // FG-174. THE OTHER SIDE OF THE RULE. `sh` can now answer both flags, so a call
+          // that opts in is ADMITTED — and these are what fail if someone restores the
+          // blanket refusal, which is the direction the two earlier attempts went.
+          test "returnStdout: true is ADMITTED in a value position" {
+              Expect.isEmpty (uses "def out = sh(script: 'x', returnStdout: true)") "the step supplies a value"
+          }
+
+          test "returnStatus: true is ADMITTED in a value position" {
+              Expect.isEmpty (uses "if (sh(script: 'x', returnStatus: true) == 0) { echo 'ok' }") "the step supplies a value"
+          }
+
+          // THE FLAG MUST BE A LITERAL `true`, and these three are why the check reads the
+          // argument LIST rather than looking for a key.
+          test "returnStdout: false is still refused" {
+              // Opting OUT is not opting in. A check that merely spotted the KEY would
+              // admit this and hand the script null.
+              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: false)") [ "sh" ] "false is not true"
+          }
+
+          test "a NON-LITERAL flag is still refused" {
+              // A static reader cannot know what `flag` holds, so assuming it is true
+              // would be guessing in the direction that fails open.
+              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: flag)") [ "sh" ] "unknown at read time"
+          }
+
+          test "the flag must be NAMED, not positional" {
+              // `sh('x', true)` says nothing about WHICH option is being set.
+              Expect.equal (usedSteps "def out = sh('x', true)") [ "sh" ] "a bare true opts in to nothing"
           }
         ]
 

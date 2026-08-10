@@ -79,6 +79,25 @@ module WalkerStep =
 
         let renderedNamed = rendered.Named
 
+        // FG-174. THE FLAGS ARE READ BEFORE THE STEP RUNS, not after it.
+        //
+        // They used to be read only after `Executor.runStep` returned, which made
+        // `returnStdout` a post-hoc reinterpretation of a step that had already streamed
+        // its output. The review that found it named the class exactly: an unsupported
+        // option ADMITTED after a narrow refusal. `StepValueUse` refuses a VALUE USE, so
+        // `def out = sh(returnStdout: true, …)` was rejected — but a STATEMENT-position
+        // `sh script: 'printf value', returnStdout: true` is not a value use, so nothing
+        // refused it and Fogell printed `value` where Jenkins prints only the xtrace.
+        // A divergence admitted quietly, which is the shape of every finding on this
+        // branch. Deciding capture BEFORE dispatch is what makes the option affect the
+        // run instead of the report.
+        let flagged (key: string) =
+            renderedNamed
+            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
+
+        let wantsStdout = flagged "returnStdout"
+        let wantsStatus = flagged "returnStatus"
+
         let result =
             Executor.runStep
                 { Name = step.Name
@@ -86,13 +105,11 @@ module WalkerStep =
                   Workspace = cwd
                   WorkspaceRoot = Some workspace
                   Environment = envForWith ctx.EnvOverlay stage
-                  // FG-174. NOT SET YET, deliberately. `SuppressStdoutEcho` works, but
-                  // Fogell's `sh -x` writes its trace to STDOUT, so suppressing that echo
-                  // also hides the trace line Jenkins prints. Turning this on before the
-                  // trace moves to stderr would trade a missing value for missing output —
-                  // and it would do so for every `sh(returnStdout:)` anywhere, not just in
-                  // a script block.
-                  CaptureStdout = false
+                  // FG-174. `returnStdout` CAPTURES instead of printing — Jenkins' console
+                  // shows the xtrace and not the program's output, because durable-task
+                  // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
+                  // deliberately not part of this condition.
+                  CaptureStdout = wantsStdout
                   TimeoutMs =
                     match WalkerCancellation.remainingMs runCtx deadline with
                     | Some ms -> Some ms
@@ -133,36 +150,19 @@ module WalkerStep =
         // status: on success nothing else would print them, and on failure
         // the composed ERROR line is normalised away — either way the
         // receipt stayed silent until this carried them separately (FG-103).
-        // FG-174. `returnStdout` / `returnStatus`. WHAT IS TRUE TODAY, stated before the
-        // semantics, because an earlier version of this comment cited two receipts that
-        // were never written — script-sh-returnstdout and script-sh-returnstatus, named
-        // here WITHOUT the citation form on purpose, since a checker cannot tell citing
-        // a receipt from reporting its absence. That was the seventh documentation
-        // overclaim the verifier has caught on this branch:
-        //   - the plumbing below is STAGED, not finished;
-        //   - a VALUE USE is still refused (`StepValueUse.returnsAValue` is false), so
-        //     `def out = sh(returnStdout: true, …)` is rejected, not answered;
-        //   - `CaptureStdout` is false above, so `returnStdout` does not yet capture;
-        //   - the only FG-174 receipt that exists is `script-returnstatus-timeout`, which
-        //     proves the abort case below. There is no end-to-end receipt for either flag
-        //     and there cannot be one until the value use is admitted.
-        //
-        // The two semantics below were measured against pinned Jenkins 2.568.1 with
-        // SCRATCH PROBES — real measurements, no receipt, because the probes diverge
-        // while the refusal stands and so cannot join a suite that requires 130/130:
+        // FG-174. `returnStdout` / `returnStatus` semantics, measured against pinned
+        // Jenkins 2.568.1:
         //   returnStdout -> stdout VERBATIM, trailing newline INCLUDED. `printf 'value\n'`
         //     through `od -c` gives `[ v a l u e \n ]`, which is why pipelines call
         //     `.trim()`. Stripping it "helpfully" would silently change every script that
-        //     already does.
+        //     already does. It also CAPTURES: the console shows the xtrace and not the
+        //     output. Receipt: script-sh-returnstdout.
         //   returnStatus -> the exit code, and the build DOES NOT FAIL. Getting this wrong
         //     turns a deliberate status check into a failed build; getting it wrong the
-        //     other way hides a real failure.
-        let flagged (key: string) =
-            renderedNamed
-            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
-
-        let wantsStdout = flagged "returnStdout"
-        let wantsStatus = flagged "returnStatus"
+        //     other way hides a real failure. Receipt: script-sh-returnstatus.
+        //
+        // The flags themselves are read ABOVE, before dispatch — see the note there for
+        // why reading them here was the defect rather than the style.
 
         // THE FLAG ALONE DOES NOT LICENSE SUPPRESSION — the step must actually have
         // produced an exit status. `returnStatus` converts a SHELL EXIT into a value

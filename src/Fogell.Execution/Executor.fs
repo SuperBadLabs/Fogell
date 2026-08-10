@@ -474,7 +474,22 @@ module Executor =
             for note in leaks do
                 request.OnLine |> Option.iter (fun f -> f note)
 
-            request.OnLine |> Option.iter (fun f -> f masked)
+            // A MULTI-LINE MESSAGE IS MULTIPLE LOG LINES. Jenkins writes the message to
+            // the build log, so an embedded newline becomes a line break there; this
+            // handed `OnLine` one record containing a `\n`, and everything downstream
+            // that counts or compares lines then saw one line where Jenkins has two.
+            //
+            // MEASURED (`script-sh-returnstdout`): `echo "withnl:[${out}]"` over a
+            // captured "value\n" gives Jenkins seven output lines and Fogell six. Found
+            // only once `returnStdout` could produce a multi-line value at all — no
+            // existing case echoes one — but the rule is JENKINS', not the capture
+            // path's, so it is fixed here for every caller rather than at the one that
+            // exposed it. `String.concat` on the way into `Stdout` below keeps the text
+            // itself byte-identical.
+            request.OnLine
+            |> Option.iter (fun f ->
+                for line in masked.Split '\n' do
+                    f line)
 
             { ok Success with
                 Stdout = masked + "\n"

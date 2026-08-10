@@ -85,24 +85,34 @@ module StepValueUse =
                 // is left refused rather than assumed, which is the direction that fails
                 // safe. This is a property of THIS CALL's own arguments, visible without
                 // guessing, unlike the env pre-scan that had to be replaced.
-                // STILL REFUSED, and the flag detection is kept because the plumbing is
-                // done and only the SEMANTICS are wrong. Two gaps measured after lifting it
-                // once, both of which made the value wrong rather than absent:
-                //   - Jenkins does NOT echo captured stdout to the console; Fogell streams
-                //     it, so the compared output gained lines Jenkins never printed;
-                //   - `result.Stdout` includes the `sh -x` TRACE, so `out` came back as
+                // LIFTED, on the third attempt, and the two earlier attempts are why this
+                // is now believable rather than merely plumbed. Both times the refusal
+                // went back on because measuring showed the value would be WRONG, which
+                // is worse than absent:
+                //   - Jenkins does NOT echo captured stdout; Fogell streamed it, so the
+                //     compared output gained lines Jenkins never printed;
+                //   - `result.Stdout` carried the `sh -x` TRACE, so `out` came back as
                 //     "+ printf value\nvalue" instead of "value\n".
-                // A returned value that is wrong is worse than one refused, so this goes
-                // back to refusing until `sh` can capture program output alone and stay
-                // quiet while doing it. FG-174 carries that.
-                // STILL REFUSED. Plumbing and echo-suppression are done; the blocker is
-                // that Fogell's `sh -x` writes its TRACE TO STDOUT, where Jenkins writes it
-                // to stderr. So stdout cannot be captured alone: suppressing its echo also
-                // swallowed the `+ printf value` line Jenkins prints, and the captured
-                // value still contained the trace. Separating them changes how the shell is
-                // invoked for EVERY step and every one of the 129 receipts, which is its
-                // own piece of work — FG-174 carries it.
-                let returnsAValue = false
+                // Both are closed at the source. The trace was never `sh`'s doing: the
+                // process wrapper merged stderr into stdout with `2>&1`, and it now does
+                // that only when stdout is NOT being captured. So a captured `sh` yields
+                // the program's own output alone while the trace still streams — see
+                // ProcessGroup's note, and receipts script-sh-returnstdout and
+                // script-sh-returnstatus.
+                //
+                // The flag must be a LITERAL `true`. `sh(returnStdout: someVar)` cannot be
+                // decided here — a static reader does not know what `someVar` holds — so
+                // it stays refused rather than assumed, which is the direction that fails
+                // safe. That is a property of THIS CALL's own arguments, visible without
+                // guessing, unlike the env pre-scan that had to be replaced.
+                let optsIn (name: string) =
+                    args
+                    |> List.exists (fun a ->
+                        match a with
+                        | ANamed(k, EBool true) -> k = name
+                        | _ -> false)
+
+                let returnsAValue = optsIn "returnStdout" || optsIn "returnStatus"
 
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with

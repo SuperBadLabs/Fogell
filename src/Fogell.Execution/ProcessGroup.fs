@@ -300,9 +300,24 @@ module ProcessGroup =
         // runs it: a shebang script executes itself, everything else runs under
         // `sh -xe <path>` — so `$0` is the script path on both engines, not
         // `/bin/sh` here and `script.sh` there. The path travels positionally.
+        // FG-174. `2>&1` IS WHY THE TRACE WAS ON STDOUT — not `sh`. This was recorded on
+        // the board as "Fogell's `sh -x` writes its trace to stdout", which named the
+        // symptom and made the fix sound like it changed shell invocation for every step
+        // and every receipt. It does not: `sh -x` writes to STDERR exactly as Jenkins'
+        // does, and the wrapper here MERGES the two streams.
+        //
+        // The merge exists so that interleaving is exact — one pipe cannot reorder
+        // against itself, and the console shows the trace and the output in the order
+        // the script produced them. That reason DOES NOT APPLY when stdout is captured:
+        // nothing of stdout reaches the console, so there is no interleaving left to
+        // preserve. Splitting the streams only there gives the Jenkins shape — the trace
+        // still prints, the program's own output does not — and leaves every other step
+        // byte-identical, which is what keeps the receipts valid.
+        let mergeStderr = if request.SuppressStdoutEcho then "" else " 2>&1"
+
         (match request.Command.StartsWith "#!" with
-         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
-         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\" 2>&1")
+         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\"{mergeStderr}"
+         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\"{mergeStderr}")
 
         psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
         psi.ArgumentList.Add(defaultArg shebangFile request.Command)
@@ -329,15 +344,25 @@ module ProcessGroup =
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 request.OnLine |> Option.iter (fun f -> f line)
 
-        // CAPTURED, not echoed. The sink is still filled — the value depends on it — but
-        // the line does not reach the console, which is what Jenkins does under
-        // `returnStdout`. stderr is untouched, so the `sh -x` trace still streams.
-        let emitCaptured (sink: Text.StringBuilder) (line: string) =
-            if line <> null then
-                lock sink (fun () -> sink.AppendLine line |> ignore)
-
-        proc.OutputDataReceived.Add(fun e ->
-            if request.SuppressStdoutEcho then emitCaptured stdout e.Data else emit stdout e.Data)
+        // CAPTURED STDOUT IS READ AS BYTES, NOT REASSEMBLED FROM LINES.
+        //
+        // The first version of this filled the same StringBuilder through `AppendLine`,
+        // and MEASURED AGAINST JENKINS it was wrong: `printf value` emits five bytes and
+        // no terminator, but a line-based sink re-terminates every line, so the captured
+        // value came back as "value\n". `sh(script: 'printf value', returnStdout: true)`
+        // then differed from Jenkins in a way no amount of `.trim()` in the pipeline
+        // would reveal, and the `raw:[...]` assertion in `script-sh-returnstdout` is what
+        // caught it: Jenkins printed one line where Fogell printed two.
+        //
+        // A line reader CANNOT fix this — `OutputDataReceived` never says whether the
+        // final line carried a terminator, so the information is gone before the sink
+        // sees it. Capture mode therefore skips the line reader for stdout entirely,
+        // which costs nothing: nothing is echoing those lines anyway. stderr keeps its
+        // event reader, so the xtrace still streams while this runs, and the two are read
+        // CONCURRENTLY — reading one to completion before draining the other is how a
+        // full pipe buffer deadlocks a process that writes to both.
+        if not request.SuppressStdoutEcho then
+            proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
 
         proc.ErrorDataReceived.Add(fun e ->
             match e.Data with
@@ -351,7 +376,16 @@ module ProcessGroup =
             | line -> emit stderr line)
 
         proc.Start() |> ignore
-        proc.BeginOutputReadLine()
+
+        // Started BEFORE the stderr reader and never awaited until the wait is over, so
+        // both pipes drain concurrently — see the capture note above.
+        let capturedStdout =
+            if request.SuppressStdoutEcho then
+                Some(proc.StandardOutput.ReadToEndAsync())
+            else
+                proc.BeginOutputReadLine()
+                None
+
         proc.BeginErrorReadLine()
 
         // Wait briefly for the leader to report its pid. Deriving it from
@@ -515,8 +549,23 @@ module ProcessGroup =
 
         shebangFile |> Option.iter deleteShebang
 
+        // The captured text is awaited HERE, after the wait has ended, so the read never
+        // competes with the timeout/interrupt polling above. On a killed process the
+        // pipe closes and the read completes with whatever was written before the kill,
+        // which is the honest answer; a step that never produced output yields "".
+        //
+        // A bounded wait, not an indefinite one: this runs after the process group has
+        // been reaped, but an INHERITED pipe held open by a surviving grandchild would
+        // otherwise block the engine here forever — the one failure mode that would be
+        // worse than a wrong value. The captured value is best-effort by construction,
+        // and `returnStdout` on a step that timed out is discarded anyway, since an
+        // abort propagates rather than becoming a value.
+        let capturedText =
+            capturedStdout
+            |> Option.map (fun t -> if t.Wait 5_000 then t.Result else stdout.ToString())
+
         { Outcome = outcome
-          Stdout = stdout.ToString()
+          Stdout = defaultArg capturedText (stdout.ToString())
           Stderr = stderr.ToString()
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid
