@@ -83,7 +83,47 @@ let declarativeDetection =
 let structure =
     testList
         "declarative structure"
-        [ test "stages and steps are recovered" {
+        [ // FG-174. A duplicate named argument is refused at PARSE time, because Jenkins
+          // rejects the model and runs nothing — refusing at dispatch would let earlier
+          // stages run first. MEASURED on the pinned lab: Jenkins logs only `Started by
+          // user unknown or anonymous` and leaves the workspace empty, while Fogell took
+          // the first flag, suppressed `exit 7` and reported success. UNPROVEN by
+          // receipt: a compile-shaped refusal cannot be receipted (FG-129).
+          test "a duplicate named argument is refused" {
+              err (mk "    stage('B') { steps { sh script: 'exit 7', returnStatus: true, returnStatus: 'false' } }")
+              |> ignore
+          }
+
+          test "the refusal carries a named code and a position" {
+              // WHAT IT ACTUALLY SAYS, not what I wanted it to. The parser's own message
+              // names the duplicated argument, but an enclosing fallback generalises it
+              // to `malformed_syntax at L:C: opaque section` before it reaches the
+              // caller. That still satisfies tier 3 — a rejection with a named code and a
+              // position — and the safety property (nothing runs) holds either way, so
+              // the test asserts the reachable guarantee instead of a nicer sentence.
+              // The lost detail is recorded on the board rather than papered over here.
+              let e = err (mk "    stage('B') { steps { sh script: 'x', returnStatus: true, returnStatus: false } }")
+              Expect.stringContains (string e) "malformed_syntax" "a named code"
+              Expect.stringContains (string e) ":" "and a position"
+          }
+
+          test "DISTINCT named arguments are untouched" {
+              // The refusal must not swallow the ordinary shape: this is the spelling the
+              // whole corpus uses, and rejecting it would be far worse than the defect.
+              let p = ok (mk "    stage('B') { steps { sh script: 'make', returnStatus: true } }")
+              Expect.equal p.Stages.[0].Steps.Length 1 "the step parses"
+          }
+
+          test "a name repeated across DIFFERENT steps is fine" {
+              // Duplication is per-call. One counter shared across the step block would
+              // reject two ordinary `sh` steps that each set the same option.
+              let p =
+                  ok (mk "    stage('B') { steps { sh script: 'a', returnStatus: true\n sh script: 'b', returnStatus: true } }")
+
+              Expect.equal p.Stages.[0].Steps.Length 2 "both steps parse"
+          }
+
+          test "stages and steps are recovered" {
               let p = ok (mk "    stage('Build') { steps { sh 'make'\n echo 'done' } }")
               Expect.equal p.Stages.Length 1 "one stage"
               Expect.equal p.Stages.[0].Name "Build" "stage name"

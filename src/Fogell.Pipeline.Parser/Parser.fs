@@ -176,8 +176,39 @@ let private argList
     let one =
         (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
 
+    // FG-174. A DUPLICATE NAMED ARGUMENT IS REFUSED AT PARSE TIME, not at dispatch.
+    //
+    // Groovy builds a call's named arguments as a MAP LITERAL, and a duplicate key does
+    // not survive it. MEASURED on the pinned lab in BOTH spellings — inside a `script`
+    // block and at stage level — `sh(script: 'exit 7', returnStatus: true,
+    // returnStatus: 'false')` makes Jenkins fail with nothing in the log but `Started by
+    // user unknown or anonymous` and an EMPTY workspace: nothing ran at all. Fogell took
+    // the first flag, suppressed the `exit 7`, ran the following step and reported
+    // success. UNPROVEN by receipt — a compile-shaped refusal cannot be receipted, which
+    // is FG-129 — so the probe and the parser tests carry it.
+    //
+    // WHY PARSE TIME, when refusing at dispatch would have been the smaller change:
+    // Jenkins rejects the MODEL, so NO stage runs. A refusal at the step would let every
+    // EARLIER stage run first — indistinguishable on this probe, where the duplicate sits
+    // in the first step, and plainly wrong for a duplicate in a later stage. That
+    // difference is between matching Jenkins and matching one example of it.
+    let duplicateNamed items =
+        items
+        |> List.choose (function
+            | Choice1Of2(n, _, _, _) -> Some n
+            | _ -> None)
+        |> List.countBy id
+        |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
+
     sepBy one (symbol ",")
-    |>> fun items ->
+    >>= fun items ->
+        match duplicateNamed items with
+        | Some name ->
+            fail
+                $"duplicate named argument `{name}`: Groovy builds a call's named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+        | None ->
+
+        preturn (
             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
             let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
@@ -220,7 +251,7 @@ let private argList
                 |> fst
                 |> List.rev
 
-            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order
+            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order)
 
 let private stepBlock: P<Step list> =
     // SEMICOLONS separate statements in Groovy, and a step block may use them:

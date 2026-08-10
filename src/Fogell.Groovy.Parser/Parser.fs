@@ -130,14 +130,36 @@ let private listOrMap: P<Expr> =
 let private arg: P<Arg> =
     attempt (plainIdent .>>? symbol ":" .>>. exprRef |>> ANamed) <|> (exprRef |>> APos)
 
+/// FG-174. Refuses a DUPLICATE NAMED ARGUMENT — the same rule the declarative parser
+/// applies, for the same reason: Groovy assembles a call's named arguments into a MAP
+/// LITERAL, and Jenkins rejects the pipeline before running anything. MEASURED on the
+/// pinned lab in both spellings, and UNPROVEN by receipt for the reason FG-129 gives —
+/// a compile-shaped refusal emits nothing comparable. See the declarative parser's note.
+///
+/// BOTH parsers enforce it because both produce calls, and a rule held by only one of
+/// them is the shape of half the findings on this branch — the script path and the stage
+/// path taking different views of the same source construct.
+let private noDuplicateNames (args: Arg list) : P<Arg list> =
+    args
+    |> List.choose (function
+        | ANamed(n, _) -> Some n
+        | APos _ -> None)
+    |> List.countBy id
+    |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
+    |> function
+        | Some name ->
+            fail
+                $"duplicate named argument `{name}`: Groovy builds a call's named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+        | None -> preturn args
+
 let private argsInParens: P<Arg list> =
-    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ","))
+    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ",")) >>= noDuplicateNames
 
 /// Command form: `sh 'make'`, `echo "x"`, `stash name: 's', includes: '*'`.
 /// Only admitted when what follows cannot start a binary operator, so
 /// `a + b` is never read as a call to `a`.
 let private commandArgs: P<Arg list> =
-    attempt (sepBy1 arg (symbol ","))
+    attempt (sepBy1 arg (symbol ",")) >>= noDuplicateNames
 
 let private primary: P<Expr> =
     ws

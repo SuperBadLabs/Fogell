@@ -64,6 +64,24 @@ let grammar =
           test "spread-dot and safe navigation" {
               Expect.isTrue (parses "def a = b*.c\ndef d = e?.f\n") "*. and ?."
           }
+          // FG-174. Both parsers hold this rule, because both produce calls and a rule
+          // held by only one of them is the shape of half the findings on this branch.
+          test "a duplicate named argument is refused, parenthesised" {
+              Expect.isFalse (parses "sh(script: 'exit 7', returnStatus: true, returnStatus: 'false')\n") "map literal duplicate"
+          }
+
+          test "a duplicate named argument is refused, command form" {
+              // The form without parentheses goes through a DIFFERENT parser path, and
+              // covering only the parenthesised one would leave the commonest spelling of
+              // a step call unchecked.
+              Expect.isFalse (parses "sh script: 'exit 7', returnStatus: true, returnStatus: false\n") "command form too"
+          }
+
+          test "DISTINCT named arguments still parse in both forms" {
+              Expect.isTrue (parses "sh(script: 'make', returnStatus: true)\n") "parenthesised"
+              Expect.isTrue (parses "sh script: 'make', returnStatus: true\n") "command form"
+          }
+
           test "user-defined functions are recognised, not treated as unknown steps" {
               let script = parseOk "def helper(a) { return a }\nhelper(1)\n"
               Expect.contains (Ast.definedFunctions script) "helper" "declared function found"
