@@ -260,7 +260,14 @@ module WalkerStep =
             // The build fails here anyway; publishing null keeps the two consistent
             // rather than relying on that.
             | WalkerRules.ExitStatus when statusAvailable -> slot.Value <- VInt(int64 result.ExitCode.Value)
-            | WalkerRules.CapturedStdout -> slot.Value <- VStr result.Stdout
+            // THE RAW CAPTURE, not the masked `Stdout`. A pipeline that captures a
+            // credential must receive the credential; masking belongs to what PRINTS.
+            // Measured: Jenkins returns a 12-character token where this returned `****`.
+            // The fallback is the masked text and is unreachable for a capturing shell
+            // step — it exists so a future non-shell producer cannot silently publish
+            // nothing.
+            | WalkerRules.CapturedStdout ->
+                slot.Value <- VStr(defaultArg result.CapturedStdoutRaw result.Stdout)
             | _ -> slot.Value <- VNull)
 
         result.EngineNote

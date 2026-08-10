@@ -279,10 +279,17 @@ module WalkerOrchestration =
                 // positional, and the TYPE of a single argument is left alone
                 // deliberately — refusing a shape Jenkins accepts is the false-refusal
                 // error `retry(0)` taught, and nothing here has been measured.
-                match positional with
-                | _ :: _ :: _ ->
+                // EITHER FORM, NEVER BOTH. Measured on the pinned lab, and the mixed
+                // shape had to be probed separately — an arity-only check passed
+                // `timeout(1, unit: 'SECONDS')`, `timeoutMs` then combined the positional
+                // duration with the named unit, and the body RAN where Jenkins rejects
+                // the call and leaves the workspace empty. Raised in review on PR #53.
+                match positional, named with
+                | _ :: _ :: _, _ ->
                     let shown = positional |> List.map Value.toDisplay |> String.concat ", "
                     wrongShape $"takes one positional argument or named ones; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+                | _ :: _, _ :: _ ->
+                    wrongShape "takes EITHER one positional duration OR named arguments, not both; Jenkins rejects the mixed form"
                 | _ -> None
             | _ ->
                 // NOT A SILENT PASS. Reaching here means a hosted wrapper was admitted

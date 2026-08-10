@@ -74,6 +74,25 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
+      /// FG-174. The captured stdout UNMASKED, and ONLY when `CaptureStdout` asked for
+      /// it — None on every other step, so the raw text exists nowhere it was not
+      /// requested.
+      ///
+      /// `Stdout` above is MASKED, which is right for everything that prints or is
+      /// compared, and wrong for the one consumer that is not printing: a value handed
+      /// back to the pipeline. MEASURED, and held by receipt `credentials-returnstdout` —
+      /// `def t = sh(script: 'printf %s "$TOKEN"', returnStdout: true)` gives Jenkins
+      /// `t.length() == 12` and gave Fogell `4`, because `****` is what it captured. A
+      /// pipeline that captures a credential and passes it to the next command therefore
+      /// authenticated with the mask. Raised in review on PR #53.
+      ///
+      /// THIS IS NOT A HOLE IN MASKING. Jenkins masks the LOG, not the value, and every
+      /// path out of the engine still masks: `echo` masks its message (FG-044b), a shell
+      /// argument carrying it is masked on the way to the console, and the receipt only
+      /// ever sees `Stdout`. What changes is that the interpreter's own variable holds
+      /// what the program actually wrote, which is the only thing that makes
+      /// `returnStdout` usable with a credential at all.
+      CapturedStdoutRaw: string option
       Diagnostic: string option
       /// FG-103: the engine reporting on its OWN checks — a leak scan that could
       /// not run, survivors it found — separate from the step's failure reason so
@@ -102,6 +121,7 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
+          CapturedStdoutRaw = None
           Diagnostic = None
           EngineNote = None
           AbortedBySibling = None
@@ -280,6 +300,9 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
+              // ONLY when asked. An unconditional copy would keep the unmasked text
+              // alive on every step for no consumer.
+              CapturedStdoutRaw = if request.CaptureStdout then Some run.Stdout else None
               Diagnostic = diagnostic
               EngineNote = engineNote
               AbortedBySibling =
