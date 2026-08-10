@@ -326,7 +326,115 @@
          :text (str/trim (subs line 0 (min 100 (count line))))})
 
       findings (remove :backed? claims)
-      unproven-count (count (filter :unproven? claims))]
+      unproven-count (count (filter :unproven? claims))
+
+      ;; SECOND CHECK: A CITATION MUST NAME SOMETHING THAT EXISTS.
+      ;;
+      ;; The check above asks "does this MEASURED claim cite anything citable" and is
+      ;; therefore blind in two directions at once. A comment reading
+      ;; `Receipt: script-sh-returnstdout` — naming a receipt nobody ever wrote — sailed
+      ;; through it TWICE: the sentence said "measured" in lower case so it was never
+      ;; examined as a claim at all, and even had it been, the rule only requires SOME
+      ;; citable name in the block, never that every name mentioned resolves.
+      ;;
+      ;; That was the SEVENTH documentation overclaim found by review on one branch. Six
+      ;; earlier ones were answered with a careful sentence and the seventh arrived
+      ;; anyway, which is the signal that the answer was never a sentence. A dangling
+      ;; citation is mechanically decidable, so it should not cost a review round.
+      ;;
+      ;; This deliberately does NOT key on `MEASURED`. Keying on a word I have to
+      ;; remember to shout is how the last one escaped; a citation is a citation whatever
+      ;; sentence surrounds it.
+      ;;
+      ;; NAME SHAPE, not any token: lower-case kebab with at least one hyphen, which all
+      ;; 129 receipt names have. Requiring the hyphen is what keeps prose out — "the
+      ;; receipt that proves it" and "receipt whose seal" cannot match, so the pattern
+      ;; needs no list of stop-words to maintain.
+      ;;
+      ;; WHAT IT CANNOT DO, in the same spirit as the ceiling stated at the top: it
+      ;; verifies the name RESOLVES, never that the receipt exercises the sentence. A
+      ;; citation of a real but irrelevant receipt still passes, and a human still has to
+      ;; open it.
+      ;; A CITATION IS BACKTICKED, OR INTRODUCED BY A COLON. Bare prose after the word
+      ;; "receipt" is not a citation and must not be read as one: "left a re-run receipt
+      ;; byte-identical to a first-attempt pass" is an English sentence, and an earlier
+      ;; draft of this check reported `byte-identical` as a missing receipt. A checker
+      ;; that cries wolf on prose gets switched off, so the trigger is the punctuation an
+      ;; actual citation always carries.
+      cite-backticked #"(?i)receipts?\s+((?:`[^`\n]+`(?:\s*(?:,|and|or)\s*)?)+)"
+      cite-colon #"(?i)receipts?:\s*((?:`?[a-z][a-z0-9./*-]*`?(?:\s*,\s*)?)+)"
+      ;; `.b1` and a trailing `-*` are part of the name as written — see `resolves?`.
+      ;;
+      ;; TWO ALTERNATIVES, and the glob one is not decoration. A single hyphenless
+      ;; family — `fam-*` — has no `-[a-z0-9]` group before the star, so a
+      ;; hyphen-requiring pattern never extracts it and the citation is silently
+      ;; UNCHECKED. Proven: the "glob matching nothing" arm passed until this was split
+      ;; in two. The hyphen stays required for the non-glob form, because that is what
+      ;; keeps ordinary prose words out of a backticked list.
+      cite-name #"[a-z][a-z0-9]*(?:-[a-z0-9]+)*-?\*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:[./][a-z0-9]+)*"
+      ;; TWO REAL SPELLINGS, learned from the citations already in the tree rather than
+      ;; assumed — the first draft called six of them dangling and every one was mine
+      ;; being wrong about the naming, not the comment being wrong:
+      ;;   - A MULTI-BUILD case stores one receipt PER BUILD, so the case
+      ;;     `git-step-refetch` is on disk as `git-step-refetch.b1` and `.b2`. Comments
+      ;;     cite the case; both spellings must resolve, or the check would demand
+      ;;     comments name a build number that means nothing to the reader.
+      ;;   - A FAMILY is cited as a glob: `checkout-scm-*` covers four receipts. That is
+      ;;     the honest way to cite four things, so it resolves when the prefix matches
+      ;;     something — and still fails when it matches nothing.
+      resolves?
+      (fn [tok]
+        ;; `.receipt.txt` is the third real spelling: some comments cite the FILE.
+        (let [glob? (str/ends-with? tok "*")
+              t (-> tok (str/replace #"\*$" "") (str/replace #"\.receipt\.txt$" ""))
+              ;; AN EXPLICIT BUILD NUMBER IS CHECKED EXACTLY. A first version resolved
+              ;; any `.bN` through its family, so `multi-case.b9` passed on the strength
+              ;; of `multi-case.b1` existing — a citation pointing at a build that was
+              ;; never run, which is the same defect as a missing receipt wearing a
+              ;; plausible name. Proven by the "typo'd build suffix" arm.
+              explicit-build? (re-find #"\.b\d+$" t)]
+          (cond
+            glob? (some #(str/starts-with? % t) citable)
+            explicit-build? (contains? citable t)
+            ;; A bare case name resolves either directly or through its per-build
+            ;; receipts — comments cite the CASE, and making them name a build number
+            ;; would serve the checker at the reader's expense.
+            :else (or (contains? citable t)
+                      (some #(str/starts-with? % (str t ".")) citable)))))
+      ;; MATCHED OVER THE WHOLE COMMENT BLOCK, not one line. These comments wrap, so
+      ;; `cited receipts` routinely ends a line and the name begins the next one; a
+      ;; per-line matcher misses exactly those and its coverage then depends on where
+      ;; the text happened to wrap. Measured while writing this: the per-line version
+      ;; found 5 and the block version finds more, all of them real.
+      ;;
+      ;; A block is a run of FULL-LINE comments, reusing the same `full-comment?` the
+      ;; claims check uses so the two cannot drift. A TRAILING comment is its own block:
+      ;; code separates it from its neighbours, the same rule applied there.
+      blocks
+      (for [f sources
+            :let [lines (str/split-lines (slurp f))
+                  v (scan-file lines)
+                  n (count v)]
+            [start _] (map-indexed vector lines)
+            :when (and (seq (:spans (v start)))
+                       ;; `zero?` FIRST — `or` is left to right and `(v -1)` throws.
+                       (or (zero? start)
+                           (:code? (v start))
+                           (not (full-comment? (v (dec start))))))
+            :let [stop (if (:code? (v start))
+                         start
+                         (loop [k start]
+                           (if (and (< (inc k) n) (full-comment? (v (inc k)))) (recur (inc k)) k)))]]
+        {:file f
+         :line (inc start)
+         :text (str/join " " (mapcat :spans (subvec v start (inc stop))))})
+
+      dangling
+      (for [{:keys [file line text]} blocks
+            [_ lst] (concat (re-seq cite-backticked text) (re-seq cite-colon text))
+            name (re-seq cite-name lst)
+            :when (not (resolves? name))]
+        {:file (str (fs/relativize root file)) :line line :name name})]
 
   (println (format "MEASURED claims: %d source files scanned, %d receipts + %d lane scenarios + %d proof cases citable"
                    (count sources) (count receipts) (count lane-scenarios) (count proof-cases)))
@@ -339,4 +447,11 @@
       (doseq [{:keys [file line text]} findings]
         (println (format "  %s:%d\n    %s" file line text)))
       (println "\nEach must either cite its receipt, or say it is UNPROVEN.")))
-  (when (and strict? (seq findings)) (System/exit 1)))
+  (if (empty? dangling)
+    (println "every receipt CITATION resolves to a receipt, lane scenario or proof case that exists")
+    (do
+      (println (format "\n%d citation(s) name something that does not exist:\n" (count dangling)))
+      (doseq [{:keys [file line name]} dangling]
+        (println (format "  %s:%d\n    cites `%s`, which is not a receipt, lane scenario or proof case" file line name)))
+      (println "\nEither write the receipt, or stop citing it.")))
+  (when (and strict? (or (seq findings) (seq dangling))) (System/exit 1)))

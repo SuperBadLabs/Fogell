@@ -133,14 +133,30 @@ module WalkerStep =
         // status: on success nothing else would print them, and on failure
         // the composed ERROR line is normalised away — either way the
         // receipt stayed silent until this carried them separately (FG-103).
-        // FG-174. `returnStdout` / `returnStatus`, measured against pinned Jenkins:
+        // FG-174. `returnStdout` / `returnStatus`. WHAT IS TRUE TODAY, stated before the
+        // semantics, because an earlier version of this comment cited two receipts that
+        // were never written — script-sh-returnstdout and script-sh-returnstatus, named
+        // here WITHOUT the citation form on purpose, since a checker cannot tell citing
+        // a receipt from reporting its absence. That was the seventh documentation
+        // overclaim the verifier has caught on this branch:
+        //   - the plumbing below is STAGED, not finished;
+        //   - a VALUE USE is still refused (`StepValueUse.returnsAValue` is false), so
+        //     `def out = sh(returnStdout: true, …)` is rejected, not answered;
+        //   - `CaptureStdout` is false above, so `returnStdout` does not yet capture;
+        //   - the only FG-174 receipt that exists is `script-returnstatus-timeout`, which
+        //     proves the abort case below. There is no end-to-end receipt for either flag
+        //     and there cannot be one until the value use is admitted.
+        //
+        // The two semantics below were measured against pinned Jenkins 2.568.1 with
+        // SCRATCH PROBES — real measurements, no receipt, because the probes diverge
+        // while the refusal stands and so cannot join a suite that requires 130/130:
         //   returnStdout -> stdout VERBATIM, trailing newline INCLUDED. `printf 'value\n'`
         //     through `od -c` gives `[ v a l u e \n ]`, which is why pipelines call
         //     `.trim()`. Stripping it "helpfully" would silently change every script that
-        //     already does. Receipt: script-sh-returnstdout.
-        //   returnStatus -> the exit code, and the build DOES NOT FAIL. Receipt:
-        //     script-sh-returnstatus. Getting this wrong turns a deliberate status check
-        //     into a failed build; getting it wrong the other way hides a real failure.
+        //     already does.
+        //   returnStatus -> the exit code, and the build DOES NOT FAIL. Getting this wrong
+        //     turns a deliberate status check into a failed build; getting it wrong the
+        //     other way hides a real failure.
         let flagged (key: string) =
             renderedNamed
             |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
@@ -148,10 +164,41 @@ module WalkerStep =
         let wantsStdout = flagged "returnStdout"
         let wantsStatus = flagged "returnStatus"
 
+        // THE FLAG ALONE DOES NOT LICENSE SUPPRESSION — the step must actually have
+        // produced an exit status. `returnStatus` converts a SHELL EXIT into a value
+        // instead of a failure; it says nothing about a WRAPPER INTERRUPTION, which is
+        // not the script's answer to anything.
+        //
+        // Found by the pre-push verifier, which ran it:
+        //   timeout(time: 1, unit: 'SECONDS') { sh script: 'sleep 5', returnStatus: true }
+        //   sh 'echo after > after.txt'
+        // reported SUCCESS and wrote `after.txt`. A safety bound defeated, which ranks
+        // with a bypassed approval here — and the same test as `script-timeout-bound`,
+        // which passed only because its `sh` carried no flag.
+        //
+        // `ExitCode.IsSome` IS the test, not a proxy for one: `Executor` sets it from
+        // `Completed code` and `Signalled` — the two ways a shell reports its own
+        // status — and leaves it None for `TimedOut` and `Cancelled`, which are the
+        // engine stopping the step from outside. A non-shell step never has one either,
+        // so `error(message: 'x', returnStatus: true)` cannot borrow the suppression.
+        // Deriving it from the status instead would need this to re-enumerate a mapping
+        // that already exists, and drift from it the next time a case is added.
+        //
+        // `Signalled` is admitted deliberately: durable-task records 128+N in its
+        // wrapper file, so Jenkins hands that back as the status. ANALYSIS, not
+        // measured — the timeout arm below is what has a receipt.
+        let statusAvailable = result.ExitCode.IsSome
+        let statusIsTheAnswer = wantsStatus && statusAvailable
+
         ctx.HostedResult
         |> Option.iter (fun slot ->
             if wantsStdout then slot.Value <- VStr result.Stdout
-            elif wantsStatus then slot.Value <- VInt(int64 (defaultArg result.ExitCode 0))
+            // NO FABRICATED ZERO. `defaultArg result.ExitCode 0` handed an interrupted
+            // step the value 0 — a killed step reporting success to the script, which is
+            // the false-success shape ADR 0001 calls worse than an explicit rejection.
+            // The build now fails here anyway; publishing null keeps the two consistent
+            // rather than relying on that.
+            elif statusIsTheAnswer then slot.Value <- VInt(int64 result.ExitCode.Value)
             else slot.Value <- VNull)
 
         result.EngineNote
@@ -164,8 +211,10 @@ module WalkerStep =
         // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
         // opaque `exit code -1`, and we promised to be clearer, not quieter).
         // `returnStatus` ASKED for the code, so a non-zero exit is the ANSWER rather than a
-        // failure — Jenkins runs the following steps and reports success.
-        if result.Status <> BuildStatus.Success && not wantsStatus then
+        // failure — Jenkins runs the following steps and reports success. It asked about a
+        // SHELL EXIT though, so an abort with no exit code propagates: see
+        // `statusIsTheAnswer` above and receipt `script-returnstatus-timeout`.
+        if result.Status <> BuildStatus.Success && not statusIsTheAnswer then
             // Was this step stopped because a failFast SIBLING failed?
             // MEASURED (FG-036): Jenkins reports such a build as FAILURE,
             // not ABORTED — the sibling's failure is the cause and the
