@@ -91,9 +91,14 @@ module WalkerStep =
         // A divergence admitted quietly, which is the shape of every finding on this
         // branch. Deciding capture BEFORE dispatch is what makes the option affect the
         // run instead of the report.
+        // AND ONLY FOR THE STEPS WHOSE CONTRACT THEY ARE. This end must agree with the
+        // static refusal about which steps answer, so both read the one set — see
+        // `WalkerRules.stepsHonouringReturnFlags`. When it was every step, `echo(message:
+        // 'hello', returnStdout: true)` returned "hello\n" where Jenkins returns null.
         let flagged (key: string) =
-            renderedNamed
-            |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
+            WalkerRules.stepsHonouringReturnFlags.Contains step.Name
+            && renderedNamed
+               |> List.exists (fun (k, v) -> k = key && v.Trim().ToLowerInvariant() = "true")
 
         let wantsStdout = flagged "returnStdout"
         let wantsStatus = flagged "returnStatus"

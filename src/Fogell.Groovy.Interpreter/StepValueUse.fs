@@ -41,7 +41,12 @@ module StepValueUse =
     /// the batch model. It is the nested occurrences that lie — and the ARGUMENTS of a
     /// bare call are themselves value positions, so `echo sh(returnStdout: true, …)` is
     /// caught even though the outer call is a statement.
-    let find (isStep: string -> bool) (script: Script) : Use list =
+    /// `honoursReturnFlags` decides WHICH steps `returnStdout`/`returnStatus` belong to.
+    /// It is a parameter rather than a list here because those flags are the shell
+    /// steps' own contract and this layer must not hold a step vocabulary — see
+    /// `WalkerRules.stepsHonouringReturnFlags` for the set and why treating them as
+    /// universal was a false success.
+    let find (isStep: string -> bool) (honoursReturnFlags: string -> bool) (script: Script) : Use list =
         let found = ResizeArray<Use>()
 
         let rec expr (where: string) (valuePos: bool) (e: Expr) =
@@ -80,11 +85,6 @@ module StepValueUse =
                 // `sh(returnStdout: true)` and `sh(returnStatus: true)` now carry one back
                 // through the host. Everything else still yields null.
                 //
-                // The flag must be a LITERAL `true`. `sh(returnStdout: someVar)` cannot be
-                // decided here — a static reader does not know what `someVar` holds — so it
-                // is left refused rather than assumed, which is the direction that fails
-                // safe. This is a property of THIS CALL's own arguments, visible without
-                // guessing, unlike the env pre-scan that had to be replaced.
                 // LIFTED, on the third attempt, and the two earlier attempts are why this
                 // is now believable rather than merely plumbed. Both times the refusal
                 // went back on because measuring showed the value would be WRONG, which
@@ -105,19 +105,26 @@ module StepValueUse =
                 // it stays refused rather than assumed, which is the direction that fails
                 // safe. That is a property of THIS CALL's own arguments, visible without
                 // guessing, unlike the env pre-scan that had to be replaced.
-                let optsIn (name: string) =
+                let optsIn (flag: string) =
                     args
                     |> List.exists (fun a ->
                         match a with
-                        | ANamed(k, EBool true) -> k = name
+                        | ANamed(k, EBool true) -> k = flag
                         | _ -> false)
 
-                let returnsAValue = optsIn "returnStdout" || optsIn "returnStatus"
+                // AND THE FLAGS MUST BE THIS STEP'S OWN. They are the durable-task shell
+                // steps' contract, not a mechanism any step can opt into by naming it.
+                // Treating them as universal admitted `def got = echo(message: 'hello',
+                // returnStdout: true)`, which handed the script "hello\n" where Jenkins'
+                // `echo` returns null — so a branch on `got == null` took the wrong arm
+                // and skipped work Jenkins runs, while reporting success.
+                let returnsAValue (n: string) =
+                    honoursReturnFlags n && (optsIn "returnStdout" || optsIn "returnStatus")
 
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with
                  | FreeCall n when isStep n ->
-                     if valuePos && not returnsAValue then
+                     if valuePos && not (returnsAValue n) then
                          found.Add { Step = n; Where = where }
                  | FreeCall _ -> ()
                  | MethodCall(t, _)

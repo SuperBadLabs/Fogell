@@ -290,7 +290,7 @@ let stepValueUse =
     // `sh(script: 'x', returnStdout: true)`. Left alone they would have kept passing on
     // the day the refusal was lifted, asserting a rule the code no longer has.
     let uses src =
-        Fogell.Groovy.Interpreter.StepValueUse.find steps.Contains (parseOk src)
+        Fogell.Groovy.Interpreter.StepValueUse.find steps.Contains (fun n -> n = "sh" || n = "bat") (parseOk src)
 
     let usedSteps src = uses src |> List.map (fun u -> u.Step)
 
@@ -419,6 +419,18 @@ let stepValueUse =
           test "the flag must be NAMED, not positional" {
               // `sh('x', true)` says nothing about WHICH option is being set.
               Expect.equal (usedSteps "def out = sh('x', true)") [ "sh" ] "a bare true opts in to nothing"
+          }
+
+          test "the flags belong to the SHELL STEPS, not to every step" {
+              // The verifier ran this one: Fogell handed the script "hello\n" where
+              // Jenkins' `echo` returns null and only warns about the unknown parameter,
+              // so `got == null` took the other branch and skipped work Jenkins runs —
+              // while the build reported success. Refusing is the honest answer, and it
+              // is what an engine that cannot answer must do.
+              Expect.equal
+                  (usedSteps "def got = echo(message: 'hello', returnStdout: true)")
+                  [ "echo" ]
+                  "echo does not answer returnStdout"
           }
         ]
 

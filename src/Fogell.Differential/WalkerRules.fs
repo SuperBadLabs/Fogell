@@ -123,6 +123,30 @@ type BranchCtx =
 /// ref and the interrupt predicate handed to it in BranchCtx) and decides
 /// nothing beyond them. A function needing more does not belong here.
 module WalkerRules =
+    /// FG-174. The steps whose CONTRACT includes `returnStdout` / `returnStatus`.
+    ///
+    /// These are durable-task shell steps, and the flags are THEIR options — not a
+    /// general mechanism any step can opt into. Treating them as universal was the
+    /// twelfth finding of the admitted-option class: `def got = echo(message: 'hello',
+    /// returnStdout: true)` handed the script `"hello\n"`, where Jenkins' `echo` returns
+    /// null and merely warns about the unknown parameter. A pipeline branching on
+    /// `got == null` then takes the OTHER branch and skips work Jenkins runs, while the
+    /// build reports success — a false success, and one no amount of output comparison
+    /// would show, since the skipped work leaves no trace to compare.
+    ///
+    /// ONE definition, read by BOTH the static refusal (`StepValueUse`, through a
+    /// predicate, so the interpreter layer holds no step names) and the runtime that
+    /// publishes the value (`WalkerStep`). Two copies of this set is how the two ends
+    /// disagree about which steps answer, and that disagreement is precisely the shape
+    /// of the defect above.
+    ///
+    /// `bat` IS UNPROVEN HERE and is listed on contract, not on evidence: it is the
+    /// same durable-task shell step with the same two options, but there is no Windows
+    /// differential lane, so no receipt covers it and this engine does not claim Windows
+    /// support. Listing it keeps the two ends agreeing if that lane is ever built;
+    /// nothing in the suite exercises it today, and it should not be read as coverage.
+    let stepsHonouringReturnFlags = set [ "sh"; "bat" ]
+
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
     /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,
     /// `5 min 0 sec`, and `1 mo 0 days` for thirty DAYS (months are 30 days).
