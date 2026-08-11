@@ -125,6 +125,15 @@ module Planted
 let x = 1
 EOF
 
+# THE FIXTURE GAP THAT HID IT. Conjunctions were exercised only in the BACKTICKED
+# form, so the colon form's comma-only separator list went unchecked and a second
+# citation after `and` was never resolved. Both forms now have an arm.
+expect reject "colon form, second name after 'and' does not exist" <<'EOF'
+module Planted
+// Receipts: real-case and missing-after-and
+let x = 1
+EOF
+
 expect reject "a glob matching nothing" <<'EOF'
 module Planted
 // Proven by receipts `nosuchfamily-*`.

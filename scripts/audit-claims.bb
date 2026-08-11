@@ -362,7 +362,15 @@
       ;; that cries wolf on prose gets switched off, so the trigger is the punctuation an
       ;; actual citation always carries.
       cite-backticked #"(?i)receipts?\s+((?:`[^`\n]+`(?:\s*(?:,|and|or)\s*)?)+)"
-      cite-colon #"(?i)receipts?:\s*((?:`?[a-z][a-z0-9./*-]*`?(?:\s*,\s*)?)+)"
+      ;; CONJUNCTIONS TOO. `Receipts: real-case and missing-case` captured only the
+      ;; FIRST name, so the second was never resolved and `--strict` passed while a
+      ;; dangling citation sat in the comment — the guarantee this check exists to give,
+      ;; broken by its own separator list. The backticked form already accepted
+      ;; `and`/`or`; the colon form accepted only commas, and the proof fixture exercised
+      ;; conjunctions ONLY in the backticked form, so nothing could expose it. Raised in
+      ;; review on PR #53. Same shape as every other finding on this branch: a rule that
+      ;; covers one spelling while an equivalent one stays open.
+      cite-colon #"(?i)receipts?:\s*((?:`?[a-z][a-z0-9./*-]*`?(?:\s*(?:,|and|or)\s*)?)+)"
       ;; `.b1` and a trailing `-*` are part of the name as written — see `resolves?`.
       ;;
       ;; TWO ALTERNATIVES, and the glob one is not decoration. A single hyphenless

@@ -444,23 +444,39 @@ module Interpreter =
                         fun () ->
                             st.Depth <- st.Depth + 1
 
-                            // THE WRAPPER'S ENVIRONMENT, ASKED FOR NOW. Both spellings
-                            // are rebound, the same pair `runHosted` binds initially: a
-                            // bare `TARGET` and `env.TARGET`. Refreshing only the map
-                            // would fix the interpolation in the measured case and leave
-                            // the bare name reading the stale value — half a fix that
-                            // looks like a whole one.
+                            // THE WRAPPER'S ENVIRONMENT, ASKED FOR NOW — but ONLY the
+                            // `env` MAP, never the bare names.
+                            //
+                            // The first version rebound both, reasoning that refreshing
+                            // one spelling and not the other is half a fix. That was
+                            // wrong, and measured wrong: a bare name may be a LOCAL, and
+                            // folding the environment over the body's bindings CLOBBERS
+                            // it. `def TARGET = 'staging'; withEnv(['TARGET=prod']) { sh
+                            // "printf ${TARGET}" }` gives Jenkins `staging` — the local
+                            // SHADOWS the environment — and gave `prod` here. A defect I
+                            // introduced while fixing the one above it, caught in review.
+                            //
+                            // Bare names cannot be refreshed safely without knowing which
+                            // of them are environment-backed and which are locals, and
+                            // this scope keeps no such provenance: at refresh time a name
+                            // bound from `env` at script start and a name a `def`
+                            // overwrote are indistinguishable. Guessing from equality
+                            // ("refresh it if it still looks like the old value") is the
+                            // kind of cleverness that fails silently on a local that
+                            // happens to match.
+                            //
+                            // RESIDUAL LIMIT, stated: a BARE name inside a wrapper does
+                            // not see the wrapper's override — `env.NAME` does, and the
+                            // shell sees it through the overlay either way. Narrower than
+                            // clobbering locals, and in the safe direction. FG-179 carries
+                            // the environment model that would settle both.
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let asMap = Map.ofList current
 
-                                let refreshed =
-                                    current
-                                    |> List.fold (fun acc (k, v) -> Map.add k v acc) bodyEnv.Value.Vars
-                                    |> Map.add "env" (VMap asMap)
-
-                                bodyEnv.Value <- { bodyEnv.Value with Vars = refreshed })
+                                bodyEnv.Value <-
+                                    { bodyEnv.Value with
+                                        Vars = Map.add "env" (VMap(Map.ofList current)) bodyEnv.Value.Vars })
 
                             try
                                 try
