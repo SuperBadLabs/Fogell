@@ -219,6 +219,38 @@ module WalkerRules =
               "retry", 1
               "withEnv", 1 ]
 
+    /// FG-177, SECOND SLICE. The SOLE REQUIRED PARAMETER of each step that has one.
+    ///
+    /// Jenkins lets a step's single required parameter be written EITHER positionally or
+    /// by name — `dir('sub')` and `dir(path: 'sub')` are the same call — and the arms
+    /// accepted only the positional spelling. The sixteenth finding of the class, and a
+    /// FALSE REFUSAL: measured, `script { dir(path: 'sub') { … } }` and
+    /// `script { withEnv(overrides: ['X=1']) { … } }` both succeed on Jenkins and failed
+    /// here with an EMPTY workspace.
+    ///
+    /// This is the layer the arity table could not supply. `positionalArity` says HOW
+    /// MANY positionals a step takes; this says WHAT the one required parameter is
+    /// CALLED, which is what lets the named spelling be normalised into the positional
+    /// one ONCE, centrally, so no arm has to learn both.
+    ///
+    /// `deleteDir` is absent because it has no parameter at all — the same fact
+    /// `positionalArity` records as 0, and the two must agree; a test holds them together.
+    let soleRequiredParameter: Map<string, string> =
+        Map
+            [ "sh", "script"
+              "echo", "message"
+              "archiveArtifacts", "artifacts"
+              "junit", "testResults"
+              "checkout", "scm"
+              "git", "url"
+              "stash", "name"
+              "unstable", "message"
+              "unstash", "name"
+              "dir", "path"
+              "timeout", "time"
+              "retry", "count"
+              "withEnv", "overrides" ]
+
     /// FG-174. The hosted wrappers whose CALL SHAPE is validated before dispatch.
     ///
     /// THIS EXISTS TO BE COMPARED WITH THE SET ABOVE, and the comparison is a test.

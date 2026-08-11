@@ -224,9 +224,44 @@ module WalkerOrchestration =
         ///
         /// A step absent from this table is not validated here — its arm is responsible,
         /// as before. Adding a hosted step SHOULD add a line here.
+        /// FG-177. ONE PLACE THAT DECIDES WHAT SHAPE A HOSTED CALL IS IN.
+        ///
+        /// Two things, in this order, because the order is the whole subtlety:
+        ///   1. the CPS rule — positional AND named together is rejected by Jenkins for
+        ///      EVERY step, whatever its parameters;
+        ///   2. NORMALISATION — a sole required parameter written by name becomes the
+        ///      positional form, so no arm and no dispatch path has to learn both
+        ///      spellings. `dir(path: 'sub')` is `dir('sub')`.
+        ///
+        /// Doing (2) before (1) would be wrong in a way worth naming: normalising
+        /// `sh(script: 'x', returnStatus: true)` moves `script` to the positional slot and
+        /// leaves `returnStatus` named, MANUFACTURING the mixed shape that (1) rejects —
+        /// and every existing `sh(script:…, returnStatus:…)` receipt would start failing.
+        /// So the rule reads the call as WRITTEN, and only then is it rewritten.
+        ///
+        /// The result feeds the `Step` record, the signature arms AND `HostedArgs`, so a
+        /// wrapper reading its typed argument sees the normalised form too — which is
+        /// where `withEnv(overrides: […])` was actually failing, not just in validation.
+        let normaliseHostedCall (name: string) (positional: Value list) (named: (string * Value) list) =
+            if not (List.isEmpty positional) && not (List.isEmpty named) then
+                let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+
+                Error
+                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+            else
+                match positional, Map.tryFind name WalkerRules.soleRequiredParameter with
+                | [], Some param ->
+                    match named |> List.partition (fun (k, _) -> k = param) with
+                    | [ (_, v) ], rest -> Ok([ v ], rest)
+                    | _ -> Ok(positional, named)
+                | _ -> Ok(positional, named)
+
         let hostedSignatureError (name: string) (positional: Value list) (named: (string * Value) list) =
             let wrongShape expected = Some $"`{name}` {expected}"
 
+            // The CPS mixed-argument rule used to live here; it moved into
+            // `normaliseHostedCall` below, because normalisation has to happen AFTER it
+            // and both belong to the same "what shape is this call" question.
             // POSITIONAL **OR** NAMED, NEVER BOTH — and this is not a per-step rule, which
             // is why it sits ahead of the match rather than in an arm.
             //
@@ -243,11 +278,6 @@ module WalkerOrchestration =
             // finding of this class: the right rule in the wrong scope. `timeout`'s own
             // mixed branch is GONE rather than left beside this one, because a dead
             // branch that can never fire reads as a second opinion.
-            if not (List.isEmpty positional) && not (List.isEmpty named) then
-                let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-                wrongShape $"takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
-            else
-
             match name with
             | "withEnv" ->
                 match positional, named with
@@ -2089,7 +2119,16 @@ module WalkerOrchestration =
 
                         let host: PerformStep =
                             { Perform =
-                                fun name positional named runBody ->
+                                fun name rawPositional rawNamed runBody ->
+                                    // SHAPE FIRST, then everything downstream sees one
+                                    // form — the Step record, the signature arms and the
+                                    // typed `HostedArgs` a wrapper reads.
+                                    match normaliseHostedCall name rawPositional rawNamed with
+                                    | Error why ->
+                                        fail $"script block: {why}"
+                                        VNull
+                                    | Ok(positional, named) ->
+
                                     let called =
                                         { Name = name
                                           Positional = positional |> List.map Value.toDisplay

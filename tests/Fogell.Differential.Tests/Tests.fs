@@ -1239,6 +1239,19 @@ let returnFlagContract =
               Expect.isEmpty missing "a vocabulary step with no arity entry falls back to a guess"
           }
 
+          // FG-177. THE TWO TABLES MUST AGREE. `positionalArity` says how many
+          // positionals a step takes; `soleRequiredParameter` says what its one required
+          // parameter is called. A step with arity 0 has no parameter to name, and a step
+          // with arity 1 must have one or the named spelling stays unreachable — which is
+          // exactly the false refusal `dir(path: 'sub')` was.
+          test "the arity table and the parameter table agree" {
+              for step in WalkerRules.scriptStepVocabulary do
+                  let arity = Map.find step WalkerRules.positionalArity
+                  let named = Map.containsKey step WalkerRules.soleRequiredParameter
+
+                  Expect.equal named (arity = 1) $"{step}: arity {arity} and named-parameter presence must match"
+          }
+
           test "deleteDir takes NO positional argument" {
               // Measured: Jenkins keeps the workspace and FAILS on `deleteDir('ignored')`,
               // where Fogell deleted it and continued. The one value a blanket
