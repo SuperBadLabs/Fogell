@@ -207,13 +207,10 @@ module WalkerOrchestration =
         // fails with a reason. That is the fail-closed direction — an open vocabulary
         // would let an unimplemented name reach the walker's dispatch and silently do
         // nothing.
-        let scriptStepVocabulary =
-            set
-                [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
-                  "stash"; "unstable"; "unstash"
-                  // FG-172: readmitted, now that a hosted body reaches their arms.
-                  "dir"; "timeout"; "retry"; "withEnv" ]
-
+        // Defined in `WalkerRules` so a test can hold the arity table against it; this
+        // local binding keeps every call site below unchanged. `dir`, `timeout`, `retry`
+        // and `withEnv` are in it because FG-172 taught their arms to run a hosted body.
+        let scriptStepVocabulary = WalkerRules.scriptStepVocabulary
         /// FG-172. The SIGNATURE a hosted step must be called with, checked centrally
         /// before dispatch.
         ///
@@ -334,11 +331,23 @@ module WalkerOrchestration =
                 // it is an ARITY rule only. `deleteDir('x')` takes no argument at all and
                 // is still admitted with one, and no unknown NAMED argument is rejected
                 // anywhere. Those need the per-step schema in FG-177.
-                match positional with
-                | _ :: _ :: _ ->
+                // PER-STEP, from `WalkerRules.positionalArity` — FG-177's first slice.
+                // A blanket "zero or one" could not express a ZERO-argument step, and
+                // `deleteDir('ignored')` duly passed it: the arm ignored the argument,
+                // Fogell DELETED THE WORKSPACE and continued, where Jenkins keeps the
+                // files and fails. Measured. A default cannot distinguish a step with a
+                // sole required parameter from one with none, so the answer is data.
+                let allowed = Map.tryFind name WalkerRules.positionalArity |> Option.defaultValue 1
+
+                if List.length positional > allowed then
                     let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-                    wrongShape $"takes at most one positional argument; Jenkins rejects `[{shown}]`"
-                | _ -> None
+
+                    if allowed = 0 then
+                        wrongShape $"takes no positional arguments; Jenkins rejects `[{shown}]`"
+                    else
+                        wrongShape $"takes at most {allowed} positional argument; Jenkins rejects `[{shown}]`"
+                else
+                    None
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body. Defined in
         /// `WalkerRules` so a test can hold it against the set of wrappers that actually

@@ -1227,6 +1227,25 @@ let returnFlagContract =
           // signature bypass, one per arm, found one review round at a time".
           //
           // Admitting a wrapper without validating it now fails HERE instead.
+          // FG-177 slice 1. Same pairing idea as the wrapper test below: a step admitted
+          // to the vocabulary with no arity entry falls back to a default, and a default
+          // is what let `deleteDir('ignored')` delete the workspace. Data beats a default
+          // only if the data is complete.
+          test "every step in the script vocabulary has an arity entry" {
+              let missing =
+                  WalkerRules.scriptStepVocabulary
+                  |> Set.filter (fun s -> not (Map.containsKey s WalkerRules.positionalArity))
+
+              Expect.isEmpty missing "a vocabulary step with no arity entry falls back to a guess"
+          }
+
+          test "deleteDir takes NO positional argument" {
+              // Measured: Jenkins keeps the workspace and FAILS on `deleteDir('ignored')`,
+              // where Fogell deleted it and continued. The one value a blanket
+              // zero-or-one rule could not express.
+              Expect.equal (Map.tryFind "deleteDir" WalkerRules.positionalArity) (Some 0) "empty constructor"
+          }
+
           test "every hosted wrapper has a signature case" {
               Expect.equal
                   WalkerRules.scriptWrappersWithHostedBody

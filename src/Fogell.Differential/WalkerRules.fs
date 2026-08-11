@@ -175,6 +175,50 @@ module WalkerRules =
     /// `script { }` rather than a `Step list`. Everything else block-taking is refused.
     let scriptWrappersWithHostedBody = set [ "dir"; "timeout"; "retry"; "withEnv" ]
 
+    /// FG-160. The steps a `script { }` block may call at all. Defined here so a test can
+    /// hold `positionalArity` against it — a step admitted to the vocabulary with no
+    /// arity entry is the same silent-pass hole `timeout` fell through.
+    let scriptStepVocabulary =
+        set
+            [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
+              "stash"; "unstable"; "unstash"; "dir"; "timeout"; "retry"; "withEnv" ]
+
+    /// FG-177, FIRST SLICE. How many POSITIONAL arguments each step in the script
+    /// vocabulary accepts.
+    ///
+    /// The arity DEFAULT this replaces admitted "zero or one" for every step without an
+    /// arm, and the fourteenth finding of the class is exactly what that cannot express:
+    /// `script { deleteDir('ignored') }` passed validation, the arm ignored the argument,
+    /// and Fogell DELETED THE WORKSPACE and carried on — measured, Jenkins keeps the
+    /// files and fails, because `DeleteDirStep` has an empty constructor and Jenkins'
+    /// positional binding only applies to a step with a sole REQUIRED parameter. A
+    /// destructive false success, and the one shape a default could not tell apart.
+    ///
+    /// This is DATA, which is the whole point of FG-177: "which spellings does this step
+    /// take" belongs in one reviewable table, not in thirteen hand-written arms found one
+    /// review round at a time. It is deliberately the SMALLEST useful slice — positional
+    /// arity only. Named-argument schemas (which names each step accepts, and their
+    /// types) are the rest of that ticket and are NOT here.
+    ///
+    /// Every value is measured or already held by a receipt: `deleteDir` by the probe
+    /// above, and every `1` by a committed case that passes one positional today.
+    let positionalArity: Map<string, int> =
+        Map
+            [ "sh", 1
+              "echo", 1
+              "archiveArtifacts", 1
+              "junit", 1
+              "checkout", 1
+              "deleteDir", 0
+              "git", 1
+              "stash", 1
+              "unstable", 1
+              "unstash", 1
+              "dir", 1
+              "timeout", 1
+              "retry", 1
+              "withEnv", 1 ]
+
     /// FG-174. The hosted wrappers whose CALL SHAPE is validated before dispatch.
     ///
     /// THIS EXISTS TO BE COMPARED WITH THE SET ABOVE, and the comparison is a test.
