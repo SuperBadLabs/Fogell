@@ -532,7 +532,24 @@ module Executor =
                     match request.OnLine, leaks with
                     | None, (_ :: _) -> String.concat "\n" leaks + "\n"
                     | _ -> "" }
-        | "echo", None -> { ok Success with Stdout = "\n" }
+        // FG-178. `echo()` WITH NO MESSAGE PRINTS `null`, and it does NOT fail.
+        //
+        // Review reported that Jenkins REJECTS the call and asked for a required-argument
+        // check. MEASURED instead of implemented, and held by receipt
+        // `script-echo-no-message`; the report was wrong on the Jenkins
+        // half: `script { echo(); sh 'echo ran > ran.txt' }` SUCCEEDS on Jenkins with the
+        // shell running, and the console shows the literal `null` — Groovy stringifying a
+        // null message. Fogell agreed on result and workspace and printed NOTHING, so the
+        // only divergence was the missing line.
+        //
+        // Enforcing a required argument here would have been a FALSE REFUSAL of a
+        // pipeline Jenkins accepts — the second review finding on this branch that was
+        // materially wrong about Jenkins, and the second caught by probing before
+        // implementing. `Stdout` alone was not enough: the differential compares what
+        // STREAMED, and nothing called `OnLine`.
+        | "echo", None ->
+            request.OnLine |> Option.iter (fun f -> f "null")
+            { ok Success with Stdout = "null\n" }
         | name, _ ->
             { ok Failure with
                 Diagnostic = Some $"step '{name}' is not implemented; unsupported behaviour fails closed" }
