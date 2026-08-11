@@ -104,9 +104,21 @@ module FogellSide =
 
                 here @ fromSteps st.Block)
 
-        pipeline.Stages
-        |> Pipeline.flattenStages
-        |> List.collect (fun stage -> fromSteps stage.Steps)
+        // STAGES **AND** POST BLOCKS. The first version walked `stage.Steps` only, so a
+        // malformed script in `post { always { … } }` still let every stage run — the
+        // same partial enumeration this branch keeps finding, committed inside the fix
+        // for the previous one. Raised in review on PR #53, and both `post` levels are
+        // here: a stage's and the pipeline's.
+        let stagePost =
+            pipeline.Stages
+            |> Pipeline.flattenStages
+            |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps))
+
+        (pipeline.Stages
+         |> Pipeline.flattenStages
+         |> List.collect (fun stage -> fromSteps stage.Steps))
+        @ stagePost
+        @ (pipeline.Post |> List.collect (snd >> fromSteps))
 
     let internal runWith
         (envReplacements: (string * string) list)
