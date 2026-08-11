@@ -118,6 +118,15 @@ module Interpreter =
           /// Existing consumers (`when { expression }`, the tests) rely on that and are
           /// deliberately unchanged; only a caller that supplies this gets live steps.
           Host: PerformStep option
+          /// FG-178. The `env` binding AS THE SCRIPT STARTED, so a hosted refresh can tell
+          /// its own binding from a user's `def env = …`.
+          ///
+          /// It lives on the STATE and not beside each thunk because that was the bug: a
+          /// thunk seeded provenance from its own CALL SITE, where `def env = …` has
+          /// already run, so the shadowed value was compared against itself and always
+          /// looked unshadowed. Anchoring at script start is the only place the original
+          /// is still visible.
+          mutable HostEnvBinding: Value option
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -470,13 +479,38 @@ module Interpreter =
                             // shell sees it through the overlay either way. Narrower than
                             // clobbering locals, and in the safe direction. FG-179 carries
                             // the environment model that would settle both.
+                            // AND `env` ITSELF CAN BE SHADOWED. Removing the bare-name
+                            // clobbering left one binding still overwritten
+                            // unconditionally, and it is a legal local:
+                            // `def env = [TARGET: 'local']` gives Jenkins `local` and gave
+                            // `wrapper` here. Second instance of the same class inside two
+                            // rounds, which says the fix was aimed at the SYMPTOM (bare
+                            // names) rather than the rule (never overwrite a user binding).
+                            //
+                            // PROVENANCE BY LAST-WRITE, which this scope can actually
+                            // establish: refresh `env` only while it still holds the value
+                            // this refresh last put there (or the one `runHosted` bound).
+                            // A `def env = …` makes it differ, so it is left alone. That is
+                            // not the equality GUESS rejected for bare names — there the
+                            // candidate was a scalar that could coincide by accident; here
+                            // it is a whole environment map compared against a value this
+                            // code itself wrote, which a user local does not reproduce.
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                let fresh = VMap(Map.ofList current)
 
-                                bodyEnv.Value <-
-                                    { bodyEnv.Value with
-                                        Vars = Map.add "env" (VMap(Map.ofList current)) bodyEnv.Value.Vars })
+                                let shadowed =
+                                    match Map.tryFind "env" bodyEnv.Value.Vars, st.HostEnvBinding with
+                                    | Some held, Some written -> held <> written
+                                    | Some _, None -> true
+                                    | None, _ -> false
+
+                                if not shadowed then
+                                    st.HostEnvBinding <- Some fresh
+
+                                    bodyEnv.Value <-
+                                        { bodyEnv.Value with Vars = Map.add "env" fresh bodyEnv.Value.Vars })
 
                             try
                                 try
@@ -856,6 +890,7 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Host = host
+              HostEnvBinding = Map.tryFind "env" env.Vars
               Defined = defined
               LastValue = None
               StrictVars = strictVars
