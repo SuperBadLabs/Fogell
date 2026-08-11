@@ -2199,6 +2199,11 @@ module WalkerOrchestration =
                                     // Integer, and `VNull` for everything else, which is
                                     // still every step that does not opt in.
                                     slot.Value
+                              // FG-178. Read through `hostAt`, which POINTS AT THE
+                              // WRAPPER while its body runs — so `withEnv`'s overlay is
+                              // what the body evaluates against. Reading `ctx` here would
+                              // capture the script's own context and reproduce the defect.
+                              CurrentEnv = fun () -> envForWith (fst hostAt.Value).EnvOverlay stage
                               SetEnv =
                                 fun name _ ->
                                     // THE REFUSAL ITSELF, at the moment the assignment runs.

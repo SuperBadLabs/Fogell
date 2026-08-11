@@ -38,7 +38,23 @@ type PerformStep =
       /// `env.NAME = value` inside the script. The interpreter updates its own binding
       /// either way; this tells the host so that steps AFTER the block see it too, which
       /// is what Jenkins does and what the batch model could not express.
-      SetEnv: string -> string -> unit }
+      SetEnv: string -> string -> unit
+      /// FG-178. The host's environment AS IT IS NOW, asked for each time a hosted body
+      /// is about to run.
+      ///
+      /// A wrapper can CHANGE the environment for its body — `withEnv(['TARGET=prod'])`
+      /// is the whole point of the step — and the interpreter's `env` binding is built
+      /// ONCE, before `runHosted`. So the body's Groovy read a pre-wrapper snapshot:
+      /// measured, `withEnv(['TARGET=prod']) { sh "echo saw:${env.TARGET}" }` printed
+      /// `saw:prod` on Jenkins and `saw:null` here. FG-172 delivered the wrapper's
+      /// context to the body's STEPS; this delivers it to the body's EVALUATION, which is
+      /// the half that was missing.
+      ///
+      /// A callback rather than a value because the answer differs per invocation: the
+      /// host points at the wrapper's context for the body's duration and restores it
+      /// afterwards, so only the host can say what the environment is at the moment the
+      /// body runs.
+      CurrentEnv: unit -> (string * string) list }
 
 /// Why evaluation stopped.
 type Fault =
@@ -397,13 +413,65 @@ module Interpreter =
                     | Some c -> Some c
                     | None -> trailingArg
 
+                // FG-178. THE BODY IS A CLOSURE, not a detached block, and the first
+                // version of this thunk treated it as one. Three consequences, all
+                // measured against Jenkins:
+                //
+                //   RETURN escaped it. `ReturnSignal` propagated past the thunk and ended
+                //   the whole script, so `script { dir('sub') { return }; sh 'after' }`
+                //   SKIPPED the following step where Jenkins runs it. The ordinary
+                //   closure-call path below already catches this signal; the hosted path
+                //   did not, which is the whole bug.
+                //
+                //   MUTATED CAPTURES were discarded. `execBlock` RETURNS the environment
+                //   it produced and this ignored it, so `def n = 0; retry(2) { n = n + 1;
+                //   … }` saw n = 1 on every attempt: Jenkins SUCCEEDS on the second
+                //   attempt and Fogell failed on both. A retry that cannot make progress
+                //   is not a retry. The cell carries the environment ACROSS invocations,
+                //   which is what a closure does.
+                //
+                //   KNOWN LIMIT, stated rather than left to be discovered: variables
+                //   DECLARED inside the body also persist between invocations, where
+                //   Groovy would create them afresh. That is visible only to a body that
+                //   both declares a name and depends on it being unset next time round —
+                //   far narrower than losing every mutation, and the opposite direction
+                //   from the defect it replaces.
+                let bodyEnv = ref env
+
                 let runBody =
                     bodyClosure
                     |> Option.map (fun c ->
                         fun () ->
                             st.Depth <- st.Depth + 1
-                            execBlock st env c.Body |> ignore
-                            st.Depth <- st.Depth - 1)
+
+                            // THE WRAPPER'S ENVIRONMENT, ASKED FOR NOW. Both spellings
+                            // are rebound, the same pair `runHosted` binds initially: a
+                            // bare `TARGET` and `env.TARGET`. Refreshing only the map
+                            // would fix the interpolation in the measured case and leave
+                            // the bare name reading the stale value — half a fix that
+                            // looks like a whole one.
+                            st.Host
+                            |> Option.iter (fun h ->
+                                let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                let asMap = Map.ofList current
+
+                                let refreshed =
+                                    current
+                                    |> List.fold (fun acc (k, v) -> Map.add k v acc) bodyEnv.Value.Vars
+                                    |> Map.add "env" (VMap asMap)
+
+                                bodyEnv.Value <- { bodyEnv.Value with Vars = refreshed })
+
+                            try
+                                try
+                                    bodyEnv.Value <- execBlock st bodyEnv.Value c.Body
+                                with ReturnSignal _ ->
+                                    // A closure-local return ends the BODY. The value is
+                                    // dropped because a wrapper does not consume one:
+                                    // `dir('x') { return 5 }` is not `dir` returning 5.
+                                    ()
+                            finally
+                                st.Depth <- st.Depth - 1)
 
                 match st.Host with
                 | Some host ->

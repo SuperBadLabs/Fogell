@@ -483,7 +483,10 @@ let hostedSteps =
     // These test the seam, not the walker; the walker side is separate work.
     let hostThat perform setEnv =
         { Perform = perform
-          SetEnv = setEnv }
+          SetEnv = setEnv
+          // FG-178. These tests exercise the SEAM, not a walker environment; an empty
+          // list keeps the body's bindings exactly as `runHosted` set them.
+          CurrentEnv = fun () -> [] }
 
     /// Records what the host was asked to do, in order.
     let recording () =
