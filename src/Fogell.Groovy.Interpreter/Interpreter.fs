@@ -118,15 +118,27 @@ module Interpreter =
           /// Existing consumers (`when { expression }`, the tests) rely on that and are
           /// deliberately unchanged; only a caller that supplies this gets live steps.
           Host: PerformStep option
-          /// FG-178. The `env` binding AS THE SCRIPT STARTED, so a hosted refresh can tell
-          /// its own binding from a user's `def env = …`.
+          /// FG-178. Has the SCRIPT declared or assigned its own `env`?
           ///
-          /// It lives on the STATE and not beside each thunk because that was the bug: a
-          /// thunk seeded provenance from its own CALL SITE, where `def env = …` has
-          /// already run, so the shadowed value was compared against itself and always
-          /// looked unshadowed. Anchoring at script start is the only place the original
-          /// is still visible.
-          mutable HostEnvBinding: Value option
+          /// FOURTH SHAPE OF THIS FLAG, and the first that is a FACT rather than an
+          /// inference. The refresh must not overwrite a user binding, and the question
+          /// "is this binding the user's?" was answered twice by comparing VALUES:
+          ///   - seeded per thunk from its CALL SITE, where `def env = …` had already run,
+          ///     so the shadowed value was compared against itself and never detected;
+          ///   - then anchored on state, which is SHARED, so one wrapper's refresh made
+          ///     the next sibling look user-shadowed and its refresh was skipped —
+          ///     reintroducing the staleness the whole thing exists to fix, in nested and
+          ///     sequential wrappers.
+          ///
+          /// The interpreter does not need to infer any of it: it EXECUTES the `def`. This
+          /// records that, and the refresh reads it. No value comparison, nothing to be
+          /// coincidentally equal to, and nothing shared that should not be.
+          ///
+          /// SCOPE LIMIT, stated: a `def env` anywhere in the script disables the refresh
+          /// for the whole run, where Groovy would scope it to its block. Fogell's
+          /// variable model has no block scoping to hang that on — FG-179 — and erring
+          /// toward NOT overwriting the user's binding is the safe direction.
+          mutable EnvUserShadowed: bool
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -500,21 +512,40 @@ module Interpreter =
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
                                 let fresh = VMap(Map.ofList current)
 
-                                let shadowed =
-                                    match Map.tryFind "env" bodyEnv.Value.Vars, st.HostEnvBinding with
-                                    | Some held, Some written -> held <> written
-                                    | Some _, None -> true
-                                    | None, _ -> false
-
-                                if not shadowed then
-                                    st.HostEnvBinding <- Some fresh
-
+                                if not st.EnvUserShadowed then
                                     bodyEnv.Value <-
                                         { bodyEnv.Value with Vars = Map.add "env" fresh bodyEnv.Value.Vars })
 
+                            // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
+                            // names it CAPTURED do.
+                            //
+                            // Carrying the whole environment forward was the previous
+                            // shape, and I recorded the gap as a known limit: a `def`
+                            // inside the body persisted into the next invocation where
+                            // Groovy creates it afresh. Review then MEASURED it, and
+                            // receipt `script-body-local-does-not-persist` holds it — a
+                            // `retry(2)` whose first attempt declares `marker` and whose
+                            // second reads it FAILS on Jenkins and succeeded here — which
+                            // is the reminder that writing a limit down does not make it
+                            // acceptable, it only makes it honest.
+                            //
+                            // The split needs no scope machinery: a name present BEFORE
+                            // the invocation is captured, a name present only after was
+                            // declared by the body. Keeping the first and dropping the
+                            // second is exactly Groovy's behaviour for this case. Proper
+                            // block scoping — which would also fix `def` inside `if` and
+                            // friends — is FG-179's variable model, and this does not
+                            // pretend to be it.
+                            let captured =
+                                bodyEnv.Value.Vars |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+
                             try
                                 try
-                                    bodyEnv.Value <- execBlock st bodyEnv.Value c.Body
+                                    let after = execBlock st bodyEnv.Value c.Body
+
+                                    bodyEnv.Value <-
+                                        { after with
+                                            Vars = after.Vars |> Map.filter (fun k _ -> captured.Contains k) }
                                 with ReturnSignal _ ->
                                     // A closure-local return ends the BODY. The value is
                                     // dropped because a wrapper does not consume one:
@@ -706,6 +737,9 @@ module Interpreter =
         | SDef(n, Some e) ->
             let v = evalExpr st env e
             st.LastValue <- Some v
+            // FG-178. The script declaring its OWN `env` is the fact the hosted refresh
+            // needs; recorded where it happens rather than inferred later from values.
+            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n v env
         // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
         // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
@@ -713,10 +747,15 @@ module Interpreter =
         // evaluates to null.
         | SDef(n, None) ->
             st.LastValue <- Some VNull
+            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
+            // Assignment counts too: `env = [...]` replaces the binding as surely as a
+            // `def` does, and covering only `def` would leave the commoner spelling open —
+            // the partial-enumeration shape this branch keeps finding.
+            if n = "env" then st.EnvUserShadowed <- true
 
             if Map.containsKey n env.Vars then
                 // a LOCAL (def, parameter, loop/catch variable): lexical update,
@@ -890,7 +929,7 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Host = host
-              HostEnvBinding = Map.tryFind "env" env.Vars
+              EnvUserShadowed = false
               Defined = defined
               LastValue = None
               StrictVars = strictVars
