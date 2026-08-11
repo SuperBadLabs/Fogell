@@ -227,6 +227,27 @@ module WalkerOrchestration =
         let hostedSignatureError (name: string) (positional: Value list) (named: (string * Value) list) =
             let wrongShape expected = Some $"`{name}` {expected}"
 
+            // POSITIONAL **OR** NAMED, NEVER BOTH — and this is not a per-step rule, which
+            // is why it sits ahead of the match rather than in an arm.
+            //
+            // Jenkins' CPS `DSL.parseArgs` throws `Expected named arguments but got …`
+            // whenever a named map arrives beside positional arguments, whatever the step
+            // is. MEASURED on TWO different steps to establish that it is step-INDEPENDENT
+            // rather than assuming it from one, and held by receipt
+            // `script-mixed-positional-named`: `sh('exit 7', returnStatus: true)` and
+            // `archiveArtifacts('*.txt', fingerprint: true)` both make Jenkins fail with
+            // the SAME workspace hash — only the earlier stage's file — while Fogell ran
+            // each and reported success.
+            //
+            // It was first written as a `timeout`-only arm, which was the fifteenth
+            // finding of this class: the right rule in the wrong scope. `timeout`'s own
+            // mixed branch is GONE rather than left beside this one, because a dead
+            // branch that can never fire reads as a second opinion.
+            if not (List.isEmpty positional) && not (List.isEmpty named) then
+                let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+                wrongShape $"takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+            else
+
             match name with
             | "withEnv" ->
                 match positional, named with
@@ -306,8 +327,6 @@ module WalkerOrchestration =
                 | _ :: _ :: _, _ ->
                     let shown = positional |> List.map Value.toDisplay |> String.concat ", "
                     wrongShape $"takes one positional argument or named ones; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
-                | _ :: _, _ :: _ ->
-                    wrongShape "takes EITHER one positional duration OR named arguments, not both; Jenkins rejects the mixed form"
                 | _ -> None
             | _ ->
                 // DEFAULT DENY ON ARITY, rather than a thirteenth hand-written arm.
