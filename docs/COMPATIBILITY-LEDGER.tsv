@@ -16,13 +16,13 @@ HariSekhon_Jenkins.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque sectio
 HariSekhon_Nagios-Plugins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 HariSekhon_Templates.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Jotschi_maven-release-workflow-test.Jenkinsfile	3	malformed_syntax	malformed_syntax , 'while', '{', '||' or '}' @9:23
-MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 3:40: 'true', 'try', 'while', '{', '||' or '}' @225:5
 ORCID_ORCID-Source.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Primus19_jenkins-pipeline-deploy-to-eks.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @3:5
 RitheeshBaradwaj_JenkinsPipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-Romeh_spring-boot-ignite.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-Romeh_spring-boot-sample-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+Romeh_spring-boot-ignite.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 7:21: '||' or '}' @12:17
+Romeh_spring-boot-sample-app.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 7:21: '||' or '}' @13:17
 Statemood_jenkins-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 SumanReddy568_Selenium-Python-Pytest-framework.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @7:5
@@ -31,7 +31,7 @@ TTFHW_jenkins_pipeline_java_maven.Jenkinsfile	admitted	-	parsed; execution NOT a
 TTFHW_jenkins_pipeline_shell_scripts.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 TechPrimers_jenkins-example.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Terradue_DotNet4One.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-Terradue_DotNetOpenSearchClient.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+Terradue_DotNetOpenSearchClient.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 9:47: , 'null', 'return', 'switch', 'throw', 'true', 'try', 'while', '{' or '||' @92:9
 TomCzHen_jenkins-android-sample.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Tynab_crm-project.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 VAD37_unity-jenkinsfile.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @7:5
@@ -223,7 +223,7 @@ sixeyed_jenkins-pipeline-demos.Jenkinsfile	admitted	-	parsed; execution NOT atte
 stakater_GitWebhookProxy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tknerr_jenkins-pipes-helloworld.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tomasbjerre_bitbucket-server-jenkins-release-tags.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-varunpalekar_php-ci-cd.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+varunpalekar_php-ci-cd.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 6:21: 'instanceof', '{' or '||' @22:17
 vineet68sharma_CI-CD-Docker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vinsguru_docker-selenium-jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vskurikhin_DayBook3.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2

@@ -8,8 +8,8 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Of 228 corpus files: **0** proven, **174** admitted (parsed — NOT a
-parity claim), **54** rejected. This page covers the rejected set.
+Of 228 corpus files: **0** proven, **169** admitted (parsed — NOT a
+parity claim), **59** rejected. This page covers the rejected set.
 
 ## opaque section
 
@@ -52,6 +52,13 @@ Files: **2**
 - `jenkinsci_jenkins.Jenkinsfile`
 - `kesselborn_jenkinsfile.Jenkinsfile`
 
+## script block did not parse as Groovy: malformed_syntax at 7:21: '||' or '}'
+
+Files: **2**
+
+- `Romeh_spring-boot-ignite.Jenkinsfile`
+- `Romeh_spring-boot-sample-app.Jenkinsfile`
+
 ## 'switch', 'throw', 'true', 'try', 'while', '{', '||' or '}'
 
 Files: **2**
@@ -64,6 +71,12 @@ Files: **2**
 Files: **1**
 
 - `arun-gupta_docker-jenkins-pipeline.Jenkinsfile`
+
+## script block did not parse as Groovy: malformed_syntax at 3:40: 'true', 'try', 'while', '{', '||' or '}'
+
+Files: **1**
+
+- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
 
 ## an opaque section
 
@@ -82,6 +95,18 @@ Files: **1**
 Files: **1**
 
 - `ricardozanini_soccer-stats.Jenkinsfile`
+
+## script block did not parse as Groovy: malformed_syntax at 9:47: , 'null', 'return', 'switch', 'throw', 'true', 'try', 'while', '{' or '||'
+
+Files: **1**
+
+- `Terradue_DotNetOpenSearchClient.Jenkinsfile`
+
+## script block did not parse as Groovy: malformed_syntax at 6:21: 'instanceof', '{' or '||'
+
+Files: **1**
+
+- `varunpalekar_php-ci-cd.Jenkinsfile`
 
 ## 'switch', 'throw', 'true', 'try', 'while' or '{'
 

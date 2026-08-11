@@ -84,42 +84,6 @@ module FogellSide =
 
                 Map.ofList entries
 
-    /// FG-174. Every `script { }` body in the pipeline that does NOT parse as Groovy.
-    ///
-    /// Walks nested stages AND nested step blocks, because a `script` inside a
-    /// `dir { … }` inside a nested stage is exactly as compile-visible as a top-level
-    /// one — and a check that reached only the easy positions would be the partial
-    /// coverage this branch keeps finding.
-    let private badScriptBodies (pipeline: Pipeline) : string list =
-        let rec fromSteps (steps: Step list) =
-            steps
-            |> List.collect (fun st ->
-                let here =
-                    match st.ScriptBody with
-                    | Some src ->
-                        match Fogell.Groovy.Parser.Parser.parse src with
-                        | Result.Error e -> [ string e ]
-                        | Result.Ok _ -> []
-                    | None -> []
-
-                here @ fromSteps st.Block)
-
-        // STAGES **AND** POST BLOCKS. The first version walked `stage.Steps` only, so a
-        // malformed script in `post { always { … } }` still let every stage run — the
-        // same partial enumeration this branch keeps finding, committed inside the fix
-        // for the previous one. Raised in review on PR #53, and both `post` levels are
-        // here: a stage's and the pipeline's.
-        let stagePost =
-            pipeline.Stages
-            |> Pipeline.flattenStages
-            |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps))
-
-        (pipeline.Stages
-         |> Pipeline.flattenStages
-         |> List.collect (fun stage -> fromSteps stage.Steps))
-        @ stagePost
-        @ (pipeline.Post |> List.collect (snd >> fromSteps))
-
     let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
@@ -133,26 +97,6 @@ module FogellSide =
         : Result<Trace, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
-        | Result.Ok pipeline when not (List.isEmpty (badScriptBodies pipeline)) ->
-            // FG-174. EVERY `script { }` BODY IS PARSED BEFORE ANY STAGE RUNS.
-            //
-            // The body used to be parsed when dispatch REACHED it, so a malformed script
-            // in a LATER stage let every earlier stage run first. MEASURED by scratch
-            // probe and UNPROVEN by receipt — a compile-shaped refusal emits nothing
-            // comparable, which is FG-129: a pipeline
-            // whose second stage carries a duplicate named argument makes Jenkins fail
-            // with nothing in the log but `Started by user unknown or anonymous` and an
-            // EMPTY workspace — it rejects the model — while Fogell ran the first stage
-            // and wrote its file. Irreversible work from a pipeline Jenkins never
-            // started. Raised in review on PR #53.
-            //
-            // The same placement lesson as the duplicate named argument itself: a defect
-            // knowable at COMPILE time must be acted on before execution, not where it
-            // happens to be noticed. Returning `Result.Error` here is the identical shape
-            // a declarative parse error takes, so no stage, `post` block or workspace
-            // mutation happens at all.
-            let first = List.head (badScriptBodies pipeline)
-            Result.Error $"malformed_syntax at 0:0: script block did not parse as Groovy: {first}"
         | Result.Ok pipeline ->
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).

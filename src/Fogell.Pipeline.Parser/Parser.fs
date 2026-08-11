@@ -984,5 +984,45 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
 
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
+/// FG-178. Every `script { }` body in the model, including nested stages, nested step
+/// blocks and both `post` levels.
+///
+/// THIRD ENUMERATION OF THE SAME THING, which is why it is finally here instead of at a
+/// caller. It began as a walk of `stage.Steps`; review found `post` blocks; review then
+/// found the HTTP admission endpoint, which calls `parse` DIRECTLY and so reached none of
+/// it — a submission with an invalid body was accepted and queued, failing only when a
+/// runner picked it up, where the contract promises a 422 at admission.
+///
+/// Putting it inside `parse` is what makes "which entry points are covered" stop being a
+/// question: there is one.
+let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
+    let rec fromSteps (steps: Step list) =
+        steps
+        |> List.collect (fun st ->
+            let here =
+                match st.ScriptBody with
+                | Some src ->
+                    match Fogell.Groovy.Parser.Parser.parse src with
+                    | Result.Error e -> [ string e, st.Position ]
+                    | Result.Ok _ -> []
+                | None -> []
+
+            here @ fromSteps st.Block)
+
+    let stages = Pipeline.flattenStages pipeline.Stages
+
+    (stages |> List.collect (fun stage -> fromSteps stage.Steps))
+    @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
+    @ (pipeline.Post |> List.collect (snd >> fromSteps))
+
 let parse (source: string) : Result<Pipeline, AdmissionError> =
-    parseWithLimits Limits.defaults source
+    match parseWithLimits Limits.defaults source with
+    | Result.Error e -> Result.Error e
+    | Result.Ok pipeline ->
+        match scriptBodyErrors pipeline with
+        | (why, position) :: _ ->
+            Result.Error
+                { Code = MalformedSyntax
+                  Message = $"script block did not parse as Groovy: {why}"
+                  Position = position }
+        | [] -> Result.Ok pipeline
