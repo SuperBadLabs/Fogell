@@ -313,13 +313,32 @@ module WalkerOrchestration =
                     wrongShape "takes EITHER one positional duration OR named arguments, not both; Jenkins rejects the mixed form"
                 | _ -> None
             | _ ->
-                // NOT A SILENT PASS. Reaching here means a hosted wrapper was admitted
-                // without a signature case, which is the bypass this function exists to
-                // close — `timeout` did exactly that and shipped a false success. The
-                // pairing is asserted by a test over
-                // `WalkerRules.hostedWrappersWithSignatureCase`; this arm stays total for
-                // the many NON-hosted steps that legitimately reach it.
-                None
+                // DEFAULT DENY ON ARITY, rather than a thirteenth hand-written arm.
+                //
+                // Reaching here means the step has no arm of its own — `sh`, `echo`,
+                // `git` and the rest. That used to be a silent pass, so
+                // `script { sh('echo ran > ran.txt', 'ignored') }` ran the FIRST
+                // positional and dropped the second, while Jenkins rejects the call and
+                // leaves the workspace EMPTY. Measured. Two more arms would have closed
+                // `sh` and `script` and left the next step open, which is the trend
+                // FG-177 exists to end.
+                //
+                // ONE positional is the Jenkins shape: DescribableModel maps a single
+                // positional onto the sole required parameter, and named arguments
+                // otherwise. CHECKED AGAINST THE CLOSED VOCABULARY rather than assumed —
+                // `sh`, `echo`, `archiveArtifacts`, `junit`, `checkout`, `git`, `stash`,
+                // `unstable`, `unstash`, `deleteDir` — none of which takes two.
+                //
+                // WHAT THIS STILL DOES NOT CATCH, said plainly because the last thing
+                // this class needs is another comment claiming more than it delivers:
+                // it is an ARITY rule only. `deleteDir('x')` takes no argument at all and
+                // is still admitted with one, and no unknown NAMED argument is rejected
+                // anywhere. Those need the per-step schema in FG-177.
+                match positional with
+                | _ :: _ :: _ ->
+                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+                    wrongShape $"takes at most one positional argument; Jenkins rejects `[{shown}]`"
+                | _ -> None
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body. Defined in
         /// `WalkerRules` so a test can hold it against the set of wrappers that actually
@@ -1924,6 +1943,15 @@ module WalkerOrchestration =
                     emit $"ERROR: {why}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
+
+                // `script` TAKES NO ARGUMENTS — only its implicit closure. The guard
+                // above checks `ScriptBody` alone, so `script('ignored') { … }` ran the
+                // body while Jenkins rejects the argument and leaves the workspace EMPTY.
+                // Measured; raised in review on PR #53. The body running at all is the
+                // defect: side effects from a pipeline Jenkins never started.
+                if not (List.isEmpty step.Positional && List.isEmpty step.Named) then
+                    fail "step 'script' takes no arguments, only its block; Jenkins rejects the call"
+                else
 
                 match Fogell.Groovy.Parser.Parser.parse src with
                 | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
