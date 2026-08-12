@@ -2229,6 +2229,12 @@ module WalkerOrchestration =
                               // what the body evaluates against. Reading `ctx` here would
                               // capture the script's own context and reproduce the defect.
                               CurrentEnv = fun () -> envForWith (fst hostAt.Value).EnvOverlay stage
+                              // FG-184. Answered from the ONE table that says which steps
+                              // host a body — the same set `runStepDispatch` uses — so the
+                              // interpreter's normalisation and the walker's dispatch
+                              // cannot disagree about what a block-taking step is.
+                              TakesBlock =
+                                fun name -> WalkerRules.scriptWrappersWithHostedBody.Contains name
                               SetEnv =
                                 fun name _ ->
                                     // THE REFUSAL ITSELF, at the moment the assignment runs.

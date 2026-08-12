@@ -54,7 +54,21 @@ type PerformStep =
       /// host points at the wrapper's context for the body's duration and restores it
       /// afterwards, so only the host can say what the environment is at the moment the
       /// body runs.
-      CurrentEnv: unit -> (string * string) list }
+      CurrentEnv: unit -> (string * string) list
+      /// FG-184. Does this step take a BLOCK? Asked before a final closure argument is
+      /// normalised into a hosted body.
+      ///
+      /// The interpreter cannot answer it. Which steps take a block is a property of the
+      /// step VOCABULARY, which the host owns — `WalkerRules.scriptWrappersWithHostedBody`
+      /// is the one place it is written down, and copying that set in here is how the
+      /// three copies of the timestamp rule came to disagree.
+      ///
+      /// It is asked because normalising unconditionally was a FALSE SUCCESS: `def body =
+      /// {}; sh('touch ran.txt', body)` had its closure stripped before validation, so the
+      /// host saw a valid one-positional `sh` plus a body its dispatcher ignores, and the
+      /// shell RAN. Jenkins rejects the two-argument call — measured, jenkins=failure with
+      /// an EMPTY workspace against fogell=SUCCESS with the file written.
+      TakesBlock: string -> bool }
 
 /// Why evaluation stopped.
 type Fault =
@@ -424,9 +438,35 @@ module Interpreter =
                 // body-less. `StepValueUse.findWrapperCalls` already had to learn this
                 // exact lesson; the interpreter had not. Normalising HERE means every host
                 // sees one shape instead of each host rediscovering the two.
+                // FG-184. ONLY FOR A STEP THAT TAKES A BLOCK, and the restriction is the
+                // fix. Normalising unconditionally REMOVED the closure before the host
+                // could validate the call, so `def body = {}; sh('touch ran.txt', body)`
+                // reached `hostedSignatureError` as a valid one-positional `sh` with a
+                // hosted body its dispatcher ignores — and the shell ran. Jenkins rejects
+                // the two-argument call: measured, jenkins=FAILURE with an empty workspace
+                // against fogell=SUCCESS with the file written. A green build doing work
+                // Jenkins refused, which is the ADR 0001 class.
+                //
+                // THE STATIC SCAN CANNOT COVER THIS, which is why the rule belongs here
+                // rather than in another pre-flight arm: the argument is an `EVar`, so it
+                // is only a closure at RUNTIME. A scan of the source sees a variable.
+                //
+                // Left in place for a step that takes no block, the closure stays a second
+                // positional argument and the arity default-deny refuses the call — the
+                // rule FG-177 already established, now actually reached.
+                //
+                // WITHOUT A HOST the question is unanswerable and the shape is unchanged.
+                // That is not a second behaviour: the batch model never DISPATCHES a step
+                // — the call yields VNull and the effect is only recorded — so there is no
+                // call for the answer to be wrong about.
+                let takesBlock =
+                    match st.Host with
+                    | Some h -> h.TakesBlock name
+                    | None -> true
+
                 let trailingArg, positionalArgs =
                     match trailing, List.rev positionalLazy.Value with
-                    | None, VClosure(c, _) :: rest -> Some c, List.rev rest
+                    | None, VClosure(c, _) :: rest when takesBlock -> Some c, List.rev rest
                     | _ -> None, positionalLazy.Value
 
                 let bodyClosure =

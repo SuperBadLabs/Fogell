@@ -486,7 +486,12 @@ let hostedSteps =
           SetEnv = setEnv
           // FG-178. These tests exercise the SEAM, not a walker environment; an empty
           // list keeps the body's bindings exactly as `runHosted` set them.
-          CurrentEnv = fun () -> [] }
+          CurrentEnv = fun () -> []
+          // FG-184. The seam's own answer, spelled out here rather than imported from
+          // `WalkerRules`: these tests drive `dir`/`retry`/`withEnv` bodies directly, and
+          // borrowing the production set would make them pass because of what the walker
+          // happens to register rather than because the normalisation asked at all.
+          TakesBlock = fun name -> Set.contains name (set [ "dir"; "timeout"; "retry"; "withEnv" ]) }
 
     /// Records what the host was asked to do, in order.
     let recording () =
