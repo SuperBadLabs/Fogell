@@ -958,31 +958,114 @@ let looksDeclarative (source: string) : bool =
 
     System.Text.RegularExpressions.Regex.IsMatch(stripped, @"(^|[\s};])pipeline\s*\{")
 
-/// Parse a Declarative Jenkinsfile. Admission limits are applied first so a
-/// hostile input never reaches the recursive grammar.
-let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
-    match Limits.precheck limits source with
-    | Result.Error e -> Result.Error e
-    | Result.Ok() ->
-        if not (looksDeclarative source) then
-            Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
-        else
-            match runParserOnString (pipelineParser .>> ws) () "Jenkinsfile" source with
-            | ParserResult.Success(p, _, _) ->
-                if List.isEmpty p.Stages then
-                    Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
-                else
-                    Result.Ok p
-            | ParserResult.Failure(msg, err, _) ->
-                let pos = err.Position
+/// FG-183. `break` and `continue` are only legal inside a loop, and a CLOSURE IS NOT A
+/// LOOP. Jenkins refuses a pipeline containing a misplaced one at COMPILE time, before
+/// any stage runs; Fogell admitted it, ran the earlier stages, and then let a
+/// `BreakSignal` escape to the top of the engine.
+///
+/// MEASURED, both engines. `script { dir('d') { break } }` behind a stage that writes a
+/// file: Jenkins fails the Groovy compile naming the position and NEVER STARTS A STAGE,
+/// so its workspace is empty; Fogell ran the first stage to completion, wrote the file,
+/// and ended `run failed: BreakSignal`. Two defects in one input — a durable effect
+/// Jenkins cannot produce, and an engine FAULT where ADR 0001 requires a rejection with a
+/// named code and a position. An uncaught exception is the one outcome no tier describes.
+///
+/// NOT A DIFFERENTIAL RECEIPT, and the reason is this rule's own effect: Fogell now
+/// REFUSES where Jenkins FAILS A BUILD, and the harness cannot compare a refusal against a
+/// build — it scored the attempt NOT-COMPARABLE. Proven instead by proof case
+/// `break-outside-loop`, which asserts the refusal AND that no earlier stage ran;
+/// that file's pre-existing helper could not tell an admission refusal from a runtime
+/// fault, since both leave a diagnostic in the log and only the absent marker separates
+/// them.
+///
+/// WHY NOT CATCH THE SIGNAL AT THE TOP instead, which is the smaller change: that
+/// converts the fault into a stage failure and STILL runs the earlier stages. Those
+/// effects are what Jenkins never produced, so catching trades a loud wrong answer for a
+/// quiet one — the exchange ADR 0001 exists to forbid.
+///
+/// A PARSER SUCCESS IS NOT A VALIDITY VERDICT. The Groovy parser accepts these keywords
+/// unconditionally and is right to: placement is a CONTEXT rule, not a grammar one. So
+/// this is a walk of the parsed body rather than a grammar change.
+///
+/// THE CLOSURE BOUNDARY IS THE SUBTLE PART, and it is why `inLoop` RESETS on the way in
+/// rather than being inherited. Groovy rejects `break` inside a closure even when the
+/// closure is written inside a loop, because the closure is a separate body — so
+/// `while (x) { [1].each { break } }` is invalid, and a check that inherited the
+/// enclosing loop would admit it. `SFunc` bodies reset for the same reason.
+///
+/// THE POSITION IS THE SCRIPT STEP'S, not the keyword's, and that is a stated limit
+/// rather than an oversight: this AST carries no positions. Jenkins names a line and
+/// column inside the script; Fogell names the `script` block containing it. The existing
+/// malformed-body path already reports at exactly that granularity, so the two agree.
+module private LoopControl =
+    // Scoped to this module rather than opened at the top of the file: the IR and the
+    // Groovy AST both define short type names, and a file-wide open would resolve them
+    // by import order rather than by intent.
+    open Fogell.Groovy
 
-                let firstLine =
-                    msg.Split('\n')
-                    |> Array.filter (fun l -> l.Trim() <> "")
-                    |> Array.tryLast
-                    |> Option.defaultValue "unparsable"
+    let misplaced (script: Script) : string list =
+        let rec stmts inLoop ss = ss |> List.collect (stmt inLoop)
 
-                Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+        and stmt inLoop s =
+            match s with
+            | SBreak -> if inLoop then [] else [ "break" ]
+            | SContinue -> if inLoop then [] else [ "continue" ]
+            | SWhile(c, b) -> expr c @ stmts true b
+            | SForIn(_, src, b) -> expr src @ stmts true b
+            | SIf(c, a, b) -> expr c @ stmts inLoop a @ stmts inLoop b
+            | STry(b, catch, fin) ->
+                stmts inLoop b
+                @ (catch |> Option.map (fun (_, _, h) -> stmts inLoop h) |> Option.defaultValue [])
+                @ stmts inLoop fin
+            // A function body is its own scope: a loop around the DEFINITION does not make a
+            // `break` inside the function legal.
+            | SFunc(_, _, b) -> stmts false b
+            | SExpr e -> expr e
+            | SDef(_, v) -> v |> Option.map expr |> Option.defaultValue []
+            | SAssign(t, v) -> expr t @ expr v
+            | SReturn v -> v |> Option.map expr |> Option.defaultValue []
+            | SThrow e -> expr e
+
+        // EVERY expression form is walked, and the wildcard is deliberately absent: a closure
+        // can be written anywhere a value can, so a `| _ -> []` catch-all here would silently
+        // stop checking whichever form was added next. FS0025 makes that a build error.
+        and expr e =
+            match e with
+            | EClosure c -> stmts false c.Body
+            | ECall(target, args, trailing) ->
+                callTarget target
+                @ (args
+                   |> List.collect (function
+                       | APos v -> expr v
+                       | ANamed(_, v) -> expr v))
+                @ (trailing |> Option.map (fun c -> stmts false c.Body) |> Option.defaultValue [])
+            | EGString parts ->
+                parts
+                |> List.collect (function
+                    | GLit _ -> []
+                    | GExpr x -> expr x)
+            | EList xs -> xs |> List.collect expr
+            | EMap kvs -> kvs |> List.collect (snd >> expr)
+            | EProp(t, _)
+            | ESafeProp(t, _) -> expr t
+            | EIndex(t, i) -> expr t @ expr i
+            | EUnary(_, o) -> expr o
+            | EBinary(_, l, r) -> expr l @ expr r
+            | ETernary(c, a, b) -> expr c @ expr a @ expr b
+            | EElvis(a, b) -> expr a @ expr b
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EVar _ -> []
+
+        and callTarget t =
+            match t with
+            | FreeCall _ -> []
+            | MethodCall(target, _)
+            | SafeMethodCall(target, _) -> expr target
+
+        stmts false script
 
 /// FG-178. Every `script { }` body in the model, including nested stages, nested step
 /// blocks and both `post` levels.
@@ -1003,8 +1086,14 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
                 match st.ScriptBody with
                 | Some src ->
                     match Fogell.Groovy.Parser.Parser.parse src with
-                    | Result.Error e -> [ string e, st.Position ]
-                    | Result.Ok _ -> []
+                    | Result.Error e -> [ $"script block did not parse as Groovy: {string e}", st.Position ]
+                    | Result.Ok parsed ->
+                        // FG-183. Parsed, and still not admissible.
+                        match LoopControl.misplaced parsed with
+                        | keyword :: _ ->
+                            [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
+                              st.Position ]
+                        | [] -> []
                 | None -> []
 
             here @ fromSteps st.Block)
@@ -1015,14 +1104,49 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
     @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
     @ (pipeline.Post |> List.collect (snd >> fromSteps))
 
-let parse (source: string) : Result<Pipeline, AdmissionError> =
-    match parseWithLimits Limits.defaults source with
+/// Parse a Declarative Jenkinsfile. Admission limits are applied first so a
+/// hostile input never reaches the recursive grammar.
+///
+/// FG-185. SCRIPT-BODY VALIDATION LIVES HERE, not in `parse`. It was in `parse`, under a
+/// comment claiming that "which entry points are covered" had stopped being a question
+/// because there was only one — and `parseWithLimits` was a second, public, and exempt.
+/// A caller choosing custom limits got `Ok` for a pipeline the default entry point
+/// rejects, which restores the delayed execution-time failure the check exists to prevent
+/// for anyone who passes limits. FOURTH ENUMERATION OF THE SAME RULE (stage steps, then
+/// `post`, then the HTTP endpoint, now custom limits), and it is this branch's recurring
+/// shape: a rule covering one path while an equivalent path stays open. `parse` now only
+/// supplies the defaults, so there is nothing left to forget. Raised in review on PR #53.
+let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
+    match Limits.precheck limits source with
     | Result.Error e -> Result.Error e
-    | Result.Ok pipeline ->
-        match scriptBodyErrors pipeline with
-        | (why, position) :: _ ->
-            Result.Error
-                { Code = MalformedSyntax
-                  Message = $"script block did not parse as Groovy: {why}"
-                  Position = position }
-        | [] -> Result.Ok pipeline
+    | Result.Ok() ->
+        if not (looksDeclarative source) then
+            Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
+        else
+            match runParserOnString (pipelineParser .>> ws) () "Jenkinsfile" source with
+            | ParserResult.Success(p, _, _) ->
+                if List.isEmpty p.Stages then
+                    Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
+                else
+                    match scriptBodyErrors p with
+                    | (why, position) :: _ ->
+                        Result.Error
+                            { Code = MalformedSyntax
+                              Message = why
+                              Position = position }
+                    | [] -> Result.Ok p
+            | ParserResult.Failure(msg, err, _) ->
+                let pos = err.Position
+
+                let firstLine =
+                    msg.Split('\n')
+                    |> Array.filter (fun l -> l.Trim() <> "")
+                    |> Array.tryLast
+                    |> Option.defaultValue "unparsable"
+
+                Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+
+let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
+
+
+

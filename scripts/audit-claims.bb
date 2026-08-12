@@ -66,7 +66,15 @@
       ;; way: the case name must actually appear as an assertion in the proof script.
       proof-cases (let [f (fs/file root "scripts/prove-section-refusals.sh")]
                     (if (fs/exists? f)
-                      (->> (re-seq #"(?m)^expect_(?:refusal|control|env_ok)\s+([a-z0-9-]+)" (slurp f))
+                      (->> (re-seq #"(?m)^expect_[a-z_]+\s+([a-z0-9-]+)" (slurp f))
+                           ;; ANY `expect_*` helper, not an enumerated three. The list was
+                           ;; `refusal|control|env_ok`, and adding a fourth assertion helper
+                           ;; (`expect_refusal_before_effects`, FG-183) silently made its cases
+                           ;; uncitable — the claim audit then rejected a comment naming a case
+                           ;; that DID exist and WAS asserted. Same shape as the defect that
+                           ;; audit exists to catch: a rule covering the paths someone listed
+                           ;; while an equivalent one stays open. A prefix match cannot go stale
+                           ;; when the next helper is written.
                            (map second)
                            set)
                       #{}))

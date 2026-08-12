@@ -514,6 +514,30 @@ let structure =
 
           test "a scripted file reports no_pipeline_block, not a syntax error" {
               Expect.equal (err "node { sh 'make' }").Code NoPipelineBlock "no_pipeline_block"
+          }
+
+          // FG-185. THE SAME SOURCE THROUGH BOTH PUBLIC ENTRY POINTS, and the pair is the
+          // test. Script-body validation lived in `parse`, so `parseWithLimits` — equally
+          // public, and the one a caller reaches for precisely when it wants different
+          // bounds — returned Ok for a body `parse` rejects, restoring the delayed
+          // execution-time failure the check exists to prevent. Asserting only the
+          // `parseWithLimits` half would pass a build that moved the check and broke
+          // `parse`; asserting both pins the actual invariant, which is that the two
+          // cannot disagree about admissibility.
+          test "a malformed script body is rejected through parseWithLimits, not only parse" {
+              let src = mk "    stage('a') { steps { script { def x = } } }"
+
+              // NOT `Limits.defaults` — that goes down the very path `parse` uses and
+              // would prove nothing about the custom-limit route.
+              let custom =
+                  { Limits.defaults with
+                      MaxSourceBytes = 100_000 }
+
+              match Parser.parseWithLimits custom src with
+              | Ok _ -> failtest "parseWithLimits admitted a malformed script body"
+              | Error e -> Expect.equal e.Code MalformedSyntax "malformed_syntax"
+
+              Expect.equal (err src).Code MalformedSyntax "and `parse` still agrees"
           } ]
 
 [<EntryPoint>]
