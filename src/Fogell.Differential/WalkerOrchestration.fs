@@ -1997,10 +1997,41 @@ module WalkerOrchestration =
             | "script", _ when step.ScriptBody.IsSome ->
                 let src = Option.get step.ScriptBody
 
+                // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
+                // wrapper's body re-enters the interpreter, which calls back here —
+                // and those inner steps must run in the directory and overlay the
+                // WRAPPER established, not the ones that existed when the script
+                // started. Capturing `ctx`/`cwd` in this closure is exactly the bug
+                // `dir('x') { sh 'pwd' }` had under the batch model, in a new place.
+                //
+                // DECLARED HERE, ABOVE `fail`, AND THAT PLACEMENT IS THE FG-182 FIX — see
+                // the note on `fail` for what reading `ctx` instead cost.
+                let hostAt = ref (ctx, cwd)
+
                 let fail (why: string) =
+                    // FG-182. THE ACTIVE CONTEXT, NOT THE SCRIPT'S OWN. `runWithRetry`
+                    // gives every attempt a fresh `Failed` ref and a throwaway status
+                    // sink — deliberately, so that a body which fails once and then
+                    // succeeds is a SUCCESS build (FG-035) — and `runBodyIn` points
+                    // `hostAt` at that attempt while its body runs. Marking the captured
+                    // `ctx` walked past both: the OUTER flag was set, the attempt still
+                    // looked clean, and `halted` therefore admitted the NEXT call in the
+                    // same closure. MEASURED: `retry(1) { sh('invalid', 'extra'); sh
+                    // 'touch ran-after-invalid.txt' }` leaves Jenkins' workspace EMPTY —
+                    // it stops the closure at the invalid invocation — and wrote the file
+                    // here. A durable effect from a call Jenkins refused, which is the
+                    // ADR 0001 class, not a bookkeeping slip. Receipt
+                    // `script-retry-halts-attempt-on-refusal`, run against this code
+                    // REVERTED and diverging on the workspace hash — both engines FAIL this
+                    // build, so a result-only case would have proven nothing.
+                    //
+                    // Outside a wrapper body this cell still holds `(ctx, cwd)`, so the
+                    // argument and parse refusals below are unchanged. Raised in review
+                    // on PR #53.
+                    let atCtx = fst hostAt.Value
                     emit $"ERROR: {why}"
-                    ctx.Failed.Value <- true
-                    ctx.Sink BuildStatus.Failure
+                    atCtx.Failed.Value <- true
+                    atCtx.Sink BuildStatus.Failure
 
                 // `script` TAKES NO ARGUMENTS — only its implicit closure. The guard
                 // above checks `ScriptBody` alone, so `script('ignored') { … }` ran the
@@ -2095,13 +2126,7 @@ module WalkerOrchestration =
                         // `input` (durable identity is per top-level step, FG-171), and
                         // and `withCredentials`, whose nested-call argument DSL the
                         // interpreter cannot evaluate.
-                        // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
-                        // wrapper's body re-enters the interpreter, which calls back here —
-                        // and those inner steps must run in the directory and overlay the
-                        // WRAPPER established, not the ones that existed when the script
-                        // started. Capturing `ctx`/`cwd` in this closure is exactly the bug
-                        // `dir('x') { sh 'pwd' }` had under the batch model, in a new place.
-                        let hostAt = ref (ctx, cwd)
+                        // `hostAt` is declared with `fail`, above — see the FG-182 note there.
 
                         // Point the host at a wrapper's context for the duration of its
                         // body, then restore. `try/finally` because a step inside the body
