@@ -379,11 +379,41 @@ module ProcessGroup =
 
         proc.Start() |> ignore
 
+        // FG-181. The capture accumulates INCREMENTALLY into a buffer this scope owns,
+        // rather than being handed to `ReadToEndAsync` and read out of the task's Result.
+        // The two differ only when the read does not finish, and that is exactly the case
+        // that was wrong: a descendant which escaped the process group holds the inherited
+        // write end open, `ReadToEndAsync` cannot complete, the bounded wait below expires,
+        // and the task's Result is unavailable — so the fallback substituted "" and threw
+        // away bytes that HAD ALREADY ARRIVED. MEASURED: `setsid sleep 10 & printf token`
+        // gave Jenkins `raw:[token]` and Fogell `raw:[]`, with BOTH ENGINES REPORTING
+        // SUCCESS, which is a wrong value under a green build. With the buffer the same
+        // case truncates instead of erasing, and `token` is there because it arrived long
+        // before the bound. Receipt `script-capture-escaped-descendant`, which was run
+        // against this code REVERTED and diverges on both the value and the workspace
+        // hash — a capture case that cannot fail proves nothing about capture.
+        //
         // Started BEFORE the stderr reader and never awaited until the wait is over, so
         // both pipes drain concurrently — see the capture note above.
+        //
+        // The buffer is locked on BOTH sides: this task may still be reading when the
+        // snapshot below is taken, precisely in the case the ticket is about.
+        let captureBuffer = Text.StringBuilder()
+
         let capturedStdout =
             if request.SuppressStdoutEcho then
-                Some(proc.StandardOutput.ReadToEndAsync())
+                let reader = proc.StandardOutput
+                // A char buffer, not a byte one: `StreamReader.Read` decodes, so a chunk
+                // boundary can never split a multi-byte character. Reading bytes here to
+                // make the comment above literally true would introduce that bug.
+                Some(
+                    Tasks.Task.Run(fun () ->
+                        let chunk = Array.zeroCreate<char> 4096
+                        let mutable n = reader.Read(chunk, 0, chunk.Length)
+
+                        while n > 0 do
+                            lock captureBuffer (fun () -> captureBuffer.Append(chunk, 0, n) |> ignore)
+                            n <- reader.Read(chunk, 0, chunk.Length)))
             else
                 proc.BeginOutputReadLine()
                 None
@@ -570,17 +600,27 @@ module ProcessGroup =
         // otherwise block the engine here forever — the one failure mode that would be
         // worse than a wrong value. The captured value is best-effort by construction,
         // and `returnStdout` on a step that timed out is discarded anyway, since an
-        // abort propagates rather than becoming a value. "Best-effort" means the READ is
-        // abandoned, NOT that a partial value is salvaged: see the fallback below.
-        // THE FALLBACK IS EMPTY, AND SAYS SO. It read `stdout.ToString()`, which in
-        // capture mode is ALWAYS "" — the line handler is not attached at all, so that
-        // sink is never filled — while the comment above called the value "best-effort",
-        // implying partial output survives a stuck read. It does not, and a fallback that
-        // reads like recovered data is worse than one that admits it recovered nothing.
-        // Raised in review on PR #53.
+        // abort propagates rather than becoming a value.
+        //
+        // "BEST-EFFORT" NOW MEANS WHAT IT SAYS, and it took two goes. The bound was always
+        // right; what was salvaged when it expired was not. First the fallback read
+        // `stdout.ToString()`, which in capture mode is ALWAYS "" — the line handler is
+        // not attached at all, so that sink is never filled — while the comment called the
+        // value best-effort, implying partial output survived. It did not. Making the
+        // fallback an explicit "" was honest about that and still WRONG (FG-181): bytes
+        // that arrived before the bound are real captured output, and discarding them
+        // hands the pipeline a wrong value under a build that reports success. The buffer
+        // above keeps them, so an expired wait TRUNCATES what was captured rather than
+        // ERASING it, and the timeout is no longer the difference between `token` and "".
+        //
+        // WHY NOT SIMPLY WAIT LONGER: the bound is what stops an escaped descendant from
+        // holding the engine open forever, which is the one failure mode worse than a
+        // wrong value. Truncation removes the need to choose between them.
         let capturedText =
             capturedStdout
-            |> Option.map (fun t -> if t.Wait 5_000 then t.Result else "")
+            |> Option.map (fun t ->
+                t.Wait 5_000 |> ignore
+                lock captureBuffer (fun () -> captureBuffer.ToString()))
 
         { Outcome = outcome
           Stdout = defaultArg capturedText (stdout.ToString())
