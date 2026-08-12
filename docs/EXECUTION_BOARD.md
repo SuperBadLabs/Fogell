@@ -178,7 +178,7 @@ how the work was conceived and is no longer where it happens — twenty-one tick
 accreted into **Wave 8 — Release gates** because that table was last in the file.
 
 **The P column is left exactly as filed.** Each row's priority carries that row's own
-severity argument and re-typing thirty-one of them would add no evidence. What orders
+severity argument and re-typing thirty of them would add no evidence. What orders
 execution is the CLASS and the queue below.
 
 ### Defect class (the ranking rule)
@@ -196,8 +196,10 @@ than an explicit rejection — and every class here is a position relative to th
 
 A ticket's class is a MEASUREMENT, not a label: A and B both require a probe naming what
 each engine did. A ticket that has not been probed is not yet classifiable, and saying
-so is the point — three tickets on this branch were re-ranked by measuring them, in both
-directions (FG-140 down from P1, FG-181 up from the P2 its reviewer assigned).
+so is the point — two tickets have been re-ranked by measuring them, and in OPPOSITE
+directions: FG-140 down from P1 once the symptom stopped being silent, FG-181 up from
+the P2 its reviewer assigned once the receipt showed a green build carrying a wrong
+value. A rule that only ever ranks things up is a rule nobody is applying.
 
 ### The queue
 
