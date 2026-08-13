@@ -45,7 +45,11 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
   and the verifier caught each copy separately over four rounds. The failure was never the
   claim; it was that one fact had five authors and I only ever edited the copies I was
   already looking at. Concretely: a CASE HEADER explains what that case asserts and why it
-  is shaped that way — never the status of another ticket. A TICKET ROW carries history,
+  is shaped that way — never the status of another ticket, and never an INSTRUCTION for a
+  future commit. A "drop these semicolons when FG-187 lands" note went stale in the very
+  commit that landed FG-187 and dropped them: an instruction asserts the work is still
+  outstanding, so it has a built-in expiry, and the person best placed to forget it is
+  whoever does the work. A TICKET ROW carries history,
   so a superseded statement stays and is marked RETRACTED rather than deleted. A QUEUE ROW
   gives ranking only. If a fact is worth stating twice, state it once and cite it.
   SOURCE COMMENTS AND ACCEPTANCE FIELDS ARE COVERED TOO, and they were the two the rule
