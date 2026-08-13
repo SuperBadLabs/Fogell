@@ -1,8 +1,8 @@
 # Differential receipt — script-closure-mutates-enclosing.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         f3596e112538198cb641cfb8c2fdb87490ba4e3d0d1abe390a89f9dda22e3542
-case-digest:  b6b66a447ea2a2b59fe9c56656e6ea940c0533b22c681441ca7efd07fee31843
+seal:         c3d64f63fdba27dfe19ebd40d15e2cfccae287fca33de2204b7e9f99a39576e7
+case-digest:  673b2f7de20e81ea5e51fb8b75cc07622277c53d231f35da77e9ed5bba964e5d
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
