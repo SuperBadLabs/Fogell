@@ -40,6 +40,12 @@ let private symbol s : P<unit> = lexeme (skipString s)
 ///
 /// BLOCK COMMENTS ARE THE ONLY HARD CASE: a line comment cannot sit between a break and a
 /// `[` without its own terminating break, so meeting one already means a break.
+///
+/// AND ORDINARY ONES ARE ALL IT HANDLES — FG-190. The scan pairs `*/` with the nearest
+/// `/*` to its LEFT, and Groovy block comments do not nest, so a comment whose own text
+/// contains `/*` pairs the wrong opener and this returns success. An opener is a
+/// FORWARD-lexing fact and no right-to-left scan recovers it; the real fix carries the
+/// break out of `ws` itself.
 let private notAfterLineBreak: P<unit> =
     fun stream ->
         let here = stream.Index
