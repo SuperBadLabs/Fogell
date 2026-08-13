@@ -1091,7 +1091,14 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
                         // FG-183. Parsed, and still not admissible.
                         match LoopControl.misplaced parsed with
                         | keyword :: _ ->
-                            [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
+                            // WORDED FOR BOTH READINGS, because the check cannot tell them
+                            // apart and a refusal that misreports its reason sends an
+                            // author to fix the wrong thing. Outside a loop Jenkins
+                            // rejects the pipeline outright; inside a `switch` arm but not
+                            // as its final statement, Jenkins accepts it and Fogell's
+                            // lowering cannot represent it. Both are refusals here; only
+                            // one is Jenkins agreeing.
+                            [ $"script block: `{keyword}` is not inside a loop, and is not a `switch` arm's final statement — Jenkins rejects the first outright; the second is valid Groovy that Fogell does not model",
                               st.Position ]
                         | [] -> []
                 | None -> []

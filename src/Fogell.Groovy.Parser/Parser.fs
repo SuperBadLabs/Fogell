@@ -395,6 +395,26 @@ let private tryStmt: P<Stmt> =
 /// `switch (e) { case a: … default: … }` — flattened to nested ifs so the
 /// interpreter needs no extra case. Fallthrough is NOT modelled; Jenkinsfile
 /// switches in the corpus all break or return.
+///
+/// FG-183. THE CASE TERMINATOR IS CONSUMED BY THE LOWERING, and it has to be. A `case`
+/// arm's trailing `break` means "this arm is over", which the nested-if form already
+/// expresses structurally because the branches are mutually exclusive. Left in the body it
+/// becomes an `SBreak` with no enclosing loop and no switch left in the AST to explain it:
+/// at runtime it raised a `BreakSignal` that escaped the engine, and once misplaced
+/// `break`s were refused at admission it became a REFUSAL OF VALID GROOVY —
+/// `switch (x) { case 'a': break }` is ordinary code Jenkins runs.
+///
+/// CAUGHT BY THE PRE-PUSH VERIFIER BEFORE IT SHIPPED, and it is precisely the over-broad
+/// fix this branch has made twice before: a rule right about the shape it was written for
+/// and wrong about the neighbouring one. Stripping it HERE, where the switch context still
+/// exists, is what lets the admission check need no notion of `switch` at all.
+///
+/// ONLY THE TRAILING ONE. A `break` elsewhere in an arm — `case 'a': if (x) break; more()`
+/// — is a shape this lowering genuinely cannot represent, because a nested if has no way
+/// to leave an arm early. Honouring it needs `switch` modelled properly; until then it is
+/// left for the admission check to refuse, which is the ADR 0001 answer for something
+/// Fogell cannot model, and that refusal's wording covers both readings rather than
+/// asserting the Jenkins-rejects-it one.
 let private switchStmt: P<Stmt> =
     attempt (
         keyword "switch" >>. between (symbol "(") (symbol ")") exprRef
@@ -406,6 +426,14 @@ let private switchStmt: P<Stmt> =
                      <|> (keyword "default" >>. symbol ":" >>% None))
                     .>>. many (attempt stmtRef))))
         |>> fun (subject, arms) ->
+                // The arm terminator, consumed here — see the note above.
+                let endOfArm (body: Stmt list) =
+                    match List.rev body with
+                    | SBreak :: rest -> List.rev rest
+                    | _ -> body
+
+                let arms = arms |> List.map (fun (k, body) -> k, endOfArm body)
+
                 let dflt =
                     arms |> List.tryPick (fun (k, body) -> if k.IsNone then Some body else None)
 
