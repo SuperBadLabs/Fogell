@@ -162,7 +162,7 @@ module GString =
                 let runInterpreter = if strict then Interpreter.runStrictVars else Interpreter.run
 
                 let outcome =
-                    runInterpreter Budget.defaults Set.empty { Vars = bindings; Funcs = Map.empty } script
+                    runInterpreter Budget.defaults Set.empty (Env.ofValues bindings) script
 
                 // What SURVIVES a placeholder, and what the user is TOLD about it —
                 // shared by the success and fault paths, because Groovy performs an
@@ -182,7 +182,10 @@ module GString =
                 // the same line so the two logs COMPARE instead of being suppressed.
                 let absorb (outcome: Outcome) =
                     carried <-
-                        outcome.Env.Vars
+                        // FG-179: `Env.Vars` holds ref cells now, and this consumer wants a
+                        // SNAPSHOT — the values as they stood when the script ended, not a
+                        // live view into scopes that are already gone.
+                        Env.snapshot outcome.Env
                         |> Map.fold
                             (fun acc k v ->
                                 // outcome.Env.Vars IS the script Binding now — locals

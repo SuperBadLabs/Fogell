@@ -235,7 +235,9 @@ module Interpreter =
         | EVar n ->
             // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
-            | Some v -> v
+            // FG-179: locals are ref CELLS now, so a read derefs. What the closure shares is
+            // the cell, which is why a write made inside one is visible here afterwards.
+            | Some cell -> cell.Value
             | None ->
                 match Map.tryFind n st.Binding with
                 | Some v -> v
@@ -554,7 +556,7 @@ module Interpreter =
 
                                 if not st.EnvUserShadowed then
                                     bodyEnv.Value <-
-                                        { bodyEnv.Value with Vars = Map.add "env" fresh bodyEnv.Value.Vars })
+                                        { bodyEnv.Value with Vars = Map.add "env" (ref fresh) bodyEnv.Value.Vars })
 
                             // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
                             // names it CAPTURED do.
@@ -797,10 +799,17 @@ module Interpreter =
             // the partial-enumeration shape this branch keeps finding.
             if n = "env" then st.EnvUserShadowed <- true
 
-            if Map.containsKey n env.Vars then
-                // a LOCAL (def, parameter, loop/catch variable): lexical update,
-                // the shared binding never sees it
-                Env.withVar n value env
+            // FG-179. WRITE THROUGH THE CELL, and return the SAME env. This used to call
+            // `Env.withVar`, which mints a fresh cell in a fresh map — so the write was
+            // visible only to whoever went on to hold that new map, and a closure assigning
+            // to a captured name changed nothing its creator could see. Groovy captures by
+            // REFERENCE: `marker = 'after'` inside a closure updates the enclosing
+            // `marker`. Ten findings, each looking like a separate bug, were this one line.
+            if Env.assign n value env then
+                // The shared BINDING still never sees it — a local is a local. What changed
+                // is which scopes count as sharing this local: every one holding the cell,
+                // which is exactly the set that can see the variable in Groovy.
+                env
             else
                 // the script BINDING: created on first assignment (the advisory
                 // case), mutated in place — immediately visible everywhere,
@@ -1034,7 +1043,10 @@ module Interpreter =
               LastValue = None
               StrictVars = strictVars
               NewBindings = []
-              Binding = env.Vars }
+              // FG-179: the BINDING is a value map, not cells — it is Groovy's script
+              // binding, already shared and mutable in its own right, so it needs no second
+              // sharing mechanism. Seeded from a SNAPSHOT of the caller's locals.
+              Binding = Env.snapshot env }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -1053,7 +1065,7 @@ module Interpreter =
               Fault = None
               // the BINDING is the outcome's variable view — locals died with
               // their scopes, exactly as Groovy's did
-              Env = { final with Vars = st.Binding }
+              Env = { final with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
               NewBindings = List.rev st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
@@ -1064,13 +1076,13 @@ module Interpreter =
               // NOT the pristine environment: assignments made BEFORE the fault were
               // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
               // still reads x. The mutable binding survives the raise by nature.
-              Env = { hoisted with Vars = st.Binding }
+              Env = { hoisted with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
               NewBindings = List.rev st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = { hoisted with Vars = st.Binding }
+              Env = { hoisted with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
               NewBindings = List.rev st.NewBindings
               Returned = Some v }
 

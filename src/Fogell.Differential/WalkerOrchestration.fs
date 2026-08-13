@@ -2110,8 +2110,7 @@ module WalkerOrchestration =
                         // Both spellings bound, as `when { expression { … } }` learned to:
                         // a bare name AND `env.NAME`.
                         let genv =
-                            { Vars = asValues |> Map.add "env" (VMap asValues)
-                              Funcs = Map.empty }
+                            Env.ofValues (asValues |> Map.add "env" (VMap asValues))
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted
