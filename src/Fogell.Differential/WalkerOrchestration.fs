@@ -377,9 +377,16 @@ module WalkerOrchestration =
                 //
                 // WHAT THIS STILL DOES NOT CATCH, said plainly because the last thing
                 // this class needs is another comment claiming more than it delivers:
-                // it is an ARITY rule only. `deleteDir('x')` takes no argument at all and
-                // is still admitted with one, and no unknown NAMED argument is rejected
-                // anywhere. Those need the per-step schema in FG-177.
+                // it is an ARITY rule only, so no unknown NAMED argument is rejected
+                // anywhere. That needs the per-step schema in FG-177.
+                //
+                // THIS PASSAGE ALSO NAMED `deleteDir('x')` AS STILL ADMITTED WITH AN
+                // ARGUMENT, and that stopped being true in the very change described
+                // below it: `positionalArity` records `deleteDir` at ZERO, and receipt
+                // `script-deletedir-argument` holds the refusal. A caveat that outlives
+                // its defect is the same drift as a claim outrunning its evidence, and
+                // this one sat inside a paragraph warning against precisely that, which
+                // is how it survived several reads.
                 // PER-STEP, from `WalkerRules.positionalArity` — FG-177's first slice.
                 // A blanket "zero or one" could not express a ZERO-argument step, and
                 // `deleteDir('ignored')` duly passed it: the arm ignored the argument,
