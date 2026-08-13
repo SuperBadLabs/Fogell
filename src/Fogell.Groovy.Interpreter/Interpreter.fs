@@ -466,10 +466,23 @@ module Interpreter =
                     | Some h -> h.TakesBlock name
                     | None -> true
 
-                let trailingArg, positionalArgs =
+                // FG-179. THE CLOSURE'S OWN ENV TRAVELS WITH IT. A closure reaching a
+                // wrapper as a VALUE was reduced to its `Closure` and the `Env` beside it in
+                // `VClosure` was dropped, so the body ran against the CALL SITE's scope —
+                // where the names it captured need not exist at all.
+                //
+                // ONCE LOCALS BECAME CELLS THAT STOPPED BEING MERELY LOSSY AND BECAME A
+                // WRONG WRITE. `def makeBody(v) { return { v = 'changed' } }` invoked as
+                // `dir('sub', makeBody('inner'))` with a caller-local `v` assigned THE
+                // CALLER'S `v`, because that was the only `v` in the scope it was handed.
+                // Jenkins changes the captured parameter and leaves the caller's alone.
+                // Before cells the write was discarded and the damage stayed inside; after,
+                // it escaped. Caught in review on PR #54 as a regression of my own change.
+                let trailingArg, capturedEnv, positionalArgs =
                     match trailing, List.rev positionalLazy.Value with
-                    | None, VClosure(c, _) :: rest when takesBlock -> Some c, List.rev rest
-                    | _ -> None, positionalLazy.Value
+                    | None, VClosure(c, closureEnv) :: rest when takesBlock ->
+                        Some c, Some closureEnv, List.rev rest
+                    | _ -> None, None, positionalLazy.Value
 
                 let bodyClosure =
                     match trailing with
@@ -504,7 +517,10 @@ module Interpreter =
                 //   both declares a name and depends on it being unset next time round —
                 //   far narrower than losing every mutation, and the opposite direction
                 //   from the defect it replaces.
-                let bodyEnv = ref env
+                // A closure passed by VALUE brings its own scope; a trailing block is
+                // written at the call site and shares that one. `capturedEnv` is `Some` only
+                // in the first case, which is exactly when they differ.
+                let bodyEnv = ref (defaultArg capturedEnv env)
 
                 let runBody =
                     bodyClosure
@@ -560,8 +576,19 @@ module Interpreter =
                                 let fresh = VMap(Map.ofList current)
 
                                 if not st.EnvUserShadowed then
-                                    bodyEnv.Value <-
-                                        { bodyEnv.Value with Vars = Map.add "env" (ref fresh) bodyEnv.Value.Vars })
+                                    // FG-179. UPDATE THE CELL, do not rebind the name. A
+                                    // fresh `ref` here would detach every closure that had
+                                    // already captured `env`'s cell — a closure created in
+                                    // one retry attempt and invoked in a later one would go
+                                    // on reading the old map, which is the capture-by-value
+                                    // defect this change exists to remove, reintroduced at
+                                    // one name. Raised in review on PR #54.
+                                    match Map.tryFind "env" bodyEnv.Value.Vars with
+                                    | Some cell -> cell.Value <- fresh
+                                    | None ->
+                                        bodyEnv.Value <-
+                                            { bodyEnv.Value with
+                                                Vars = Map.add "env" (ref fresh) bodyEnv.Value.Vars })
 
                             // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
                             // names it CAPTURED do.
@@ -1072,7 +1099,7 @@ module Interpreter =
               Fault = None
               // the BINDING is the outcome's variable view — locals died with
               // their scopes, exactly as Groovy's did
-              Env = { final with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
+              Env = { Env.ofValues st.Binding with Funcs = final.Funcs }
               NewBindings = List.rev st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
@@ -1083,13 +1110,13 @@ module Interpreter =
               // NOT the pristine environment: assignments made BEFORE the fault were
               // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
               // still reads x. The mutable binding survives the raise by nature.
-              Env = { hoisted with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
               NewBindings = List.rev st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = { hoisted with Vars = st.Binding |> Map.map (fun _ v -> ref v) }
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
               NewBindings = List.rev st.NewBindings
               Returned = Some v }
 
