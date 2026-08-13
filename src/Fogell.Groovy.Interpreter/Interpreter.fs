@@ -955,13 +955,18 @@ module Interpreter =
                 // visibility — an assignment made before the break now survives, so the
                 // wrong number reaches a step instead of being discarded with the
                 // environment. Raised in review on PR #54.
+                // WALKED, NOT INDEXED. `xs` is an F# linked list, so `xs[i]` is a linear
+                // lookup and indexing it per iteration made the loop QUADRATIC — within the
+                // 10,000-iteration budget, so nothing refuses it and a long `for` just gets
+                // slow. Introduced by my own break fix and caught in review on PR #54;
+                // holding the tail costs nothing and restores the original traversal.
                 let mutable cur = env
                 let mutable running = true
-                let mutable i = 0
+                let mutable rest = xs
 
-                while running && i < xs.Length do
-                    let x = xs[i]
-                    i <- i + 1
+                while running && not (List.isEmpty rest) do
+                    let x = List.head rest
+                    rest <- List.tail rest
 
                     try
                         cur <- execBlock st (Env.withVar v x cur) body
