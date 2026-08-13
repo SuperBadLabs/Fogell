@@ -22,6 +22,44 @@ let private ws: P<unit> = skipMany (choice [ skipMany1 (anyOf " \t\r\n"); lineCo
 let private lexeme (p: P<'a>) = p .>> ws
 let private symbol s : P<unit> = lexeme (skipString s)
 
+/// FG-187. Succeeds only when the position is NOT the start of a fresh line — i.e. when
+/// nothing but spaces and tabs separates it from something earlier on the same line.
+///
+/// WHY IT HAS TO LOOK BACKWARDS. `ws` skips line breaks, and a token's trailing `ws` runs
+/// before the next token is attempted, so by the time a postfix `[` is tried the newline
+/// that preceded it is already consumed and unrecorded. The information exists only in the
+/// stream behind us.
+///
+/// WHAT IT COSTS AND WHAT IT MISSES, stated rather than discovered: it walks back over
+/// spaces and tabs only. A COMMENT between the line break and the `[` defeats it, and the
+/// index continues as before. That is narrower than the defect it closes and errs toward
+/// the old behaviour rather than toward a new refusal, which is the safe direction for a
+/// grammar change.
+let private notAfterLineBreak: P<unit> =
+    fun stream ->
+        let here = stream.Index
+        let mutable i = here - 1L
+        let mutable sawBreak = false
+        let mutable scanning = true
+
+        while scanning && i >= 0L do
+            stream.Seek i
+            let c = stream.Peek()
+
+            if c = '\n' || c = '\r' then
+                sawBreak <- true
+                scanning <- false
+            elif c = ' ' || c = '\t' then i <- i - 1L
+            else scanning <- false
+
+        stream.Seek here
+
+        if sawBreak then
+            Reply(Error, expected "no line break before '['")
+        else
+            Reply(())
+
+
 let private isIdentStart c = isLetter c || c = '_'
 let private isIdentCont c = isLetter c || isDigit c || c = '_'
 let private rawIdent: P<string> = many1Satisfy2 isIdentStart isIdentCont
@@ -194,7 +232,20 @@ let private postfixChain (start: Expr) : P<Expr> =
                           match args, trailing with
                           | None, None -> EProp(e, n)
                           | a, t -> ECall(MethodCall(e, n), defaultArg a [], t))
-              attempt (between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
+              // FG-187. A postfix index may NOT begin a new line. `def a = false` followed
+              // by a line starting with `[1].each { … }` parsed as the single expression
+              // `false[1].each { … }`: two statements became one, the second never ran, and
+              // `each` faulted on a non-list receiver. Groovy ends a statement at a line
+              // break once it is complete, so both lines run there.
+              //
+              // IT WAS NOT ONLY A FAILURE. Where the swallowed line indexes something real
+              // — `def xs = [1, 2]` then `[0].each { … }` — the result is an ELEMENT rather
+              // than a list and no error is raised at all.
+              //
+              // This masked FG-179 for months: every probe of closure capture was written
+              // across newlines, so the confound sat in the evidence for both sides of that
+              // argument and two observers agreed on a wrong cause.
+              attempt (notAfterLineBreak >>. between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
               attempt (argsInParens .>>. opt (attempt closure)
                        |>> fun (args, t) ->
                                match e with

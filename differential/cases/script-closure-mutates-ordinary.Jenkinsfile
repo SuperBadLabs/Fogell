@@ -24,10 +24,10 @@ pipeline {
         stage('Probe') {
             steps {
                 script {
-                    def n = 0;
-                    def marker = 'before';
+                    def n = 0
+                    def marker = 'before'
 
-                    [1, 2].each { n = n + 1; marker = 'after' };
+                    [1, 2].each { n = n + 1; marker = 'after' }
 
                     echo "n:[${n}] marker:[${marker}]"
                     sh "printf 'n=%s marker=%s' '${n}' '${marker}' > closure.txt"

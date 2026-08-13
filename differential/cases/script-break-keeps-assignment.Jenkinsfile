@@ -21,13 +21,13 @@ pipeline {
         stage('Probe') {
             steps {
                 script {
-                    def y = 0;
-                    def z = 0;
+                    def y = 0
+                    def z = 0
 
                     switch ('a') {
                         case 'a':
                             if (true) {
-                                y = 1;
+                                y = 1
                                 break
                             }
                             y = 9
@@ -35,7 +35,7 @@ pipeline {
 
                     while (true) {
                         if (true) {
-                            z = 1;
+                            z = 1
                             break
                         }
                     }
