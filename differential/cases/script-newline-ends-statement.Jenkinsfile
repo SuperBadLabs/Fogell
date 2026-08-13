@@ -17,7 +17,10 @@
 // walked back over spaces and tabs only. A BLOCK COMMENT between the break and the `[` got
 // the old behaviour — and here that is a SILENT drop, not a loud one: the statement is
 // swallowed into an index expression, its block never runs, and the build reports success.
-// The guard now counts breaks inside comments too. Raised by the pre-push verifier.
+// The guard now counts breaks inside ORDINARY block comments. It does NOT handle a
+// comment whose own TEXT contains `/*` — the scan runs right-to-left and Groovy comments
+// do not nest, so it pairs the wrong opener. That spelling is FG-190, measured and filed
+// rather than papered over with a third backward scan.
 //
 // `same.txt` is the control that keeps the rule narrow: an index on the SAME line is
 // ordinary subscripting and must still work. A guard that refused those would satisfy

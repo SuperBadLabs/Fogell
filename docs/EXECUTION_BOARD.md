@@ -191,8 +191,8 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 181 rows, 101 of them DONE, and the open
-80 are spread 4 / 32 / 34 / 10 across P0–P3. A tier holding thirty open items does not
+**WHY THIS SECTION EXISTS.** The board carries 182 rows, 101 of them DONE, and the open
+81 are spread 4 / 32 / 35 / 10 across P0–P3. A tier holding thirty open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
 review round happened to touch went next. The waves below group by SUBSYSTEM, which is
@@ -538,6 +538,10 @@ changed, and the queue above is what orders them.
 
 | FG-188 | **P1** | TODO | A top-level `def` helper is INVISIBLE inside `script { }`, and it is the corpus's commonest escape construct | MEASURED 2026-08-13. `def greet(v) { return v }` before `pipeline { }`, then `sh "printf got=${greet(7)}"` inside a script block: Jenkins runs it, Fogell fails with an EMPTY workspace. The walker parses only the `script` BODY, so `Ast.definedFunctions` never sees a declaration made outside it and the call is denied as an unknown name. The AST comment on `SFunc` calls this 'the single most common escape construct in the corpus (56 files)', which is what makes an invisible one expensive. FIX DIRECTION: the top-level statements around `pipeline { }` are already parsed by the Declarative parser — their function declarations need to reach the interpreter's `Defined` set, which is a plumbing change rather than a semantic one | interpreter + host probes, both directions |
 | FG-189 | **P1** | TODO | A closure held in a LOCAL cannot be invoked — neither `f(x)` nor `f.call(x)` | MEASURED 2026-08-13 at the interpreter. `def f = { v -> v }; echo "${f(1)}"` is DENIED with 'not a registered step, a script-defined function, or a pure builtin'; the `.call` spelling is denied as 'not a pure builtin'. `Sandbox.admitCall` decides on the NAME, and a name bound to a `VClosure` is not in any of its three categories — so the sandbox is right about what it knows and the gap is that a closure value never becomes callable. **IT ALSO BLOCKS A RECEIPT**: the FG-179 by-value capture fix cannot be proven by differential, because every spelling Jenkins accepts needs this and the one spelling Fogell can run (a `def` method inside `script`) JENKINS REJECTS. Recorded on that fix rather than left implicit | 4 interpreter probes; blocks a receipt named in the FG-179 essay |
+
+---
+
+| FG-190 | P2 | TODO | The FG-187 newline guard mis-pairs a block comment whose own TEXT contains `/*` | RAISED BY THE PRE-PUSH VERIFIER ON PR #54 as the second executable instance of the FG-187 class. The guard scans RIGHT-TO-LEFT for the comment's opener, and Groovy block comments do not nest, so `/* first line\n text /* marker */ [0].each { … }` pairs the inner `/*` and concludes no line break occurred; the `[0].each` is swallowed into an index expression. **SEVERITY MEASURED RATHER THAN INHERITED**: the report described a silent false success with `fault=None`, which is the BATCH interpreter's behaviour. The path `script { }` actually uses is strict, and there it FAULTS — `method 'each' is not modelled by the bounded interpreter` — so for a pipeline this is a false FAILURE, class B, not the ADR 0001 worst class. The batch shape is real but reaches no pipeline today. **WHY NOT A THIRD BACKWARD SCAN**: the opener of a block comment is a forward-lexing fact, and no right-to-left scan can recover it — two versions of this guard have now been wrong in exactly that way. The fix is to carry 'a line break occurred in the trivia' out of `ws` itself, which is a change to how every token is lexed rather than a patch to one guard, and it is filed as such | interpreter probes both directions: the reported spelling faults, an ordinary block comment runs both statements |
 
 ---
 

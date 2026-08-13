@@ -1,8 +1,8 @@
 # Differential receipt — script-newline-ends-statement.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         7ed4b9a90689a44bcf5ac756f564b0612469f6b169d8d83f205d5d1ae3e794a1
-case-digest:  92bb6564cb7f0929106874e760af6fd3029abc4ae9442c324ee369333905d241
+seal:         4121a1f61e8c6630a3c3e3c91f32dc3916bda88b7b4ee64ad9fe2dacbeb20268
+case-digest:  412d0554b340c1040d311b7b1305148d27e870fcdf9878f34a56da99b14877cb
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
