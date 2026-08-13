@@ -1004,41 +1004,61 @@ module private LoopControl =
     open Fogell.Groovy
 
     let misplaced (script: Script) : string list =
-        let rec stmts inLoop ss = ss |> List.collect (stmt inLoop)
+        // TWO FLAGS, NOT ONE, because `switch` legalises exactly one of the two keywords.
+        // A single `inLoop` could not say "break is fine here, continue is not": passing it
+        // as true for an arm body admitted a `continue` that belongs to a loop there isn't
+        // one of, and passing it through unchanged refused a `break` the switch itself
+        // catches. The language distinguishes them, so the walk has to.
+        let rec stmts breakOk continueOk ss =
+            ss |> List.collect (stmt breakOk continueOk)
 
-        and stmt inLoop s =
+        and stmt breakOk continueOk s =
             match s with
-            | SBreak -> if inLoop then [] else [ "break" ]
-            | SContinue -> if inLoop then [] else [ "continue" ]
-            | SWhile(c, b) -> expr c @ stmts true b
-            | SForIn(_, src, b) -> expr src @ stmts true b
-            | SIf(c, a, b) -> expr c @ stmts inLoop a @ stmts inLoop b
+            | SBreak -> if breakOk then [] else [ "break" ]
+            | SContinue -> if continueOk then [] else [ "continue" ]
+            | SWhile(c, b) -> expr c @ stmts true true b
+            | SForIn(_, src, b) -> expr src @ stmts true true b
+            // A SWITCH IS A BREAK BOUNDARY — the interpreter catches the signal at the
+            // switch, so `break` is legal in any arm at any depth. `continue` is untouched
+            // by it and still needs a real enclosing loop. Three defects came from this
+            // distinction being unrepresentable while `switch` was lowered to nested ifs;
+            // with the node it is one arm that says what the language says.
+            | SSwitch(subject, arms) ->
+                expr subject
+                @ (arms
+                   |> List.collect (fun (case_, b) ->
+                       (case_ |> Option.map expr |> Option.defaultValue [])
+                       @ stmts true continueOk b))
+            | SIf(c, a, b) -> expr c @ stmts breakOk continueOk a @ stmts breakOk continueOk b
             | STry(b, catch, fin) ->
-                stmts inLoop b
-                @ (catch |> Option.map (fun (_, _, h) -> stmts inLoop h) |> Option.defaultValue [])
-                @ stmts inLoop fin
-            // A function body is its own scope: a loop around the DEFINITION does not make a
-            // `break` inside the function legal.
-            | SFunc(_, _, b) -> stmts false b
+                stmts breakOk continueOk b
+                @ (catch
+                   |> Option.map (fun (_, _, h) -> stmts breakOk continueOk h)
+                   |> Option.defaultValue [])
+                @ stmts breakOk continueOk fin
+            // A function body is its own scope: a loop around the DEFINITION does not make
+            // a `break` inside the function legal.
+            | SFunc(_, _, b) -> stmts false false b
             | SExpr e -> expr e
             | SDef(_, v) -> v |> Option.map expr |> Option.defaultValue []
             | SAssign(t, v) -> expr t @ expr v
             | SReturn v -> v |> Option.map expr |> Option.defaultValue []
             | SThrow e -> expr e
 
-        // EVERY expression form is walked, and the wildcard is deliberately absent: a closure
-        // can be written anywhere a value can, so a `| _ -> []` catch-all here would silently
-        // stop checking whichever form was added next. FS0025 makes that a build error.
+        // EVERY expression form is walked, and the wildcard is deliberately absent: a
+        // closure can be written anywhere a value can, so a `| _ -> []` catch-all would
+        // silently stop checking whichever form was added next. FS0025 makes that a build
+        // error instead.
         and expr e =
             match e with
-            | EClosure c -> stmts false c.Body
+            | EClosure c -> stmts false false c.Body
             | ECall(target, args, trailing) ->
                 callTarget target
                 @ (args
                    |> List.collect (function
                        | APos v -> expr v
                        | ANamed(_, v) -> expr v))
-                @ (trailing |> Option.map (fun c -> stmts false c.Body) |> Option.defaultValue [])
+                @ (trailing |> Option.map (fun c -> stmts false false c.Body) |> Option.defaultValue [])
             | EGString parts ->
                 parts
                 |> List.collect (function
@@ -1065,7 +1085,7 @@ module private LoopControl =
             | MethodCall(target, _)
             | SafeMethodCall(target, _) -> expr target
 
-        stmts false script
+        stmts false false script
 
 /// FG-178. Every `script { }` body in the model, including nested stages, nested step
 /// blocks and both `post` levels.

@@ -339,44 +339,6 @@ expect_refusal_before_effects continue-outside-loop early.txt 'pipeline {
     }
 }'
 
-# FG-183, SECOND INSTANCE. THE SWITCH-ARM BREAK INSIDE A LOOP, which is the one that was
-# SILENT. With no enclosing loop a leftover arm `break` was refused, so the first fix
-# looked complete; inside a loop the admission check sees `inLoop = true`, admits it, and
-# the interpreter's loop handler catches the signal as a LOOP break — leaving the whole
-# loop instead of the arm, and reporting SUCCESS having skipped the rest. Groovy leaves
-# only the switch and runs `after-switch`.
-#
-# THE MARKER IS `after-switch.txt` AND NOT THE REFUSAL ALONE. An engine that refuses for
-# any reason passes an arm that only checks for a refusal, and the previous fix DID refuse
-# this shape — just not when a loop was wrapped around it. Asserting no stage ran is what
-# separates "refused" from "ran the loop and quietly skipped work".
-expect_refusal_before_effects switch-arm-break-in-loop after-switch.txt 'pipeline {
-    agent any
-    stages {
-        stage("early") {
-            steps {
-                sh "touch after-switch.txt"
-            }
-        }
-        stage("two") {
-            steps {
-                script {
-                    while (true) {
-                        switch ("a") {
-                            case "a":
-                                if (true) {
-                                    break
-                                }
-                                sh "touch arm-after.txt"
-                        }
-                        sh "touch after-switch.txt"
-                    }
-                }
-            }
-        }
-    }
-}'
-
 if [ "$FAILED" -eq 0 ]; then
   echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, a misplaced break/continue refuses BEFORE any stage runs, and every control still runs"
 else

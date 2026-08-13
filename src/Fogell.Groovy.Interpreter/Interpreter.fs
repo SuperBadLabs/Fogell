@@ -897,6 +897,66 @@ module Interpreter =
                 | BreakSignal -> running <- false
 
             cur
+        // FG-183. A SWITCH IS A BREAK BOUNDARY, which is the whole reason this node exists
+        // rather than a lowering to nested ifs. `BreakSignal` is caught HERE, so an arm's
+        // `break` leaves the switch and execution continues after it — including when the
+        // switch sits inside a loop, where the lowered form let the signal reach the loop
+        // handler and silently leave the LOOP instead. `ContinueSignal` is deliberately NOT
+        // caught: `continue` belongs to an enclosing loop and must pass straight through.
+        //
+        // FALLTHROUGH IS REAL. Groovy runs from the matching arm ONWARD until a `break`, so
+        // the arms are executed as a sequence starting at the match rather than as one
+        // isolated body. The nested-if lowering could not express this at all — its
+        // branches are mutually exclusive — and recorded it as a known gap justified by the
+        // corpus rather than by the language.
+        | SSwitch(subject, arms) ->
+            st.LastValue <- None
+            let v = evalExpr st env subject
+
+            // `default` matches by POSITION, not by precedence: it is chosen only when no
+            // case matches, and fallthrough then continues from where it sits in source
+            // order. Hoisting it to the end would run the wrong arms after it.
+            let entry =
+                arms
+                |> List.tryFindIndex (fun (k, _) ->
+                    match k with
+                    // The SAME equality `==` uses (line 340), not a second opinion: a
+                    // switch that matched by a different rule than the operator would be
+                    // its own defect, and the lowered form got this right by construction
+                    // because it literally built an `EBinary("==", …)`.
+                    | Some case -> v = evalExpr st env case
+                    | None -> false)
+                |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
+
+            match entry with
+            | None -> env
+            | Some i ->
+                // STATEMENT BY STATEMENT, NOT `execBlock` PER ARM, and the difference is a
+                // measured wrong answer rather than a style choice. `execBlock` folds a
+                // whole body and RETURNS the environment, so a `break` part-way through
+                // unwinds past the return and every assignment the arm had already made is
+                // discarded. Measured against Jenkins with the arm-level fold:
+                // `case 'b': log = log + 'B'; break` gave `log:[abDz]` where Jenkins gives
+                // `log:[aBbDz]`, and the fallthrough arm gave `fall:[P]` against `PQ` —
+                // the value was computed and then thrown away by the unwind.
+                //
+                // KNOWN LIMIT, stated rather than left to be found: an assignment made
+                // inside a NESTED block before a break — `case 'a': if (x) { y = 1; break }`
+                // — is still lost, because that block is itself an `execBlock` whose return
+                // the unwind skips. `SWhile` has had the identical shape all along. Both
+                // dissolve when FG-179 makes variables ref cells, which is where the fix
+                // belongs; a second partial-env mechanism here would be the ninth guard
+                // that ticket exists to stop.
+                let mutable cur = env
+
+                try
+                    for _, body in List.skip i arms do
+                        for s in body do
+                            cur <- execStmt st cur s
+                with BreakSignal ->
+                    ()
+
+                cur
         | SReturn e -> raise (ReturnSignal(match e with Some x -> evalExpr st env x | None -> VNull))
         | SBreak -> raise BreakSignal
         | SContinue -> raise ContinueSignal

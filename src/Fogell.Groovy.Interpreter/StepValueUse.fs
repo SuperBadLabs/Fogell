@@ -165,6 +165,13 @@ module StepValueUse =
             | SWhile(c, body) ->
                 expr "a while condition" true c
                 stmts body
+            | SSwitch(subject, arms) ->
+                expr "a switch subject" true subject
+                for case_, body in arms do
+                    // A `case` label is a VALUE position too — `case sh(…):` uses
+                    // a step's result exactly as an if condition would.
+                    case_ |> Option.iter (expr "a switch case label" true)
+                    stmts body
             | SReturn e -> e |> Option.iter (expr "a return value" true)
             | SThrow e -> expr "a thrown value" true e
             | STry(body, catch, fin) ->
@@ -289,6 +296,11 @@ module StepValueUse =
             | SWhile(c, body) ->
                 expr c
                 stmts body
+            | SSwitch(subject, arms) ->
+                expr subject
+                for case_, body in arms do
+                    case_ |> Option.iter expr
+                    stmts body
             | SReturn e -> e |> Option.iter expr
             | SThrow e -> expr e
             | STry(body, catch, fin) ->

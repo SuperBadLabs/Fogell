@@ -392,35 +392,33 @@ let private tryStmt: P<Stmt> =
 
                 STry(b, catch, defaultArg f []))
 
-/// `switch (e) { case a: … default: … }` — flattened to nested ifs so the
-/// interpreter needs no extra case. Fallthrough is NOT modelled; Jenkinsfile
-/// switches in the corpus all break or return.
+/// `switch (e) { case a: … default: … }` — a REAL NODE, `SSwitch`, carrying the arms in
+/// source order.
 ///
-/// FG-183. THE CASE TERMINATOR IS CONSUMED BY THE LOWERING, and it has to be. A `case`
-/// arm's trailing `break` means "this arm is over", which the nested-if form already
-/// expresses structurally because the branches are mutually exclusive. Left in the body it
-/// becomes an `SBreak` with no enclosing loop and no switch left in the AST to explain it:
-/// at runtime it raised a `BreakSignal` that escaped the engine, and once misplaced
-/// `break`s were refused at admission it became a REFUSAL OF VALID GROOVY —
-/// `switch (x) { case 'a': break }` is ordinary code Jenkins runs.
+/// IT USED TO BE LOWERED to nested ifs, "so the interpreter needs no extra case". That
+/// saved one interpreter arm and cost three consecutive defects, each found by the
+/// pre-push verifier on the fix for the last:
 ///
-/// CAUGHT BY THE PRE-PUSH VERIFIER BEFORE IT SHIPPED, and it is precisely the over-broad
-/// fix this branch has made twice before: a rule right about the shape it was written for
-/// and wrong about the neighbouring one. Stripping it HERE, where the switch context still
-/// exists, is what lets the admission check need no notion of `switch` at all.
+///   1. the arm-final `break` became an `SBreak` with no loop around it — at runtime a
+///      `BreakSignal` escaping the engine, and once FG-183 refused misplaced breaks, a
+///      REFUSAL OF VALID GROOVY.
+///   2. consuming just that one left `case 'a': if (x) break; more()` in the tree. Outside
+///      a loop it was refused, so the fix looked complete; INSIDE one the admission check
+///      saw `inLoop = true` and the interpreter's loop handler caught the signal as a LOOP
+///      break — success reported, work skipped.
+///   3. refusing every remaining arm `break` then over-refused `case 'a': if (true) break`,
+///      which Groovy accepts and continues past.
 ///
-/// ONLY THE TRAILING ONE. A `break` elsewhere in an arm — `case 'a': if (x) break; more()`
-/// — is a shape this lowering genuinely cannot represent, because a nested if has no way
-/// to leave an arm early. Honouring it needs `switch` modelled properly; until then it is
-/// REFUSED BELOW, before the lowering, while the arm is still known.
+/// Three positions, each defensible against the previous failure and wrong about the next,
+/// which is the signature of compensating for missing structure instead of supplying it. A
+/// switch IS a break boundary; the lowering destroyed exactly that, and every downstream
+/// stage then had to guess. The node restores it and all three questions stop being
+/// questions.
 ///
-/// AN EARLIER VERSION OF THIS COMMENT SAID IT WAS "left for the admission check to refuse".
-/// That was true with no enclosing loop and FALSE with one — inside a loop the admission
-/// check sees `inLoop = true`, admits the bare `SBreak`, and the interpreter's loop handler
-/// catches it as a LOOP break, silently leaving the loop instead of the arm. The claim was
-/// written without the qualifier that decided it, which is the documentation-overclaim
-/// shape `audit-claims.bb` exists for and which no checker catches in a comment about
-/// control flow.
+/// FALLTHROUGH IS NOW MODELLED TOO, because the node can express it and nested ifs could
+/// not: they are mutually exclusive, so an arm without a `break` stopped rather than
+/// running into the next. The old comment called that a known gap, justified by the corpus
+/// rather than by the language.
 let private switchStmt: P<Stmt> =
     attempt (
         keyword "switch" >>. between (symbol "(") (symbol ")") exprRef
@@ -431,79 +429,7 @@ let private switchStmt: P<Stmt> =
                     (attempt (keyword "case" >>. exprRef .>> symbol ":") |>> Some
                      <|> (keyword "default" >>. symbol ":" >>% None))
                     .>>. many (attempt stmtRef))))
-        >>= fun (subject, arms) ->
-                // The arm terminator, consumed here — see the note above.
-                let endOfArm (body: Stmt list) =
-                    match List.rev body with
-                    | SBreak :: rest -> List.rev rest
-                    | _ -> body
-
-                let arms = arms |> List.map (fun (k, body) -> k, endOfArm body)
-
-                // ANY REMAINING `break` IN AN ARM IS REFUSED HERE, BEFORE THE LOWERING,
-                // and it has to be here because after the lowering the switch is gone.
-                //
-                // SECOND INSTANCE OF THIS CLASS, caught by the pre-push verifier on the
-                // fix for the first. Consuming only the arm-final `break` left
-                // `case 'a': if (x) break; more()` in the tree as a bare `SBreak`. Outside
-                // a loop the admission check refused it — but INSIDE one, `inLoop` is true,
-                // the check admits it, and the interpreter's loop handler catches the
-                // signal as a LOOP break. So `while (…) { switch ('a') { case 'a': if (true)
-                // break; … }; sh 'touch after-switch.txt' }` left the whole loop: Fogell
-                // reported SUCCESS having skipped `after-switch.txt`, where Groovy leaves
-                // only the switch and runs it. A green build skipping work — ADR 0001's
-                // worst class — reached by a `break` that means one thing to the language
-                // and another to the tree it was lowered into.
-                //
-                // IT ALSO FALSIFIED THE PREVIOUS FIX'S OWN COMMENT, which said such a
-                // `break` "is left for the admission check to refuse". True with no
-                // enclosing loop, false with one, and stated without the qualifier.
-                //
-                // Refusing while the arm is still known is what makes the claim true in
-                // both cases, and it is why the admission check can go back to naming the
-                // one thing it actually knows: a `break` with no loop around it.
-                let rec armBreaks (ss: Stmt list) =
-                    ss
-                    |> List.exists (function
-                        | SBreak -> true
-                        | SIf(_, a, b) -> armBreaks a || armBreaks b
-                        | STry(b, c, f) ->
-                            armBreaks b
-                            || (c |> Option.map (fun (_, _, h) -> armBreaks h) |> Option.defaultValue false)
-                            || armBreaks f
-                        // A nested loop OWNS its breaks, and a function body is its own
-                        // scope. A `break` inside a closure is invalid Groovy wherever it
-                        // appears, so the admission check reports that one rather than
-                        // this parser blaming the switch for it.
-                        | SWhile _
-                        | SForIn _
-                        | SFunc _
-                        | SExpr _
-                        | SDef _
-                        | SAssign _
-                        | SReturn _
-                        | SThrow _
-                        | SContinue -> false)
-
-                if arms |> List.exists (snd >> armBreaks) then
-                    fail
-                        "a `switch` arm's `break` is supported only as the arm's final statement; \
-                         Fogell lowers `switch` to nested conditionals, which cannot leave an arm early"
-                else
-
-                let dflt =
-                    arms |> List.tryPick (fun (k, body) -> if k.IsNone then Some body else None)
-
-                arms
-                |> List.choose (fun (k, body) -> k |> Option.map (fun v -> v, body))
-                |> List.rev
-                |> List.fold
-                    (fun acc (v, body) -> [ SIf(EBinary("==", subject, v), body, acc) ])
-                    (defaultArg dflt [])
-                |> function
-                    | [ single ] -> single
-                    | many -> SIf(EBool true, many, [])
-                |> preturn)
+        |>> SSwitch)
 
 let private returnStmt: P<Stmt> = attempt (keyword "return" >>. opt exprRef |>> SReturn)
 let private throwStmt: P<Stmt> = attempt (keyword "throw" >>. exprRef |>> SThrow)

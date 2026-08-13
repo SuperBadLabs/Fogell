@@ -63,6 +63,23 @@ and Stmt =
     | SIf of cond: Expr * thenBranch: Stmt list * elseBranch: Stmt list
     | SForIn of var: string * source: Expr * body: Stmt list
     | SWhile of cond: Expr * body: Stmt list
+    /// FG-183. `switch (subject) { case a: … default: … }`, arms in SOURCE ORDER, `None`
+    /// marking `default`.
+    ///
+    /// THIS NODE EXISTS BECAUSE ITS ABSENCE COST THREE CONSECUTIVE DEFECTS. The parser
+    /// lowered a switch to nested `SIf`s — faithful for the arm bodies, and it discarded
+    /// the one thing `break` depends on: a switch IS a break boundary, and afterwards
+    /// nothing was left to say so. Each attempt to compensate downstream (consume the
+    /// arm-final `break`; then refuse the rest) was right about the shape it was written
+    /// for and wrong about the neighbouring one, ending in an over-refusal of
+    /// `case 'a': if (true) break`, which Groovy accepts and runs on past. Context that a
+    /// later stage needs cannot be destroyed by an earlier one.
+    ///
+    /// It also makes FALLTHROUGH expressible, which the lowering could not manage at all:
+    /// nested ifs are mutually exclusive, so an arm without a `break` stopped rather than
+    /// continuing into the next. That was recorded as a known gap on the grounds that
+    /// corpus switches all break or return — true of the corpus, and not of Groovy.
+    | SSwitch of subject: Expr * arms: (Expr option * Stmt list) list
     | SReturn of Expr option
     | SBreak
     | SContinue
@@ -89,6 +106,9 @@ module Ast =
               | SIf(_, a, b) -> countStmts a + countStmts b
               | SForIn(_, _, b)
               | SWhile(_, b) -> countStmts b
+              // Every arm body counts: the admission bound must see the whole switch,
+              // not just its subject.
+              | SSwitch(_, arms) -> arms |> List.sumBy (snd >> countStmts)
               | STry(b, c, f) ->
                   countStmts b
                   + (match c with
@@ -159,6 +179,11 @@ module Ast =
             | SIf(c, a, b) -> Set.unionMany [ ofExpr c; freeCalls a; freeCalls b ]
             | SForIn(_, src, b) -> Set.union (ofExpr src) (freeCalls b)
             | SWhile(c, b) -> Set.union (ofExpr c) (freeCalls b)
+            | SSwitch(subject, arms) ->
+                Set.unionMany (
+                    ofExpr subject
+                    :: (arms |> List.map (fun (k, b) -> Set.union (k |> Option.map ofExpr |> Option.defaultValue Set.empty) (freeCalls b)))
+                )
             | SReturn(Some e) -> ofExpr e
             | SReturn None -> Set.empty
             | SBreak
@@ -183,6 +208,7 @@ module Ast =
             | SIf(_, a, b) -> Set.union (definedFunctions a) (definedFunctions b)
             | SForIn(_, _, b)
             | SWhile(_, b) -> definedFunctions b
+            | SSwitch(_, arms) -> arms |> List.map (snd >> definedFunctions) |> Set.unionMany
             | STry(b, c, f) ->
                 Set.unionMany
                     [ definedFunctions b
