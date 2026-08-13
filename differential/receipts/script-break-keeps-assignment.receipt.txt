@@ -1,8 +1,8 @@
 # Differential receipt — script-break-keeps-assignment.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         15dce9118ae2a92e9ff57da9e7b31309d159fc12923e6f0c6f94675f2d77854e
-case-digest:  ef692aa4ff0a429f0e8c3409940500e6e36669689cc6d740a040c46475f1e762
+seal:         a7c25f95bae97381e90ef2ae131a7df39d83e5cc116a233253ab289136fb4b2b
+case-digest:  b400c8c0d567c9344206b5a943d7532f463f266b3174b0f4f6722b0bb96dafb8
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash

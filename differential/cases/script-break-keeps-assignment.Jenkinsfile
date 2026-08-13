@@ -12,9 +12,6 @@
 // The `y = 9` after the `if` must NOT run: it is what distinguishes "the break left the
 // arm and kept the write" from "the break was ignored and the arm ran on".
 //
-// Semicolons are FG-187, as in the sibling closure cases — a line starting with `[` or a
-// statement following a complete expression can be swallowed by the previous line. Drop
-// them when that lands; the case should still pass.
 pipeline {
     agent any
     stages {
