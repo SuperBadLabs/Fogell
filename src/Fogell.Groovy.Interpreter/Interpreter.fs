@@ -943,14 +943,31 @@ module Interpreter =
                 if xs.Length > st.Budget.MaxLoopIterations then
                     raise (Stop(BudgetExhausted "loop exceeds the iteration budget"))
 
+                // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
+                // and carried on with the next element, so `for (x in xs) { … break }` ran
+                // the body for every element — `SWhile` one arm below has always stopped
+                // correctly, which is what makes this a transcription slip rather than a
+                // design question.
+                //
+                // PRE-EXISTING, NOT A REF-CELL REGRESSION, and worth separating because
+                // three findings on this branch WERE regressions of that change: the
+                // `with BreakSignal -> ()` line predates it. What cells changed is
+                // visibility — an assignment made before the break now survives, so the
+                // wrong number reaches a step instead of being discarded with the
+                // environment. Raised in review on PR #54.
                 let mutable cur = env
+                let mutable running = true
+                let mutable i = 0
 
-                for x in xs do
+                while running && i < xs.Length do
+                    let x = xs[i]
+                    i <- i + 1
+
                     try
                         cur <- execBlock st (Env.withVar v x cur) body
                     with
                     | ContinueSignal -> ()
-                    | BreakSignal -> ()
+                    | BreakSignal -> running <- false
 
                 cur
             | _ -> env

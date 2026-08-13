@@ -191,7 +191,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 185 rows, 101 of them DONE, and the open
+**WHY THIS SECTION EXISTS.** The board carries 186 rows, 102 of them DONE, and the open
 84 are spread 4 / 34 / 36 / 10 across P0–P3. A tier holding thirty open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
@@ -551,6 +551,10 @@ changed, and the queue above is what orders them.
 ---
 
 | FG-193 | **P1** | TODO | A Groovy map is a REFERENCE object; `VMap` has no identity, so aliases do not see each other's mutations | RAISED IN REVIEW ON PR #54 as two findings that are one root, which is why they are one ticket. **(a)** `def local = [:]; def env = local; env.FOO = …` — the FG-179 assignment arm replaces the `env` cell's `VMap` with a NEW map, so `local` still holds the old one. Groovy mutates the shared object and both names see it. **(b)** `def saved = env; def env = saved; env.FOO = …` — rebinding through an alias mints a fresh cell, which is not in the Jenkins-provenance set, so a write to what IS the Jenkins environment is treated as a local map mutation. Provenance by cell identity is right for VARIABLES and cannot answer a question about the identity of the VALUE. **THE SHAPE IS THE ONE FG-179 JUST SOLVED ONE LEVEL DOWN.** Locals needed reference semantics and got ref cells; maps need the same and have an immutable `Map` inside an F# union. Patching the assignment arm to mutate 'the shared object' is not possible while no shared object exists, so this is a VALUE-MODEL change — most likely `VMap of Map<string, Value> ref` — with the same blast radius ref cells had, and it belongs in its own PR. NOT MEASURED: both are reviewer constructions, and the second needs the walker to supply a real Jenkins env, so neither is probed here | 2 reviewer constructions, unmeasured |
+
+---
+
+| FG-194 | **P1** | **DONE** | `break` inside a `for-in` was caught PER ITERATION, so the loop ran the body for every remaining element | RAISED IN REVIEW ON PR #54. The handler had `with BreakSignal -> ()`, which resumes the next iteration; `SWhile` one arm below has always set its running flag to false, so this is a transcription slip rather than a design question. **PRE-EXISTING, NOT A REF-CELL REGRESSION**, and worth separating because three findings on this branch WERE regressions of that change: the line predates it. What cells changed is VISIBILITY — an assignment made before the break now survives, so a wrong value reaches a step instead of being discarded with the environment, which is how the reviewer saw it. FIXED with the same shape `SWhile` uses. Probed all three paths, because a break fix that broke `continue` would be a worse trade: break stops (`picked:[a]`), continue skips one (`seen:[b]`), and an unsignalled loop still runs every element (`all:[ab]`) | receipt `script-for-in-break`, tier 1: `picked` holds the FIRST element only, which separates BOTH wrong answers — resuming after the break and treating it as `continue` each leave all three — and `after.txt` proves the loop was left rather than the script abandoned |
 
 ---
 
