@@ -191,8 +191,8 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 182 rows, 101 of them DONE, and the open
-81 are spread 4 / 32 / 35 / 10 across P0–P3. A tier holding thirty open items does not
+**WHY THIS SECTION EXISTS.** The board carries 184 rows, 101 of them DONE, and the open
+83 are spread 4 / 33 / 36 / 10 across P0–P3. A tier holding thirty open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
 review round happened to touch went next. The waves below group by SUBSYSTEM, which is
@@ -542,6 +542,11 @@ changed, and the queue above is what orders them.
 ---
 
 | FG-190 | P2 | TODO | The FG-187 newline guard mis-pairs a block comment whose own TEXT contains `/*` | RAISED BY THE PRE-PUSH VERIFIER ON PR #54 as the second executable instance of the FG-187 class. The guard scans RIGHT-TO-LEFT for the comment's opener, and Groovy block comments do not nest, so `/* first line\n text /* marker */ [0].each { … }` pairs the inner `/*` and concludes no line break occurred; the `[0].each` is swallowed into an index expression. **SEVERITY MEASURED RATHER THAN INHERITED**: the report described a silent false success with `fault=None`, which is the BATCH interpreter's behaviour. The path `script { }` actually uses is strict, and there it FAULTS — `method 'each' is not modelled by the bounded interpreter` — so for a pipeline this is a false FAILURE, class B, not the ADR 0001 worst class. The batch shape is real but reaches no pipeline today. **WHY NOT A THIRD BACKWARD SCAN**: the opener of a block comment is a forward-lexing fact, and no right-to-left scan can recover it — two versions of this guard have now been wrong in exactly that way. The fix is to carry 'a line break occurred in the trivia' out of `ws` itself, which is a change to how every token is lexed rather than a patch to one guard, and it is filed as such | interpreter probes both directions: the reported spelling faults, an ordinary block comment runs both statements |
+
+---
+
+| FG-191 | **P1** | TODO | Ref cells can build a CYCLIC value graph, and `==` walks it structurally | RAISED IN REVIEW ON PR #54. `def make() { def c; c = { c }; return c }` returns a closure whose captured `Env` holds the cell that holds the closure, so `Value -> Env -> ref -> Value` closes a loop. Structural equality on two such values recurses without bound. Before FG-179 locals were copied and the graph could not close. NOT MEASURED YET — it needs a probe that builds the cycle and compares, and the shape is easy to get wrong in a way that looks like a hang rather than a defect, so it is filed at the reviewer's description rather than at a severity I have not established. FIX DIRECTION: compare by cell IDENTITY rather than structurally wherever a `VClosure` is involved, which is also what Groovy does — closures are reference-equal or not equal | reviewer's construction; unmeasured |
+| FG-192 | P2 | TODO | The FG-187 newline guard is too strict INSIDE a grouped expression | RAISED IN REVIEW ON PR #54. Groovy continues an expression across a line break while a bracket is open, so `(xs\n[0])` is an ordinary index there and Fogell now refuses it. The guard asks only 'is there a break before this `[`', which is the right question at STATEMENT level and the wrong one inside parentheses. Direction: a FALSE REFUSAL, which is the conservative side, and it is filed rather than rushed because the fix wants the same trivia tracking as FG-190 — the guard needs to know the bracket depth as well as the break | reviewer's construction; unmeasured |
 
 ---
 

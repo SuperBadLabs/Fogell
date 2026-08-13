@@ -661,9 +661,22 @@ module Interpreter =
                 | Some(ps, body) ->
                     st.Depth <- st.Depth + 1
 
+                    // FG-179. A FUNCTION BODY DOES NOT SEE THE CALLER'S LOCALS. This
+                    // folded the parameters onto the CALLER's `env`, which was merely
+                    // wasteful while locals were copied and became a WRONG WRITE once they
+                    // were cells: `def x = 'outer'; def change() { x = 'inner' }; change()`
+                    // reached through and assigned the caller's `x`. A Groovy method cannot
+                    // do that — it has no access to the calling frame's locals, and an
+                    // assignment there goes to the script binding, which `st.Binding`
+                    // already models and which the `EVar` fallback still reaches.
+                    //
+                    // `Funcs` is carried so recursion and mutual calls still resolve; only
+                    // the VARIABLE scope is isolated. Raised in review on PR #54 as the
+                    // second regression of the ref-cell change, and it is the same shape as
+                    // the first: cells made an existing sloppiness observable.
                     let callEnv =
                         List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
-                        |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
+                        |> List.fold (fun acc (p, v) -> Env.withVar p v acc) { Env.empty with Funcs = env.Funcs }
 
                     let result =
                         try
