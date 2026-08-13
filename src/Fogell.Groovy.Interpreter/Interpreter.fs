@@ -493,9 +493,14 @@ module Interpreter =
                 //   is not a retry. The cell carries the environment ACROSS invocations,
                 //   which is what a closure does.
                 //
-                //   KNOWN LIMIT, stated rather than left to be discovered: variables
-                //   DECLARED inside the body also persist between invocations, where
-                //   Groovy would create them afresh. That is visible only to a body that
+                //   KNOWN LIMIT, stated rather than left to be discovered, and NOT
+                //   re-measured since FG-179 made locals ref cells and therefore UNPROVEN
+                //   either way — the sibling limit
+                //   recorded on `SSwitch` dissolved under that change (receipt
+                //   `script-break-keeps-assignment`), so this one may have too: variables
+                //   DECLARED inside the body also persist between
+                //   invocations, where Groovy would create them afresh. That is visible
+                //   only to a body that
                 //   both declares a name and depends on it being unset next time round —
                 //   far narrower than losing every mutation, and the opposite direction
                 //   from the defect it replaces.
@@ -949,13 +954,15 @@ module Interpreter =
                 // `log:[aBbDz]`, and the fallthrough arm gave `fall:[P]` against `PQ` —
                 // the value was computed and then thrown away by the unwind.
                 //
-                // KNOWN LIMIT, stated rather than left to be found: an assignment made
-                // inside a NESTED block before a break — `case 'a': if (x) { y = 1; break }`
-                // — is still lost, because that block is itself an `execBlock` whose return
-                // the unwind skips. `SWhile` has had the identical shape all along. Both
-                // dissolve when FG-179 makes variables ref cells, which is where the fix
-                // belongs; a second partial-env mechanism here would be the ninth guard
-                // that ticket exists to stop.
+                // THAT LIMIT IS GONE, and it went the way the note predicted. This said an
+                // assignment inside a NESTED block before a break — `case 'a': if (x) { y = 1;
+                // break }` — was still lost, because the block is its own `execBlock` whose
+                // return the unwind skips, and that both this and `SWhile`'s identical shape
+                // "dissolve when FG-179 makes variables ref cells". FG-179 landed and they
+                // did: receipt `script-break-keeps-assignment` holds both shapes, the switch
+                // arm yielding `y:[1]` and the `while` body `z:[1]`, where each previously
+                // kept the pre-block value.
+                // A write now goes THROUGH the variable's cell, so no unwind can skip it.
                 let mutable cur = env
 
                 try
