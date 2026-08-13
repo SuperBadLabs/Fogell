@@ -1,8 +1,8 @@
 # Differential receipt — script-switch-case-break.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d40f499b829c8071563caf36c3e85430f757dae50c56c4dd42170d19c3c33b10
-case-digest:  e57e23d37c18c5fe8950c3a2f573d333e170b259cadb30d85b3fd372d6be08fa
+seal:         fe3cd45ff960e967f76fb6faa72a5d3bd209c1daabec8024f777cc86531410de
+case-digest:  ad6fee99d7f9ad80c4e7d81e38ac217a727d4af52ab086ebc36bf140e853ea14
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash

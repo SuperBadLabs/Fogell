@@ -1116,9 +1116,14 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
                             // arm's final statement" — because a lowered `switch` could
                             // still deliver an arm's `break` here, and Jenkins ACCEPTS
                             // that one, so claiming a compile rejection would have been
-                            // false. The Groovy parser now refuses those while the arm is
-                            // still known, so nothing reaching this point is a switch arm
-                            // and the plain reason is true again.
+                            // false. It is true now for a DIFFERENT reason than that hedge
+                            // recorded, and the stale rationale outlived the lowering that
+                            // made it necessary: `LoopControl.misplaced` accounts for
+                            // switch break boundaries itself, so an arm's `break` is legal
+                            // at any depth and never arrives here, while a `continue` with
+                            // no enclosing loop still does. A refusal that misreports its
+                            // reason sends an author to fix the wrong thing, so the reason
+                            // has to move whenever the rule does.
                             [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
                               st.Position ]
                         | [] -> []
