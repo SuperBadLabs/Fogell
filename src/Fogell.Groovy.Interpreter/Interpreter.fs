@@ -506,17 +506,13 @@ module Interpreter =
                 //   is not a retry. The cell carries the environment ACROSS invocations,
                 //   which is what a closure does.
                 //
-                //   KNOWN LIMIT, stated rather than left to be discovered, and NOT
-                //   re-measured since FG-179 made locals ref cells and therefore UNPROVEN
-                //   either way — the sibling limit
-                //   recorded on `SSwitch` dissolved under that change (receipt
-                //   `script-break-keeps-assignment`), so this one may have too: variables
-                //   DECLARED inside the body also persist between
-                //   invocations, where Groovy would create them afresh. That is visible
-                //   only to a body that
-                //   both declares a name and depends on it being unset next time round —
-                //   far narrower than losing every mutation, and the opposite direction
-                //   from the defect it replaces.
+                //   THAT LIMIT IS CLOSED, ten lines below this one. It said variables
+                //   DECLARED inside the body persist between invocations where Groovy
+                //   creates them afresh, and a later hedge added that it was UNPROVEN since
+                //   ref cells landed. Neither is true: `captured` is the name set present
+                //   BEFORE the invocation, and the post-body environment is filtered back to
+                //   it, so a body's declarations are dropped exactly as Groovy drops them.
+                //   The answer was in the same function as the doubt.
                 // A closure passed by VALUE brings its own scope; a trailing block is
                 // written at the call site and shares that one. `capturedEnv` is `Some` only
                 // in the first case, which is exactly when they differ.
