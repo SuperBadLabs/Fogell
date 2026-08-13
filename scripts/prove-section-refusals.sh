@@ -263,8 +263,84 @@ expect_refusal stage-steps-bad 'pipeline {
     }
 }'
 
+# FG-183. REFUSED BEFORE ANY STAGE RAN — which `expect_refusal` above cannot check, and
+# the difference is the whole ticket. A refusal at ADMISSION and a fault at RUNTIME both
+# leave a non-success log with a diagnostic in it, so that helper passes either way. The
+# defect this arm exists for ran an earlier stage to completion and THEN faulted, and the
+# obvious fix (catch the signal at the top) would still run it. Only the absence of the
+# marker distinguishes them.
+expect_refusal_before_effects() {
+  local name=$1 marker=$2 log
+  log=$(run_case "$name" "$3")
+  if ! grep -qE 'malformed_syntax|no_stages|refus' <<<"$log"; then
+    echo "  FAIL: $name was not refused"
+    sed 's/^/    | /' <<<"$log" | head -5
+    FAILED=1
+  elif [ -e "$LAB/$name/ws/run/$marker" ]; then
+    echo "  FAIL: $name refused, but an EARLIER STAGE had already run ($marker exists)"
+    FAILED=1
+  else
+    echo "  refused $name, and no stage ran"
+  fi
+}
+
+echo "=== break/continue outside a loop: Jenkins refuses at compile time, before any stage ==="
+# The control comes FIRST here on purpose: this arm adds a new refusal, and a check that
+# refuses every `break` would satisfy the refusal case while breaking every real loop.
+expect_control break-in-loop-ok 'completed: success' 'pipeline {
+    agent any
+    stages {
+        stage("one") {
+            steps {
+                script {
+                    for (i in [1, 2]) {
+                        break
+                    }
+                    sh "echo ran > marker.txt"
+                }
+            }
+        }
+    }
+}'
+expect_refusal_before_effects break-outside-loop early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") {
+            steps {
+                sh "touch early.txt"
+            }
+        }
+        stage("two") {
+            steps {
+                script {
+                    dir("d") {
+                        break
+                    }
+                }
+            }
+        }
+    }
+}'
+expect_refusal_before_effects continue-outside-loop early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") {
+            steps {
+                sh "touch early.txt"
+            }
+        }
+        stage("two") {
+            steps {
+                script {
+                    continue
+                }
+            }
+        }
+    }
+}'
+
 if [ "$FAILED" -eq 0 ]; then
-  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, and every control still runs"
+  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, a misplaced break/continue refuses BEFORE any stage runs, and every control still runs"
 else
   echo "SECTION-REFUSAL PROOF FAILED"
   exit 1

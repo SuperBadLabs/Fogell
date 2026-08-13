@@ -9,6 +9,67 @@ open Fogell.Admission
 type Effect =
     | StepCall of name: string * positional: Value list * named: (string * Value) list
 
+/// FG-160 slice 2. The host performing a step DURING evaluation, rather than receiving a
+/// batch of requests afterwards.
+///
+/// WHY THE BATCH MODEL WAS THE WRONG BOUNDARY, measured over six review rounds on one
+/// ticket: collecting `StepCall` effects and replaying them afterwards preserves ORDER and
+/// loses everything else that crosses the boundary — a step's RETURN VALUE (the call
+/// evaluates to null on the spot), a wrapper's BODY (the closure runs immediately and
+/// flattens), `env` MUTATION (the host's overlay never sees it), and per-step DURABLE
+/// identity (the journal only wraps the outer step). Each was refused in turn until the
+/// supported surface was a fraction of `script { }`.
+///
+/// A callback makes all four ANSWERABLE at the source, which is not the same as answered.
+/// WHAT IS TRUE TODAY, audited rather than asserted:
+///   - a body executes in the host's own context — DONE, `dir`/`timeout`/`retry`;
+///   - an `env` mutation is reported at the assignment — DONE, and the host currently
+///     REFUSES it, because Fogell's overlay does not yet cross the script boundary;
+///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
+///     host returns null and value uses stay refused;
+///   - per-step journaling is POSSIBLE here — FG-171 is open; the hooks are keyed
+///     `stage -> stepIndex` and a nested identity needs a journal format change.
+/// The earlier wording claimed all four as delivered.
+///
+/// [RunBody] is present when the call had a trailing block; invoking it evaluates that
+/// block, so a wrapper can set up its context, call it, and tear down.
+type PerformStep =
+    { Perform: string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
+      /// `env.NAME = value` inside the script. The interpreter updates its own binding
+      /// either way; this tells the host so that steps AFTER the block see it too, which
+      /// is what Jenkins does and what the batch model could not express.
+      SetEnv: string -> string -> unit
+      /// FG-178. The host's environment AS IT IS NOW, asked for each time a hosted body
+      /// is about to run.
+      ///
+      /// A wrapper can CHANGE the environment for its body — `withEnv(['TARGET=prod'])`
+      /// is the whole point of the step — and the interpreter's `env` binding is built
+      /// ONCE, before `runHosted`. So the body's Groovy read a pre-wrapper snapshot:
+      /// measured, `withEnv(['TARGET=prod']) { sh "echo saw:${env.TARGET}" }` printed
+      /// `saw:prod` on Jenkins and `saw:null` here. FG-172 delivered the wrapper's
+      /// context to the body's STEPS; this delivers it to the body's EVALUATION, which is
+      /// the half that was missing.
+      ///
+      /// A callback rather than a value because the answer differs per invocation: the
+      /// host points at the wrapper's context for the body's duration and restores it
+      /// afterwards, so only the host can say what the environment is at the moment the
+      /// body runs.
+      CurrentEnv: unit -> (string * string) list
+      /// FG-184. Does this step take a BLOCK? Asked before a final closure argument is
+      /// normalised into a hosted body.
+      ///
+      /// The interpreter cannot answer it. Which steps take a block is a property of the
+      /// step VOCABULARY, which the host owns — `WalkerRules.scriptWrappersWithHostedBody`
+      /// is the one place it is written down, and copying that set in here is how the
+      /// three copies of the timestamp rule came to disagree.
+      ///
+      /// It is asked because normalising unconditionally was a FALSE SUCCESS: `def body =
+      /// {}; sh('touch ran.txt', body)` had its closure stripped before validation, so the
+      /// host saw a valid one-positional `sh` plus a body its dispatcher ignores, and the
+      /// shell RAN. Jenkins rejects the two-argument call — measured, jenkins=failure with
+      /// an EMPTY workspace against fogell=SUCCESS with the file written.
+      TakesBlock: string -> bool }
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
@@ -67,6 +128,31 @@ module Interpreter =
           mutable Effects: Effect list
           Budget: Budget
           RegisteredSteps: Set<string>
+          /// None keeps the BATCH model — effects are collected and the call yields null.
+          /// Existing consumers (`when { expression }`, the tests) rely on that and are
+          /// deliberately unchanged; only a caller that supplies this gets live steps.
+          Host: PerformStep option
+          /// FG-178. Has the SCRIPT declared or assigned its own `env`?
+          ///
+          /// FOURTH SHAPE OF THIS FLAG, and the first that is a FACT rather than an
+          /// inference. The refresh must not overwrite a user binding, and the question
+          /// "is this binding the user's?" was answered twice by comparing VALUES:
+          ///   - seeded per thunk from its CALL SITE, where `def env = …` had already run,
+          ///     so the shadowed value was compared against itself and never detected;
+          ///   - then anchored on state, which is SHARED, so one wrapper's refresh made
+          ///     the next sibling look user-shadowed and its refresh was skipped —
+          ///     reintroducing the staleness the whole thing exists to fix, in nested and
+          ///     sequential wrappers.
+          ///
+          /// The interpreter does not need to infer any of it: it EXECUTES the `def`. This
+          /// records that, and the refresh reads it. No value comparison, nothing to be
+          /// coincidentally equal to, and nothing shared that should not be.
+          ///
+          /// SCOPE LIMIT, stated: a `def env` anywhere in the script disables the refresh
+          /// for the whole run, where Groovy would scope it to its block. Fogell's
+          /// variable model has no block scoping to hang that on — FG-179 — and erring
+          /// toward NOT overwriting the user's binding is the safe direction.
+          mutable EnvUserShadowed: bool
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -344,16 +430,192 @@ module Interpreter =
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
-                // a step is a request to the host, not something we perform
-                st.Effects <- StepCall(s, positionalLazy.Value, namedLazy.Value) :: st.Effects
+                // ONE NORMALISED BODY, from either representation. A block reaches a call
+                // as `trailing` OR as a FINAL CLOSURE ARGUMENT depending on which parser
+                // path matched — `dir('sub') { … }` versus `dir 'sub', { … }` — and taking
+                // it only from `trailing` meant the second spelling stringified its closure
+                // into a positional argument and the wrapper then rejected itself as
+                // body-less. `StepValueUse.findWrapperCalls` already had to learn this
+                // exact lesson; the interpreter had not. Normalising HERE means every host
+                // sees one shape instead of each host rediscovering the two.
+                // FG-184. ONLY FOR A STEP THAT TAKES A BLOCK, and the restriction is the
+                // fix. Normalising unconditionally REMOVED the closure before the host
+                // could validate the call, so `def body = {}; sh('touch ran.txt', body)`
+                // reached `hostedSignatureError` as a valid one-positional `sh` with a
+                // hosted body its dispatcher ignores — and the shell ran. Jenkins rejects
+                // the two-argument call: measured, jenkins=FAILURE with an empty workspace
+                // against fogell=SUCCESS with the file written. A green build doing work
+                // Jenkins refused, which is the ADR 0001 class.
+                //
+                // THE STATIC SCAN CANNOT COVER THIS, which is why the rule belongs here
+                // rather than in another pre-flight arm: the argument is an `EVar`, so it
+                // is only a closure at RUNTIME. A scan of the source sees a variable.
+                //
+                // Left in place for a step that takes no block, the closure stays a second
+                // positional argument and the arity default-deny refuses the call — the
+                // rule FG-177 already established, now actually reached.
+                //
+                // WITHOUT A HOST the question is unanswerable and the shape is unchanged.
+                // That is not a second behaviour: the batch model never DISPATCHES a step
+                // — the call yields VNull and the effect is only recorded — so there is no
+                // call for the answer to be wrong about.
+                let takesBlock =
+                    match st.Host with
+                    | Some h -> h.TakesBlock name
+                    | None -> true
 
-                trailing
-                |> Option.iter (fun c ->
-                    st.Depth <- st.Depth + 1
-                    execBlock st env c.Body |> ignore
-                    st.Depth <- st.Depth - 1)
+                let trailingArg, positionalArgs =
+                    match trailing, List.rev positionalLazy.Value with
+                    | None, VClosure(c, _) :: rest when takesBlock -> Some c, List.rev rest
+                    | _ -> None, positionalLazy.Value
 
-                VNull
+                let bodyClosure =
+                    match trailing with
+                    | Some c -> Some c
+                    | None -> trailingArg
+
+                // FG-178. THE BODY IS A CLOSURE, not a detached block, and the first
+                // version of this thunk treated it as one. Three consequences, all
+                // measured against Jenkins:
+                //
+                //   RETURN escaped it. `ReturnSignal` propagated past the thunk and ended
+                //   the whole script, so `script { dir('sub') { return }; sh 'after' }`
+                //   SKIPPED the following step where Jenkins runs it. The ordinary
+                //   closure-call path below already catches this signal; the hosted path
+                //   did not, which is the whole bug.
+                //
+                //   MUTATED CAPTURES were discarded. `execBlock` RETURNS the environment
+                //   it produced and this ignored it, so `def n = 0; retry(2) { n = n + 1;
+                //   … }` saw n = 1 on every attempt: Jenkins SUCCEEDS on the second
+                //   attempt and Fogell failed on both. A retry that cannot make progress
+                //   is not a retry. The cell carries the environment ACROSS invocations,
+                //   which is what a closure does.
+                //
+                //   KNOWN LIMIT, stated rather than left to be discovered: variables
+                //   DECLARED inside the body also persist between invocations, where
+                //   Groovy would create them afresh. That is visible only to a body that
+                //   both declares a name and depends on it being unset next time round —
+                //   far narrower than losing every mutation, and the opposite direction
+                //   from the defect it replaces.
+                let bodyEnv = ref env
+
+                let runBody =
+                    bodyClosure
+                    |> Option.map (fun c ->
+                        fun () ->
+                            st.Depth <- st.Depth + 1
+
+                            // THE WRAPPER'S ENVIRONMENT, ASKED FOR NOW — but ONLY the
+                            // `env` MAP, never the bare names.
+                            //
+                            // The first version rebound both, reasoning that refreshing
+                            // one spelling and not the other is half a fix. That was
+                            // wrong, and measured wrong: a bare name may be a LOCAL, and
+                            // folding the environment over the body's bindings CLOBBERS
+                            // it. `def TARGET = 'staging'; withEnv(['TARGET=prod']) { sh
+                            // "printf ${TARGET}" }` gives Jenkins `staging` — the local
+                            // SHADOWS the environment — and gave `prod` here. A defect I
+                            // introduced while fixing the one above it, caught in review.
+                            //
+                            // Bare names cannot be refreshed safely without knowing which
+                            // of them are environment-backed and which are locals, and
+                            // this scope keeps no such provenance: at refresh time a name
+                            // bound from `env` at script start and a name a `def`
+                            // overwrote are indistinguishable. Guessing from equality
+                            // ("refresh it if it still looks like the old value") is the
+                            // kind of cleverness that fails silently on a local that
+                            // happens to match.
+                            //
+                            // RESIDUAL LIMIT, stated: a BARE name inside a wrapper does
+                            // not see the wrapper's override — `env.NAME` does, and the
+                            // shell sees it through the overlay either way. Narrower than
+                            // clobbering locals, and in the safe direction. FG-179 carries
+                            // the environment model that would settle both.
+                            // AND `env` ITSELF CAN BE SHADOWED. Removing the bare-name
+                            // clobbering left one binding still overwritten
+                            // unconditionally, and it is a legal local:
+                            // `def env = [TARGET: 'local']` gives Jenkins `local` and gave
+                            // `wrapper` here. Second instance of the same class inside two
+                            // rounds, which says the fix was aimed at the SYMPTOM (bare
+                            // names) rather than the rule (never overwrite a user binding).
+                            //
+                            // PROVENANCE BY LAST-WRITE, which this scope can actually
+                            // establish: refresh `env` only while it still holds the value
+                            // this refresh last put there (or the one `runHosted` bound).
+                            // A `def env = …` makes it differ, so it is left alone. That is
+                            // not the equality GUESS rejected for bare names — there the
+                            // candidate was a scalar that could coincide by accident; here
+                            // it is a whole environment map compared against a value this
+                            // code itself wrote, which a user local does not reproduce.
+                            st.Host
+                            |> Option.iter (fun h ->
+                                let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                let fresh = VMap(Map.ofList current)
+
+                                if not st.EnvUserShadowed then
+                                    bodyEnv.Value <-
+                                        { bodyEnv.Value with Vars = Map.add "env" fresh bodyEnv.Value.Vars })
+
+                            // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
+                            // names it CAPTURED do.
+                            //
+                            // Carrying the whole environment forward was the previous
+                            // shape, and I recorded the gap as a known limit: a `def`
+                            // inside the body persisted into the next invocation where
+                            // Groovy creates it afresh. Review then MEASURED it, and
+                            // receipt `script-body-local-does-not-persist` holds it — a
+                            // `retry(2)` whose first attempt declares `marker` and whose
+                            // second reads it FAILS on Jenkins and succeeded here — which
+                            // is the reminder that writing a limit down does not make it
+                            // acceptable, it only makes it honest.
+                            //
+                            // The split needs no scope machinery: a name present BEFORE
+                            // the invocation is captured, a name present only after was
+                            // declared by the body. Keeping the first and dropping the
+                            // second is exactly Groovy's behaviour for this case. Proper
+                            // block scoping — which would also fix `def` inside `if` and
+                            // friends — is FG-179's variable model, and this does not
+                            // pretend to be it.
+                            let captured =
+                                bodyEnv.Value.Vars |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+
+                            try
+                                try
+                                    let after = execBlock st bodyEnv.Value c.Body
+
+                                    bodyEnv.Value <-
+                                        { after with
+                                            Vars = after.Vars |> Map.filter (fun k _ -> captured.Contains k) }
+                                with ReturnSignal _ ->
+                                    // A closure-local return ends the BODY. The value is
+                                    // dropped because a wrapper does not consume one:
+                                    // `dir('x') { return 5 }` is not `dir` returning 5.
+                                    ()
+                            finally
+                                st.Depth <- st.Depth - 1)
+
+                match st.Host with
+                | Some host ->
+                    // LIVE: the host performs it here and its value is the call's value.
+                    // The body is handed over UNEVALUATED so a wrapper can run it inside
+                    // whatever context it establishes — the batch model evaluated it
+                    // immediately and flattened it, which is how `dir('x') { … }` lost its
+                    // directory.
+                    host.Perform s positionalArgs namedLazy.Value runBody
+                | None ->
+                    // BATCH: a step is a request, not something we perform.
+                    //
+                    // `positionalArgs`, NOT `positionalLazy.Value` — the NORMALISED list.
+                    // This recorded the raw one, so `dir 'sub', { … }` logged the trailing
+                    // closure as a positional argument AND ran it through `runBody` below:
+                    // the same block counted twice, once as data and once as an effect.
+                    // The comment above says normalising here means every host sees ONE
+                    // shape, and then this branch did not use it — raised in review on
+                    // PR #53. No walker path was affected, since only batch consumers read
+                    // `Effects`; a future one would have inherited the defect.
+                    st.Effects <- StepCall(s, positionalArgs, namedLazy.Value) :: st.Effects
+                    runBody |> Option.iter (fun run -> run ())
+                    VNull
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
                 | Some(ps, body) ->
@@ -515,6 +777,9 @@ module Interpreter =
         | SDef(n, Some e) ->
             let v = evalExpr st env e
             st.LastValue <- Some v
+            // FG-178. The script declaring its OWN `env` is the fact the hosted refresh
+            // needs; recorded where it happens rather than inferred later from values.
+            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n v env
         // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
         // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
@@ -522,10 +787,15 @@ module Interpreter =
         // evaluates to null.
         | SDef(n, None) ->
             st.LastValue <- Some VNull
+            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
+            // Assignment counts too: `env = [...]` replaces the binding as surely as a
+            // `def` does, and covering only `def` would leave the commoner spelling open —
+            // the partial-enumeration shape this branch keeps finding.
+            if n = "env" then st.EnvUserShadowed <- true
 
             if Map.containsKey n env.Vars then
                 // a LOCAL (def, parameter, loop/catch variable): lexical update,
@@ -549,6 +819,29 @@ module Interpreter =
             evalExpr st env target |> ignore
             let value = evalExpr st env v
             st.LastValue <- Some value
+
+            // FG-172. `env.X = …` IS TOLD TO THE HOST, at the assignment itself.
+            //
+            // A STATIC PRE-SCAN CANNOT DO THIS JOB. The `findEnvMutations` scanner this
+            // replaces walked statements
+            // and missed `[1].each { env.FOO = 'x' }`, because the assignment lives inside
+            // a closure the scanner did not enter — and closure and control-flow shapes
+            // will keep escaping any incomplete scan of a dynamic language. The pre-scan
+            // was replaced by this, which sees every assignment that actually EXECUTES,
+            // whatever syntax reached it. Raised by the pre-push verifier as the fifth of
+            // its class, with exactly that argument.
+            //
+            // The host decides what it means: today it fails the build, because Fogell's
+            // environment overlay does not yet cross the script boundary. That refusal is
+            // now COMPLETE rather than best-effort.
+            match st.Host, target with
+            | Some host, EProp(EVar "env", name) -> host.SetEnv name (Value.toDisplay value)
+            | Some host, EIndex(EVar "env", idx) ->
+                // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
+                // the pre-scan only recognised a literal string.
+                host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
+            | _ -> ()
+
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
         // returned TRUE, because `true` set the trailing value and the untaken `if`
@@ -604,6 +897,66 @@ module Interpreter =
                 | BreakSignal -> running <- false
 
             cur
+        // FG-183. A SWITCH IS A BREAK BOUNDARY, which is the whole reason this node exists
+        // rather than a lowering to nested ifs. `BreakSignal` is caught HERE, so an arm's
+        // `break` leaves the switch and execution continues after it — including when the
+        // switch sits inside a loop, where the lowered form let the signal reach the loop
+        // handler and silently leave the LOOP instead. `ContinueSignal` is deliberately NOT
+        // caught: `continue` belongs to an enclosing loop and must pass straight through.
+        //
+        // FALLTHROUGH IS REAL. Groovy runs from the matching arm ONWARD until a `break`, so
+        // the arms are executed as a sequence starting at the match rather than as one
+        // isolated body. The nested-if lowering could not express this at all — its
+        // branches are mutually exclusive — and recorded it as a known gap justified by the
+        // corpus rather than by the language.
+        | SSwitch(subject, arms) ->
+            st.LastValue <- None
+            let v = evalExpr st env subject
+
+            // `default` matches by POSITION, not by precedence: it is chosen only when no
+            // case matches, and fallthrough then continues from where it sits in source
+            // order. Hoisting it to the end would run the wrong arms after it.
+            let entry =
+                arms
+                |> List.tryFindIndex (fun (k, _) ->
+                    match k with
+                    // The SAME equality `==` uses (line 340), not a second opinion: a
+                    // switch that matched by a different rule than the operator would be
+                    // its own defect, and the lowered form got this right by construction
+                    // because it literally built an `EBinary("==", …)`.
+                    | Some case -> v = evalExpr st env case
+                    | None -> false)
+                |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
+
+            match entry with
+            | None -> env
+            | Some i ->
+                // STATEMENT BY STATEMENT, NOT `execBlock` PER ARM, and the difference is a
+                // measured wrong answer rather than a style choice. `execBlock` folds a
+                // whole body and RETURNS the environment, so a `break` part-way through
+                // unwinds past the return and every assignment the arm had already made is
+                // discarded. Measured against Jenkins with the arm-level fold:
+                // `case 'b': log = log + 'B'; break` gave `log:[abDz]` where Jenkins gives
+                // `log:[aBbDz]`, and the fallthrough arm gave `fall:[P]` against `PQ` —
+                // the value was computed and then thrown away by the unwind.
+                //
+                // KNOWN LIMIT, stated rather than left to be found: an assignment made
+                // inside a NESTED block before a break — `case 'a': if (x) { y = 1; break }`
+                // — is still lost, because that block is itself an `execBlock` whose return
+                // the unwind skips. `SWhile` has had the identical shape all along. Both
+                // dissolve when FG-179 makes variables ref cells, which is where the fix
+                // belongs; a second partial-env mechanism here would be the ninth guard
+                // that ticket exists to stop.
+                let mutable cur = env
+
+                try
+                    for _, body in List.skip i arms do
+                        for s in body do
+                            cur <- execStmt st cur s
+                with BreakSignal ->
+                    ()
+
+                cur
         | SReturn e -> raise (ReturnSignal(match e with Some x -> evalExpr st env x | None -> VNull))
         | SBreak -> raise BreakSignal
         | SContinue -> raise ContinueSignal
@@ -666,7 +1019,7 @@ module Interpreter =
     /// Evaluate a script. `registeredSteps` is the host's step vocabulary;
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
-    let private runWith (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+    let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
         let st =
@@ -675,6 +1028,8 @@ module Interpreter =
               Effects = []
               Budget = budget
               RegisteredSteps = registeredSteps
+              Host = host
+              EnvUserShadowed = false
               Defined = defined
               LastValue = None
               StrictVars = strictVars
@@ -721,13 +1076,24 @@ module Interpreter =
 
     /// Groovy's late-binding default: an unknown name reads as null.
     let run (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        runWith false budget registeredSteps env script
+        runWith None false budget registeredSteps env script
 
     /// Groovy's property-lookup contract for GStrings in step arguments: an unknown
     /// name faults with [UnknownProperty]. Enforced at READ time because laziness
     /// makes the read set undecidable statically — `${c ? A : B}` reads one arm.
+    /// FG-160 slice 2. Evaluate with the host performing steps LIVE, strict variable
+    /// reads included — a script block is a Jenkins context, where an unbound name raises
+    /// MissingPropertyException rather than reading null.
+    ///
+    /// `Outcome.Effects` is EMPTY in this mode, and that is not an oversight: the steps
+    /// already happened. A caller that reads `Effects` after this has misunderstood which
+    /// model it asked for, so leaving the list empty makes that mistake visible rather
+    /// than handing back a replayable-looking log of work already done.
+    let runHosted (host: PerformStep) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
+        runWith (Some host) true budget registeredSteps env script
+
     let runStrictVars (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        runWith true budget registeredSteps env script
+        runWith None true budget registeredSteps env script
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script

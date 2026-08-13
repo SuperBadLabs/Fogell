@@ -130,14 +130,36 @@ let private listOrMap: P<Expr> =
 let private arg: P<Arg> =
     attempt (plainIdent .>>? symbol ":" .>>. exprRef |>> ANamed) <|> (exprRef |>> APos)
 
+/// FG-174. Refuses a DUPLICATE NAMED ARGUMENT — the same rule the declarative parser
+/// applies, for the same reason: Groovy assembles a call's named arguments into a MAP
+/// LITERAL, and Jenkins rejects the pipeline before running anything. MEASURED on the
+/// pinned lab in both spellings, and UNPROVEN by receipt for the reason FG-129 gives —
+/// a compile-shaped refusal emits nothing comparable. See the declarative parser's note.
+///
+/// BOTH parsers enforce it because both produce calls, and a rule held by only one of
+/// them is the shape of half the findings on this branch — the script path and the stage
+/// path taking different views of the same source construct.
+let private noDuplicateNames (args: Arg list) : P<Arg list> =
+    args
+    |> List.choose (function
+        | ANamed(n, _) -> Some n
+        | APos _ -> None)
+    |> List.countBy id
+    |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
+    |> function
+        | Some name ->
+            fail
+                $"duplicate named argument `{name}`: Groovy builds a call's named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+        | None -> preturn args
+
 let private argsInParens: P<Arg list> =
-    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ","))
+    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ",")) >>= noDuplicateNames
 
 /// Command form: `sh 'make'`, `echo "x"`, `stash name: 's', includes: '*'`.
 /// Only admitted when what follows cannot start a binary operator, so
 /// `a + b` is never read as a call to `a`.
 let private commandArgs: P<Arg list> =
-    attempt (sepBy1 arg (symbol ","))
+    attempt (sepBy1 arg (symbol ",")) >>= noDuplicateNames
 
 let private primary: P<Expr> =
     ws
@@ -370,9 +392,33 @@ let private tryStmt: P<Stmt> =
 
                 STry(b, catch, defaultArg f []))
 
-/// `switch (e) { case a: … default: … }` — flattened to nested ifs so the
-/// interpreter needs no extra case. Fallthrough is NOT modelled; Jenkinsfile
-/// switches in the corpus all break or return.
+/// `switch (e) { case a: … default: … }` — a REAL NODE, `SSwitch`, carrying the arms in
+/// source order.
+///
+/// IT USED TO BE LOWERED to nested ifs, "so the interpreter needs no extra case". That
+/// saved one interpreter arm and cost three consecutive defects, each found by the
+/// pre-push verifier on the fix for the last:
+///
+///   1. the arm-final `break` became an `SBreak` with no loop around it — at runtime a
+///      `BreakSignal` escaping the engine, and once FG-183 refused misplaced breaks, a
+///      REFUSAL OF VALID GROOVY.
+///   2. consuming just that one left `case 'a': if (x) break; more()` in the tree. Outside
+///      a loop it was refused, so the fix looked complete; INSIDE one the admission check
+///      saw `inLoop = true` and the interpreter's loop handler caught the signal as a LOOP
+///      break — success reported, work skipped.
+///   3. refusing every remaining arm `break` then over-refused `case 'a': if (true) break`,
+///      which Groovy accepts and continues past.
+///
+/// Three positions, each defensible against the previous failure and wrong about the next,
+/// which is the signature of compensating for missing structure instead of supplying it. A
+/// switch IS a break boundary; the lowering destroyed exactly that, and every downstream
+/// stage then had to guess. The node restores it and all three questions stop being
+/// questions.
+///
+/// FALLTHROUGH IS NOW MODELLED TOO, because the node can express it and nested ifs could
+/// not: they are mutually exclusive, so an arm without a `break` stopped rather than
+/// running into the next. The old comment called that a known gap, justified by the corpus
+/// rather than by the language.
 let private switchStmt: P<Stmt> =
     attempt (
         keyword "switch" >>. between (symbol "(") (symbol ")") exprRef
@@ -383,19 +429,7 @@ let private switchStmt: P<Stmt> =
                     (attempt (keyword "case" >>. exprRef .>> symbol ":") |>> Some
                      <|> (keyword "default" >>. symbol ":" >>% None))
                     .>>. many (attempt stmtRef))))
-        |>> fun (subject, arms) ->
-                let dflt =
-                    arms |> List.tryPick (fun (k, body) -> if k.IsNone then Some body else None)
-
-                arms
-                |> List.choose (fun (k, body) -> k |> Option.map (fun v -> v, body))
-                |> List.rev
-                |> List.fold
-                    (fun acc (v, body) -> [ SIf(EBinary("==", subject, v), body, acc) ])
-                    (defaultArg dflt [])
-                |> function
-                    | [ single ] -> single
-                    | many -> SIf(EBool true, many, []))
+        |>> SSwitch)
 
 let private returnStmt: P<Stmt> = attempt (keyword "return" >>. opt exprRef |>> SReturn)
 let private throwStmt: P<Stmt> = attempt (keyword "throw" >>. exprRef |>> SThrow)

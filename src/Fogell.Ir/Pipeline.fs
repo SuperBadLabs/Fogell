@@ -56,6 +56,17 @@ type Step =
       /// Raw source of the arguments, retained because ADR 0002 says the
       /// interpreter — not the parser — decides what an expression means.
       RawArgs: string
+      /// FG-160. The VERBATIM body of a `script { … }` block, delimiters stripped.
+      ///
+      /// A script body is SCRIPTED GROOVY, not a step list — `def`, `if`, `for`, a
+      /// method call on a variable. Parsing it as Declarative steps read `if (…)` as a
+      /// step named `if`, which is why the walker could never run one. It is kept as
+      /// source because the thing that understands it is `Fogell.Groovy.Parser`, and
+      /// ADR 0002 says the interpreter decides what an expression means.
+      ///
+      /// `None` for every other step. `Block` is empty when this is `Some`: a script
+      /// body has no Declarative steps to hold.
+      ScriptBody: string option
       Position: Position }
 
 type WhenCondition =

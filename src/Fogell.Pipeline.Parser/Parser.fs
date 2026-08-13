@@ -98,6 +98,48 @@ let private wholeValue (p: P<'a>) : P<'a> =
 
     attempt (p .>>? notFollowedBy continuation)
 
+/// FG-174. THE ONE DUPLICATE RULE, for every named-argument surface in this parser.
+///
+/// Groovy assembles named arguments into a MAP LITERAL and a duplicate key does not
+/// survive it, so Jenkins rejects the pipeline at COMPILE time and runs NOTHING.
+/// MEASURED on the pinned lab across four spellings — a step call parenthesised and in
+/// command form, `when { equals … }`, and `when { environment … }` — each failing with
+/// nothing in the log but `Started by user unknown or anonymous` and an EMPTY workspace.
+/// Fogell took the FIRST matching key every time, and in the `when` cases ran the earlier
+/// stage before quietly skipping the gated one. UNPROVEN by receipt: a compile-shaped
+/// refusal emits nothing comparable (FG-129).
+///
+/// IT LIVES HERE, ABOVE EVERY CALLER, ON PURPOSE. The first version of this fix guarded
+/// only step arguments, and the review found `when { equals actual: 1, actual: 2 }` the
+/// very next round — the same defect on a surface I had not enumerated.
+///
+/// WHICH SURFACES THIS RULE REACHES, corrected after the sentence here claimed more than
+/// the code delivers — the enumeration was right about the SHAPES and wrong about their
+/// consequence, which is the overclaim class this project treats as a defect:
+///   - STEP ARGUMENTS: guarded, and the refusal REACHES the caller. That path has no
+///     fallback above it, so the pipeline is rejected — which is what Jenkins does.
+///   - `when { equals … }` and `when { environment … }`: guarded here, but the refusal is
+///     swallowed by `whenSectionOpaque` and the stage merely fails closed. FG-175.
+///   - `tag`, `branch`, `changelog`, `triggeredBy`: these parse ONE named argument, and I
+///     wrote that they therefore "cannot duplicate one". They can. `when { tag pattern:
+///     'v1', pattern: 'v2' }` leaves the second pair UNCONSUMED, the condition fails, and
+///     the same opaque fallback absorbs the section — identical outcome, reached by a
+///     different route. Not guarded, and guarding them here would change nothing while
+///     the fallback stands. FG-175 covers them, and each has a tripwire test.
+/// A new list-shaped surface must call this.
+let private firstDuplicateName (names: string list) : string option =
+    names
+    |> List.countBy id
+    |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
+
+/// Refuses the list if any key repeats, naming the key.
+let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a list> =
+    match firstDuplicateName (items |> List.map keyOf) with
+    | Some name ->
+        fail
+            $"duplicate named argument `{name}`: Groovy builds named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
+    | None -> preturn items
+
 let private namedArgWithKind: P<string * string * string * bool> =
     attempt (
         identifier .>>? symbol ":" .>>. (
@@ -176,8 +218,36 @@ let private argList
     let one =
         (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
 
+    // FG-174. A DUPLICATE NAMED ARGUMENT IS REFUSED AT PARSE TIME, not at dispatch.
+    //
+    // Groovy builds a call's named arguments as a MAP LITERAL, and a duplicate key does
+    // not survive it. MEASURED on the pinned lab in BOTH spellings — inside a `script`
+    // block and at stage level — `sh(script: 'exit 7', returnStatus: true,
+    // returnStatus: 'false')` makes Jenkins fail with nothing in the log but `Started by
+    // user unknown or anonymous` and an EMPTY workspace: nothing ran at all. Fogell took
+    // the first flag, suppressed the `exit 7`, ran the following step and reported
+    // success. UNPROVEN by receipt — a compile-shaped refusal cannot be receipted, which
+    // is FG-129 — so the probe and the parser tests carry it.
+    //
+    // WHY PARSE TIME, when refusing at dispatch would have been the smaller change:
+    // Jenkins rejects the MODEL, so NO stage runs. A refusal at the step would let every
+    // EARLIER stage run first — indistinguishable on this probe, where the duplicate sits
+    // in the first step, and plainly wrong for a duplicate in a later stage. That
+    // difference is between matching Jenkins and matching one example of it.
     sepBy one (symbol ",")
-    |>> fun items ->
+    // ONE implementation, not a second copy of the same rule. This inlined the check and
+    // its error message, so the two could drift in wording or in keying — raised in
+    // review on PR #53. Positionals cannot collide, so only the named ones are keyed,
+    // and `rejectingDuplicates` is fed exactly those.
+    >>= fun items ->
+        items
+        |> List.choose (function
+            | Choice1Of2(n, _, _, _) -> Some n
+            | _ -> None)
+        |> rejectingDuplicates id
+        |> fun guard ->
+            guard
+            >>. preturn (
             let namedWithKind = items |> List.choose (function Choice1Of2 x -> Some x | _ -> None)
             let named = namedWithKind |> List.map (fun (n, v, _, _) -> n, v)
             let literal = namedWithKind |> List.choose (fun (n, _, _, lit) -> if lit then Some n else None) |> Set.ofList
@@ -220,7 +290,7 @@ let private argList
                 |> fst
                 |> List.rev
 
-            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order
+            named, pos, literal, literalPos, namedSource @ posSource, Set.ofList (namedExpr @ posExpr), order)
 
 let private stepBlock: P<Step list> =
     // SEMICOLONS separate statements in Groovy, and a step block may use them:
@@ -307,8 +377,19 @@ stepRef.Value <-
                   attempt (hspaces >>. argList)
                   preturn ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
             (fun pos name args -> pos, name, args)
-    .>>. opt (attempt stepBlock)
-    |>> fun ((pos, name, args), block) ->
+    >>= (fun (pos, name, args) ->
+        // FG-160. `script { … }` HOLDS SCRIPTED GROOVY, so its body is captured
+        // VERBATIM instead of being parsed as Declarative steps. Parsing it as steps
+        // read `if (cond)` as a step named `if` with a block, and `def x = 1` as a step
+        // named `def` — structurally accepted, semantically nonsense, and the reason the
+        // walker could never run one. `Fogell.Groovy.Parser` is what understands this
+        // text; the walker hands it over at execution.
+        if name = "script" then
+            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], Some raw)
+            <|> preturn (pos, name, args, [], None)
+        else
+            opt (attempt stepBlock) |>> fun b -> pos, name, args, defaultArg b [], None)
+    |>> fun (pos, name, args, block, scriptBody) ->
             // The DOWNGRADE THAT USED TO LIVE HERE IS GONE, not merely guarded. It
             // re-parsed the paren body and, on failure, invented a single positional
             // argument from the raw text — which is how an approval prompt came to
@@ -325,11 +406,12 @@ stepRef.Value <-
               InterpolationSource = interpolationSource
               ExpressionArgs = expressionArgs
               ArgumentOrder = argOrder
-              Block = defaultArg block []
+              Block = block
               // Only ever populated on the OPAQUE paren path, which no longer exists.
               // No code reads this field — `rg RawArgs` finds the record definition,
               // this assignment and one test literal — so emptying it drops nothing.
               RawArgs = ""
+              ScriptBody = scriptBody
               Position = pos }
 
 // ---------------------------------------------------------------------------
@@ -406,7 +488,7 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// Receipt: `when-conditions`.
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
-    >>. sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",")
+    >>. (sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",") >>= rejectingDuplicates fst)
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
 
@@ -443,6 +525,7 @@ let private whenEqualsCondition: P<WhenCondition> =
                    // unmodelled — so the stage failed closed over one character.
                    <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)))
             (symbol ",")
+    >>= rejectingDuplicates fst
     .>> ws
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
@@ -875,8 +958,197 @@ let looksDeclarative (source: string) : bool =
 
     System.Text.RegularExpressions.Regex.IsMatch(stripped, @"(^|[\s};])pipeline\s*\{")
 
+/// FG-183. `break` and `continue` are only legal inside a loop, and a CLOSURE IS NOT A
+/// LOOP. Jenkins refuses a pipeline containing a misplaced one at COMPILE time, before
+/// any stage runs; Fogell admitted it, ran the earlier stages, and then let a
+/// `BreakSignal` escape to the top of the engine.
+///
+/// MEASURED, both engines. `script { dir('d') { break } }` behind a stage that writes a
+/// file: Jenkins fails the Groovy compile naming the position and NEVER STARTS A STAGE,
+/// so its workspace is empty; Fogell ran the first stage to completion, wrote the file,
+/// and ended `run failed: BreakSignal`. Two defects in one input — a durable effect
+/// Jenkins cannot produce, and an engine FAULT where ADR 0001 requires a rejection with a
+/// named code and a position. An uncaught exception is the one outcome no tier describes.
+///
+/// NOT A DIFFERENTIAL RECEIPT, and the reason is this rule's own effect: Fogell now
+/// REFUSES where Jenkins FAILS A BUILD, and the harness cannot compare a refusal against a
+/// build — it scored the attempt NOT-COMPARABLE. Proven instead by proof case
+/// `break-outside-loop`, which asserts the refusal AND that no earlier stage ran;
+/// that file's pre-existing helper could not tell an admission refusal from a runtime
+/// fault, since both leave a diagnostic in the log and only the absent marker separates
+/// them.
+///
+/// WHY NOT CATCH THE SIGNAL AT THE TOP instead, which is the smaller change: that
+/// converts the fault into a stage failure and STILL runs the earlier stages. Those
+/// effects are what Jenkins never produced, so catching trades a loud wrong answer for a
+/// quiet one — the exchange ADR 0001 exists to forbid.
+///
+/// A PARSER SUCCESS IS NOT A VALIDITY VERDICT. The Groovy parser accepts these keywords
+/// unconditionally and is right to: placement is a CONTEXT rule, not a grammar one. So
+/// this is a walk of the parsed body rather than a grammar change.
+///
+/// THE CLOSURE BOUNDARY IS THE SUBTLE PART, and it is why `inLoop` RESETS on the way in
+/// rather than being inherited. Groovy rejects `break` inside a closure even when the
+/// closure is written inside a loop, because the closure is a separate body — so
+/// `while (x) { [1].each { break } }` is invalid, and a check that inherited the
+/// enclosing loop would admit it. `SFunc` bodies reset for the same reason.
+///
+/// THE POSITION IS THE SCRIPT STEP'S, not the keyword's, and that is a stated limit
+/// rather than an oversight: this AST carries no positions. Jenkins names a line and
+/// column inside the script; Fogell names the `script` block containing it. The existing
+/// malformed-body path already reports at exactly that granularity, so the two agree.
+module private LoopControl =
+    // Scoped to this module rather than opened at the top of the file: the IR and the
+    // Groovy AST both define short type names, and a file-wide open would resolve them
+    // by import order rather than by intent.
+    open Fogell.Groovy
+
+    let misplaced (script: Script) : string list =
+        // TWO FLAGS, NOT ONE, because `switch` legalises exactly one of the two keywords.
+        // A single `inLoop` could not say "break is fine here, continue is not": passing it
+        // as true for an arm body admitted a `continue` that belongs to a loop there isn't
+        // one of, and passing it through unchanged refused a `break` the switch itself
+        // catches. The language distinguishes them, so the walk has to.
+        let rec stmts breakOk continueOk ss =
+            ss |> List.collect (stmt breakOk continueOk)
+
+        and stmt breakOk continueOk s =
+            match s with
+            | SBreak -> if breakOk then [] else [ "break" ]
+            | SContinue -> if continueOk then [] else [ "continue" ]
+            | SWhile(c, b) -> expr c @ stmts true true b
+            | SForIn(_, src, b) -> expr src @ stmts true true b
+            // A SWITCH IS A BREAK BOUNDARY — the interpreter catches the signal at the
+            // switch, so `break` is legal in any arm at any depth. `continue` is untouched
+            // by it and still needs a real enclosing loop. Three defects came from this
+            // distinction being unrepresentable while `switch` was lowered to nested ifs;
+            // with the node it is one arm that says what the language says.
+            | SSwitch(subject, arms) ->
+                expr subject
+                @ (arms
+                   |> List.collect (fun (case_, b) ->
+                       (case_ |> Option.map expr |> Option.defaultValue [])
+                       @ stmts true continueOk b))
+            | SIf(c, a, b) -> expr c @ stmts breakOk continueOk a @ stmts breakOk continueOk b
+            | STry(b, catch, fin) ->
+                stmts breakOk continueOk b
+                @ (catch
+                   |> Option.map (fun (_, _, h) -> stmts breakOk continueOk h)
+                   |> Option.defaultValue [])
+                @ stmts breakOk continueOk fin
+            // A function body is its own scope: a loop around the DEFINITION does not make
+            // a `break` inside the function legal.
+            | SFunc(_, _, b) -> stmts false false b
+            | SExpr e -> expr e
+            | SDef(_, v) -> v |> Option.map expr |> Option.defaultValue []
+            | SAssign(t, v) -> expr t @ expr v
+            | SReturn v -> v |> Option.map expr |> Option.defaultValue []
+            | SThrow e -> expr e
+
+        // EVERY expression form is walked, and the wildcard is deliberately absent: a
+        // closure can be written anywhere a value can, so a `| _ -> []` catch-all would
+        // silently stop checking whichever form was added next. FS0025 makes that a build
+        // error instead.
+        and expr e =
+            match e with
+            | EClosure c -> stmts false false c.Body
+            | ECall(target, args, trailing) ->
+                callTarget target
+                @ (args
+                   |> List.collect (function
+                       | APos v -> expr v
+                       | ANamed(_, v) -> expr v))
+                @ (trailing |> Option.map (fun c -> stmts false false c.Body) |> Option.defaultValue [])
+            | EGString parts ->
+                parts
+                |> List.collect (function
+                    | GLit _ -> []
+                    | GExpr x -> expr x)
+            | EList xs -> xs |> List.collect expr
+            | EMap kvs -> kvs |> List.collect (snd >> expr)
+            | EProp(t, _)
+            | ESafeProp(t, _) -> expr t
+            | EIndex(t, i) -> expr t @ expr i
+            | EUnary(_, o) -> expr o
+            | EBinary(_, l, r) -> expr l @ expr r
+            | ETernary(c, a, b) -> expr c @ expr a @ expr b
+            | EElvis(a, b) -> expr a @ expr b
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EVar _ -> []
+
+        and callTarget t =
+            match t with
+            | FreeCall _ -> []
+            | MethodCall(target, _)
+            | SafeMethodCall(target, _) -> expr target
+
+        stmts false false script
+
+/// FG-178. Every `script { }` body in the model, including nested stages, nested step
+/// blocks and both `post` levels.
+///
+/// THIRD ENUMERATION OF THE SAME THING, which is why it is finally here instead of at a
+/// caller. It began as a walk of `stage.Steps`; review found `post` blocks; review then
+/// found the HTTP admission endpoint, which calls `parse` DIRECTLY and so reached none of
+/// it — a submission with an invalid body was accepted and queued, failing only when a
+/// runner picked it up, where the contract promises a 422 at admission.
+///
+/// Putting it inside `parse` is what makes "which entry points are covered" stop being a
+/// question: there is one.
+let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
+    let rec fromSteps (steps: Step list) =
+        steps
+        |> List.collect (fun st ->
+            let here =
+                match st.ScriptBody with
+                | Some src ->
+                    match Fogell.Groovy.Parser.Parser.parse src with
+                    | Result.Error e -> [ $"script block did not parse as Groovy: {string e}", st.Position ]
+                    | Result.Ok parsed ->
+                        // FG-183. Parsed, and still not admissible.
+                        match LoopControl.misplaced parsed with
+                        | keyword :: _ ->
+                            // NAMES THE ONE THING THIS CHECK KNOWS. It briefly hedged
+                            // across two readings — "not inside a loop, and not a switch
+                            // arm's final statement" — because a lowered `switch` could
+                            // still deliver an arm's `break` here, and Jenkins ACCEPTS
+                            // that one, so claiming a compile rejection would have been
+                            // false. It is true now for a DIFFERENT reason than that hedge
+                            // recorded, and the stale rationale outlived the lowering that
+                            // made it necessary: `LoopControl.misplaced` accounts for
+                            // switch break boundaries itself, so an arm's `break` is legal
+                            // at any depth and never arrives here, while a `continue` with
+                            // no enclosing loop still does. A refusal that misreports its
+                            // reason sends an author to fix the wrong thing, so the reason
+                            // has to move whenever the rule does.
+                            [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
+                              st.Position ]
+                        | [] -> []
+                | None -> []
+
+            here @ fromSteps st.Block)
+
+    let stages = Pipeline.flattenStages pipeline.Stages
+
+    (stages |> List.collect (fun stage -> fromSteps stage.Steps))
+    @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
+    @ (pipeline.Post |> List.collect (snd >> fromSteps))
+
 /// Parse a Declarative Jenkinsfile. Admission limits are applied first so a
 /// hostile input never reaches the recursive grammar.
+///
+/// FG-185. SCRIPT-BODY VALIDATION LIVES HERE, not in `parse`. It was in `parse`, under a
+/// comment claiming that "which entry points are covered" had stopped being a question
+/// because there was only one — and `parseWithLimits` was a second, public, and exempt.
+/// A caller choosing custom limits got `Ok` for a pipeline the default entry point
+/// rejects, which restores the delayed execution-time failure the check exists to prevent
+/// for anyone who passes limits. FOURTH ENUMERATION OF THE SAME RULE (stage steps, then
+/// `post`, then the HTTP endpoint, now custom limits), and it is this branch's recurring
+/// shape: a rule covering one path while an equivalent path stays open. `parse` now only
+/// supplies the defaults, so there is nothing left to forget. Raised in review on PR #53.
 let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
     match Limits.precheck limits source with
     | Result.Error e -> Result.Error e
@@ -889,7 +1161,13 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                 if List.isEmpty p.Stages then
                     Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
                 else
-                    Result.Ok p
+                    match scriptBodyErrors p with
+                    | (why, position) :: _ ->
+                        Result.Error
+                            { Code = MalformedSyntax
+                              Message = why
+                              Position = position }
+                    | [] -> Result.Ok p
             | ParserResult.Failure(msg, err, _) ->
                 let pos = err.Position
 
@@ -901,5 +1179,7 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
 
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
-let parse (source: string) : Result<Pipeline, AdmissionError> =
-    parseWithLimits Limits.defaults source
+let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
+
+
+

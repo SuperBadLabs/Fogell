@@ -19,6 +19,9 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int64 option
+      /// FG-174. `sh(returnStdout: true)` captures stdout rather than printing it.
+      /// The trace on stderr still streams, which is what Jenkins does.
+      CaptureStdout: bool
       /// The WORKSPACE root (not the step's cwd): durable-task roots its script
       /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
       /// executed script's $0 is observable.
@@ -71,6 +74,25 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
+      /// FG-174. The captured stdout UNMASKED, and ONLY when `CaptureStdout` asked for
+      /// it — None on every other step, so the raw text exists nowhere it was not
+      /// requested.
+      ///
+      /// `Stdout` above is MASKED, which is right for everything that prints or is
+      /// compared, and wrong for the one consumer that is not printing: a value handed
+      /// back to the pipeline. MEASURED, and held by receipt `credentials-returnstdout` —
+      /// `def t = sh(script: 'printf %s "$TOKEN"', returnStdout: true)` gives Jenkins
+      /// `t.length() == 12` and gave Fogell `4`, because `****` is what it captured. A
+      /// pipeline that captures a credential and passes it to the next command therefore
+      /// authenticated with the mask. Raised in review on PR #53.
+      ///
+      /// THIS IS NOT A HOLE IN MASKING. Jenkins masks the LOG, not the value, and every
+      /// path out of the engine still masks: `echo` masks its message (FG-044b), a shell
+      /// argument carrying it is masked on the way to the console, and the receipt only
+      /// ever sees `Stdout`. What changes is that the interpreter's own variable holds
+      /// what the program actually wrote, which is the only thing that makes
+      /// `returnStdout` usable with a credential at all.
+      CapturedStdoutRaw: string option
       Diagnostic: string option
       /// FG-103: the engine reporting on its OWN checks — a leak scan that could
       /// not run, survivors it found — separate from the step's failure reason so
@@ -99,10 +121,20 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
+          CapturedStdoutRaw = None
           Diagnostic = None
           EngineNote = None
           AbortedBySibling = None
           DurableId = None }
+
+    /// FG-174. A step REFUSED before it ran: no process, no output, no workspace change.
+    ///
+    /// Built here rather than by the caller so it cannot drift from `ok` — a hand-rolled
+    /// record that quietly gained a field would be a `StepResult` nobody else produces.
+    /// `ExitCode` stays None, which is load-bearing: `returnStatus` suppression keys on
+    /// an exit code EXISTING, so a refusal can never be converted into a status answer.
+    let refusedBeforeRunning (why: string) =
+        { ok Failure with Diagnostic = Some why }
 
     /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
     /// names *why* on any non-success — never a bare code.
@@ -150,7 +182,8 @@ module Executor =
                         WorkspaceRoot = request.WorkspaceRoot
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
-                        OnLine = onLine }
+                        OnLine = onLine
+                        SuppressStdoutEcho = request.CaptureStdout }
 
             // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
             // streaming callback, so a step with no OnLine — or one that wrote a
@@ -267,6 +300,9 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
+              // ONLY when asked. An unconditional copy would keep the unmasked text
+              // alive on every step for no consumer.
+              CapturedStdoutRaw = if request.CaptureStdout then Some run.Stdout else None
               Diagnostic = diagnostic
               EngineNote = engineNote
               AbortedBySibling =
@@ -470,7 +506,22 @@ module Executor =
             for note in leaks do
                 request.OnLine |> Option.iter (fun f -> f note)
 
-            request.OnLine |> Option.iter (fun f -> f masked)
+            // A MULTI-LINE MESSAGE IS MULTIPLE LOG LINES. Jenkins writes the message to
+            // the build log, so an embedded newline becomes a line break there; this
+            // handed `OnLine` one record containing a `\n`, and everything downstream
+            // that counts or compares lines then saw one line where Jenkins has two.
+            //
+            // MEASURED (`script-sh-returnstdout`): `echo "withnl:[${out}]"` over a
+            // captured "value\n" gives Jenkins seven output lines and Fogell six. Found
+            // only once `returnStdout` could produce a multi-line value at all — no
+            // existing case echoes one — but the rule is JENKINS', not the capture
+            // path's, so it is fixed here for every caller rather than at the one that
+            // exposed it. `String.concat` on the way into `Stdout` below keeps the text
+            // itself byte-identical.
+            request.OnLine
+            |> Option.iter (fun f ->
+                for line in masked.Split '\n' do
+                    f line)
 
             { ok Success with
                 Stdout = masked + "\n"
@@ -481,7 +532,24 @@ module Executor =
                     match request.OnLine, leaks with
                     | None, (_ :: _) -> String.concat "\n" leaks + "\n"
                     | _ -> "" }
-        | "echo", None -> { ok Success with Stdout = "\n" }
+        // FG-178. `echo()` WITH NO MESSAGE PRINTS `null`, and it does NOT fail.
+        //
+        // Review reported that Jenkins REJECTS the call and asked for a required-argument
+        // check. MEASURED instead of implemented, and held by receipt
+        // `script-echo-no-message`; the report was wrong on the Jenkins
+        // half: `script { echo(); sh 'echo ran > ran.txt' }` SUCCEEDS on Jenkins with the
+        // shell running, and the console shows the literal `null` — Groovy stringifying a
+        // null message. Fogell agreed on result and workspace and printed NOTHING, so the
+        // only divergence was the missing line.
+        //
+        // Enforcing a required argument here would have been a FALSE REFUSAL of a
+        // pipeline Jenkins accepts — the second review finding on this branch that was
+        // materially wrong about Jenkins, and the second caught by probing before
+        // implementing. `Stdout` alone was not enough: the differential compares what
+        // STREAMED, and nothing called `OnLine`.
+        | "echo", None ->
+            request.OnLine |> Option.iter (fun f -> f "null")
+            { ok Success with Stdout = "null\n" }
         | name, _ ->
             { ok Failure with
                 Diagnostic = Some $"step '{name}' is not implemented; unsupported behaviour fails closed" }

@@ -33,7 +33,15 @@ done
 # backlog it was introduced against (30) is zero, so the check now fails the build instead
 # of printing at it — an advisory check nobody must act on decays into noise.
 if [ -x scripts/audit-claims.bb ]; then
-  echo "=== claim audit (FG-104, blocking) ==="
+  echo "=== claim audit + its citation proof (FG-104/FG-174, blocking) ==="
+  # THE PROOF RUNS FIRST, for the same reason the stale-ref proof does below. The audit
+  # gained a SECOND check — every receipt a comment NAMES must exist — and a checker
+  # nobody has watched fail is itself a claim. 14 arms in both directions: six planted
+  # dangling citations it must reject, and the real spellings (backticked, colon,
+  # multi-build `.b1`, glob, `.receipt.txt`, and prose that merely says "receipt") it
+  # must not. Both directions earned their place — the first draft called six genuine
+  # citations dangling, and its ACCEPT arms were passing on zero scanned files.
+  ./scripts/prove-claim-citations.sh || { echo "CLAIM-CITATION PROOF FAILED"; exit 1; }
   # No `| head`: piping into head can SIGPIPE babashka and mask its exit status, which
   # would make an advisory check silently become a broken one.
   # Status captured explicitly: without it a babashka that cannot start is indistinguishable

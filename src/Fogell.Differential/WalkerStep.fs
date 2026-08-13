@@ -2,6 +2,8 @@ namespace Fogell.Differential
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
+// FG-174: a step's return value is published typed, so `returnStatus` yields an Integer.
+open Fogell.Groovy.Interpreter
 
 /// FG-105. ONE step's execution: render its arguments, hand it to the
 /// executor with the branch's deadline/interrupt wiring, then classify and
@@ -77,13 +79,94 @@ module WalkerStep =
 
         let renderedNamed = rendered.Named
 
+        // FG-174. THE FLAGS ARE READ BEFORE THE STEP RUNS, not after it.
+        //
+        // They used to be read only after `Executor.runStep` returned, which made
+        // `returnStdout` a post-hoc reinterpretation of a step that had already streamed
+        // its output. The review that found it named the class exactly: an unsupported
+        // option ADMITTED after a narrow refusal. `StepValueUse` refuses a VALUE USE, so
+        // `def out = sh(returnStdout: true, …)` was rejected — but a STATEMENT-position
+        // `sh script: 'printf value', returnStdout: true` is not a value use, so nothing
+        // refused it and Fogell printed `value` where Jenkins prints only the xtrace.
+        // A divergence admitted quietly, which is the shape of every finding on this
+        // branch. Deciding capture BEFORE dispatch is what makes the option affect the
+        // run instead of the report.
+        // WHAT THIS CALL RETURNS comes from `WalkerRules.returnContract`, the same
+        // function the static refusal reads. This end deciding for itself is what
+        // produced two findings: the flags treated as universal, then as orthogonal.
+        //
+        // AND THE VALUE'S TYPE DECIDES, NOT ITS RENDERED TEXT. `returnStatus: true` and
+        // `returnStatus: 'true'` both render to "true", and Jenkins treats them
+        // differently — see `WalkerRules.returnFlag`. The type survives in two places
+        // depending on how the step was reached: `ExpressionArgs` records a stage-level
+        // argument written UNQUOTED, and inside a `script` block the typed `HostedArgs`
+        // value is the argument itself.
+        let writtenAsLiteralBoolean (key: string) =
+            match ctx.HostedArgs with
+            | Some(_, named) ->
+                named
+                |> List.exists (fun (k, v) ->
+                    k = key
+                    && match v with
+                       | VBool _ -> true
+                       | _ -> false)
+            | None -> step.ExpressionArgs.Contains key
+
+        let flagState (key: string) =
+            renderedNamed
+            |> List.tryPick (fun (k, v) -> if k = key then Some v else None)
+            |> Option.map (fun v -> WalkerRules.returnFlag (writtenAsLiteralBoolean key) v)
+
+        // A REJECTED FLAG STOPS THE STEP, and stops it BEFORE it runs. Jenkins refuses
+        // `returnStatus: 1` at instantiation with an empty workspace, so a Fogell that
+        // ran the shell and then complained would already have done the work Jenkins
+        // never started. Only the shell steps are checked: on any other step these are
+        // unknown parameters that Jenkins ignores with a warning, and refusing them here
+        // would be stricter than Jenkins for no gain.
+        let flagRejection =
+            if not (WalkerRules.stepsHonouringReturnFlags.Contains step.Name) then
+                None
+            else
+                [ "returnStdout"; "returnStatus" ]
+                |> List.tryPick (fun key ->
+                    match flagState key with
+                    | Some(WalkerRules.FlagRejected why) -> Some $"step '{step.Name}' argument `{key}` {why}"
+                    | _ -> None)
+
+        let flagged (key: string) = flagState key = Some WalkerRules.FlagOn
+
+        let contract =
+            WalkerRules.returnContract step.Name (flagged "returnStdout") (flagged "returnStatus")
+
+        // CAPTURE KEYS ON THE REQUEST, NOT ON WHO WINS. durable-task calls
+        // `captureOutput()` because `returnStdout` was ASKED FOR, so with both flags set
+        // the output is still captured and the STATUS is what comes back. Receipt:
+        // script-sh-return-both.
+        let wantsStdout =
+            WalkerRules.stepsHonouringReturnFlags.Contains step.Name && flagged "returnStdout"
+
+        let wantsStatus = contract = WalkerRules.ExitStatus
+
         let result =
+            match flagRejection with
+            // REFUSED WITHOUT RUNNING. `Executor.runStep` is not reached, so no shell
+            // starts and no file is written — which is the observable part: Jenkins
+            // leaves the workspace EMPTY here, so an engine that ran the shell first and
+            // complained afterwards would still differ on the workspace hash.
+            | Some why -> Executor.refusedBeforeRunning why
+            | None ->
+
             Executor.runStep
                 { Name = step.Name
                   Script = script
                   Workspace = cwd
                   WorkspaceRoot = Some workspace
                   Environment = envForWith ctx.EnvOverlay stage
+                  // FG-174. `returnStdout` CAPTURES instead of printing — Jenkins' console
+                  // shows the xtrace and not the program's output, because durable-task
+                  // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
+                  // deliberately not part of this condition.
+                  CaptureStdout = wantsStdout
                   TimeoutMs =
                     match WalkerCancellation.remainingMs runCtx deadline with
                     | Some ms -> Some ms
@@ -124,6 +207,69 @@ module WalkerStep =
         // status: on success nothing else would print them, and on failure
         // the composed ERROR line is normalised away — either way the
         // receipt stayed silent until this carried them separately (FG-103).
+        // FG-174. `returnStdout` / `returnStatus` semantics, measured against pinned
+        // Jenkins 2.568.1:
+        //   returnStdout -> stdout VERBATIM, trailing newline INCLUDED. `printf 'value\n'`
+        //     through `od -c` gives `[ v a l u e \n ]`, which is why pipelines call
+        //     `.trim()`. Stripping it "helpfully" would silently change every script that
+        //     already does. It also CAPTURES: the console shows the xtrace and not the
+        //     output. Receipt: script-sh-returnstdout.
+        //   returnStatus -> the exit code, and the build DOES NOT FAIL. Getting this wrong
+        //     turns a deliberate status check into a failed build; getting it wrong the
+        //     other way hides a real failure. Receipt: script-sh-returnstatus.
+        //
+        // The flags themselves are read ABOVE, before dispatch — see the note there for
+        // why reading them here was the defect rather than the style.
+
+        // THE FLAG ALONE DOES NOT LICENSE SUPPRESSION — the step must actually have
+        // produced an exit status. `returnStatus` converts a SHELL EXIT into a value
+        // instead of a failure; it says nothing about a WRAPPER INTERRUPTION, which is
+        // not the script's answer to anything.
+        //
+        // Found by the pre-push verifier, which ran it:
+        //   timeout(time: 1, unit: 'SECONDS') { sh script: 'sleep 5', returnStatus: true }
+        //   sh 'echo after > after.txt'
+        // reported SUCCESS and wrote `after.txt`. A safety bound defeated, which ranks
+        // with a bypassed approval here — and the same test as `script-timeout-bound`,
+        // which passed only because its `sh` carried no flag.
+        //
+        // `ExitCode.IsSome` IS the test, not a proxy for one: `Executor` sets it from
+        // `Completed code` and `Signalled` — the two ways a shell reports its own
+        // status — and leaves it None for `TimedOut` and `Cancelled`, which are the
+        // engine stopping the step from outside. A non-shell step never has one either,
+        // so `error(message: 'x', returnStatus: true)` cannot borrow the suppression.
+        // Deriving it from the status instead would need this to re-enumerate a mapping
+        // that already exists, and drift from it the next time a case is added.
+        //
+        // `Signalled` is admitted deliberately: durable-task records 128+N in its
+        // wrapper file, so Jenkins hands that back as the status. ANALYSIS, not
+        // measured — the timeout arm below is what has a receipt.
+        let statusAvailable = result.ExitCode.IsSome
+        let statusIsTheAnswer = wantsStatus && statusAvailable
+
+        // PUBLISHED STRAIGHT FROM THE CONTRACT, so precedence is decided once. The
+        // status arm is FIRST because `returnContract` already resolved the combination —
+        // testing `wantsStdout` first is what returned a String for
+        // `sh(returnStdout: true, returnStatus: true)`, where Jenkins returns Integer 7.
+        ctx.HostedResult
+        |> Option.iter (fun slot ->
+            match contract with
+            // NO FABRICATED ZERO. `defaultArg result.ExitCode 0` handed an interrupted
+            // step the value 0 — a killed step reporting success to the script, which is
+            // the false-success shape ADR 0001 calls worse than an explicit rejection.
+            // The build fails here anyway; publishing null keeps the two consistent
+            // rather than relying on that.
+            | WalkerRules.ExitStatus when statusAvailable -> slot.Value <- VInt(int64 result.ExitCode.Value)
+            // THE RAW CAPTURE, not the masked `Stdout`. A pipeline that captures a
+            // credential must receive the credential; masking belongs to what PRINTS.
+            // Measured: Jenkins returns a 12-character token where this returned `****`.
+            // The fallback is the masked text and is unreachable for a capturing shell
+            // step — it exists so a future non-shell producer cannot silently publish
+            // nothing.
+            | WalkerRules.CapturedStdout ->
+                slot.Value <- VStr(defaultArg result.CapturedStdoutRaw result.Stdout)
+            | _ -> slot.Value <- VNull)
+
         result.EngineNote
         |> Option.iter (fun n -> runCtx.NoteEngine $"step '{step.Name}': {n}")
 
@@ -133,7 +279,11 @@ module WalkerStep =
         // requires the same: a diagnostic the user cannot see is not a
         // diagnostic (JB-DUR-005 — Jenkins' own worst behaviour is an
         // opaque `exit code -1`, and we promised to be clearer, not quieter).
-        if result.Status <> BuildStatus.Success then
+        // `returnStatus` ASKED for the code, so a non-zero exit is the ANSWER rather than a
+        // failure — Jenkins runs the following steps and reports success. It asked about a
+        // SHELL EXIT though, so an abort with no exit code propagates: see
+        // `statusIsTheAnswer` above and receipt `script-returnstatus-timeout`.
+        if result.Status <> BuildStatus.Success && not statusIsTheAnswer then
             // Was this step stopped because a failFast SIBLING failed?
             // MEASURED (FG-036): Jenkins reports such a build as FAILURE,
             // not ABORTED — the sibling's failure is the cause and the

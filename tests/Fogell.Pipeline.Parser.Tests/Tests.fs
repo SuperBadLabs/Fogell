@@ -83,7 +83,162 @@ let declarativeDetection =
 let structure =
     testList
         "declarative structure"
-        [ test "stages and steps are recovered" {
+        [ // FG-174. A duplicate named argument is refused at PARSE time, because Jenkins
+          // rejects the model and runs nothing — refusing at dispatch would let earlier
+          // stages run first. MEASURED on the pinned lab: Jenkins logs only `Started by
+          // user unknown or anonymous` and leaves the workspace empty, while Fogell took
+          // the first flag, suppressed `exit 7` and reported success. UNPROVEN by
+          // receipt: a compile-shaped refusal cannot be receipted (FG-129).
+          test "a duplicate named argument is refused" {
+              err (mk "    stage('B') { steps { sh script: 'exit 7', returnStatus: true, returnStatus: 'false' } }")
+              |> ignore
+          }
+
+          test "the refusal carries a named code and a position" {
+              // WHAT IT ACTUALLY SAYS, not what I wanted it to. The parser's own message
+              // names the duplicated argument, but an enclosing fallback generalises it
+              // to `malformed_syntax at L:C: opaque section` before it reaches the
+              // caller. That still satisfies tier 3 — a rejection with a named code and a
+              // position — and the safety property (nothing runs) holds either way, so
+              // the test asserts the reachable guarantee instead of a nicer sentence.
+              // The lost detail is recorded on the board rather than papered over here.
+              let e = err (mk "    stage('B') { steps { sh script: 'x', returnStatus: true, returnStatus: false } }")
+              Expect.stringContains (string e) "malformed_syntax" "a named code"
+              Expect.stringContains (string e) ":" "and a position"
+          }
+
+          test "DISTINCT named arguments are untouched" {
+              // The refusal must not swallow the ordinary shape: this is the spelling the
+              // whole corpus uses, and rejecting it would be far worse than the defect.
+              let p = ok (mk "    stage('B') { steps { sh script: 'make', returnStatus: true } }")
+              Expect.equal p.Stages.[0].Steps.Length 1 "the step parses"
+          }
+
+          test "a name repeated across DIFFERENT steps is fine" {
+              // Duplication is per-call. One counter shared across the step block would
+              // reject two ordinary `sh` steps that each set the same option.
+              let p =
+                  ok (mk "    stage('B') { steps { sh script: 'a', returnStatus: true\n sh script: 'b', returnStatus: true } }")
+
+              Expect.equal p.Stages.[0].Steps.Length 2 "both steps parse"
+          }
+
+          // FG-175. A KNOWN GAP, PINNED SO IT CANNOT BE MISTAKEN FOR COVERAGE.
+          //
+          // The duplicate rule is wired into `equals` and `environment` too, but it
+          // CANNOT REACH the caller there: `when` falls back to `whenSectionOpaque`,
+          // which consumes any unparseable body as raw text and marks the condition
+          // UNMODELLED. So the refusal backtracks into that fallback and the stage merely
+          // fails closed and SKIPS.
+          //
+          // That is still a divergence, MEASURED by scratch probe and UNPROVEN by receipt
+          // (FG-129 — a compile-shaped refusal emits nothing comparable): Jenkins rejects
+          // the pipeline at compile time and runs NOTHING, while Fogell runs the earlier
+          // stage and reports SUCCESS. Closing it means changing how section fallbacks handle a REFUSAL as
+          // opposed to an unmodelled shape — the fallback is deliberate (FG-152) and
+          // load-bearing, so this is a design change, not a patch. FG-175 carries it.
+          //
+          // These tests assert TODAY'S behaviour on purpose. When FG-175 lands they will
+          // fail, which is the point: they are the tripwire, not an endorsement.
+          test "FG-175 gap: a duplicate in when-equals PARSES, and the condition is unmodelled" {
+              let p = ok (mk "    stage('B') { when { equals expected: 1, actual: 1, actual: 2 }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          // The SINGLE-KEY conditions reach the same place by a different route: the
+          // second pair is left UNCONSUMED, the condition fails, and the opaque fallback
+          // absorbs the section. An earlier comment of mine claimed these "cannot
+          // duplicate" a named argument — they can, and review caught the sentence.
+          test "FG-175 gap: a duplicate in when-tag lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { tag pattern: 'v1', pattern: 'v2' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-branch lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { branch pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-changelog lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { changelog pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-triggeredBy lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { triggeredBy cause: 'a', cause: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "FG-175 gap: a duplicate in when-changeset lands in the same fallback" {
+              let p = ok (mk "    stage('B') { when { changeset pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          // AND A SECOND ROUTE TO THE SAME GAP, which this test found by being WRONG.
+          //
+          // Four review rounds went on enumerations of mine that were each missing one
+          // more condition — `equals`, then the single-key ones, then `changeset` — so
+          // this was written to assert the PROPERTY instead: that leftover arguments
+          // always end in `whenSectionOpaque`. They do not. `changeRequest` accepts only
+          // empty parens here, and `changeRequest target: 'a', target: 'b'` parses as TWO
+          // conditions implicitly ANDed — `WhenAllOf [WhenChangeRequest; WhenUnmodelled
+          // ("target", ": 'a', target: 'b'")]`. Stray argument text becomes an extra
+          // condition rather than a parse failure.
+          //
+          // The USER-VISIBLE outcome is identical (unmodelled -> fail closed -> the stage
+          // SKIPS, where Jenkins rejects the pipeline), but the mechanism is different, so
+          // a FG-175 fix aimed only at the opaque fallback would leave this route open.
+          // Recorded here because the enumeration was never the hard part.
+          test "FG-175 gap: leftover named args become a second, implicitly ANDed condition" {
+              let p = ok (mk "    stage('B') { when { changeRequest target: 'a', target: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenAllOf parts) ->
+                  Expect.isTrue
+                      (parts |> List.exists (function WhenUnmodelled _ -> true | _ -> false))
+                      "the leftover arrives as an unmodelled sibling condition, so the stage fails closed"
+              | other -> failtestf "expected an implicit AllOf, got %A" other
+          }
+
+          test "the ORDINARY single-key conditions still parse" {
+              // What the tripwires above must not be confused with.
+              ok (mk "    stage('B') { when { tag pattern: 'v1' }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { branch 'main' }\n steps { sh 'x' } }") |> ignore
+          }
+
+          test "FG-175 gap: a duplicate in when-environment PARSES, and the condition is unmodelled" {
+              let p = ok (mk "    stage('B') { when { environment name: 'T', value: 'a', value: 'b' }\n steps { sh 'x' } }")
+
+              match p.Stages.[0].When with
+              | Some(WhenUnmodelled _) -> ()
+              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          }
+
+          test "the ORDINARY when conditions still parse" {
+              // Both are in the corpus and are what the refusal must not touch.
+              ok (mk "    stage('B') { when { equals expected: 1, actual: 1 }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { environment name: 'T', value: 'a' }\n steps { sh 'x' } }") |> ignore
+          }
+
+          test "stages and steps are recovered" {
               let p = ok (mk "    stage('Build') { steps { sh 'make'\n echo 'done' } }")
               Expect.equal p.Stages.Length 1 "one stage"
               Expect.equal p.Stages.[0].Name "Build" "stage name"
@@ -359,6 +514,30 @@ let structure =
 
           test "a scripted file reports no_pipeline_block, not a syntax error" {
               Expect.equal (err "node { sh 'make' }").Code NoPipelineBlock "no_pipeline_block"
+          }
+
+          // FG-185. THE SAME SOURCE THROUGH BOTH PUBLIC ENTRY POINTS, and the pair is the
+          // test. Script-body validation lived in `parse`, so `parseWithLimits` — equally
+          // public, and the one a caller reaches for precisely when it wants different
+          // bounds — returned Ok for a body `parse` rejects, restoring the delayed
+          // execution-time failure the check exists to prevent. Asserting only the
+          // `parseWithLimits` half would pass a build that moved the check and broke
+          // `parse`; asserting both pins the actual invariant, which is that the two
+          // cannot disagree about admissibility.
+          test "a malformed script body is rejected through parseWithLimits, not only parse" {
+              let src = mk "    stage('a') { steps { script { def x = } } }"
+
+              // NOT `Limits.defaults` — that goes down the very path `parse` uses and
+              // would prove nothing about the custom-limit route.
+              let custom =
+                  { Limits.defaults with
+                      MaxSourceBytes = 100_000 }
+
+              match Parser.parseWithLimits custom src with
+              | Ok _ -> failtest "parseWithLimits admitted a malformed script body"
+              | Error e -> Expect.equal e.Code MalformedSyntax "malformed_syntax"
+
+              Expect.equal (err src).Code MalformedSyntax "and `parse` still agrees"
           } ]
 
 [<EntryPoint>]

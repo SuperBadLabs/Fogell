@@ -4,6 +4,7 @@
     <Compile Include="Value.fs" />
     <Compile Include="Sandbox.fs" />
     <Compile Include="Interpreter.fs" />
+    <Compile Include="StepValueUse.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Fogell.Groovy/Fogell.Groovy.fsproj" />

@@ -64,6 +64,24 @@ let grammar =
           test "spread-dot and safe navigation" {
               Expect.isTrue (parses "def a = b*.c\ndef d = e?.f\n") "*. and ?."
           }
+          // FG-174. Both parsers hold this rule, because both produce calls and a rule
+          // held by only one of them is the shape of half the findings on this branch.
+          test "a duplicate named argument is refused, parenthesised" {
+              Expect.isFalse (parses "sh(script: 'exit 7', returnStatus: true, returnStatus: 'false')\n") "map literal duplicate"
+          }
+
+          test "a duplicate named argument is refused, command form" {
+              // The form without parentheses goes through a DIFFERENT parser path, and
+              // covering only the parenthesised one would leave the commonest spelling of
+              // a step call unchecked.
+              Expect.isFalse (parses "sh script: 'exit 7', returnStatus: true, returnStatus: false\n") "command form too"
+          }
+
+          test "DISTINCT named arguments still parse in both forms" {
+              Expect.isTrue (parses "sh(script: 'make', returnStatus: true)\n") "parenthesised"
+              Expect.isTrue (parses "sh script: 'make', returnStatus: true\n") "command form"
+          }
+
           test "user-defined functions are recognised, not treated as unknown steps" {
               let script = parseOk "def helper(a) { return a }\nhelper(1)\n"
               Expect.contains (Ast.definedFunctions script) "helper" "declared function found"
@@ -106,6 +124,20 @@ let sandbox =
               let o = run "sh 'make'\necho 'done'\n"
               Expect.equal (stepNames o) [ "sh"; "echo" ] "effects recorded in order"
               Expect.isNone o.Fault "no fault"
+          }
+
+          test "a trailing closure ARGUMENT is a body, not a positional (batch mode)" {
+              // The normalisation above the host split existed for the LIVE path only:
+              // batch recorded the raw positional list, so this logged the closure as an
+              // argument AND ran it as a body — the same block counted twice. Raised in
+              // review on PR #53. Nothing in the walker read `Effects`, so no receipt
+              // could have caught it; this is the only thing that can.
+              let o = run "node 'label', { sh 'make' }\n"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "node", [ "label" ]; "sh", [ "make" ] ]
+                  "the closure is the body, and its contents are their own effects"
           }
 
           test "denial happens before the step is emitted" {
@@ -275,6 +307,300 @@ let predicateValues =
               Expect.equal (run "[1].any { it == 1 }").Returned (Some(VBool true)) "implicit closure return"
           } ]
 
+let stepValueUse =
+    // FG-160/FG-174. A step call in a VALUE position is refused unless the step can
+    // actually supply a value.
+    //
+    // The original reason was the batch model: it collected `StepCall` effects and every
+    // call evaluated to `VNull`, so a body using a return value decided branches on null.
+    // FG-172 replaced that with a live host and FG-174 taught `sh` to answer
+    // `returnStdout`/`returnStatus`, so the rule is now narrower and the exemplars below
+    // had to change with it: a call that OPTS IN is admitted, and a call that does not is
+    // still refused — the walker's dispatch returns unit, so there is nothing to hand back.
+    //
+    // Which is why these tests use `sh(script: 'x')` where they once used
+    // `sh(script: 'x', returnStdout: true)`. Left alone they would have kept passing on
+    // the day the refusal was lifted, asserting a rule the code no longer has.
+    let uses src =
+        // A STUB of the real contract, deliberately. This assembly must not depend on
+        // `Fogell.Differential` — keeping the step vocabulary out of the interpreter layer
+        // is why `find` takes a predicate at all. These tests assert that `find` CONSULTS
+        // the rule and walks every value position; the rule ITSELF (which steps, and
+        // `returnStatus` winning when both are set) is `WalkerRules.returnContract` and is
+        // tested against that function in Fogell.Differential.Tests.
+        Fogell.Groovy.Interpreter.StepValueUse.find
+            steps.Contains
+            (fun n so st -> (n = "sh" || n = "bat") && (so || st))
+            (parseOk src)
+
+    let usedSteps src = uses src |> List.map (fun u -> u.Step)
+
+    testList
+        "FG-160 step calls whose value is used"
+        [ test "a bare step statement is NOT a value use" {
+              // The whole point: the common shape must still run. If this fires, the
+              // refusal rejects the corpus it was meant to admit.
+              Expect.isEmpty (uses "sh 'make'\necho 'done'") "a discarded call is safe"
+          }
+
+          test "a step in a variable initialiser IS a value use" {
+              Expect.equal (usedSteps "def out = sh(script: 'x')") [ "sh" ] "def RHS"
+          }
+
+          test "a step in an if condition IS a value use" {
+              Expect.equal (usedSteps "if (sh(script: 'x') == 0) { echo 'ok' }") [ "sh" ] "condition"
+          }
+
+          test "a step in an ASSIGNMENT is a value use" {
+              Expect.equal (usedSteps "x = sh(script: 'x')") [ "sh" ] "assignment RHS"
+          }
+
+          test "a step nested in a string interpolation is a value use" {
+              // The sneakiest shape, and the one a naive statement-level check misses.
+              Expect.equal (usedSteps "echo \"got ${sh(script: 'x')}\"") [ "sh" ] "interpolation"
+          }
+
+          test "a step as an ARGUMENT to a bare statement call is a value use" {
+              // The outer call is a discarded statement; the inner one is not. A check
+              // that only asked "is this statement a call" would pass this.
+              Expect.equal (usedSteps "echo sh(script: 'x')") [ "sh" ] "argument"
+          }
+
+          test "a step inside a TRAILING BLOCK is not a VALUE use" {
+              // `timeout(5) { sh 'x' }` discards the inner value exactly as a statement
+              // does — so this finder, which answers only the VALUE question, says
+              // nothing about it.
+              //
+              // IT IS NOT THEREFORE RUNNABLE. This comment claimed a trailing block was a
+              // "perfectly runnable shape", and the pre-push verifier showed it is not:
+              // the interpreter runs the closure immediately and flattens it, so a
+              // replayed wrapper arrives with no body and `dir('x') { sh 'pwd' }` runs in
+              // the wrong directory. `findWrapperCalls` refuses it. One sentence cannot
+              // answer both questions, and the old one tried.
+              Expect.isEmpty (uses "node { sh 'make' }") "a trailing block holds statements, not a value"
+          }
+
+          test "a WRAPPER call is refused, because replay cannot carry its body" {
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+                  |> List.map (fun u -> u.Step)
+
+              Expect.equal (wrappers "node { sh 'make' }") [ "node" ] "a step with a trailing block"
+          }
+
+          test "a wrapper NESTED in control flow is still found" {
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+                  |> List.map (fun u -> u.Step)
+
+              Expect.equal (wrappers "if (true) { node { sh 'make' } }") [ "node" ] "the walk reaches into branches"
+          }
+
+          test "a bare step with NO trailing block is not a wrapper" {
+              // The refusal must not swallow the shape FG-160 exists to run.
+              let wrappers src =
+                  Fogell.Groovy.Interpreter.StepValueUse.findWrapperCalls steps.Contains (parseOk src)
+
+              Expect.isEmpty (wrappers "sh 'make'\necho 'done'") "plain steps stay runnable"
+          }
+
+          test "a step in a RETURN is a value use" {
+              Expect.equal (usedSteps "return sh(script: 'x')") [ "sh" ] "return value"
+          }
+
+          test "a step in a for-in SOURCE is a value use" {
+              Expect.equal
+                  (usedSteps "for (f in sh(script: 'ls').split()) { echo f }")
+                  [ "sh" ]
+                  "loop source"
+          }
+
+          test "a NON-step call is never flagged" {
+              // `isStep` decides, not call shape. A user function or builtin returning a
+              // value is ordinary Groovy and must not be refused.
+              Expect.isEmpty (uses "def x = someHelper()") "only registered steps batch their effects"
+          }
+
+          test "the position is NAMED, not just the step" {
+              // A refusal that says only "a step value is used" sends someone hunting.
+              let u = uses "def out = sh(script: 'x')" |> List.exactlyOne
+              Expect.equal u.Where "a variable initialiser" "the position is reported"
+          }
+
+          test "several uses are all reported, in source order" {
+              let src = "def a = sh(script: '1')\nif (sh(script: '2') == 0) { echo a }"
+              Expect.equal (usedSteps src) [ "sh"; "sh" ] "every use, not the first"
+          }
+
+          // FG-174. THE OTHER SIDE OF THE RULE. `sh` can now answer both flags, so a call
+          // that opts in is ADMITTED — and these are what fail if someone restores the
+          // blanket refusal, which is the direction the two earlier attempts went.
+          test "returnStdout: true is ADMITTED in a value position" {
+              Expect.isEmpty (uses "def out = sh(script: 'x', returnStdout: true)") "the step supplies a value"
+          }
+
+          test "returnStatus: true is ADMITTED in a value position" {
+              Expect.isEmpty (uses "if (sh(script: 'x', returnStatus: true) == 0) { echo 'ok' }") "the step supplies a value"
+          }
+
+          // THE FLAG MUST BE A LITERAL `true`, and these three are why the check reads the
+          // argument LIST rather than looking for a key.
+          test "returnStdout: false is still refused" {
+              // Opting OUT is not opting in. A check that merely spotted the KEY would
+              // admit this and hand the script null.
+              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: false)") [ "sh" ] "false is not true"
+          }
+
+          test "a NON-LITERAL flag is still refused" {
+              // A static reader cannot know what `flag` holds, so assuming it is true
+              // would be guessing in the direction that fails open.
+              Expect.equal (usedSteps "def out = sh(script: 'x', returnStdout: flag)") [ "sh" ] "unknown at read time"
+          }
+
+          test "the flag must be NAMED, not positional" {
+              // `sh('x', true)` says nothing about WHICH option is being set.
+              Expect.equal (usedSteps "def out = sh('x', true)") [ "sh" ] "a bare true opts in to nothing"
+          }
+
+          test "the flags belong to the SHELL STEPS, not to every step" {
+              // The verifier ran this one: Fogell handed the script "hello\n" where
+              // Jenkins' `echo` returns null and only warns about the unknown parameter,
+              // so `got == null` took the other branch and skipped work Jenkins runs —
+              // while the build reported success. Refusing is the honest answer, and it
+              // is what an engine that cannot answer must do.
+              Expect.equal
+                  (usedSteps "def got = echo(message: 'hello', returnStdout: true)")
+                  [ "echo" ]
+                  "echo does not answer returnStdout"
+          }
+        ]
+
+let hostedSteps =
+    // FG-160 slice 2. The callback boundary, holding the four things the BATCH model
+    // could not express — each one a refusal in slice 1, each found by review:
+    //   a step's RETURN VALUE, a wrapper's BODY, `env` MUTATION, and per-step ordering
+    //   the host can hang durability on.
+    // These test the seam, not the walker; the walker side is separate work.
+    let hostThat perform setEnv =
+        { Perform = perform
+          SetEnv = setEnv
+          // FG-178. These tests exercise the SEAM, not a walker environment; an empty
+          // list keeps the body's bindings exactly as `runHosted` set them.
+          CurrentEnv = fun () -> []
+          // FG-184. The seam's own answer, spelled out here rather than imported from
+          // `WalkerRules`: these tests drive `dir`/`retry`/`withEnv` bodies directly, and
+          // borrowing the production set would make them pass because of what the walker
+          // happens to register rather than because the normalisation asked at all.
+          TakesBlock = fun name -> Set.contains name (set [ "dir"; "timeout"; "retry"; "withEnv" ]) }
+
+    /// Records what the host was asked to do, in order.
+    let recording () =
+        let log = ResizeArray<string>()
+
+        let host =
+            hostThat
+                (fun name positional _named runBody ->
+                    let args = positional |> List.map Value.toDisplay |> String.concat ","
+                    log.Add $"{name}({args})"
+
+                    match runBody with
+                    | Some run ->
+                        log.Add $"{name}:body-start"
+                        run ()
+                        log.Add $"{name}:body-end"
+                    | None -> ()
+
+                    VNull)
+                (fun k v -> log.Add $"env:{k}={v}")
+
+        host, log
+
+    let runIt host src =
+        Interpreter.runHosted host Budget.defaults steps (Env.empty) (parseOk src)
+
+    testList
+        "FG-160 slice 2 the host performs steps live"
+        [ test "steps are performed IN ORDER, as they are reached" {
+              let host, log = recording ()
+              let outcome = runIt host "sh 'a'\nsh 'b'"
+
+              Expect.isNone outcome.Fault "the script ran"
+              Expect.equal (List.ofSeq log) [ "sh(a)"; "sh(b)" ] "source order, live"
+          }
+
+          test "Effects is EMPTY in hosted mode, because the steps already happened" {
+              // A caller reading Effects here has asked for the wrong model; an empty list
+              // makes that visible instead of handing back a replayable-looking log.
+              let host, _ = recording ()
+              let outcome = runIt host "sh 'a'"
+              Expect.isEmpty outcome.Effects "hosted mode performs, it does not collect"
+          }
+
+          test "a step's RETURN VALUE reaches the script" {
+              // The defect that started the refusals: batch mode evaluated every call to
+              // null, so `def out = sh(...)` bound null and every branch on it was wrong.
+              let host =
+                  hostThat (fun _ _ _ _ -> VStr "deadbeef") (fun _ _ -> ())
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk "def out = sh(script: 'git rev-parse HEAD', returnStdout: true)\nreturn out")
+
+              Expect.isNone outcome.Fault "no fault"
+              Expect.equal outcome.Returned (Some(VStr "deadbeef")) "the host's value is the call's value"
+          }
+
+          test "a WRAPPER's body runs INSIDE the wrapper, not flattened before it" {
+              // Batch mode evaluated a trailing closure immediately and flattened its
+              // effects, so `dir('x') { sh 'pwd' }` ran `sh` outside `x`. The body arrives
+              // as a thunk the host invokes where it chooses.
+              let host, log = recording ()
+              let outcome = runIt host "node('linux') { sh 'pwd' }"
+
+              Expect.isNone outcome.Fault "no fault"
+
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "node(linux)"; "node:body-start"; "sh(pwd)"; "node:body-end" ]
+                  "the inner step runs between the wrapper's setup and teardown"
+          }
+
+          test "a wrapper body is NOT run when the host declines to run it" {
+              // `retry`, `timeout` and a skipped `when` all need this: the host decides
+              // whether and how many times the body runs. Batch mode had already run it.
+              let host = hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ())
+              let ran = ref false
+
+              let counting =
+                  { host with
+                      Perform =
+                        fun name _ _ _ ->
+                            if name = "sh" then ran.Value <- true
+                            VNull }
+
+              let outcome =
+                  Interpreter.runHosted counting Budget.defaults steps Env.empty (parseOk "node('linux') { sh 'pwd' }")
+
+              Expect.isNone outcome.Fault "no fault"
+              Expect.isFalse ran.Value "an unrun body performs no steps"
+          }
+
+          test "a host FAULT stops the script where it happened" {
+              // A failing step must not let the rest of the block run — batch mode could
+              // not fail mid-script at all, because nothing had run yet.
+              let host =
+                  hostThat
+                      (fun name _ _ _ ->
+                          if name = "sh" then failwith "step failed"
+                          VNull)
+                      (fun _ _ -> ())
+
+              Expect.throws
+                  (fun () -> Interpreter.runHosted host Budget.defaults steps Env.empty (parseOk "sh 'a'\nsh 'b'") |> ignore)
+                  "a host exception propagates rather than being swallowed"
+          }
+        ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps ])

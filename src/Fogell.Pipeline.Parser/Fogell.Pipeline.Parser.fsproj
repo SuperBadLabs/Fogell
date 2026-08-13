@@ -7,6 +7,13 @@
   <ItemGroup>
     <ProjectReference Include="../Fogell.Ir/Fogell.Ir.fsproj" />
     <ProjectReference Include="../Fogell.Admission/Fogell.Admission.fsproj" />
+    <!-- FG-178. A `script { }` body is Groovy, and admission must reject an invalid
+         one the way Jenkins rejects the model at compile time. Validating it inside
+         `parse` is what puts the check on EVERY entry point at once — the HTTP
+         router, the differential, the run host — rather than on whichever one I
+         happened to be looking at. No cycle: Fogell.Groovy.Parser depends only on
+         Fogell.Groovy and Fogell.Admission. -->
+    <ProjectReference Include="../Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <PackageReference Include="FParsec" Version="1.1.1" />
   </ItemGroup>
 </Project>

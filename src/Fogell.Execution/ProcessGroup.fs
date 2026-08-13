@@ -73,6 +73,20 @@ type RunRequest =
       /// Called with each output line as it arrives, so a running build streams
       /// rather than materialising at the end (FG-040 / JB-LOG-002 parity).
       OnLine: (string -> unit) option
+      /// FG-174. `sh(returnStdout: true)` CAPTURES stdout instead of printing it.
+      ///
+      /// Seen on pinned Jenkins: the xtrace line still appears in the console — Jenkins
+      /// prints `+ printf value` — while the program's own output does NOT. UNPROVEN
+      /// in-repo, and said so: the probe diverges because Fogell cannot yet reproduce it,
+      /// so it has no receipt until the trace moves off stdout. So this
+      /// suppresses the ECHO of stdout only; stderr, which is where `sh -x` writes the
+      /// trace, keeps streaming. Both sinks are still filled, so the captured value is
+      /// unaffected.
+      ///
+      /// Without this the compared output gained lines Jenkins never produced, and the
+      /// captured value picked up the trace as well — measured by lifting the refusal and
+      /// running it, not by reading the code.
+      SuppressStdoutEcho: bool
       /// Set when the step's group should be reaped even on success. Jenkins does
       /// NOT do this — measured: `nohup`ed children survive both success and
       /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
@@ -101,6 +115,7 @@ type RunRequest =
           TimeoutMs = None
           GraceMs = 2_000
           OnLine = None
+          SuppressStdoutEcho = false
           ReapGroup = true
           Interrupt = None
           InterruptBeatsDeadline = None
@@ -285,9 +300,24 @@ module ProcessGroup =
         // runs it: a shebang script executes itself, everything else runs under
         // `sh -xe <path>` — so `$0` is the script path on both engines, not
         // `/bin/sh` here and `script.sh` there. The path travels positionally.
+        // FG-174. `2>&1` IS WHY THE TRACE WAS ON STDOUT — not `sh`. This was recorded on
+        // the board as "Fogell's `sh -x` writes its trace to stdout", which named the
+        // symptom and made the fix sound like it changed shell invocation for every step
+        // and every receipt. It does not: `sh -x` writes to STDERR exactly as Jenkins'
+        // does, and the wrapper here MERGES the two streams.
+        //
+        // The merge exists so that interleaving is exact — one pipe cannot reorder
+        // against itself, and the console shows the trace and the output in the order
+        // the script produced them. That reason DOES NOT APPLY when stdout is captured:
+        // nothing of stdout reaches the console, so there is no interleaving left to
+        // preserve. Splitting the streams only there gives the Jenkins shape — the trace
+        // still prints, the program's own output does not — and leaves every other step
+        // byte-identical, which is what keeps the receipts valid.
+        let mergeStderr = if request.SuppressStdoutEcho then "" else " 2>&1"
+
         (match request.Command.StartsWith "#!" with
-         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\" 2>&1"
-         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\" 2>&1")
+         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\"{mergeStderr}"
+         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\"{mergeStderr}")
 
         psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
         psi.ArgumentList.Add(defaultArg shebangFile request.Command)
@@ -314,7 +344,27 @@ module ProcessGroup =
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 request.OnLine |> Option.iter (fun f -> f line)
 
-        proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
+        // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
+        //
+        // The first version of this filled the same StringBuilder through `AppendLine`,
+        // and MEASURED AGAINST JENKINS it was wrong: `printf value` emits five bytes and
+        // no terminator, but a line-based sink re-terminates every line, so the captured
+        // value came back as "value\n". `sh(script: 'printf value', returnStdout: true)`
+        // then differed from Jenkins in a way no amount of `.trim()` in the pipeline
+        // would reveal, and the `raw:[...]` assertion in `script-sh-returnstdout` is what
+        // caught it: Jenkins printed one line where Fogell printed two.
+        //
+        // A line reader CANNOT fix this — `OutputDataReceived` never says whether the
+        // final line carried a terminator, so the information is gone before the sink
+        // sees it. `ReadToEndAsync` still DECODES to a string; what it preserves is the
+        // terminator, not the raw bytes, and an earlier version of this comment said
+        // "as bytes" and overstated it (raised in review on PR #53). Capture mode therefore skips the line reader for stdout entirely,
+        // which costs nothing: nothing is echoing those lines anyway. stderr keeps its
+        // event reader, so the xtrace still streams while this runs, and the two are read
+        // CONCURRENTLY — reading one to completion before draining the other is how a
+        // full pipe buffer deadlocks a process that writes to both.
+        if not request.SuppressStdoutEcho then
+            proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
 
         proc.ErrorDataReceived.Add(fun e ->
             match e.Data with
@@ -328,7 +378,46 @@ module ProcessGroup =
             | line -> emit stderr line)
 
         proc.Start() |> ignore
-        proc.BeginOutputReadLine()
+
+        // FG-181. The capture accumulates INCREMENTALLY into a buffer this scope owns,
+        // rather than being handed to `ReadToEndAsync` and read out of the task's Result.
+        // The two differ only when the read does not finish, and that is exactly the case
+        // that was wrong: a descendant which escaped the process group holds the inherited
+        // write end open, `ReadToEndAsync` cannot complete, the bounded wait below expires,
+        // and the task's Result is unavailable — so the fallback substituted "" and threw
+        // away bytes that HAD ALREADY ARRIVED. MEASURED: `setsid sleep 10 & printf token`
+        // gave Jenkins `raw:[token]` and Fogell `raw:[]`, with BOTH ENGINES REPORTING
+        // SUCCESS, which is a wrong value under a green build. With the buffer the same
+        // case truncates instead of erasing, and `token` is there because it arrived long
+        // before the bound. Receipt `script-capture-escaped-descendant`, which was run
+        // against this code REVERTED and diverges on both the value and the workspace
+        // hash — a capture case that cannot fail proves nothing about capture.
+        //
+        // Started BEFORE the stderr reader and never awaited until the wait is over, so
+        // both pipes drain concurrently — see the capture note above.
+        //
+        // The buffer is locked on BOTH sides: this task may still be reading when the
+        // snapshot below is taken, precisely in the case the ticket is about.
+        let captureBuffer = Text.StringBuilder()
+
+        let capturedStdout =
+            if request.SuppressStdoutEcho then
+                let reader = proc.StandardOutput
+                // A char buffer, not a byte one: `StreamReader.Read` decodes, so a chunk
+                // boundary can never split a multi-byte character. Reading bytes here to
+                // make the comment above literally true would introduce that bug.
+                Some(
+                    Tasks.Task.Run(fun () ->
+                        let chunk = Array.zeroCreate<char> 4096
+                        let mutable n = reader.Read(chunk, 0, chunk.Length)
+
+                        while n > 0 do
+                            lock captureBuffer (fun () -> captureBuffer.Append(chunk, 0, n) |> ignore)
+                            n <- reader.Read(chunk, 0, chunk.Length)))
+            else
+                proc.BeginOutputReadLine()
+                None
+
         proc.BeginErrorReadLine()
 
         // Wait briefly for the leader to report its pid. Deriving it from
@@ -466,7 +555,14 @@ module ProcessGroup =
                 // still in flight would land after the snapshot, read as post-signal
                 // shell narration, and wrongly suppress the synthetic line below.
                 flushReaders 300
+                // BOTH BUFFERS. A trapping script's `Terminated` lands wherever its
+                // stderr is pointed, and in CAPTURE mode the two streams are no longer
+                // merged — so a stdout-only snapshot stopped seeing it and the engine
+                // synthesised a SECOND line beside the shell's own. Raised in review on
+                // PR #53; the split that caused it is FG-174's, so the check has to know
+                // about it.
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
+                let stderrBeforeSignal = lock stderr (fun () -> stderr.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
                 flushReaders 300
 
@@ -476,11 +572,13 @@ module ProcessGroup =
                 // position. UNLESS the script trapped the signal and said it itself:
                 // synthesising unconditionally doubled the line for a trapping shell.
                 let shellSaidIt =
-                    let afterSignal =
-                        (lock stdout (fun () -> stdout.ToString())).Substring outputBeforeSignal.Length
+                    let since (sink: Text.StringBuilder) (before: string) =
+                        (lock sink (fun () -> sink.ToString())).Substring before.Length
 
-                    afterSignal.Replace("\r\n", "\n").Split '\n'
-                    |> Array.exists (fun l -> l.Trim() = "Terminated")
+                    [ since stdout outputBeforeSignal; since stderr stderrBeforeSignal ]
+                    |> List.exists (fun afterSignal ->
+                        afterSignal.Replace("\r\n", "\n").Split '\n'
+                        |> Array.exists (fun l -> l.Trim() = "Terminated"))
 
                 if not shellSaidIt then
                     request.OnLine |> Option.iter (fun f -> f "Terminated")
@@ -492,8 +590,40 @@ module ProcessGroup =
 
         shebangFile |> Option.iter deleteShebang
 
+        // The captured text is awaited HERE, after the wait has ended, so the read never
+        // competes with the timeout/interrupt polling above. On a killed process the
+        // pipe closes and the read completes with whatever was written before the kill,
+        // which is the honest answer; a step that never produced output yields "".
+        //
+        // A bounded wait, not an indefinite one: this runs after the process group has
+        // been reaped, but an INHERITED pipe held open by a surviving grandchild would
+        // otherwise block the engine here forever — the one failure mode that would be
+        // worse than a wrong value. The captured value is best-effort by construction,
+        // and `returnStdout` on a step that timed out is discarded anyway, since an
+        // abort propagates rather than becoming a value.
+        //
+        // "BEST-EFFORT" NOW MEANS WHAT IT SAYS, and it took two goes. The bound was always
+        // right; what was salvaged when it expired was not. First the fallback read
+        // `stdout.ToString()`, which in capture mode is ALWAYS "" — the line handler is
+        // not attached at all, so that sink is never filled — while the comment called the
+        // value best-effort, implying partial output survived. It did not. Making the
+        // fallback an explicit "" was honest about that and still WRONG (FG-181): bytes
+        // that arrived before the bound are real captured output, and discarding them
+        // hands the pipeline a wrong value under a build that reports success. The buffer
+        // above keeps them, so an expired wait TRUNCATES what was captured rather than
+        // ERASING it, and the timeout is no longer the difference between `token` and "".
+        //
+        // WHY NOT SIMPLY WAIT LONGER: the bound is what stops an escaped descendant from
+        // holding the engine open forever, which is the one failure mode worse than a
+        // wrong value. Truncation removes the need to choose between them.
+        let capturedText =
+            capturedStdout
+            |> Option.map (fun t ->
+                t.Wait 5_000 |> ignore
+                lock captureBuffer (fun () -> captureBuffer.ToString()))
+
         { Outcome = outcome
-          Stdout = stdout.ToString()
+          Stdout = defaultArg capturedText (stdout.ToString())
           Stderr = stderr.ToString()
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid

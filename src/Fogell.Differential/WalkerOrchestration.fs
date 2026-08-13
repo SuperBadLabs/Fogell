@@ -5,6 +5,8 @@ open System.IO
 open Fogell.Domain
 open Fogell.Execution
 open Fogell.Ir
+// FG-160: `script { }` bodies are scripted Groovy, evaluated by the interpreter.
+open Fogell.Groovy.Interpreter
 
 /// FG-046b. A human's answer to an `input` prompt. Deliberately NOT a bool: the
 /// two outcomes narrate and terminate differently (MEASURED on Jenkins 2.568.1 —
@@ -198,6 +200,264 @@ module WalkerOrchestration =
         let timeoutMs = WalkerRules.timeoutMs
         let retryCount = WalkerRules.retryCount
         let halted = WalkerRules.halted
+
+        // FG-160. The step names a `script { }` body may call. DERIVED FROM THE DISPATCH
+        // TABLE below plus the two the inner runner handles, deliberately CLOSED: a name
+        // outside it is refused by `Sandbox.admitCall`, the script faults, and the build
+        // fails with a reason. That is the fail-closed direction — an open vocabulary
+        // would let an unimplemented name reach the walker's dispatch and silently do
+        // nothing.
+        // Defined in `WalkerRules` so a test can hold the arity table against it; this
+        // local binding keeps every call site below unchanged. `dir`, `timeout`, `retry`
+        // and `withEnv` are in it because FG-172 taught their arms to run a hosted body.
+        let scriptStepVocabulary = WalkerRules.scriptStepVocabulary
+        /// FG-172. The SIGNATURE a hosted step must be called with, checked centrally
+        /// before dispatch.
+        ///
+        /// WHY CENTRAL AND NOT PER-ARM. The first attempt validated `withEnv` inside its
+        /// own arm and only when the first argument was a list — so `withEnv('A=1')`, the
+        /// WRONG SHAPE entirely, fell past it: no list, no raw entries, empty bindings, and
+        /// the body RAN while Jenkins rejects the call outright (`EnvStep(List<String>)`).
+        /// Every newly admitted hosted step would otherwise get its own signature bypass,
+        /// one per arm, discovered one review round at a time. Raised by the pre-push
+        /// verifier as the eighth of its class, with exactly that argument.
+        ///
+        /// A step absent from this table is not validated here — its arm is responsible,
+        /// as before. Adding a hosted step SHOULD add a line here.
+        /// FG-177. ONE PLACE THAT DECIDES WHAT SHAPE A HOSTED CALL IS IN.
+        ///
+        /// Two things, in this order, because the order is the whole subtlety:
+        ///   1. the CPS rule — positional AND named together is rejected by Jenkins for
+        ///      EVERY step, whatever its parameters;
+        ///   2. NORMALISATION — a sole required parameter written by name becomes the
+        ///      positional form, so no arm and no dispatch path has to learn both
+        ///      spellings. `dir(path: 'sub')` is `dir('sub')`.
+        ///
+        /// Doing (2) before (1) would be wrong in a way worth naming: normalising
+        /// `sh(script: 'x', returnStatus: true)` moves `script` to the positional slot and
+        /// leaves `returnStatus` named, MANUFACTURING the mixed shape that (1) rejects —
+        /// and every existing `sh(script:…, returnStatus:…)` receipt would start failing.
+        /// So the rule reads the call as WRITTEN, and only then is it rewritten.
+        ///
+        /// The result feeds the `Step` record, the signature arms AND `HostedArgs`, so a
+        /// wrapper reading its typed argument sees the normalised form too — which is
+        /// where `withEnv(overrides: […])` was actually failing, not just in validation.
+        let normaliseHostedCall (name: string) (positional: Value list) (named: (string * Value) list) =
+            if not (List.isEmpty positional) && not (List.isEmpty named) then
+                let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+
+                Error
+                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+            else
+                match positional, Map.tryFind name WalkerRules.soleRequiredParameter with
+                | [], Some param ->
+                    match named |> List.partition (fun (k, _) -> k = param) with
+                    | [ (_, v) ], rest -> Ok([ v ], rest)
+                    | _ -> Ok(positional, named)
+                | _ -> Ok(positional, named)
+
+        let hostedSignatureError (name: string) (positional: Value list) (named: (string * Value) list) =
+            let wrongShape expected = Some $"`{name}` {expected}"
+
+            // The CPS mixed-argument rule used to live here; it moved into
+            // `normaliseHostedCall` below, because normalisation has to happen AFTER it
+            // and both belong to the same "what shape is this call" question.
+            // POSITIONAL **OR** NAMED, NEVER BOTH — and this is not a per-step rule, which
+            // is why it sits ahead of the match rather than in an arm.
+            //
+            // Jenkins' CPS `DSL.parseArgs` throws `Expected named arguments but got …`
+            // whenever a named map arrives beside positional arguments, whatever the step
+            // is. MEASURED on TWO different steps to establish that it is step-INDEPENDENT
+            // rather than assuming it from one, and held by receipt
+            // `script-mixed-positional-named`: `sh('exit 7', returnStatus: true)` and
+            // `archiveArtifacts('*.txt', fingerprint: true)` both make Jenkins fail with
+            // the SAME workspace hash — only the earlier stage's file — while Fogell ran
+            // each and reported success.
+            //
+            // It was first written as a `timeout`-only arm, which was the fifteenth
+            // finding of this class: the right rule in the wrong scope. `timeout`'s own
+            // mixed branch is GONE rather than left beside this one, because a dead
+            // branch that can never fire reads as a second opinion.
+            match name with
+            | "withEnv" ->
+                match positional, named with
+                | [ VList items ], [] ->
+                    items
+                    |> List.map Value.toDisplay
+                    |> List.tryFind (fun e -> e.IndexOf '=' <= 0)
+                    |> Option.map (fun bad ->
+                        $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
+                | _ -> wrongShape "takes exactly one list argument of NAME=VALUE strings"
+            | "dir" ->
+                match positional, named with
+                | [ _ ], [] -> None
+                | _ -> wrongShape "takes exactly one path argument"
+            | "retry" ->
+                // THE TYPE, not just the arity — and NOT the sign. MEASURED against pinned
+                // Jenkins rather than assumed, because the review that raised this said
+                // Jenkins "rejects the count" for both shapes and that is only half true:
+                //   retry(0)       -> Jenkins SUCCEEDS and runs the body once (clamped).
+                //                     Receipt: script-retry-zero.receipt.txt.
+                //   retry('nope')  -> Jenkins FAILS, IllegalArgumentException from RetryStep.
+                //                     UNPROVEN in-repo: that probe diverges on Jenkins'
+                //                     Java stack trace, so it cannot be a suite case.
+                // A first fix refused non-positive counts too and made Fogell STRICTER than
+                // Jenkins, which is a false refusal — the opposite error, still a
+                // divergence. Probed both before settling on this.
+                //
+                // Negative counts are UNTESTED and treated like 0; `runWithRetry` clamps to
+                // one attempt, which is what Jenkins does with 0.
+                //
+                // NAMED `count:` IS VALID JENKINS, and refusing it was a FALSE REFUSAL —
+                // the opposite error to everything else in this function, and the one
+                // `retry(0)` already taught. MEASURED: `script { retry(count: 2) { … } }`
+                // succeeds on Jenkins and failed here, with the ordinary stage-level
+                // reader (`WalkerRules.retryCountOpt`) already accepting the same spelling.
+                // An arm stricter than the reader it guards is a refusal with no rule
+                // behind it. Raised in review on PR #53.
+                let countArg =
+                    match positional, named |> List.tryFind (fun (k, _) -> k = "count") with
+                    | [ v ], None -> Some v
+                    | [], Some(_, v) -> Some v
+                    // Both spellings at once is not a shape Jenkins takes either.
+                    | _ -> None
+
+                match countArg with
+                | None -> wrongShape "takes one attempt count, either positionally or as `count:`"
+                | Some(VInt _) ->
+                    // `conditions:` is real Jenkins and NOT implemented here. Refusing it
+                    // by name beats accepting it and retrying unconditionally, which would
+                    // retry on failures the pipeline asked to leave alone.
+                    match named |> List.filter (fun (k, _) -> k <> "count") with
+                    | [] -> None
+                    | (k, _) :: _ -> wrongShape $"does not support `{k}`; only the attempt count is implemented"
+                | Some other -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
+            | "timeout" ->
+                // MEASURED on the pinned lab, not inferred from the other arms, and held
+                // by receipt `script-timeout-two-positionals`: Jenkins accepts ONE
+                // positional (minutes) or named arguments, and `timeout(1, 2)` raises
+                // `IllegalArgumentException: Expected named arguments but got [1, 2]`. Fogell read the FIRST positional as one
+                // minute, silently dropped the `2`, ran the body and reported SUCCESS.
+                //
+                // The probe also decided WHERE this belongs: Jenkins ran the earlier
+                // STAGE before failing, so this is a RUNTIME signature rejection and not
+                // a compile-time one like a duplicated named argument. Refusing at
+                // dispatch is therefore right here, where it was wrong there.
+                //
+                // ARITY ONLY. `timeoutMs` already reads `time`/`unit` and a bare
+                // positional, and the TYPE of a single argument is left alone
+                // deliberately — refusing a shape Jenkins accepts is the false-refusal
+                // error `retry(0)` taught, and nothing here has been measured.
+                // EITHER FORM, NEVER BOTH. Measured on the pinned lab, and the mixed
+                // shape had to be probed separately — an arity-only check passed
+                // `timeout(1, unit: 'SECONDS')`, `timeoutMs` then combined the positional
+                // duration with the named unit, and the body RAN where Jenkins rejects
+                // the call and leaves the workspace empty. Raised in review on PR #53.
+                match positional, named with
+                | _ :: _ :: _, _ ->
+                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+                    wrongShape $"takes one positional argument or named ones; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+                | _ -> None
+            | _ ->
+                // DEFAULT DENY ON ARITY, rather than a thirteenth hand-written arm.
+                //
+                // Reaching here means the step has no arm of its own — `sh`, `echo`,
+                // `git` and the rest. That used to be a silent pass, so
+                // `script { sh('echo ran > ran.txt', 'ignored') }` ran the FIRST
+                // positional and dropped the second, while Jenkins rejects the call and
+                // leaves the workspace EMPTY. Measured. Two more arms would have closed
+                // `sh` and `script` and left the next step open, which is the trend
+                // FG-177 exists to end.
+                //
+                // ONE positional is the Jenkins shape: DescribableModel maps a single
+                // positional onto the sole required parameter, and named arguments
+                // otherwise. CHECKED AGAINST THE CLOSED VOCABULARY rather than assumed —
+                // `sh`, `echo`, `archiveArtifacts`, `junit`, `checkout`, `git`, `stash`,
+                // `unstable`, `unstash`, `deleteDir` — none of which takes two.
+                //
+                // WHAT THIS STILL DOES NOT CATCH, said plainly because the last thing
+                // this class needs is another comment claiming more than it delivers:
+                // it is an ARITY rule only, so no unknown NAMED argument is rejected
+                // anywhere. That needs the per-step schema in FG-177.
+                //
+                // THIS PASSAGE ALSO NAMED `deleteDir('x')` AS STILL ADMITTED WITH AN
+                // ARGUMENT, and that stopped being true in the very change described
+                // below it: `positionalArity` records `deleteDir` at ZERO, and receipt
+                // `script-deletedir-argument` holds the refusal. A caveat that outlives
+                // its defect is the same drift as a claim outrunning its evidence, and
+                // this one sat inside a paragraph warning against precisely that, which
+                // is how it survived several reads.
+                // PER-STEP, from `WalkerRules.positionalArity` — FG-177's first slice.
+                // A blanket "zero or one" could not express a ZERO-argument step, and
+                // `deleteDir('ignored')` duly passed it: the arm ignored the argument,
+                // Fogell DELETED THE WORKSPACE and continued, where Jenkins keeps the
+                // files and fails. Measured. A default cannot distinguish a step with a
+                // sole required parameter from one with none, so the answer is data.
+                let allowed = Map.tryFind name WalkerRules.positionalArity |> Option.defaultValue 1
+
+                if List.length positional > allowed then
+                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
+
+                    if allowed = 0 then
+                        wrongShape $"takes no positional arguments; Jenkins rejects `[{shown}]`"
+                    else
+                        wrongShape $"takes at most {allowed} positional argument; Jenkins rejects `[{shown}]`"
+                else
+                    None
+
+        /// FG-172. Block-taking steps whose walker arm can run a HOSTED body. Defined in
+        /// `WalkerRules` so a test can hold it against the set of wrappers that actually
+        /// have a signature case — see the note there.
+        let scriptWrappersWithHostedBody = WalkerRules.scriptWrappersWithHostedBody
+
+        /// FG-160. Steps DELIBERATELY absent from the vocabulary above, with the reason —
+        /// the sandbox's generic denial says a name was not admissible, not why THIS one
+        /// never will be.
+        ///
+        /// `input`: DURABLE APPROVAL REPLAY is keyed on the top-level step (`Resume.fs`),
+        /// and a nested hosted step has no durable identity of its own. REPRODUCED by
+        /// the pre-push verifier — journal `step-started Gate 0 script` plus an
+        /// `input-decision … approved alice`, rewind before `step-finished`, and the
+        /// resume exits 3 with `needs-reconciliation`, LOSING AN APPROVAL A HUMAN ALREADY
+        /// GAVE. That is the guarantee FG-046b exists to protect and the one no receipt
+        /// can cover, so it fails closed until nested effects carry journal identity.
+        let scriptStepsRefusedWithReason =
+            Map.ofList
+                [ yield
+                      "input",
+                      "durable approval replay is keyed on the top-level step, so an approval given inside a script block would be lost on resume (FG-046b); use `input` as a stage step instead"
+
+                  // EVERY BLOCK-TAKING STEP, BOTH SPELLINGS. `findWrapperCalls` refuses
+                  // these WITH a body because the replay cannot carry one — but the
+                  // BODY-LESS spelling stayed admitted, and `dir("child")` with no body
+                  // CREATED THE DIRECTORY and exited 0 where Jenkins fails with "dir step
+                  // must be called with a body". I refused one half of a shape and left
+                  // the other running: the same defect as scoping a fix to the level in
+                  // front of me, which this ticket has now done three times. Raised by the
+                  // pre-push verifier, which named it the SECOND of its class — a script
+                  // shape Jenkins rejects being accepted as success.
+                  //
+                  // THE RULE AS IT STANDS after FG-172, replacing an earlier note that
+                  // still said every block-taking step was absent: a wrapper is admitted
+                  // ONLY when its walker arm accepts a `HostedBody`. `dir`, `timeout` and
+                  // `retry` and `withEnv` do, each with a differential case — `withEnv`
+                  // through TYPED arguments on `BranchCtx.HostedArgs`, because rendering its
+                  // list to display text produced `[A=1]` and bound nothing.
+                  //
+                  // `withCredentials` does NOT, and not for the marshalling reason this
+                  // note used to give: its argument is a DSL OF NESTED CALLS
+                  // (`string(credentialsId: …)`), which the interpreter would try to
+                  // EVALUATE — those names are neither steps nor `Sandbox.builtins`, so the
+                  // script faults at the inner call before marshalling arises. Fail-closed,
+                  // and a bigger piece than typed args.
+                  //
+                  // A body-less `dir` is refused by the `dir` ARM before it creates the
+                  // directory, not by this list: the rule is Jenkins', and `dir('x')` alone
+                  // is just as wrong at stage level.
+                  for w in [ "withCredentials" ] do
+                      yield
+                          w,
+                          $"`{w}` takes a block, and its walker arm cannot yet run one from a script, so the body would be silently dropped and its wrapper semantics lost; Jenkins also rejects the body-less spelling. Use it as a stage step around the `script` block instead" ]
         let postFires = WalkerRules.postFires
         let postRank = WalkerRules.postRank
         let cancellationOf = WalkerCancellation.cancellationOf runCtx
@@ -750,7 +1010,7 @@ module WalkerOrchestration =
 
             // JB-FAIL-001/002: timeout and abort share one interrupt path,
             // and the interrupt is a trappable SIGTERM with a grace window.
-            | "timeout", _ when not (List.isEmpty step.Block) ->
+            | "timeout", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
                 match timeoutMs (renderStepArgs ctx stage step) with
                 | Error why ->
                     emit $"ERROR: {why}; refusing to guess a deadline"
@@ -771,9 +1031,19 @@ module WalkerOrchestration =
                     // logs COMPARE where these sentences were suppressed before.
                     emit ("Timeout set to expire in " + humanizeSpan ms)
 
-                    for inner in step.Block do
-                        if not (halted ctx) then
-                            runStepDispatch ctx cwd stage inner (Some effective)
+                    // FG-172. A hosted body runs under the SAME effective deadline the
+                    // block below would impose — the bound is the wrapper's entire purpose,
+                    // and handing over a body without it is a safety bound defeated, which
+                    // this project ranks with a bypassed approval.
+                    match ctx.HostedBody with
+                    | Some runBody ->
+                        // The deadline travels on the dispatch, not on the context, so it
+                        // is threaded through the host cell by the runner rather than here.
+                        runBody { ctx with HostedBody = None; HostedDeadline = Some effective } cwd
+                    | None ->
+                        for inner in step.Block do
+                            if not (halted ctx) then
+                                runStepDispatch ctx cwd stage inner (Some effective)
 
                     // OWN deadline, not the effective one: under a shorter outer
                     // bound this block's budget may be untouched when the outer
@@ -785,17 +1055,32 @@ module WalkerOrchestration =
             // first, and there is no backoff. `retry(3)` around a step that always
             // fails runs it exactly three times. The loop itself is `runWithRetry`,
             // shared with a stage's `options { retry(N) }`.
-            | "retry", _ when not (List.isEmpty step.Block) ->
+            | "retry", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
+                let hosted = ctx.HostedBody
+
                 runWithRetry ctx (retryCount (renderStepArgs ctx stage step)) (fun attemptCtx ->
-                    for inner in step.Block do
-                        if not (halted attemptCtx) then
-                            runStepDispatch attemptCtx cwd stage inner deadline)
+                    // FG-172. EACH ATTEMPT re-runs the body, which is the point of `retry`
+                    // and the reason the interpreter hands it over as a THUNK rather than
+                    // pre-evaluated: the batch model had already run it once by the time
+                    // the wrapper saw it, so N attempts were impossible to express.
+                    match hosted with
+                    | Some runBody -> runBody { attemptCtx with HostedBody = None } cwd
+                    | None ->
+                        for inner in step.Block do
+                            if not (halted attemptCtx) then
+                                runStepDispatch attemptCtx cwd stage inner deadline)
 
             // FG-041b. `withEnv(['A=1']) { … }` — block-scoped. MEASURED:
             // after the block an added variable is UNSET and a shadowed one
             // reverts, so the binding is an overlay on the inner scope only.
             // Receipt: `withenv-scoping`.
-            | "withEnv", _ when not (List.isEmpty step.Block) ->
+            // FG-172. `|| ctx.HostedBody.IsSome`: a hosted body leaves `Block` EMPTY, so a
+            // guard keyed on `Block` alone never matched and the call fell through to the
+            // fallback — the wrapper silently did nothing while the build reported success.
+            // Measured on `script { withEnv([...]) { sh ... } }`, which produced no output
+            // at all. `dir` escaped this only because its guard keys on the positional
+            // argument instead; the same trap waits on every other Block-keyed arm.
+            | "withEnv", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
                 // The argument is a Groovy LIST literal, handed over as one
                 // raw positional: ['ADDED=x', 'SHADOWED=y']. Splitting it here
                 // keeps ADR 0002's rule that expression-shaped text stays text
@@ -807,7 +1092,73 @@ module WalkerOrchestration =
                 // Group 1 is single-quoted (LITERAL in Groovy), group 2 is
                 // double-quoted (a GString, so it interpolates). Keeping the
                 // distinction here is the same fix as for `environment { }`.
+                // FG-172. A HOSTED call already has its list EVALUATED, so take it typed
+                // rather than re-parsing display text. `Value.toDisplay` of a Groovy list
+                // is `[A=1]` — no quotes — and the regex below matches quoted elements, so
+                // the hosted path bound NOTHING and `withEnv` silently did nothing.
+                //
+                // No interpolation on this path: the interpreter has already expanded any
+                // GString, and interpolating a second time is the defect that re-rendered
+                // an approval prompt earlier in this ticket.
+                let hostedBindings =
+                    match ctx.HostedArgs with
+                    | Some(VList items :: _, _) ->
+                        items
+                        |> List.choose (fun v ->
+                            let entry = Value.toDisplay v
+
+                            match entry.IndexOf '=' with
+                            | i when i > 0 -> Some(entry.Substring(0, i), entry.Substring(i + 1))
+                            | _ -> None)
+                        |> Some
+                    | _ -> None
+
+                // EVERY ENTRY MUST BE `NAME=VALUE`, on BOTH paths.
+                //
+                // `List.choose` dropped a malformed entry silently, so
+                // `withEnv(['BADENTRY']) { … }` ran its body and reported success. Seen at
+                // STAGE level against the pinned Jenkins, which raises
+                // `IllegalArgumentException` from `EnvStep` and fails the build. UNPROVEN
+                // in-repo, and said so rather than dressed up: the probe DIVERGES on
+                // output text — Jenkins prints a Java stack trace no engine can match — so
+                // it cannot join a suite that requires 128/128. Result and workspace DO
+                // agree now, which is the part that matters. That was a
+                // PRE-EXISTING false success in the ordinary path, not something the script
+                // bridge introduced; the hosted path merely inherited it. Fixed here, at
+                // the rule, rather than in the hosted branch that happened to surface it —
+                // the same call the body-less `dir` needed. Raised by the pre-push
+                // verifier as the seventh of its class.
+                let malformed (entry: string) = entry.IndexOf '=' <= 0
+
+                let hostedMalformed =
+                    match ctx.HostedArgs with
+                    | Some(VList items :: _, _) -> items |> List.map Value.toDisplay |> List.filter malformed
+                    | _ -> []
+
+                let rawMalformed =
+                    if Option.isSome hostedBindings then
+                        []
+                    else
+                        step.Positional
+                        |> List.collect (fun raw ->
+                            [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
+                                if m.Groups[1].Success then m.Groups[1].Value else m.Groups[2].Value ])
+                        |> List.filter malformed
+
+                match hostedMalformed @ rawMalformed with
+                | bad :: _ ->
+                    emit
+                        $"ERROR: withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='"
+
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                | [] ->
+
                 let bindings =
+                    match hostedBindings with
+                    | Some b -> b
+                    | None ->
+
                     step.Positional
                     |> List.collect (fun raw ->
                         [ for m in Text.RegularExpressions.Regex.Matches(raw, "'([^']*)'|\"([^\"]*)\"") ->
@@ -896,9 +1247,16 @@ module WalkerOrchestration =
 
                 let inner = { ctx with EnvOverlay = ctx.EnvOverlay @ bindings }
 
-                for st in step.Block do
-                    if not (halted inner) then
-                        runStepDispatch inner cwd stage st deadline
+                // FG-172. A HOSTED body gets the same `inner` — the overlay is the whole
+                // point of the wrapper, and handing over `ctx` would run the body without
+                // the bindings while reporting success. `HostedBody = None` on the way in,
+                // so a nested wrapper inside the body cannot re-run this one's block.
+                match ctx.HostedBody with
+                | Some runBody -> runBody { inner with HostedBody = None } cwd
+                | None ->
+                    for st in step.Block do
+                        if not (halted inner) then
+                            runStepDispatch inner cwd stage st deadline
 
                 if inner.Failed.Value then ctx.Failed.Value <- true
 
@@ -1595,6 +1953,18 @@ module WalkerOrchestration =
                     emit $"dir refused: {e.Describe}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
+                // BEFORE the directory is created. Jenkins rejects a body-less `dir`
+                // before establishing any context, and creating `child/` and THEN failing
+                // leaves a side effect behind on a build that should not have touched the
+                // workspace. Ordering matters here in a way the receipt cannot see: the
+                // manifest hashes FILES, so an extra EMPTY directory is invisible to it —
+                // which is also why the case below no longer claims to prove agreement on
+                // side effects. Raised by the pre-push verifier, which was careful to note
+                // this is a side-effect blind spot rather than another false success.
+                | Result.Ok _ when Option.isNone ctx.HostedBody && List.isEmpty step.Block ->
+                    emit "ERROR: dir step must be called with a body"
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
                 | Result.Ok target ->
                     Directory.CreateDirectory target |> ignore
 
@@ -1604,9 +1974,304 @@ module WalkerOrchestration =
                     // engines agreed on the file CONTENT, so only the workspace
                     // manifest's PATHS caught it — which is precisely why the
                     // manifest is (path, hash) pairs and not a content digest.
-                    for inner in step.Block do
-                        if not (halted ctx) then
-                            runStepDispatch ctx target stage inner deadline
+                    // FG-172. A HOSTED body is Groovy, not a `Step list`, so it is run
+                    // through the runner the script host supplied — and it is handed
+                    // `target`, the directory this arm just established, for the same
+                    // reason the loop below takes `target` rather than `cwd`. That
+                    // distinction cost a defect once already: the body wrote to the stage
+                    // root and only the workspace manifest's PATHS caught it.
+                    // The body-less case is refused ABOVE, before the directory exists,
+                    // so only the two real shapes reach here.
+                    match ctx.HostedBody with
+                    | Some runBody -> runBody { ctx with HostedBody = None } target
+                    | None ->
+                        for inner in step.Block do
+                            if not (halted ctx) then
+                                runStepDispatch ctx target stage inner deadline
+
+            // FG-160. `script { … }` — SCRIPTED GROOVY, handed to the engine that
+            // understands it. The body arrives verbatim (`ScriptBody`) because parsing it
+            // as Declarative steps read `if (cond)` as a step named `if`, which is why
+            // this never ran.
+            //
+            // THE REFUSALS COME FIRST, and they are why this is safe to ship. Steps run
+            // LIVE through `Interpreter.runHosted` (FG-172) — the batch model this comment
+            // used to describe is gone — but the walker's dispatch still returns UNIT, so
+            // a step call yields null and a body reading a step's RETURN VALUE would decide
+            // branches wrongly. `StepValueUse.find` names every such position and refuses.
+            // FG-174 carries implementing `returnStdout`/`returnStatus`, which is what
+            // would let that refusal be lifted.
+            | "script", _ when step.ScriptBody.IsSome ->
+                let src = Option.get step.ScriptBody
+
+                // WHERE HOSTED STEPS RUN, as a cell rather than a capture. A
+                // wrapper's body re-enters the interpreter, which calls back here —
+                // and those inner steps must run in the directory and overlay the
+                // WRAPPER established, not the ones that existed when the script
+                // started. Capturing `ctx`/`cwd` in this closure is exactly the bug
+                // `dir('x') { sh 'pwd' }` had under the batch model, in a new place.
+                //
+                // DECLARED HERE, ABOVE `fail`, AND THAT PLACEMENT IS THE FG-182 FIX — see
+                // the note on `fail` for what reading `ctx` instead cost.
+                let hostAt = ref (ctx, cwd)
+
+                let fail (why: string) =
+                    // FG-182. THE ACTIVE CONTEXT, NOT THE SCRIPT'S OWN. `runWithRetry`
+                    // gives every attempt a fresh `Failed` ref and a throwaway status
+                    // sink — deliberately, so that a body which fails once and then
+                    // succeeds is a SUCCESS build (FG-035) — and `runBodyIn` points
+                    // `hostAt` at that attempt while its body runs. Marking the captured
+                    // `ctx` walked past both: the OUTER flag was set, the attempt still
+                    // looked clean, and `halted` therefore admitted the NEXT call in the
+                    // same closure. MEASURED: `retry(1) { sh('invalid', 'extra'); sh
+                    // 'touch ran-after-invalid.txt' }` leaves Jenkins' workspace EMPTY —
+                    // it stops the closure at the invalid invocation — and wrote the file
+                    // here. A durable effect from a call Jenkins refused, which is the
+                    // ADR 0001 class, not a bookkeeping slip. Receipt
+                    // `script-retry-halts-attempt-on-refusal`, run against this code
+                    // REVERTED and diverging on the workspace hash — both engines FAIL this
+                    // build, so a result-only case would have proven nothing.
+                    //
+                    // Outside a wrapper body this cell still holds `(ctx, cwd)`, so the
+                    // argument and parse refusals below are unchanged. Raised in review
+                    // on PR #53.
+                    let atCtx = fst hostAt.Value
+                    emit $"ERROR: {why}"
+                    atCtx.Failed.Value <- true
+                    atCtx.Sink BuildStatus.Failure
+
+                // `script` TAKES NO ARGUMENTS — only its implicit closure. The guard
+                // above checks `ScriptBody` alone, so `script('ignored') { … }` ran the
+                // body while Jenkins rejects the argument and leaves the workspace EMPTY.
+                // Measured; raised in review on PR #53. The body running at all is the
+                // defect: side effects from a pipeline Jenkins never started.
+                if not (List.isEmpty step.Positional && List.isEmpty step.Named) then
+                    fail "step 'script' takes no arguments, only its block; Jenkins rejects the call"
+                else
+
+                match Fogell.Groovy.Parser.Parser.parse src with
+                | Result.Error e -> fail $"script block did not parse as Groovy: {e}"
+                | Result.Ok body ->
+                    // ONE MESSAGE PER KIND. A single sentence covered all three refusals
+                    // and said every one of them "uses the return value" and that Fogell
+                    // "performs a script's steps after the script runs" — false for an
+                    // `env` mutation, and stale for ALL of them since FG-172 made steps run
+                    // live. A refusal that misreports its own reason sends an author to fix
+                    // the wrong thing, and this project counts an overclaim as a defect in
+                    // itself. Raised by the pre-push verifier.
+                    let describe (kind: string) (u: StepValueUse.Use) =
+                        match kind with
+                        | "value" ->
+                            $"script block uses the return value of `{u.Step}` in {u.Where}; the walker's step \
+                              dispatch returns no value, so Fogell cannot supply one. Refusing rather than \
+                              binding null"
+                        | "env" ->
+                            $"script block assigns `{u.Step}` in {u.Where}; Jenkins applies that to every later \
+                              step, and Fogell's environment overlay does not yet cross the script boundary. \
+                              Refusing rather than accepting an assignment that does nothing"
+                        | _ ->
+                            $"script block calls `{u.Step}` with {u.Where}; that wrapper's walker arm cannot run \
+                              a hosted body yet, so the block would be dropped and its semantics lost"
+
+                    match
+                        // The env pre-scan is GONE, not merely supplemented: it missed
+                        // assignments inside closures, and the interpreter now reports every
+                        // one that executes through `SetEnv`. A scanner that catches some
+                        // shapes reads as coverage while leaving the rest silent.
+                        (StepValueUse.find
+                             scriptStepVocabulary.Contains
+                             (fun n so st -> WalkerRules.returnContract n so st <> WalkerRules.NoValue)
+                             body
+                         |> List.map (describe "value"))
+                        // DERIVED, not a hand-kept list: a block-taking step is refused
+                        // unless its arm has been taught to run a hosted body. Add one to
+                        // the vocabulary without teaching its arm and this fires, rather
+                        // than the step running with its block silently dropped — which is
+                        // what happened to `dir` before FG-172 and is the failure this
+                        // guard exists for. Taught today: `dir`, `timeout`, `retry`,
+                        // `withEnv`. The predicate is not vacuous — `withCredentials` is
+                        // still outside the vocabulary and denied by the sandbox — and it
+                        // stays honest as arms are taught, because it is derived rather
+                        // than listed.
+                        @ (StepValueUse.findWrapperCalls
+                               (fun n ->
+                                   scriptStepVocabulary.Contains n
+                                   && not (scriptWrappersWithHostedBody.Contains n))
+                               body
+                           |> List.map (describe "wrapper"))
+                    with
+                    | _ :: _ as reasons ->
+                        for r in reasons do
+                            fail r
+                    | [] ->
+                        let envMap = envForWith ctx.EnvOverlay stage |> Map.ofList
+                        let asValues = envMap |> Map.map (fun _ v -> VStr v)
+
+                        // Both spellings bound, as `when { expression { … } }` learned to:
+                        // a bare name AND `env.NAME`.
+                        let genv =
+                            { Vars = asValues |> Map.add "env" (VMap asValues)
+                              Funcs = Map.empty }
+
+                        // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
+                        // unbound name reads as null — kept for consumers modelling scripted
+                        // Groovy's laxer contexts — and a script block is not one of them:
+                        // Jenkins raises MissingPropertyException, which this repo already
+                        // measured in the `gstring-unresolved-property` receipt. With the lax
+                        // mode `script { sh "echo bare:${MISSING}" }` wrote `bare:null` and
+                        // exited 0 where Jenkins FAILS the build. Raised by the pre-push
+                        // verifier; a success where Jenkins fails is the governing defect.
+                        // FG-172. LIVE, via the callback seam: the host performs each step
+                        // where the script reaches it, instead of collecting requests and
+                        // replaying them afterwards.
+                        //
+                        // WHAT THE HOST DOES TODAY, corrected from a note that still said
+                        // "no observable change yet" long after there was one: hosted
+                        // WRAPPER BODIES run here (`dir`, `timeout`, `retry`), and an `env`
+                        // assignment is reported at the moment it executes and refused.
+                        // Still refused: a step's RETURN VALUE (dispatch yields unit),
+                        // `input` (durable identity is per top-level step, FG-171), and
+                        // and `withCredentials`, whose nested-call argument DSL the
+                        // interpreter cannot evaluate.
+                        // `hostAt` is declared with `fail`, above — see the FG-182 note there.
+
+                        // Point the host at a wrapper's context for the duration of its
+                        // body, then restore. `try/finally` because a step inside the body
+                        // can fail the build, and leaving the cell pointing into an
+                        // abandoned wrapper would silently run the REST of the script in
+                        // the wrong directory.
+                        let runBodyIn (thunk: unit -> unit) (inner: BranchCtx) (wd: string) =
+                            let saved = hostAt.Value
+                            hostAt.Value <- (inner, wd)
+
+                            try
+                                thunk ()
+                            finally
+                                hostAt.Value <- saved
+
+                        let host: PerformStep =
+                            { Perform =
+                                fun name rawPositional rawNamed runBody ->
+                                    // SHAPE FIRST, then everything downstream sees one
+                                    // form — the Step record, the signature arms and the
+                                    // typed `HostedArgs` a wrapper reads.
+                                    match normaliseHostedCall name rawPositional rawNamed with
+                                    | Error why ->
+                                        fail $"script block: {why}"
+                                        VNull
+                                    | Ok(positional, named) ->
+
+                                    let called =
+                                        { Name = name
+                                          Positional = positional |> List.map Value.toDisplay
+                                          Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
+                                          Block = []
+                                          // ALREADY EVALUATED by the interpreter, so no
+                                          // further interpolation: see the literal marking
+                                          // that fixed the re-rendered approval prompt.
+                                          LiteralNamedArgs = named |> List.map fst |> Set.ofList
+                                          LiteralPositionalArgs =
+                                            positional |> List.mapi (fun i _ -> i) |> Set.ofList
+                                          InterpolationSource = []
+                                          ExpressionArgs = Set.empty
+                                          ArgumentOrder =
+                                            (positional |> List.mapi (fun i _ -> $"#{i}"))
+                                            @ (named |> List.map fst)
+                                          RawArgs = ""
+                                          ScriptBody = None
+                                          Position = step.Position }
+
+                                    match hostedSignatureError name positional named with
+                                    | Some why ->
+                                        fail $"script block: {why}"
+                                        VNull
+                                    | None ->
+
+                                    let atCtx, atCwd = hostAt.Value
+
+                                    let dispatchCtx =
+                                        match runBody with
+                                        | Some thunk ->
+                                            { atCtx with
+                                                HostedBody = Some(runBodyIn thunk)
+                                                HostedArgs = Some(positional, named) }
+                                        // CLEARED for a plain step, not merely left alone: a
+                                        // stale runner inherited from an enclosing wrapper
+                                        // would let a body-less call run some other call's
+                                        // block.
+                                        | None ->
+                                            { atCtx with
+                                                HostedBody = None
+                                                HostedArgs = Some(positional, named) }
+
+                                    // The deadline a hosted `timeout` established wins over
+                                    // the one captured when the script started; without this
+                                    // the bound is announced and not applied.
+                                    let effectiveDeadline =
+                                        match atCtx.HostedDeadline with
+                                        | Some d -> Some d
+                                        | None -> deadline
+
+                                    // FG-174. A fresh slot PER CALL: reusing one would let a
+                                    // step that returns nothing hand back the previous
+                                    // step's value, which is worse than null because it
+                                    // looks plausible.
+                                    let slot = ref VNull
+
+                                    if not (halted dispatchCtx) then
+                                        runStepDispatch
+                                            { dispatchCtx with HostedResult = Some slot }
+                                            atCwd
+                                            stage
+                                            called
+                                            effectiveDeadline
+
+                                    // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
+                                    // stdout, `sh(returnStatus: true)` its exit code as an
+                                    // Integer, and `VNull` for everything else, which is
+                                    // still every step that does not opt in.
+                                    slot.Value
+                              // FG-178. Read through `hostAt`, which POINTS AT THE
+                              // WRAPPER while its body runs — so `withEnv`'s overlay is
+                              // what the body evaluates against. Reading `ctx` here would
+                              // capture the script's own context and reproduce the defect.
+                              CurrentEnv = fun () -> envForWith (fst hostAt.Value).EnvOverlay stage
+                              // FG-184. Answered from the ONE table that says which steps
+                              // host a body — the same set `runStepDispatch` uses — so the
+                              // interpreter's normalisation and the walker's dispatch
+                              // cannot disagree about what a block-taking step is.
+                              TakesBlock =
+                                fun name -> WalkerRules.scriptWrappersWithHostedBody.Contains name
+                              SetEnv =
+                                fun name _ ->
+                                    // THE REFUSAL ITSELF, at the moment the assignment runs.
+                                    // Jenkins applies `env.X` to every later step; Fogell's
+                                    // overlay does not yet cross the script boundary, so
+                                    // accepting it would silently do nothing.
+                                    fail
+                                        $"script block assigns `env.{name}`; Jenkins applies that to every later step, and Fogell's environment overlay does not yet cross the script boundary. Refusing rather than accepting an assignment that does nothing" }
+
+                        let outcome =
+                            Interpreter.runHosted host Budget.defaults scriptStepVocabulary genv body
+
+                        match outcome.Fault with
+                        | Some fault ->
+                            match fault with
+                            | Denied d when scriptStepsRefusedWithReason.ContainsKey d.Attempted ->
+                                fail
+                                    $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
+                            | _ -> fail $"script block: {fault}"
+                        | None ->
+                            // NOTHING TO REPLAY: the steps ran as the script reached them.
+                            // `Outcome.Effects` is empty in hosted mode by construction.
+                            //
+                            // DURABILITY still bites here and FG-171 stays open: these
+                            // steps go through the dispatcher without their own
+                            // `OnStepStarted`/`OnStepFinished`, so the whole block remains
+                            // one durability unit and a crash mid-block re-runs it. Moving
+                            // the boundary was the prerequisite for fixing that, not the
+                            // fix itself.
+                            ()
 
             | _ -> runStepInner ctx stage cwd step deadline
 
@@ -1696,6 +2361,10 @@ module WalkerOrchestration =
                                   // forwards upward to `bump`.
                                   Sink = ctx.Sink
                                   EnvOverlay = ctx.EnvOverlay
+                                  HostedBody = None
+                                  HostedDeadline = None
+                                  HostedArgs = None
+                                  HostedResult = None
                                   Secrets = ctx.Secrets
                                   // The stamp must travel WITH the predicate it
                                   // describes. A non-failFast block inherits the

@@ -194,6 +194,7 @@ let stringModel =
           ExpressionArgs = Set.ofList exprArgs
           InterpolationSource = sources
           RawArgs = ""
+          ScriptBody = None
           Position = Position.zero }
 
     testList
@@ -1141,6 +1142,138 @@ let timestampPrefixIsConditional =
                   "an engine's prefix is at column zero; a build's is not"
           } ]
 
+/// FG-174. `WalkerRules.returnContract` is the ONE answer to "what does this call
+/// return", read by the static refusal and by the runtime publisher. It exists because
+/// deciding it at each site produced three separate review findings, so the rule is
+/// pinned here rather than inferred from either caller.
+let returnFlagContract =
+    let contract = WalkerRules.returnContract
+
+    testList
+        "FG-174 the return-flag contract"
+        [ test "no flags means no value" {
+              Expect.equal (contract "sh" false false) WalkerRules.NoValue "a plain sh answers nothing"
+          }
+
+          test "returnStdout alone captures stdout" {
+              Expect.equal (contract "sh" true false) WalkerRules.CapturedStdout "stdout"
+          }
+
+          test "returnStatus alone gives the exit status" {
+              Expect.equal (contract "sh" false true) WalkerRules.ExitStatus "status"
+          }
+
+          test "returnStatus WINS when both are set" {
+              // MEASURED on a disposable 2.568.1 container by the pre-push verifier, and
+              // held since by receipt `script-sh-return-both`:
+              // `sh(script: 'exit 7', returnStdout: true, returnStatus: true)` returns
+              // Integer 7 and the build continues. Fogell returned the stdout, so a
+              // following `if (code == 7)` compared String to Integer, took the other
+              // arm, and skipped work Jenkins runs while reporting success. The flags
+              // are not orthogonal, and a boolean per call site cannot say so.
+              Expect.equal (contract "sh" true true) WalkerRules.ExitStatus "status takes precedence"
+          }
+
+          test "the flags belong to the shell steps only" {
+              // `echo(message: 'hello', returnStdout: true)` returned "hello\n" where
+              // Jenkins' echo returns null, so a `got == null` branch was skipped.
+              for step in [ "echo"; "error"; "dir"; "withEnv" ] do
+                  Expect.equal (contract step true true) WalkerRules.NoValue $"{step} answers nothing"
+          }
+
+          // FG-174. THE VALUE'S TYPE, not its rendered text. `returnStatus: true` and
+          // `returnStatus: 'true'` both render to "true"; Jenkins treats them
+          // differently, and comparing `Trim().ToLowerInvariant()` got two shapes wrong.
+          test "a literal boolean true turns the flag on" {
+              Expect.equal (WalkerRules.returnFlag true "true") WalkerRules.FlagOn "bare true"
+          }
+
+          test "a literal boolean false turns it off, and is not an error" {
+              Expect.equal (WalkerRules.returnFlag true "false") WalkerRules.FlagOff "bare false"
+          }
+
+          test "a non-boolean literal is REJECTED, never treated as absent" {
+              // MEASURED on the pinned lab: `sh script: '…', returnStatus: 1` makes
+              // Jenkins throw `IllegalArgumentException: Could not instantiate … for
+              // ShellStep` BEFORE running anything, leaving the workspace empty. Fogell
+              // ran the shell and reported success. Treating an unusable flag as "off"
+              // is what made that a false success, so the state is explicit.
+              // UNPROVEN by receipt: Jenkins answers with a Java stack trace no engine
+              // can match, so the case diverges on output text — scratch probe only.
+              match WalkerRules.returnFlag true "1" with
+              | WalkerRules.FlagRejected why -> Expect.stringContains why "boolean" "says what it wanted"
+              | other -> failtestf "expected a rejection, got %A" other
+          }
+
+          test "a QUOTED value is refused rather than coerced" {
+              // Narrower than Jenkins on purpose, and declared: Jenkins would run this
+              // through `Boolean.valueOf`, which makes `' true '` FALSE — measured. Every
+              // one of the 134 uses in the 228-file corpus is the literal form, so this
+              // costs nothing real and avoids importing Java coercion semantics.
+              match WalkerRules.returnFlag false "true" with
+              | WalkerRules.FlagRejected _ -> ()
+              | other -> failtestf "expected a rejection, got %A" other
+          }
+
+          // FG-174. THE PAIRING THAT TURNS THE NEXT BYPASS INTO A FAILING TEST.
+          //
+          // `hostedSignatureError` ends in a `| _ -> None` catch-all, so a hosted wrapper
+          // admitted WITHOUT a case is validated by nothing and accepts any shape.
+          // `timeout` sat in the hosted set with no case and shipped a false success:
+          // `script { timeout(1, 2) { … } }` ran its body and reported success where
+          // Jenkins raises `IllegalArgumentException: Expected named arguments but got
+          // [1, 2]`. That was the ninth finding of a class whose own comment already
+          // predicted it — "every newly admitted hosted step would have got its own
+          // signature bypass, one per arm, found one review round at a time".
+          //
+          // Admitting a wrapper without validating it now fails HERE instead.
+          // FG-177 slice 1. Same pairing idea as the wrapper test below: a step admitted
+          // to the vocabulary with no arity entry falls back to a default, and a default
+          // is what let `deleteDir('ignored')` delete the workspace. Data beats a default
+          // only if the data is complete.
+          test "every step in the script vocabulary has an arity entry" {
+              let missing =
+                  WalkerRules.scriptStepVocabulary
+                  |> Set.filter (fun s -> not (Map.containsKey s WalkerRules.positionalArity))
+
+              Expect.isEmpty missing "a vocabulary step with no arity entry falls back to a guess"
+          }
+
+          // FG-177. THE TWO TABLES MUST AGREE. `positionalArity` says how many
+          // positionals a step takes; `soleRequiredParameter` says what its one required
+          // parameter is called. A step with arity 0 has no parameter to name, and a step
+          // with arity 1 must have one or the named spelling stays unreachable — which is
+          // exactly the false refusal `dir(path: 'sub')` was.
+          test "the arity table and the parameter table agree" {
+              for step in WalkerRules.scriptStepVocabulary do
+                  let arity = Map.find step WalkerRules.positionalArity
+                  let named = Map.containsKey step WalkerRules.soleRequiredParameter
+
+                  Expect.equal named (arity = 1) $"{step}: arity {arity} and named-parameter presence must match"
+          }
+
+          test "deleteDir takes NO positional argument" {
+              // Measured: Jenkins keeps the workspace and FAILS on `deleteDir('ignored')`,
+              // where Fogell deleted it and continued. The one value a blanket
+              // zero-or-one rule could not express.
+              Expect.equal (Map.tryFind "deleteDir" WalkerRules.positionalArity) (Some 0) "empty constructor"
+          }
+
+          test "every hosted wrapper has a signature case" {
+              Expect.equal
+                  WalkerRules.scriptWrappersWithHostedBody
+                  WalkerRules.hostedWrappersWithSignatureCase
+                  "a wrapper admitted without a signature case is validated by nothing"
+          }
+
+          test "bat carries the same contract as sh" {
+              // On CONTRACT, not on evidence: there is no Windows lane and no receipt
+              // covers it. This pins the two ends AGREEING about bat, which is all it
+              // claims — see WalkerRules for why that is not coverage.
+              Expect.equal (contract "bat" true true) WalkerRules.ExitStatus "same durable-task options"
+              Expect.equal (contract "bat" true false) WalkerRules.CapturedStdout "same durable-task options"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -1157,4 +1290,5 @@ let main argv =
               concurrentSealIsOrderStable
               concurrentFoldAccounting
               continuationResolution
+              returnFlagContract
               timestampPrefixIsConditional ])
