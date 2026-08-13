@@ -23,35 +23,25 @@ and Env =
     /// enclosing scope changes the enclosing scope's variable, and every later read there
     /// sees it. With `Map<string, Value>` that is not expressible: `VClosure` holds the
     /// `Env` it was created with, assignment rebuilt the map functionally, and the caller
-    /// kept the OLD map — so the mutation existed only inside the closure and vanished
-    /// when it returned.
+    /// kept the OLD map — so the mutation existed only inside the closure and vanished when
+    /// it returned.
     ///
-    /// TEN MEASURED FINDINGS came from that one gap, and the shape they share is that each
-    /// looked like a different bug: `def marker = 'before'; dir('sub') { marker = 'after' }`
-    /// printed `before`; `[1].each { armed = true }` failed the build outright; a
-    /// body-local `def env` poisoned a sibling wrapper; a closure passed BY VALUE lost its
-    /// captured parameter entirely. Two independent reviewers, working from different
-    /// instances, arrived at this same fix. Receipt `script-closure-mutates-enclosing`
-    /// holds the hosted-body case, whose previous behaviour was a GREEN BUILD writing
-    /// `marker=before` — a false success, not a crash.
+    /// WHAT THE CELL CHANGES, precisely: `def x = …` still binds a NEW cell in a NEW map,
+    /// so shadowing and lexical scope work exactly as before — a `def` inside a closure is
+    /// invisible outside it. An ASSIGNMENT to a name already bound as a local now writes
+    /// THROUGH the cell, so every `Env` sharing it observes the write. That is the
+    /// difference between capturing a variable and copying its value.
     ///
-    /// THE ORDINARY CLOSURE PATH IS FIXED BY THIS TOO, and the correction matters more
-    /// than the fact. `def a = false; [1].each { a = true }` was reported by review as a
-    /// SEPARATE defect — "applyClosure executes its block in an immutable Env and discards
-    /// the returned environment" — and I recorded it as one. Measured after the cells
-    /// landed, it still failed, so the separate-defect story looked confirmed.
+    /// Both paths that reach a closure are receipted: `script-closure-mutates-enclosing`
+    /// for a hosted wrapper body, `script-closure-mutates-ordinary` for a builtin's
+    /// trailing block. THOSE RECEIPTS ARE THE STATEMENT OF CURRENT BEHAVIOUR, and this
+    /// comment deliberately does not repeat it. An earlier version listed the findings that
+    /// motivated the change, and when ONE of them turned out to be a different bug entirely
+    /// (FG-187, a postfix index crossing a newline) the list contradicted the paragraph
+    /// below it — a comment disagreeing with itself about a ticket it does not own. The
+    /// finding history lives on the board, which is written to be edited.
     ///
-    /// IT WAS FG-187, AN UNRELATED PARSER BUG. Written across newlines, `def a = false`
-    /// followed by a line starting with `[` parses as ONE expression, `false[1]`, because
-    /// the postfix index continues over the line break; `each` then has a non-list receiver
-    /// and faults. With a semicolon the confound disappears and the closure path is
-    /// correct: `a:[true]`, and `def n = 0; [1,2].each { n = n + 1 }` gives `n:[2]` — the
-    /// counter proving the closure wrote THROUGH the variable on both iterations. Receipt
-    /// `script-closure-mutates-ordinary`.
-    ///
-    /// TWO OBSERVERS AGREED ON A WRONG CAUSE because the symptom was real and the first
-    /// plausible mechanism fit it. What separated them was removing one variable from the
-    /// probe, which is the cheapest test available and was not run for months.
+    /// `Funcs` stays a plain map: a function binding is never reassigned.
     { Vars: Map<string, Value ref>
       Funcs: Map<string, string list * Stmt list> }
 

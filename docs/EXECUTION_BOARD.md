@@ -48,6 +48,13 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
   is shaped that way — never the status of another ticket. A TICKET ROW carries history,
   so a superseded statement stays and is marked RETRACTED rather than deleted. A QUEUE ROW
   gives ranking only. If a fact is worth stating twice, state it once and cite it.
+  SOURCE COMMENTS AND ACCEPTANCE FIELDS ARE COVERED TOO, and they were the two the rule
+  had to be extended to reach: a comment listing the findings that motivated a change
+  contradicted itself the moment one of them was reattributed to another ticket, and it
+  had no business carrying that list — a comment owns the MECHANISM it sits on and cites
+  the receipts. The tell is grammatical: a sentence about what the code DOES is durable, a
+  sentence about what is STILL BROKEN elsewhere is a status claim wearing a comment's
+  clothes.
 - **A CHECKER MUST BE PROVEN TO FAIL.** Before trusting a lane scenario, a
   verifier, a monitor or an audit script, run it against a KNOWN-BAD state and
   confirm it says so; three runs if it has timing in it, because one execution
