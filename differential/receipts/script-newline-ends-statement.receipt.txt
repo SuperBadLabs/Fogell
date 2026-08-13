@@ -1,8 +1,8 @@
 # Differential receipt — script-newline-ends-statement.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         8e36c3d4a7227e7233d384cf721f7374a9d1c379a41779d2846c6ab79a22f314
-case-digest:  7e8aa32aeef71d32f56891c4046822a6c4040d6843e82c316769878718db2934
+seal:         7ed4b9a90689a44bcf5ac756f564b0612469f6b169d8d83f205d5d1ae3e794a1
+case-digest:  92bb6564cb7f0929106874e760af6fd3029abc4ae9442c324ee369333905d241
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -78,24 +78,28 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: c3c871b836dd3652365281c841fcca88128cdacb9ebf6b192de2c4458c034fe5
-  output (3 lines):
+  workspace-hash: 7eafe213de324e377c6b74a2a8cce81b215fd6713a7d7f68f5f73c8306312fb1
+  output (4 lines):
     | + printf each=%s ran
     | + printf first=%s 9
+    | + printf comment=%s 7
     | + printf same=%s 2
   workspace:
+    730ed6e9141f  comment.txt
     67ebf0b9eed3  each.txt
     2f8342851a7d  element.txt
     0acfc8ea7324  same.txt
 
 ## Fogell
   result:         success
-  workspace-hash: c3c871b836dd3652365281c841fcca88128cdacb9ebf6b192de2c4458c034fe5
-  output (3 lines):
+  workspace-hash: 7eafe213de324e377c6b74a2a8cce81b215fd6713a7d7f68f5f73c8306312fb1
+  output (4 lines):
     | + printf each=%s ran
     | + printf first=%s 9
+    | + printf comment=%s 7
     | + printf same=%s 2
   workspace:
+    730ed6e9141f  comment.txt
     67ebf0b9eed3  each.txt
     2f8342851a7d  element.txt
     0acfc8ea7324  same.txt

@@ -22,35 +22,63 @@ let private ws: P<unit> = skipMany (choice [ skipMany1 (anyOf " \t\r\n"); lineCo
 let private lexeme (p: P<'a>) = p .>> ws
 let private symbol s : P<unit> = lexeme (skipString s)
 
-/// FG-187. Succeeds only when the position is NOT the start of a fresh line — i.e. when
-/// nothing but spaces and tabs separates it from something earlier on the same line.
+/// FG-187. Succeeds only when NO line break separates this position from the last thing on
+/// the line before it — counting breaks INSIDE comments, which is where the first version
+/// of this went wrong.
 ///
-/// WHY IT HAS TO LOOK BACKWARDS. `ws` skips line breaks, and a token's trailing `ws` runs
-/// before the next token is attempted, so by the time a postfix `[` is tried the newline
-/// that preceded it is already consumed and unrecorded. The information exists only in the
-/// stream behind us.
+/// WHY IT LOOKS BACKWARDS. `ws` skips breaks and comments, and a token's trailing `ws` runs
+/// before the next token is attempted, so by the time a postfix `[` is tried the trivia
+/// before it is consumed and unrecorded. It exists only in the stream behind us.
 ///
-/// WHAT IT COSTS AND WHAT IT MISSES, stated rather than discovered: it walks back over
-/// spaces and tabs only. A COMMENT between the line break and the `[` defeats it, and the
-/// index continues as before. That is narrower than the defect it closes and errs toward
-/// the old behaviour rather than toward a new refusal, which is the safe direction for a
-/// grammar change.
+/// THE FIRST VERSION WALKED SPACES AND TABS ONLY, and recorded that a comment would defeat
+/// it as an acceptable narrowing that "errs toward the old behaviour". Wrong about the
+/// direction, and that is the part worth keeping: here the old behaviour is a SILENT FALSE
+/// SUCCESS. `def xs = [1, 2]` then `/* c */ [0].each { … }` swallowed the second statement
+/// into an index expression, ran neither it nor its block, and reported success. A
+/// limitation that quietly drops work is not a narrower fix; it is the defect with a
+/// smaller footprint. Raised by the pre-push verifier on PR #54.
+///
+/// BLOCK COMMENTS ARE THE ONLY HARD CASE: a line comment cannot sit between a break and a
+/// `[` without its own terminating break, so meeting one already means a break.
 let private notAfterLineBreak: P<unit> =
     fun stream ->
         let here = stream.Index
+
+        let charAt (i: int64) =
+            stream.Seek i
+            stream.Peek()
+
         let mutable i = here - 1L
         let mutable sawBreak = false
         let mutable scanning = true
 
         while scanning && i >= 0L do
-            stream.Seek i
-            let c = stream.Peek()
+            let c = charAt i
 
             if c = '\n' || c = '\r' then
                 sawBreak <- true
                 scanning <- false
-            elif c = ' ' || c = '\t' then i <- i - 1L
-            else scanning <- false
+            elif c = ' ' || c = '\t' then
+                i <- i - 1L
+            elif c = '/' && i >= 1L && charAt (i - 1L) = '*' then
+                // just past a `*/`: step back to its `/*`, noticing any break inside
+                let mutable j = i - 2L
+                let mutable closed = false
+
+                while not closed && j >= 1L do
+                    let d = charAt j
+
+                    if d = '\n' || d = '\r' then sawBreak <- true
+
+                    if d = '*' && charAt (j - 1L) = '/' then
+                        closed <- true
+                        j <- j - 2L
+                    else
+                        j <- j - 1L
+
+                if sawBreak || not closed then scanning <- false else i <- j
+            else
+                scanning <- false
 
         stream.Seek here
 

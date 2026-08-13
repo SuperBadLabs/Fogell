@@ -50,12 +50,6 @@ Files: **1**
 
 - `Terradue_DotNetOpenSearchClient.Jenkinsfile`
 
-## script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: '['
-
-Files: **1**
-
-- `varunpalekar_php-ci-cd.Jenkinsfile`
-
 ## an opaque section
 
 Files: **1**
@@ -67,6 +61,12 @@ Files: **1**
 Files: **1**
 
 - `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
+
+## script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '['
+
+Files: **1**
+
+- `varunpalekar_php-ci-cd.Jenkinsfile`
 
 ## 'switch', 'throw', 'true', 'try', 'while' or '{'
 

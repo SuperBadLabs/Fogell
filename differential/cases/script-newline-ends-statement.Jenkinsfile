@@ -13,6 +13,12 @@
 //     list and NOTHING is raised. An engine with the defect writes `first=1` here; the
 //     correct answer is `first=9`, because `[9]` is a new statement's list literal.
 //
+// `comment.txt` covers the spelling that defeated the FIRST version of this guard, which
+// walked back over spaces and tabs only. A BLOCK COMMENT between the break and the `[` got
+// the old behaviour — and here that is a SILENT drop, not a loud one: the statement is
+// swallowed into an index expression, its block never runs, and the build reports success.
+// The guard now counts breaks inside comments too. Raised by the pre-push verifier.
+//
 // `same.txt` is the control that keeps the rule narrow: an index on the SAME line is
 // ordinary subscripting and must still work. A guard that refused those would satisfy
 // both assertions above and break every real `xs[0]` in the corpus.
@@ -38,7 +44,12 @@ pipeline {
                     [9].each { first = it }
                     sh "printf 'first=%s' '${first}' > element.txt"
 
-                    sh "printf 'same=%s' '${xs[1]}' > same.txt"
+                    def viaComment = 0
+                    /* a
+                       comment */ [7].each { viaComment = it }
+                    sh "printf 'comment=%s' '${viaComment}' > comment.txt"
+
+                    sh "printf 'same=%s' '${xs /* still an index */ [1]}' > same.txt"
                 }
             }
         }
