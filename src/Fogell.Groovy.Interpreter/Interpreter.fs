@@ -132,27 +132,6 @@ module Interpreter =
           /// Existing consumers (`when { expression }`, the tests) rely on that and are
           /// deliberately unchanged; only a caller that supplies this gets live steps.
           Host: PerformStep option
-          /// FG-178. Has the SCRIPT declared or assigned its own `env`?
-          ///
-          /// FOURTH SHAPE OF THIS FLAG, and the first that is a FACT rather than an
-          /// inference. The refresh must not overwrite a user binding, and the question
-          /// "is this binding the user's?" was answered twice by comparing VALUES:
-          ///   - seeded per thunk from its CALL SITE, where `def env = …` had already run,
-          ///     so the shadowed value was compared against itself and never detected;
-          ///   - then anchored on state, which is SHARED, so one wrapper's refresh made
-          ///     the next sibling look user-shadowed and its refresh was skipped —
-          ///     reintroducing the staleness the whole thing exists to fix, in nested and
-          ///     sequential wrappers.
-          ///
-          /// The interpreter does not need to infer any of it: it EXECUTES the `def`. This
-          /// records that, and the refresh reads it. No value comparison, nothing to be
-          /// coincidentally equal to, and nothing shared that should not be.
-          ///
-          /// SCOPE LIMIT, stated: a `def env` anywhere in the script disables the refresh
-          /// for the whole run, where Groovy would scope it to its block. Fogell's
-          /// variable model has no block scoping to hang that on — FG-179 — and erring
-          /// toward NOT overwriting the user's binding is the safe direction.
-          mutable EnvUserShadowed: bool
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -179,6 +158,15 @@ module Interpreter =
           /// closure at a time: an assignment to a non-local name mutates HERE and
           /// is immediately visible to every later expression, survives a fault,
           /// and never confuses a parameter for a binding.
+          /// FG-179. The cells that ARE the Jenkins environment, by IDENTITY.
+          ///
+          /// `env.FOO = …` is a Jenkins environment write only when `env` resolves to one
+          /// of these. It used to be decided syntactically — any `EProp(EVar "env", _)` was
+          /// routed to the host — so a script's own `def env = [:]` had its ordinary map
+          /// mutation sent to `host.SetEnv`, which refuses, killing the step after it while
+          /// Jenkins runs on. Provenance by cell identity answers it without naming a
+          /// syntactic form, exactly as the hosted refresh does.
+          JenkinsEnvCells: System.Collections.Generic.HashSet<Value ref>
           mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
@@ -518,6 +506,10 @@ module Interpreter =
                 // in the first case, which is exactly when they differ.
                 let bodyEnv = ref (defaultArg capturedEnv env)
 
+                // FG-179. The `env` cell THIS wrapper installed, if any — the identity
+                // that tells our binding from the script's. See the refresh below.
+                let ourEnvCell: (Value ref) option ref = ref None
+
                 let runBody =
                     bodyClosure
                     |> Option.map (fun c ->
@@ -558,33 +550,51 @@ module Interpreter =
                             // rounds, which says the fix was aimed at the SYMPTOM (bare
                             // names) rather than the rule (never overwrite a user binding).
                             //
-                            // PROVENANCE BY LAST-WRITE, which this scope can actually
-                            // establish: refresh `env` only while it still holds the value
-                            // this refresh last put there (or the one `runHosted` bound).
-                            // A `def env = …` makes it differ, so it is left alone. That is
-                            // not the equality GUESS rejected for bare names — there the
-                            // candidate was a scalar that could coincide by accident; here
-                            // it is a whole environment map compared against a value this
-                            // code itself wrote, which a user local does not reproduce.
+                            // FG-179. PROVENANCE IS THE CELL'S IDENTITY, and that is the
+                            // whole redesign. A binding is OURS if it is the very cell this
+                            // code installed; anything else in that slot was bound by the
+                            // script, whatever syntax put it there.
+                            //
+                            // WHAT IT REPLACES: one interpreter-wide shadow bit, DELETED
+                            // by this change, which was set when the interpreter
+                            // happened to notice `def env` or `env = …`. It was wrong for FIVE spellings — a wrapper-local
+                            // `def env`, a local `env` map, a closure-local `def env` that
+                            // poisoned a SIBLING wrapper for the rest of the run, a captured
+                            // wrapper environment, and a PARAMETER named `env`, where the
+                            // same code gave a different answer depending on what the
+                            // parameter was called. Each fix was a guard keyed to syntax,
+                            // and the next syntax was always outside it.
+                            //
+                            // Reference equality answers the question the bit was
+                            // approximating, and it answers it PER FRAME: a `def`, a
+                            // parameter and a catch variable all go through `Env.withVar`,
+                            // which mints a NEW cell, so every one of them is distinguishable
+                            // from ours without naming a single syntactic form. A sibling
+                            // closure's binding lives in a different `Env` entirely and can
+                            // no longer reach across.
+                            //
+                            // UPDATING THE CELL rather than rebinding the name is still
+                            // required: a fresh `ref` detaches any closure that already
+                            // captured `env`, which is the capture-by-value defect this
+                            // change exists to remove, reintroduced at one name.
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
                                 let fresh = VMap(Map.ofList current)
 
-                                if not st.EnvUserShadowed then
-                                    // FG-179. UPDATE THE CELL, do not rebind the name. A
-                                    // fresh `ref` here would detach every closure that had
-                                    // already captured `env`'s cell — a closure created in
-                                    // one retry attempt and invoked in a later one would go
-                                    // on reading the old map, which is the capture-by-value
-                                    // defect this change exists to remove, reintroduced at
-                                    // one name. Raised in review on PR #54.
-                                    match Map.tryFind "env" bodyEnv.Value.Vars with
-                                    | Some cell -> cell.Value <- fresh
-                                    | None ->
-                                        bodyEnv.Value <-
-                                            { bodyEnv.Value with
-                                                Vars = Map.add "env" (ref fresh) bodyEnv.Value.Vars })
+                                match Map.tryFind "env" bodyEnv.Value.Vars, ourEnvCell.Value with
+                                | Some cell, Some ours when System.Object.ReferenceEquals(cell, ours) ->
+                                    cell.Value <- fresh
+                                | Some _, _ ->
+                                    // the script's own `env` — leave it alone entirely
+                                    ()
+                                | None, _ ->
+                                    let cell = ref fresh
+                                    ourEnvCell.Value <- Some cell
+                                    st.JenkinsEnvCells.Add cell |> ignore
+
+                                    bodyEnv.Value <-
+                                        { bodyEnv.Value with Vars = Map.add "env" cell bodyEnv.Value.Vars })
 
                             // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
                             // names it CAPTURED do.
@@ -807,9 +817,6 @@ module Interpreter =
         | SDef(n, Some e) ->
             let v = evalExpr st env e
             st.LastValue <- Some v
-            // FG-178. The script declaring its OWN `env` is the fact the hosted refresh
-            // needs; recorded where it happens rather than inferred later from values.
-            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n v env
         // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
         // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
@@ -817,15 +824,10 @@ module Interpreter =
         // evaluates to null.
         | SDef(n, None) ->
             st.LastValue <- Some VNull
-            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
-            // Assignment counts too: `env = [...]` replaces the binding as surely as a
-            // `def` does, and covering only `def` would leave the commoner spelling open —
-            // the partial-enumeration shape this branch keeps finding.
-            if n = "env" then st.EnvUserShadowed <- true
 
             // FG-179. WRITE THROUGH THE CELL, and return the SAME env. This used to call
             // `Env.withVar`, which mints a fresh cell in a fresh map — so the write was
@@ -871,12 +873,37 @@ module Interpreter =
             // The host decides what it means: today it fails the build, because Fogell's
             // environment overlay does not yet cross the script boundary. That refusal is
             // now COMPLETE rather than best-effort.
+            // FG-179. WHICH `env`? Decided by the cell's identity, not by the name. A
+            // script that writes `def env = [:]` owns a plain map, and mutating it is
+            // ordinary Groovy that Jenkins runs; only the Jenkins environment goes to the
+            // host. Routing on the SYNTAX sent both to `host.SetEnv`, which refuses, so
+            // `def env = [:]; env.FOO = 'local'; sh 'touch ok.txt'` failed here and
+            // succeeded there.
+            let isJenkinsEnv name =
+                match Map.tryFind name env.Vars with
+                | Some cell -> st.JenkinsEnvCells.Contains cell
+                | None -> true // no local binding at all: the script binding, i.e. Jenkins'
+
+            let mutateLocalMap name key =
+                match Map.tryFind name env.Vars with
+                | Some cell ->
+                    match cell.Value with
+                    | VMap m -> cell.Value <- VMap(Map.add key value m)
+                    // Not a map: Groovy would set a property on whatever object this is,
+                    // which this interpreter does not model. Left alone rather than
+                    // guessed at.
+                    | _ -> ()
+                | None -> ()
+
             match st.Host, target with
-            | Some host, EProp(EVar "env", name) -> host.SetEnv name (Value.toDisplay value)
-            | Some host, EIndex(EVar "env", idx) ->
+            | Some host, EProp(EVar "env", name) when isJenkinsEnv "env" ->
+                host.SetEnv name (Value.toDisplay value)
+            | _, EProp(EVar "env", name) -> mutateLocalMap "env" name
+            | Some host, EIndex(EVar "env", idx) when isJenkinsEnv "env" ->
                 // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
                 // the pre-scan only recognised a literal string.
                 host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
+            | _, EIndex(EVar "env", idx) -> mutateLocalMap "env" (Value.toDisplay (evalExpr st env idx))
             | _ -> ()
 
             env
@@ -1061,6 +1088,15 @@ module Interpreter =
     let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
+        // FG-179. The `env` the CALLER supplied is Jenkins'; anything the script binds
+        // later is its own. Identity is recorded once, here, rather than inferred from
+        // syntax at each assignment.
+        let jenkinsEnvCells = System.Collections.Generic.HashSet<Value ref>(HashIdentity.Reference)
+
+        match Map.tryFind "env" env.Vars with
+        | Some cell -> jenkinsEnvCells.Add cell |> ignore
+        | None -> ()
+
         let st =
             { Steps = 0
               Depth = 0
@@ -1068,11 +1104,11 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Host = host
-              EnvUserShadowed = false
               Defined = defined
               LastValue = None
               StrictVars = strictVars
               NewBindings = []
+              JenkinsEnvCells = jenkinsEnvCells
               // FG-179: the BINDING is a value map, not cells — it is Groovy's script
               // binding, already shared and mutable in its own right, so it needs no second
               // sharing mechanism. Seeded from a SNAPSHOT of the caller's locals.
