@@ -35,20 +35,23 @@ and Env =
     /// holds the hosted-body case, whose previous behaviour was a GREEN BUILD writing
     /// `marker=before` — a false success, not a crash.
     ///
-    /// THE ORDINARY CLOSURE PATH IS NOT FIXED BY THIS AND IS UNPROVEN either way:
-    /// `def a = false; [1].each { a = true }` still fails the build here where Jenkins
-    /// succeeds. Measured against this change AND against the commit before it, so it is
-    /// neither repaired by ref cells nor caused by them — `applyClosure` has its own
-    /// defect, and claiming the ticket closed on the strength of the hosted case would
-    /// be the overclaim this repo keeps catching.
+    /// THE ORDINARY CLOSURE PATH IS FIXED BY THIS TOO, and the correction matters more
+    /// than the fact. `def a = false; [1].each { a = true }` was reported by review as a
+    /// SEPARATE defect — "applyClosure executes its block in an immutable Env and discards
+    /// the returned environment" — and I recorded it as one. Measured after the cells
+    /// landed, it still failed, so the separate-defect story looked confirmed.
     ///
-    /// WHAT THE CELL CHANGES, precisely: `def x = …` still binds a NEW cell in a NEW map,
-    /// so shadowing and lexical scope work exactly as before — a `def` inside a closure is
-    /// invisible outside it. An ASSIGNMENT to a name already bound as a local now writes
-    /// THROUGH the cell, so every `Env` sharing it observes the write. That is the
-    /// difference between capturing a variable and copying its value.
+    /// IT WAS FG-187, AN UNRELATED PARSER BUG. Written across newlines, `def a = false`
+    /// followed by a line starting with `[` parses as ONE expression, `false[1]`, because
+    /// the postfix index continues over the line break; `each` then has a non-list receiver
+    /// and faults. With a semicolon the confound disappears and the closure path is
+    /// correct: `a:[true]`, and `def n = 0; [1,2].each { n = n + 1 }` gives `n:[2]` — the
+    /// counter proving the closure wrote THROUGH the variable on both iterations. Receipt
+    /// `script-closure-mutates-ordinary`.
     ///
-    /// `Funcs` stays a plain map: a function binding is never reassigned.
+    /// TWO OBSERVERS AGREED ON A WRONG CAUSE because the symptom was real and the first
+    /// plausible mechanism fit it. What separated them was removing one variable from the
+    /// probe, which is the cheapest test available and was not run for months.
     { Vars: Map<string, Value ref>
       Funcs: Map<string, string list * Stmt list> }
 
