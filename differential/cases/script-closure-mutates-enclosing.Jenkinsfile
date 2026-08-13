@@ -17,10 +17,11 @@
 // crossed a boundary and was silently copied, and it is the one of FG-179's ten findings
 // that was a false SUCCESS rather than a false failure.
 //
-// STILL OPEN, and named here so a passing case does not read as a solved ticket: the
-// ORDINARY closure path — `def a = false; [1].each { a = true }` — still fails the build
-// here where Jenkins succeeds. Measured against this change and against the commit before
-// it, so it is neither fixed by ref cells nor caused by them.
+// THE ORDINARY CLOSURE PATH IS COVERED BY `script-closure-mutates-ordinary`, and this
+// comment claimed for two commits that it was still broken. It was not: ref cells fixed
+// both paths at once. What still failed was FG-187 — a postfix index continuing across a
+// newline, so `def a = false` and a following `[1].each { … }` parsed as one expression —
+// which is why that case spells its semicolons explicitly.
 pipeline {
     agent any
     stages {
