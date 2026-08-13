@@ -191,8 +191,8 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 184 rows, 101 of them DONE, and the open
-83 are spread 4 / 33 / 36 / 10 across P0–P3. A tier holding thirty open items does not
+**WHY THIS SECTION EXISTS.** The board carries 185 rows, 101 of them DONE, and the open
+84 are spread 4 / 34 / 36 / 10 across P0–P3. A tier holding thirty open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
 review round happened to touch went next. The waves below group by SUBSYSTEM, which is
@@ -547,6 +547,10 @@ changed, and the queue above is what orders them.
 
 | FG-191 | **P1** | TODO | Ref cells can build a CYCLIC value graph, and `==` walks it structurally | RAISED IN REVIEW ON PR #54. `def make() { def c; c = { c }; return c }` returns a closure whose captured `Env` holds the cell that holds the closure, so `Value -> Env -> ref -> Value` closes a loop. Structural equality on two such values recurses without bound. Before FG-179 locals were copied and the graph could not close. NOT MEASURED YET — it needs a probe that builds the cycle and compares, and the shape is easy to get wrong in a way that looks like a hang rather than a defect, so it is filed at the reviewer's description rather than at a severity I have not established. FIX DIRECTION: compare by cell IDENTITY rather than structurally wherever a `VClosure` is involved, which is also what Groovy does — closures are reference-equal or not equal | reviewer's construction; unmeasured |
 | FG-192 | P2 | TODO | The FG-187 newline guard is too strict INSIDE a grouped expression | RAISED IN REVIEW ON PR #54. Groovy continues an expression across a line break while a bracket is open, so `(xs\n[0])` is an ordinary index there and Fogell now refuses it. The guard asks only 'is there a break before this `[`', which is the right question at STATEMENT level and the wrong one inside parentheses. Direction: a FALSE REFUSAL, which is the conservative side, and it is filed rather than rushed because the fix wants the same trivia tracking as FG-190 — the guard needs to know the bracket depth as well as the break | reviewer's construction; unmeasured |
+
+---
+
+| FG-193 | **P1** | TODO | A Groovy map is a REFERENCE object; `VMap` has no identity, so aliases do not see each other's mutations | RAISED IN REVIEW ON PR #54 as two findings that are one root, which is why they are one ticket. **(a)** `def local = [:]; def env = local; env.FOO = …` — the FG-179 assignment arm replaces the `env` cell's `VMap` with a NEW map, so `local` still holds the old one. Groovy mutates the shared object and both names see it. **(b)** `def saved = env; def env = saved; env.FOO = …` — rebinding through an alias mints a fresh cell, which is not in the Jenkins-provenance set, so a write to what IS the Jenkins environment is treated as a local map mutation. Provenance by cell identity is right for VARIABLES and cannot answer a question about the identity of the VALUE. **THE SHAPE IS THE ONE FG-179 JUST SOLVED ONE LEVEL DOWN.** Locals needed reference semantics and got ref cells; maps need the same and have an immutable `Map` inside an F# union. Patching the assignment arm to mutate 'the shared object' is not possible while no shared object exists, so this is a VALUE-MODEL change — most likely `VMap of Map<string, Value> ref` — with the same blast radius ref cells had, and it belongs in its own PR. NOT MEASURED: both are reviewer constructions, and the second needs the walker to supply a real Jenkins env, so neither is probed here | 2 reviewer constructions, unmeasured |
 
 ---
 
