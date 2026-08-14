@@ -191,7 +191,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 186 rows, 102 of them DONE, and the open
+**WHY THIS SECTION EXISTS.** The board carries 187 rows, 103 of them DONE, and the open
 84 are spread 4 / 34 / 36 / 10 across P0–P3. A tier holding thirty open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
@@ -555,6 +555,10 @@ changed, and the queue above is what orders them.
 ---
 
 | FG-194 | **P1** | **DONE** | `break` inside a `for-in` was caught PER ITERATION, so the loop ran the body for every remaining element | RAISED IN REVIEW ON PR #54. The handler had `with BreakSignal -> ()`, which resumes the next iteration; `SWhile` one arm below has always set its running flag to false, so this is a transcription slip rather than a design question. **PRE-EXISTING, NOT A REF-CELL REGRESSION**, and worth separating because three findings on this branch WERE regressions of that change: the line predates it. What cells changed is VISIBILITY — an assignment made before the break now survives, so a wrong value reaches a step instead of being discarded with the environment, which is how the reviewer saw it. FIXED with the same shape `SWhile` uses. Probed all three paths, because a break fix that broke `continue` would be a worse trade: break stops (`picked:[a]`), continue skips one (`seen:[b]`), and an unsignalled loop still runs every element (`all:[ab]`) | receipt `script-for-in-break`, tier 1: `picked` holds the FIRST element only, which separates BOTH wrong answers — resuming after the break and treating it as `continue` each leave all three — and `after.txt` proves the loop was left rather than the script abandoned |
+
+---
+
+| FG-195 | **P1** | TODO | CALLABLE RESOLUTION has no signature model, and three defects on one branch came from that | **THREE OCCURRENCES IN ONE BRANCH, EACH A FALSE SUCCESS, EACH PATCHED WITH A REFUSAL.** (a) a LOCAL shadowing a preamble helper: `def x = { 'LOCAL' }` then `x()` ran the helper, where Groovy resolves the local. (b) DUPLICATE helper names: `def pick()` beside `def pick(v)` folded into a map by name, last-wins, so `pick()` ran the one-arg body. (c) ARITY ignored: `List.truncate` on both sides let `def constant(v)` be called as `constant()`, binding nothing and running the body — Jenkins rejects it, having no zero-arg overload. ALL THREE ARE ONE SHAPE: a call resolving to something the language would not pick, because resolution is by NAME and Groovy's is by SIGNATURE. Each is refused today with a named reason, which is honest and is not the answer — a refusal is a promise that the construct is unsupported, and all three are ordinary Groovy that Jenkins runs. WHAT THE REDESIGN NEEDS: a callable is a NAME plus a SIGNATURE; resolution picks by arity among candidates; a local binding shadows a helper; and a closure VALUE is callable (FG-189 folds into this rather than standing alone). MEASURED, all three, before refusing | 3 probes, one per shape, each against plain Groovy semantics |
 
 ---
 

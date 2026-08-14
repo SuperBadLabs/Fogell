@@ -678,6 +678,25 @@ module Interpreter =
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
                 | Some(ps, body) ->
+                    // FG-195. ARITY IS CHECKED BEFORE THE BODY RUNS. `List.truncate` on both
+                    // sides meant a mismatched call simply bound fewer parameters and ran
+                    // anyway: `def constant(v) { … }` called as `constant()` has no zero-arg
+                    // overload in Groovy, so Jenkins rejects the pipeline while Fogell ran
+                    // the body and could report success.
+                    //
+                    // THE THIRD CALLABLE-RESOLUTION DEFECT ON THIS BRANCH — after a local
+                    // shadowing a helper and duplicate helper names — and all three are one
+                    // shape: a call resolving to something the language would not pick. This
+                    // is the stop-ship refusal; FG-195 owns the signature model that makes
+                    // the question answerable instead of refused.
+                    if List.length positionalLazy.Value <> List.length ps then
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' takes {List.length ps} argument(s) and was called with {List.length positionalLazy.Value}; Fogell does not model overloads"
+                            )
+                        )
+
                     st.Depth <- st.Depth + 1
 
                     // FG-179. A FUNCTION BODY DOES NOT SEE THE CALLER'S LOCALS. This
