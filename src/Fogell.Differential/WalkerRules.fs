@@ -29,6 +29,11 @@ type ScmSpec = { Url: string; Branch: string }
 
 type BranchCtx =
     { /// Polled while a shell step runs; true means a failFast sibling failed.
+      /// FG-188. The pipeline source OUTSIDE `pipeline { }`, carried so a `script { }`
+      /// body can see top-level `def` helpers. Raw text, parsed at the point of use: the
+      /// walker's rule module has no business holding a Groovy AST, and a `script` block
+      /// is rare enough that parsing it there costs nothing measurable.
+      Preamble: string
       Interrupt: (unit -> bool) option
       /// Branch-local failure. Deliberately NOT the build status: a failed
       /// branch fails the build but does not halt its siblings.

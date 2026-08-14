@@ -2109,8 +2109,34 @@ module WalkerOrchestration =
 
                         // Both spellings bound, as `when { expression { … } }` learned to:
                         // a bare name AND `env.NAME`.
+                        // FG-188. TOP-LEVEL `def` HELPERS ARE IN SCOPE. The source outside
+                        // `pipeline { }` was discarded by the parser, so a helper declared
+                        // there was invisible here and calling it failed as an unknown name
+                        // — measured: Jenkins runs `def greet(v) { … }` from the preamble and
+                        // Fogell failed with an EMPTY workspace. It is the corpus's commonest
+                        // escape construct, 56 files.
+                        //
+                        // A PREAMBLE THAT DOES NOT PARSE IS IGNORED, NOT FATAL, and that is
+                        // deliberate: it holds shebangs, annotations and imports that this
+                        // Groovy subset does not model, and refusing a pipeline because its
+                        // `@Library` line is unsupported would reject work Jenkins runs. Only
+                        // the FUNCTIONS are taken; nothing else from it executes.
+                        let preambleFuncs =
+                            if System.String.IsNullOrWhiteSpace ctx.Preamble then
+                                Map.empty
+                            else
+                                match Fogell.Groovy.Parser.Parser.parse ctx.Preamble with
+                                | Result.Ok script ->
+                                    script
+                                    |> List.choose (function
+                                        | Fogell.Groovy.SFunc(n, ps, body) -> Some(n, (ps, body))
+                                        | _ -> None)
+                                    |> Map.ofList
+                                | Result.Error _ -> Map.empty
+
                         let genv =
-                            Env.ofValues (asValues |> Map.add "env" (VMap asValues))
+                            { Env.ofValues (asValues |> Map.add "env" (VMap asValues)) with
+                                Funcs = preambleFuncs }
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted
@@ -2348,7 +2374,8 @@ module WalkerOrchestration =
                         stage.Nested
                         |> List.map (fun branch ->
                             let branchCtx =
-                                { Failed = ref false
+                                { Preamble = ctx.Preamble
+                                  Failed = ref false
                                   // REVIEW FIX (Codex, PR #13): this sent branch
                                   // status straight to the GLOBAL sink, bypassing
                                   // the enclosing stage's. `stageStatus` therefore

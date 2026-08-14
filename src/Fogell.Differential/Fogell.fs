@@ -408,7 +408,8 @@ module FogellSide =
 
             // FG-105: env resolution and argument rendering live in WalkerArgs.
             let root =
-                { Interrupt = None
+                { Preamble = pipeline.Preamble
+                  Interrupt = None
                   Failed = ref false
                   Sink = bump
                   EnvOverlay = []

@@ -1121,7 +1121,15 @@ module Interpreter =
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
     let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        let defined = Ast.definedFunctions script
+        // FG-188. A function bound in the INCOMING env is defined too. This counted only
+        // declarations inside the script, so a caller that supplied helpers in `env.Funcs`
+        // had them denied by name at `Sandbox.admitCall` before the call could resolve —
+        // the env said the function existed and the sandbox said it did not.
+        let defined =
+            Set.union
+                (Ast.definedFunctions script)
+                (env.Funcs |> Map.toSeq |> Seq.map fst |> Set.ofSeq)
+
 
         // FG-179. The `env` the CALLER supplied is Jenkins'; anything the script binds
         // later is its own. Identity is recorded once, here, rather than inferred from

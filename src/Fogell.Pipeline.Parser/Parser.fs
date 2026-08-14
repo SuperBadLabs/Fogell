@@ -913,12 +913,18 @@ let private skipToPipeline: P<unit> =
     skipManyTill anyChar (lookAhead (attempt (keyword "pipeline" >>. skipChar '{')))
 
 let private pipelineParser: P<Pipeline> =
-    preamble
-    >>. skipToPipeline
-    >>. keyword "pipeline"
-    >>. between (symbol "{") (symbol "}") (ws >>. many (attempt topSection))
-    .>> ws
-    |>> fun sections ->
+    // FG-188. The skipped text is CAPTURED, not merely stepped over. Everything before
+    // `pipeline {` used to be discarded, which made a top-level `def` helper invisible to
+    // every `script { }` body — the commonest escape construct in the corpus.
+    //
+    // `withSkippedString` reads exactly what `preamble >>. skipToPipeline` consumed, so
+    // the capture cannot drift from the skip: there is no second scanner to keep in
+    // agreement with this one.
+    withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+    .>>. (keyword "pipeline"
+          >>. between (symbol "{") (symbol "}") (ws >>. many (attempt topSection))
+          .>> ws)
+    |>> fun (capturedPreamble, sections) ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
               Environment =
@@ -942,6 +948,7 @@ let private pipelineParser: P<Pipeline> =
               Options = sections |> List.collect (function TopOptions o -> o | _ -> [])
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
               Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
+              Preamble = capturedPreamble
               Stages = defaultArg (pick (function TopStages s -> Some s | _ -> None)) []
               Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
 

@@ -152,7 +152,18 @@ type Pipeline =
       Triggers: Step list
       Tools: (string * string) list
       Stages: Stage list
-      Post: (PostCondition * Step list) list }
+      Post: (PostCondition * Step list) list
+      /// FG-188. The source OUTSIDE `pipeline { }` — shebang, imports, annotations and,
+      /// the reason this field exists, top-level `def` helpers.
+      ///
+      /// Kept as TEXT rather than parsed here: this is the Declarative IR, and a Groovy
+      /// AST in it would make every consumer depend on the Groovy parser to read a
+      /// pipeline. The walker parses it when a `script { }` body needs the functions.
+      ///
+      /// It was DISCARDED entirely, so `def helper() { … }` before `pipeline { }` — the
+      /// commonest escape construct in the corpus, 56 files — was invisible to every
+      /// `script` block, and calling it failed as an unknown name.
+      Preamble: string }
 
 module Pipeline =
 
@@ -165,7 +176,8 @@ module Pipeline =
           Triggers = []
           Tools = []
           Stages = []
-          Post = [] }
+          Post = []
+          Preamble = "" }
 
     /// Flatten nested/parallel stages into execution order for planning.
     let rec flattenStages (stages: Stage list) : Stage list =
