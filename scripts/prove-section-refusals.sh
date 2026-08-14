@@ -339,8 +339,47 @@ expect_refusal_before_effects continue-outside-loop early.txt 'pipeline {
     }
 }'
 
+# FG-175. A MALFORMED `when` EXPRESSION IS REFUSED BEFORE ANY STAGE RUNS. Jenkins compiles
+# the whole file first, so a bad condition means NO stage starts; Fogell used to admit the
+# pipeline, run the earlier stages, and merely skip the gated one. Measured against the
+# pinned lab: Jenkins' workspace is EMPTY, Fogell's held `early.txt`.
+#
+# The marker is what separates "refused" from "ran the earlier stage and skipped the gated
+# one" — the second is what the defect did, and it leaves a diagnostic in the log too.
+expect_control when-valid-ok 'completed: success' 'pipeline {
+    agent any
+    stages {
+        stage("one") {
+            when {
+                expression { return true }
+            }
+            steps {
+                sh "echo ran > marker.txt"
+            }
+        }
+    }
+}'
+expect_refusal_before_effects when-malformed-expression early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") {
+            steps {
+                sh "touch early.txt"
+            }
+        }
+        stage("gated") {
+            when {
+                expression { return 10 / }
+            }
+            steps {
+                sh "touch gated.txt"
+            }
+        }
+    }
+}'
+
 if [ "$FAILED" -eq 0 ]; then
-  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, a misplaced break/continue refuses BEFORE any stage runs, and every control still runs"
+  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, a misplaced break/continue and a malformed when-expression each refuse BEFORE any stage runs, and every control still runs"
 else
   echo "SECTION-REFUSAL PROOF FAILED"
   exit 1

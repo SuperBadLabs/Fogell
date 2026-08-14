@@ -22,6 +22,78 @@ let private ws: P<unit> = skipMany (choice [ skipMany1 (anyOf " \t\r\n"); lineCo
 let private lexeme (p: P<'a>) = p .>> ws
 let private symbol s : P<unit> = lexeme (skipString s)
 
+/// FG-187. Succeeds only when NO line break separates this position from the last thing on
+/// the line before it — counting breaks INSIDE comments, which is where the first version
+/// of this went wrong.
+///
+/// WHY IT LOOKS BACKWARDS. `ws` skips breaks and comments, and a token's trailing `ws` runs
+/// before the next token is attempted, so by the time a postfix `[` is tried the trivia
+/// before it is consumed and unrecorded. It exists only in the stream behind us.
+///
+/// THE FIRST VERSION WALKED SPACES AND TABS ONLY, and recorded that a comment would defeat
+/// it as an acceptable narrowing that "errs toward the old behaviour". Wrong about the
+/// direction, and that is the part worth keeping: here the old behaviour is a SILENT FALSE
+/// SUCCESS. `def xs = [1, 2]` then `/* c */ [0].each { … }` swallowed the second statement
+/// into an index expression, ran neither it nor its block, and reported success. A
+/// limitation that quietly drops work is not a narrower fix; it is the defect with a
+/// smaller footprint. Raised by the pre-push verifier on PR #54.
+///
+/// BLOCK COMMENTS ARE THE ONLY HARD CASE: a line comment cannot sit between a break and a
+/// `[` without its own terminating break, so meeting one already means a break.
+///
+/// AND ORDINARY ONES ARE ALL IT HANDLES — FG-190. The scan pairs `*/` with the nearest
+/// `/*` to its LEFT, and Groovy block comments do not nest, so a comment whose own text
+/// contains `/*` pairs the wrong opener and this returns success. An opener is a
+/// FORWARD-lexing fact and no right-to-left scan recovers it; the real fix carries the
+/// break out of `ws` itself.
+let private notAfterLineBreak: P<unit> =
+    fun stream ->
+        let here = stream.Index
+
+        let charAt (i: int64) =
+            stream.Seek i
+            stream.Peek()
+
+        let mutable i = here - 1L
+        let mutable sawBreak = false
+        let mutable scanning = true
+
+        while scanning && i >= 0L do
+            let c = charAt i
+
+            if c = '\n' || c = '\r' then
+                sawBreak <- true
+                scanning <- false
+            elif c = ' ' || c = '\t' then
+                i <- i - 1L
+            elif c = '/' && i >= 1L && charAt (i - 1L) = '*' then
+                // just past a `*/`: step back to its `/*`, noticing any break inside
+                let mutable j = i - 2L
+                let mutable closed = false
+
+                while not closed && j >= 1L do
+                    let d = charAt j
+
+                    if d = '\n' || d = '\r' then sawBreak <- true
+
+                    if d = '*' && charAt (j - 1L) = '/' then
+                        closed <- true
+                        j <- j - 2L
+                    else
+                        j <- j - 1L
+
+                if sawBreak || not closed then scanning <- false else i <- j
+            else
+                scanning <- false
+
+        stream.Seek here
+
+        if sawBreak then
+            Reply(Error, expected "no line break before '['")
+        else
+            Reply(())
+
+
 let private isIdentStart c = isLetter c || c = '_'
 let private isIdentCont c = isLetter c || isDigit c || c = '_'
 let private rawIdent: P<string> = many1Satisfy2 isIdentStart isIdentCont
@@ -194,7 +266,20 @@ let private postfixChain (start: Expr) : P<Expr> =
                           match args, trailing with
                           | None, None -> EProp(e, n)
                           | a, t -> ECall(MethodCall(e, n), defaultArg a [], t))
-              attempt (between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
+              // FG-187. A postfix index may NOT begin a new line. `def a = false` followed
+              // by a line starting with `[1].each { … }` parsed as the single expression
+              // `false[1].each { … }`: two statements became one, the second never ran, and
+              // `each` faulted on a non-list receiver. Groovy ends a statement at a line
+              // break once it is complete, so both lines run there.
+              //
+              // IT WAS NOT ONLY A FAILURE. Where the swallowed line indexes something real
+              // — `def xs = [1, 2]` then `[0].each { … }` — the result is an ELEMENT rather
+              // than a list and no error is raised at all.
+              //
+              // This masked FG-179 for months: every probe of closure capture was written
+              // across newlines, so the confound sat in the evidence for both sides of that
+              // argument and two observers agreed on a wrong cause.
+              attempt (notAfterLineBreak >>. between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
               attempt (argsInParens .>>. opt (attempt closure)
                        |>> fun (args, t) ->
                                match e with

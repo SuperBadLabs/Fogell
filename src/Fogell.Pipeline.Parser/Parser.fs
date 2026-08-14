@@ -1131,11 +1131,52 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
 
             here @ fromSteps st.Block)
 
+    // FG-175. A `when { expression { … } }` BODY IS GROOVY TOO, and it was admitted
+    // unparsed. Jenkins compiles the whole file before starting anything, so a malformed
+    // condition means NO stage runs; Fogell admitted the pipeline, ran the earlier stages,
+    // and then skipped the gated one when its condition would not evaluate — MEASURED:
+    // Jenkins' workspace is EMPTY and Fogell's holds `early.txt`. Proof case
+    // `when-malformed-expression`, which asserts the refusal AND that no stage ran. A durable effect Jenkins
+    // cannot produce, which is the ADR 0001 class rather than a stage-selection quirk.
+    //
+    // It rides in `scriptBodyErrors` deliberately: that function is the one place every
+    // entry point routes through (FG-185 moved it into `parseWithLimits` for exactly this
+    // reason), so the check cannot be inherited by some callers and not others — which is
+    // the partial-enumeration shape this branch has met at four different layers.
+    //
+    // THE POSITION IS THE STAGE'S FIRST STEP, or 1:1 for a stage with none. `WhenCondition`
+    // carries source text but no position, and inventing a more precise one would be a
+    // claim the IR cannot support.
+    let rec whenSources (c: WhenCondition) =
+        match c with
+        | WhenExpression src -> [ src ]
+        | WhenAllOf cs
+        | WhenAnyOf cs -> cs |> List.collect whenSources
+        | WhenNot inner -> whenSources inner
+        | _ -> []
+
+    let whenErrors (stage: Stage) =
+        match stage.When with
+        | None -> []
+        | Some cond ->
+            whenSources cond
+            |> List.collect (fun src ->
+                match Fogell.Groovy.Parser.Parser.parse src with
+                | Result.Error e ->
+                    let position =
+                        match stage.Steps with
+                        | first :: _ -> first.Position
+                        | [] -> { Line = 1L; Column = 1L }
+
+                    [ $"when expression did not parse as Groovy: {string e}", position ]
+                | Result.Ok _ -> [])
+
     let stages = Pipeline.flattenStages pipeline.Stages
 
     (stages |> List.collect (fun stage -> fromSteps stage.Steps))
     @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
     @ (pipeline.Post |> List.collect (snd >> fromSteps))
+    @ (stages |> List.collect whenErrors)
 
 /// Parse a Declarative Jenkinsfile. Admission limits are applied first so a
 /// hostile input never reaches the recursive grammar.

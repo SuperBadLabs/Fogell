@@ -132,27 +132,6 @@ module Interpreter =
           /// Existing consumers (`when { expression }`, the tests) rely on that and are
           /// deliberately unchanged; only a caller that supplies this gets live steps.
           Host: PerformStep option
-          /// FG-178. Has the SCRIPT declared or assigned its own `env`?
-          ///
-          /// FOURTH SHAPE OF THIS FLAG, and the first that is a FACT rather than an
-          /// inference. The refresh must not overwrite a user binding, and the question
-          /// "is this binding the user's?" was answered twice by comparing VALUES:
-          ///   - seeded per thunk from its CALL SITE, where `def env = …` had already run,
-          ///     so the shadowed value was compared against itself and never detected;
-          ///   - then anchored on state, which is SHARED, so one wrapper's refresh made
-          ///     the next sibling look user-shadowed and its refresh was skipped —
-          ///     reintroducing the staleness the whole thing exists to fix, in nested and
-          ///     sequential wrappers.
-          ///
-          /// The interpreter does not need to infer any of it: it EXECUTES the `def`. This
-          /// records that, and the refresh reads it. No value comparison, nothing to be
-          /// coincidentally equal to, and nothing shared that should not be.
-          ///
-          /// SCOPE LIMIT, stated: a `def env` anywhere in the script disables the refresh
-          /// for the whole run, where Groovy would scope it to its block. Fogell's
-          /// variable model has no block scoping to hang that on — FG-179 — and erring
-          /// toward NOT overwriting the user's binding is the safe direction.
-          mutable EnvUserShadowed: bool
           Defined: Set<string>
           /// FG-048. The value of the most recent expression statement.
           ///
@@ -179,6 +158,15 @@ module Interpreter =
           /// closure at a time: an assignment to a non-local name mutates HERE and
           /// is immediately visible to every later expression, survives a fault,
           /// and never confuses a parameter for a binding.
+          /// FG-179. The cells that ARE the Jenkins environment, by IDENTITY.
+          ///
+          /// `env.FOO = …` is a Jenkins environment write only when `env` resolves to one
+          /// of these. It used to be decided syntactically — any `EProp(EVar "env", _)` was
+          /// routed to the host — so a script's own `def env = [:]` had its ordinary map
+          /// mutation sent to `host.SetEnv`, which refuses, killing the step after it while
+          /// Jenkins runs on. Provenance by cell identity answers it without naming a
+          /// syntactic form, exactly as the hosted refresh does.
+          JenkinsEnvCells: System.Collections.Generic.HashSet<Value ref>
           mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
@@ -235,7 +223,9 @@ module Interpreter =
         | EVar n ->
             // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
-            | Some v -> v
+            // FG-179: locals are ref CELLS now, so a read derefs. What the closure shares is
+            // the cell, which is why a write made inside one is visible here afterwards.
+            | Some cell -> cell.Value
             | None ->
                 match Map.tryFind n st.Binding with
                 | Some v -> v
@@ -464,10 +454,23 @@ module Interpreter =
                     | Some h -> h.TakesBlock name
                     | None -> true
 
-                let trailingArg, positionalArgs =
+                // FG-179. THE CLOSURE'S OWN ENV TRAVELS WITH IT. A closure reaching a
+                // wrapper as a VALUE was reduced to its `Closure` and the `Env` beside it in
+                // `VClosure` was dropped, so the body ran against the CALL SITE's scope —
+                // where the names it captured need not exist at all.
+                //
+                // ONCE LOCALS BECAME CELLS THAT STOPPED BEING MERELY LOSSY AND BECAME A
+                // WRONG WRITE. `def makeBody(v) { return { v = 'changed' } }` invoked as
+                // `dir('sub', makeBody('inner'))` with a caller-local `v` assigned THE
+                // CALLER'S `v`, because that was the only `v` in the scope it was handed.
+                // Jenkins changes the captured parameter and leaves the caller's alone.
+                // Before cells the write was discarded and the damage stayed inside; after,
+                // it escaped. Caught in review on PR #54 as a regression of my own change.
+                let trailingArg, capturedEnv, positionalArgs =
                     match trailing, List.rev positionalLazy.Value with
-                    | None, VClosure(c, _) :: rest when takesBlock -> Some c, List.rev rest
-                    | _ -> None, positionalLazy.Value
+                    | None, VClosure(c, closureEnv) :: rest when takesBlock ->
+                        Some c, Some closureEnv, List.rev rest
+                    | _ -> None, None, positionalLazy.Value
 
                 let bodyClosure =
                     match trailing with
@@ -491,13 +494,21 @@ module Interpreter =
                 //   is not a retry. The cell carries the environment ACROSS invocations,
                 //   which is what a closure does.
                 //
-                //   KNOWN LIMIT, stated rather than left to be discovered: variables
-                //   DECLARED inside the body also persist between invocations, where
-                //   Groovy would create them afresh. That is visible only to a body that
-                //   both declares a name and depends on it being unset next time round —
-                //   far narrower than losing every mutation, and the opposite direction
-                //   from the defect it replaces.
-                let bodyEnv = ref env
+                //   THAT LIMIT IS CLOSED, ten lines below this one. It said variables
+                //   DECLARED inside the body persist between invocations where Groovy
+                //   creates them afresh, and a later hedge added that it was UNPROVEN since
+                //   ref cells landed. Neither is true: `captured` is the name set present
+                //   BEFORE the invocation, and the post-body environment is filtered back to
+                //   it, so a body's declarations are dropped exactly as Groovy drops them.
+                //   The answer was in the same function as the doubt.
+                // A closure passed by VALUE brings its own scope; a trailing block is
+                // written at the call site and shares that one. `capturedEnv` is `Some` only
+                // in the first case, which is exactly when they differ.
+                let bodyEnv = ref (defaultArg capturedEnv env)
+
+                // FG-179. The `env` cell THIS wrapper installed, if any — the identity
+                // that tells our binding from the script's. See the refresh below.
+                let ourEnvCell: (Value ref) option ref = ref None
 
                 let runBody =
                     bodyClosure
@@ -539,22 +550,51 @@ module Interpreter =
                             // rounds, which says the fix was aimed at the SYMPTOM (bare
                             // names) rather than the rule (never overwrite a user binding).
                             //
-                            // PROVENANCE BY LAST-WRITE, which this scope can actually
-                            // establish: refresh `env` only while it still holds the value
-                            // this refresh last put there (or the one `runHosted` bound).
-                            // A `def env = …` makes it differ, so it is left alone. That is
-                            // not the equality GUESS rejected for bare names — there the
-                            // candidate was a scalar that could coincide by accident; here
-                            // it is a whole environment map compared against a value this
-                            // code itself wrote, which a user local does not reproduce.
+                            // FG-179. PROVENANCE IS THE CELL'S IDENTITY, and that is the
+                            // whole redesign. A binding is OURS if it is the very cell this
+                            // code installed; anything else in that slot was bound by the
+                            // script, whatever syntax put it there.
+                            //
+                            // WHAT IT REPLACES: one interpreter-wide shadow bit, DELETED
+                            // by this change, which was set when the interpreter
+                            // happened to notice `def env` or `env = …`. It was wrong for FIVE spellings — a wrapper-local
+                            // `def env`, a local `env` map, a closure-local `def env` that
+                            // poisoned a SIBLING wrapper for the rest of the run, a captured
+                            // wrapper environment, and a PARAMETER named `env`, where the
+                            // same code gave a different answer depending on what the
+                            // parameter was called. Each fix was a guard keyed to syntax,
+                            // and the next syntax was always outside it.
+                            //
+                            // Reference equality answers the question the bit was
+                            // approximating, and it answers it PER FRAME: a `def`, a
+                            // parameter and a catch variable all go through `Env.withVar`,
+                            // which mints a NEW cell, so every one of them is distinguishable
+                            // from ours without naming a single syntactic form. A sibling
+                            // closure's binding lives in a different `Env` entirely and can
+                            // no longer reach across.
+                            //
+                            // UPDATING THE CELL rather than rebinding the name is still
+                            // required: a fresh `ref` detaches any closure that already
+                            // captured `env`, which is the capture-by-value defect this
+                            // change exists to remove, reintroduced at one name.
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
                                 let fresh = VMap(Map.ofList current)
 
-                                if not st.EnvUserShadowed then
+                                match Map.tryFind "env" bodyEnv.Value.Vars, ourEnvCell.Value with
+                                | Some cell, Some ours when System.Object.ReferenceEquals(cell, ours) ->
+                                    cell.Value <- fresh
+                                | Some _, _ ->
+                                    // the script's own `env` — leave it alone entirely
+                                    ()
+                                | None, _ ->
+                                    let cell = ref fresh
+                                    ourEnvCell.Value <- Some cell
+                                    st.JenkinsEnvCells.Add cell |> ignore
+
                                     bodyEnv.Value <-
-                                        { bodyEnv.Value with Vars = Map.add "env" fresh bodyEnv.Value.Vars })
+                                        { bodyEnv.Value with Vars = Map.add "env" cell bodyEnv.Value.Vars })
 
                             // NAMES THE BODY DECLARES DO NOT SURVIVE IT; mutations to
                             // names it CAPTURED do.
@@ -621,9 +661,22 @@ module Interpreter =
                 | Some(ps, body) ->
                     st.Depth <- st.Depth + 1
 
+                    // FG-179. A FUNCTION BODY DOES NOT SEE THE CALLER'S LOCALS. This
+                    // folded the parameters onto the CALLER's `env`, which was merely
+                    // wasteful while locals were copied and became a WRONG WRITE once they
+                    // were cells: `def x = 'outer'; def change() { x = 'inner' }; change()`
+                    // reached through and assigned the caller's `x`. A Groovy method cannot
+                    // do that — it has no access to the calling frame's locals, and an
+                    // assignment there goes to the script binding, which `st.Binding`
+                    // already models and which the `EVar` fallback still reaches.
+                    //
+                    // `Funcs` is carried so recursion and mutual calls still resolve; only
+                    // the VARIABLE scope is isolated. Raised in review on PR #54 as the
+                    // second regression of the ref-cell change, and it is the same shape as
+                    // the first: cells made an existing sloppiness observable.
                     let callEnv =
                         List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
-                        |> List.fold (fun acc (p, v) -> Env.withVar p v acc) env
+                        |> List.fold (fun acc (p, v) -> Env.withVar p v acc) { Env.empty with Funcs = env.Funcs }
 
                     let result =
                         try
@@ -777,9 +830,6 @@ module Interpreter =
         | SDef(n, Some e) ->
             let v = evalExpr st env e
             st.LastValue <- Some v
-            // FG-178. The script declaring its OWN `env` is the fact the hosted refresh
-            // needs; recorded where it happens rather than inferred later from values.
-            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n v env
         // REVIEW FIX (Codex, PR #14 round 6): value tracking was added only for
         // INITIALISED declarations, so `[1].any { true; def x }` left `true` in
@@ -787,20 +837,22 @@ module Interpreter =
         // evaluates to null.
         | SDef(n, None) ->
             st.LastValue <- Some VNull
-            if n = "env" then st.EnvUserShadowed <- true
             Env.withVar n VNull env
         | SAssign(EVar n, v) ->
             let value = evalExpr st env v
             st.LastValue <- Some value
-            // Assignment counts too: `env = [...]` replaces the binding as surely as a
-            // `def` does, and covering only `def` would leave the commoner spelling open —
-            // the partial-enumeration shape this branch keeps finding.
-            if n = "env" then st.EnvUserShadowed <- true
 
-            if Map.containsKey n env.Vars then
-                // a LOCAL (def, parameter, loop/catch variable): lexical update,
-                // the shared binding never sees it
-                Env.withVar n value env
+            // FG-179. WRITE THROUGH THE CELL, and return the SAME env. This used to call
+            // `Env.withVar`, which mints a fresh cell in a fresh map — so the write was
+            // visible only to whoever went on to hold that new map, and a closure assigning
+            // to a captured name changed nothing its creator could see. Groovy captures by
+            // REFERENCE: `marker = 'after'` inside a closure updates the enclosing
+            // `marker`. Ten findings, each looking like a separate bug, were this one line.
+            if Env.assign n value env then
+                // The shared BINDING still never sees it — a local is a local. What changed
+                // is which scopes count as sharing this local: every one holding the cell,
+                // which is exactly the set that can see the variable in Groovy.
+                env
             else
                 // the script BINDING: created on first assignment (the advisory
                 // case), mutated in place — immediately visible everywhere,
@@ -834,12 +886,37 @@ module Interpreter =
             // The host decides what it means: today it fails the build, because Fogell's
             // environment overlay does not yet cross the script boundary. That refusal is
             // now COMPLETE rather than best-effort.
+            // FG-179. WHICH `env`? Decided by the cell's identity, not by the name. A
+            // script that writes `def env = [:]` owns a plain map, and mutating it is
+            // ordinary Groovy that Jenkins runs; only the Jenkins environment goes to the
+            // host. Routing on the SYNTAX sent both to `host.SetEnv`, which refuses, so
+            // `def env = [:]; env.FOO = 'local'; sh 'touch ok.txt'` failed here and
+            // succeeded there.
+            let isJenkinsEnv name =
+                match Map.tryFind name env.Vars with
+                | Some cell -> st.JenkinsEnvCells.Contains cell
+                | None -> true // no local binding at all: the script binding, i.e. Jenkins'
+
+            let mutateLocalMap name key =
+                match Map.tryFind name env.Vars with
+                | Some cell ->
+                    match cell.Value with
+                    | VMap m -> cell.Value <- VMap(Map.add key value m)
+                    // Not a map: Groovy would set a property on whatever object this is,
+                    // which this interpreter does not model. Left alone rather than
+                    // guessed at.
+                    | _ -> ()
+                | None -> ()
+
             match st.Host, target with
-            | Some host, EProp(EVar "env", name) -> host.SetEnv name (Value.toDisplay value)
-            | Some host, EIndex(EVar "env", idx) ->
+            | Some host, EProp(EVar "env", name) when isJenkinsEnv "env" ->
+                host.SetEnv name (Value.toDisplay value)
+            | _, EProp(EVar "env", name) -> mutateLocalMap "env" name
+            | Some host, EIndex(EVar "env", idx) when isJenkinsEnv "env" ->
                 // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
                 // the pre-scan only recognised a literal string.
                 host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
+            | _, EIndex(EVar "env", idx) -> mutateLocalMap "env" (Value.toDisplay (evalExpr st env idx))
             | _ -> ()
 
             env
@@ -866,14 +943,36 @@ module Interpreter =
                 if xs.Length > st.Budget.MaxLoopIterations then
                     raise (Stop(BudgetExhausted "loop exceeds the iteration budget"))
 
+                // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
+                // and carried on with the next element, so `for (x in xs) { … break }` ran
+                // the body for every element — `SWhile` one arm below has always stopped
+                // correctly, which is what makes this a transcription slip rather than a
+                // design question.
+                //
+                // PRE-EXISTING, NOT A REF-CELL REGRESSION, and worth separating because
+                // three findings on this branch WERE regressions of that change: the
+                // `with BreakSignal -> ()` line predates it. What cells changed is
+                // visibility — an assignment made before the break now survives, so the
+                // wrong number reaches a step instead of being discarded with the
+                // environment. Raised in review on PR #54.
+                // WALKED, NOT INDEXED. `xs` is an F# linked list, so `xs[i]` is a linear
+                // lookup and indexing it per iteration made the loop QUADRATIC — within the
+                // 10,000-iteration budget, so nothing refuses it and a long `for` just gets
+                // slow. Introduced by my own break fix and caught in review on PR #54;
+                // holding the tail costs nothing and restores the original traversal.
                 let mutable cur = env
+                let mutable running = true
+                let mutable rest = xs
 
-                for x in xs do
+                while running && not (List.isEmpty rest) do
+                    let x = List.head rest
+                    rest <- List.tail rest
+
                     try
                         cur <- execBlock st (Env.withVar v x cur) body
                     with
                     | ContinueSignal -> ()
-                    | BreakSignal -> ()
+                    | BreakSignal -> running <- false
 
                 cur
             | _ -> env
@@ -940,13 +1039,15 @@ module Interpreter =
                 // `log:[aBbDz]`, and the fallthrough arm gave `fall:[P]` against `PQ` —
                 // the value was computed and then thrown away by the unwind.
                 //
-                // KNOWN LIMIT, stated rather than left to be found: an assignment made
-                // inside a NESTED block before a break — `case 'a': if (x) { y = 1; break }`
-                // — is still lost, because that block is itself an `execBlock` whose return
-                // the unwind skips. `SWhile` has had the identical shape all along. Both
-                // dissolve when FG-179 makes variables ref cells, which is where the fix
-                // belongs; a second partial-env mechanism here would be the ninth guard
-                // that ticket exists to stop.
+                // THAT LIMIT IS GONE, and it went the way the note predicted. This said an
+                // assignment inside a NESTED block before a break — `case 'a': if (x) { y = 1;
+                // break }` — was still lost, because the block is its own `execBlock` whose
+                // return the unwind skips, and that both this and `SWhile`'s identical shape
+                // "dissolve when FG-179 makes variables ref cells". FG-179 landed and they
+                // did: receipt `script-break-keeps-assignment` holds both shapes, the switch
+                // arm yielding `y:[1]` and the `while` body `z:[1]`, where each previously
+                // kept the pre-block value.
+                // A write now goes THROUGH the variable's cell, so no unwind can skip it.
                 let mutable cur = env
 
                 try
@@ -1022,6 +1123,15 @@ module Interpreter =
     let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
         let defined = Ast.definedFunctions script
 
+        // FG-179. The `env` the CALLER supplied is Jenkins'; anything the script binds
+        // later is its own. Identity is recorded once, here, rather than inferred from
+        // syntax at each assignment.
+        let jenkinsEnvCells = System.Collections.Generic.HashSet<Value ref>(HashIdentity.Reference)
+
+        match Map.tryFind "env" env.Vars with
+        | Some cell -> jenkinsEnvCells.Add cell |> ignore
+        | None -> ()
+
         let st =
             { Steps = 0
               Depth = 0
@@ -1029,12 +1139,15 @@ module Interpreter =
               Budget = budget
               RegisteredSteps = registeredSteps
               Host = host
-              EnvUserShadowed = false
               Defined = defined
               LastValue = None
               StrictVars = strictVars
               NewBindings = []
-              Binding = env.Vars }
+              JenkinsEnvCells = jenkinsEnvCells
+              // FG-179: the BINDING is a value map, not cells — it is Groovy's script
+              // binding, already shared and mutable in its own right, so it needs no second
+              // sharing mechanism. Seeded from a SNAPSHOT of the caller's locals.
+              Binding = Env.snapshot env }
 
         // hoist declared functions so a call before its definition resolves
         let hoisted =
@@ -1053,7 +1166,7 @@ module Interpreter =
               Fault = None
               // the BINDING is the outcome's variable view — locals died with
               // their scopes, exactly as Groovy's did
-              Env = { final with Vars = st.Binding }
+              Env = { Env.ofValues st.Binding with Funcs = final.Funcs }
               NewBindings = List.rev st.NewBindings
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
@@ -1064,13 +1177,13 @@ module Interpreter =
               // NOT the pristine environment: assignments made BEFORE the fault were
               // performed — `${x = 'kept'; MISSING}` fails, and Jenkins' post block
               // still reads x. The mutable binding survives the raise by nature.
-              Env = { hoisted with Vars = st.Binding }
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
               NewBindings = List.rev st.NewBindings
               Returned = None }
         | ReturnSignal v ->
             { Effects = List.rev st.Effects
               Fault = None
-              Env = { hoisted with Vars = st.Binding }
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
               NewBindings = List.rev st.NewBindings
               Returned = Some v }
 

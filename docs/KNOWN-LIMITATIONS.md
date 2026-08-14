@@ -20,14 +20,14 @@ Files: **27**
 - `Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile`
 - …and 24 more (see the ledger)
 
-## '?', '?.', '?:', '[', 'instanceof', '{' or '||'
+## Expecting: '['
 
-Files: **8**
+Files: **21**
 
+- `Ableton_python-pipeline-utils.Jenkinsfile`
+- `Jotschi_maven-release-workflow-test.Jenkinsfile`
 - `alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile`
-- `camiloribeiro_cdeasy.Jenkinsfile`
-- `cloudogu_continuous-delivery-slides.Jenkinsfile`
-- …and 5 more (see the ledger)
+- …and 18 more (see the ledger)
 
 ## reserved
 
@@ -37,46 +37,18 @@ Files: **3**
 - `jenkinsci_docker.Jenkinsfile`
 - `merken_netCoreBuild.Jenkinsfile`
 
-## '>=', '?', '?.', '?:', '[', 'instanceof', '{' or '||'
-
-Files: **3**
-
-- `Ableton_python-pipeline-utils.Jenkinsfile`
-- `cloudogu_reveal.js-docker-example.Jenkinsfile`
-- `microsoft_movie-db-java-on-azure.Jenkinsfile`
-
-## 'true', 'try', 'while', '{', '||' or '}'
-
-Files: **2**
-
-- `jenkinsci_jenkins.Jenkinsfile`
-- `kesselborn_jenkinsfile.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 7:21: '||' or '}'
+## script block did not parse as Groovy: malformed_syntax at 7:21: Expecting: '['
 
 Files: **2**
 
 - `Romeh_spring-boot-ignite.Jenkinsfile`
 - `Romeh_spring-boot-sample-app.Jenkinsfile`
 
-## 'switch', 'throw', 'true', 'try', 'while', '{', '||' or '}'
-
-Files: **2**
-
-- `esign-consulting_logistics.Jenkinsfile`
-- `jalogut_jenkinsfile-basic-sample.Jenkinsfile`
-
-## '>=', '?', '?.', '?:', '[', 'instanceof', '{', '||' or '}'
+## script block did not parse as Groovy: malformed_syntax at 9:47: Expecting: '['
 
 Files: **1**
 
-- `arun-gupta_docker-jenkins-pipeline.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 3:40: 'true', 'try', 'while', '{', '||' or '}'
-
-Files: **1**
-
-- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
+- `Terradue_DotNetOpenSearchClient.Jenkinsfile`
 
 ## an opaque section
 
@@ -84,25 +56,13 @@ Files: **1**
 
 - `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
 
-## , 'while', '{', '||' or '}'
+## script block did not parse as Groovy: malformed_syntax at 3:40: Expecting: '['
 
 Files: **1**
 
-- `Jotschi_maven-release-workflow-test.Jenkinsfile`
+- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
 
-## , '>', '>=', '?', '?.', '?:', '[', 'instanceof', '{', '||' or '}'
-
-Files: **1**
-
-- `ricardozanini_soccer-stats.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 9:47: , 'null', 'return', 'switch', 'throw', 'true', 'try', 'while', '{' or '||'
-
-Files: **1**
-
-- `Terradue_DotNetOpenSearchClient.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 6:21: 'instanceof', '{' or '||'
+## script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '['
 
 Files: **1**
 
@@ -113,24 +73,6 @@ Files: **1**
 Files: **1**
 
 - `jenkinsci_jenkinsfile-runner.Jenkinsfile`
-
-## '||' or '}'
-
-Files: **1**
-
-- `captjt_jenkins-pipeline-express.Jenkinsfile`
-
-## , '?', '?.', '?:', '[', 'instanceof', '{', '||' or '}'
-
-Files: **1**
-
-- `kishorebhatia_pipeline-as-code-demo.Jenkinsfile`
-
-## 'return', 'switch', 'throw', 'true', 'try', 'while', '{', '||' or '}'
-
-Files: **1**
-
-- `mraible_ng-demo.Jenkinsfile`
 
 ## 'return', 'switch', 'throw', 'true', 'try', 'while' or '{'
 
