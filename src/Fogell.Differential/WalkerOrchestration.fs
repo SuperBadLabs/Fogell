@@ -2123,7 +2123,7 @@ module WalkerOrchestration =
                         // the FUNCTIONS are taken; nothing else from it executes.
                         let preambleFuncs =
                             if System.String.IsNullOrWhiteSpace ctx.Preamble then
-                                Map.empty
+                                []
                             else
                                 match Fogell.Groovy.Parser.Parser.parse ctx.Preamble with
                                 | Result.Ok script ->
@@ -2131,12 +2131,34 @@ module WalkerOrchestration =
                                     |> List.choose (function
                                         | Fogell.Groovy.SFunc(n, ps, body) -> Some(n, (ps, body))
                                         | _ -> None)
-                                    |> Map.ofList
-                                | Result.Error _ -> Map.empty
+                                | Result.Error _ -> []
+
+                        // OVERLOADS ARE NOT MODELLED, SO DUPLICATES FAIL CLOSED. Folding the
+                        // helpers into a map by NAME let the last declaration win, and
+                        // Groovy resolves by ARITY: `def pick() { 'zero' }` beside
+                        // `def pick(v) { 'one' }` made `pick()` run the one-arg body and
+                        // report success. A false success, and the SECOND of this class on
+                        // this branch after a local shadowing a helper — both are the same
+                        // shape, a name resolving to something the language would not pick.
+                        //
+                        // Refusing is not the end state; it is what honesty costs until
+                        // resolution is arity-aware. Naming the duplicate keeps the refusal
+                        // actionable.
+                        let duplicateHelpers =
+                            preambleFuncs
+                            |> List.countBy fst
+                            |> List.filter (fun (_, n) -> n > 1)
+                            |> List.map fst
+
+                        match duplicateHelpers with
+                        | dup :: _ ->
+                            fail
+                                $"script block: the preamble declares '{dup}' more than once; Fogell does not model overloads and will not guess which body a call means"
+                        | [] ->
 
                         let genv =
                             { Env.ofValues (asValues |> Map.add "env" (VMap asValues)) with
-                                Funcs = preambleFuncs }
+                                Funcs = Map.ofList preambleFuncs }
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted
