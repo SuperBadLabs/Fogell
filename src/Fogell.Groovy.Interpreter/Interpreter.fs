@@ -417,6 +417,25 @@ module Interpreter =
             positionalLazy.Value |> ignore
             namedLazy.Value |> ignore
 
+            // FG-188. A LOCAL SHADOWS A PREAMBLE HELPER, and until a closure value can be
+            // invoked (FG-189) the honest answer is to refuse rather than call the helper.
+            //
+            // Making `env.Funcs` names admissible let `def x = { 'LOCAL' }` followed by
+            // `x()` reach the PREAMBLE's `x` — Groovy resolves the local, so Fogell ran
+            // different code and reported success. A false success introduced by the fix
+            // that put those helpers in scope, caught in review before it shipped.
+            //
+            // Refusing is not the end state; it is the correct behaviour while the local
+            // cannot be called. A silent wrong answer would be the worse trade, and the
+            // reason is named so the message does not send an author hunting.
+            if Map.containsKey name env.Vars && Map.containsKey name env.Funcs then
+                raise (
+                    Stop(
+                        Unsupported
+                            $"'{name}' is bound as a local AND declared as a helper; Fogell cannot yet invoke the local (FG-189)"
+                    )
+                )
+
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
