@@ -689,6 +689,21 @@ module Interpreter =
                     // shape: a call resolving to something the language would not pick. This
                     // is the stop-ship refusal; FG-195 owns the signature model that makes
                     // the question answerable instead of refused.
+                    // NAMED ARGUMENTS AND A TRAILING CLOSURE COUNT TOO. Groovy passes named
+                    // arguments as a single Map and a trailing closure as a final argument —
+                    // the builtin path below documents the first rule already — so
+                    // `def zero() { … }` called as `zero(foo: 1)` is a ONE-argument call that
+                    // Groovy rejects. Counting positionals alone admitted it and ran the
+                    // body. Fourth occurrence of the class FG-195 owns; refusing an
+                    // unmodelled call shape is the same stop-ship move as the other three.
+                    if not (List.isEmpty namedLazy.Value) || Option.isSome trailing then
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' is a script helper called with named arguments or a block; Fogell models neither as a Groovy argument (FG-195)"
+                            )
+                        )
+
                     if List.length positionalLazy.Value <> List.length ps then
                         raise (
                             Stop(
