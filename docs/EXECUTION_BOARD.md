@@ -29,6 +29,24 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
 - Imported Jenkinsfiles are untrusted. Parsing is unconditional; **execution is
   allowlisted by executed surface**, on a no-egress network, in a disposable
   workspace.
+- **`tier1=0` OF 228 MEANS NO CORPUS FILE HAS A RECEIPT YET — THE PATH IS OPEN AND UNWALKED.**
+  A tier-1 receipt requires RUNNING a job on both engines, and the corpus scorer only ever
+  parses, so no corpus file can reach tier 1 through scoring alone. The route is nonetheless
+  BUILT and deliberately kept open: `generate-scorecard.bb` carries an explicit filter
+  exemption so that a receipt naming a corpus file counts as tier-1 evidence, with a comment
+  recording that an earlier orphan filter closed that path and had to be fixed. FG-090 exists
+  to open it. What makes it expensive is the untrusted-input rule above: a corpus file may be
+  executed, but only allowlisted by executed surface, no-egress, in a disposable workspace —
+  a bar cleared per file, not a prohibition.
+  **THIS ENTRY FIRST CLAIMED THE OPPOSITE AND IS CORRECTED IN THE SAME PASS.** It said
+  `tier1=0` was a POLICY FLOOR that could not move by engine work while the rules stood, and
+  that an outside review calling for corpus-to-receipt coverage had mistaken a decision for a
+  gap. Both halves were wrong: the rule allowlists execution rather than forbidding it, and
+  the machinery is built to accept exactly the receipts I said could not exist. THE REVIEW WAS
+  RIGHT AND MY CORRECTION OF IT WAS NOT. What remains true, and is the only part worth
+  keeping, is that the number does not move as a side effect of engine work: someone has to
+  allowlist a corpus file and run it. 169 files that only parse are not execution evidence,
+  and the hand-written suite is a different population from the jobs this engine replaces.
 - Incomplete pattern matches fail the build (FS0025/FS0026).
 - No scalar compatibility percentage is ever published.
 - **A REDIRECT'S STATUS FOLLOWS ITS TARGET.** Four states only — DONE, TODO,
