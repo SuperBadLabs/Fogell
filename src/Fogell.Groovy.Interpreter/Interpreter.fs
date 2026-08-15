@@ -417,6 +417,25 @@ module Interpreter =
             positionalLazy.Value |> ignore
             namedLazy.Value |> ignore
 
+            // FG-188. A LOCAL SHADOWS A PREAMBLE HELPER, and until a closure value can be
+            // invoked (FG-189) the honest answer is to refuse rather than call the helper.
+            //
+            // Making `env.Funcs` names admissible let `def x = { 'LOCAL' }` followed by
+            // `x()` reach the PREAMBLE's `x` — Groovy resolves the local, so Fogell ran
+            // different code and reported success. A false success introduced by the fix
+            // that put those helpers in scope, caught in review before it shipped.
+            //
+            // Refusing is not the end state; it is the correct behaviour while the local
+            // cannot be called. A silent wrong answer would be the worse trade, and the
+            // reason is named so the message does not send an author hunting.
+            if Map.containsKey name env.Vars && Map.containsKey name env.Funcs then
+                raise (
+                    Stop(
+                        Unsupported
+                            $"'{name}' is bound as a local AND declared as a helper; Fogell cannot yet invoke the local (FG-189)"
+                    )
+                )
+
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
             | Ok(Step s) ->
@@ -659,6 +678,40 @@ module Interpreter =
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
                 | Some(ps, body) ->
+                    // FG-195. ARITY IS CHECKED BEFORE THE BODY RUNS. `List.truncate` on both
+                    // sides meant a mismatched call simply bound fewer parameters and ran
+                    // anyway: `def constant(v) { … }` called as `constant()` has no zero-arg
+                    // overload in Groovy, so Jenkins rejects the pipeline while Fogell ran
+                    // the body and could report success.
+                    //
+                    // THE THIRD CALLABLE-RESOLUTION DEFECT ON THIS BRANCH — after a local
+                    // shadowing a helper and duplicate helper names — and all three are one
+                    // shape: a call resolving to something the language would not pick. This
+                    // is the stop-ship refusal; FG-195 owns the signature model that makes
+                    // the question answerable instead of refused.
+                    // NAMED ARGUMENTS AND A TRAILING CLOSURE COUNT TOO. Groovy passes named
+                    // arguments as a single Map and a trailing closure as a final argument —
+                    // the builtin path below documents the first rule already — so
+                    // `def zero() { … }` called as `zero(foo: 1)` is a ONE-argument call that
+                    // Groovy rejects. Counting positionals alone admitted it and ran the
+                    // body. Fourth occurrence of the class FG-195 owns; refusing an
+                    // unmodelled call shape is the same stop-ship move as the other three.
+                    if not (List.isEmpty namedLazy.Value) || Option.isSome trailing then
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' is a script helper called with named arguments or a block; Fogell models neither as a Groovy argument (FG-195)"
+                            )
+                        )
+
+                    if List.length positionalLazy.Value <> List.length ps then
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' takes {List.length ps} argument(s) and was called with {List.length positionalLazy.Value}; Fogell does not model overloads"
+                            )
+                        )
+
                     st.Depth <- st.Depth + 1
 
                     // FG-179. A FUNCTION BODY DOES NOT SEE THE CALLER'S LOCALS. This
@@ -1121,7 +1174,15 @@ module Interpreter =
     /// anything else is denied by name. Effects are returned for the host to
     /// perform — the interpreter performs none itself.
     let private runWith (host: PerformStep option) (strictVars: bool) (budget: Budget) (registeredSteps: Set<string>) (env: Env) (script: Script) : Outcome =
-        let defined = Ast.definedFunctions script
+        // FG-188. A function bound in the INCOMING env is defined too. This counted only
+        // declarations inside the script, so a caller that supplied helpers in `env.Funcs`
+        // had them denied by name at `Sandbox.admitCall` before the call could resolve —
+        // the env said the function existed and the sandbox said it did not.
+        let defined =
+            Set.union
+                (Ast.definedFunctions script)
+                (env.Funcs |> Map.toSeq |> Seq.map fst |> Set.ofSeq)
+
 
         // FG-179. The `env` the CALLER supplied is Jenkins'; anything the script binds
         // later is its own. Identity is recorded once, here, rather than inferred from

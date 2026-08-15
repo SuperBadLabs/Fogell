@@ -2109,8 +2109,56 @@ module WalkerOrchestration =
 
                         // Both spellings bound, as `when { expression { … } }` learned to:
                         // a bare name AND `env.NAME`.
+                        // FG-188. TOP-LEVEL `def` HELPERS ARE IN SCOPE. The source outside
+                        // `pipeline { }` was discarded by the parser, so a helper declared
+                        // there was invisible here and calling it failed as an unknown name
+                        // — measured: Jenkins runs `def greet(v) { … }` from the preamble and
+                        // Fogell failed with an EMPTY workspace. It is the corpus's commonest
+                        // escape construct, 56 files.
+                        //
+                        // A PREAMBLE THAT DOES NOT PARSE IS IGNORED, NOT FATAL, and that is
+                        // deliberate: it holds shebangs, annotations and imports that this
+                        // Groovy subset does not model, and refusing a pipeline because its
+                        // `@Library` line is unsupported would reject work Jenkins runs. Only
+                        // the FUNCTIONS are taken; nothing else from it executes.
+                        let preambleFuncs =
+                            if System.String.IsNullOrWhiteSpace ctx.Preamble then
+                                []
+                            else
+                                match Fogell.Groovy.Parser.Parser.parse ctx.Preamble with
+                                | Result.Ok script ->
+                                    script
+                                    |> List.choose (function
+                                        | Fogell.Groovy.SFunc(n, ps, body) -> Some(n, (ps, body))
+                                        | _ -> None)
+                                | Result.Error _ -> []
+
+                        // OVERLOADS ARE NOT MODELLED, SO DUPLICATES FAIL CLOSED. Folding the
+                        // helpers into a map by NAME let the last declaration win, and
+                        // Groovy resolves by ARITY: `def pick() { 'zero' }` beside
+                        // `def pick(v) { 'one' }` made `pick()` run the one-arg body and
+                        // report success. A false success, and the SECOND of this class on
+                        // this branch after a local shadowing a helper — both are the same
+                        // shape, a name resolving to something the language would not pick.
+                        //
+                        // Refusing is not the end state; it is what honesty costs until
+                        // resolution is arity-aware. Naming the duplicate keeps the refusal
+                        // actionable.
+                        let duplicateHelpers =
+                            preambleFuncs
+                            |> List.countBy fst
+                            |> List.filter (fun (_, n) -> n > 1)
+                            |> List.map fst
+
+                        match duplicateHelpers with
+                        | dup :: _ ->
+                            fail
+                                $"script block: the preamble declares '{dup}' more than once; Fogell does not model overloads and will not guess which body a call means"
+                        | [] ->
+
                         let genv =
-                            Env.ofValues (asValues |> Map.add "env" (VMap asValues))
+                            { Env.ofValues (asValues |> Map.add "env" (VMap asValues)) with
+                                Funcs = Map.ofList preambleFuncs }
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted
@@ -2348,7 +2396,8 @@ module WalkerOrchestration =
                         stage.Nested
                         |> List.map (fun branch ->
                             let branchCtx =
-                                { Failed = ref false
+                                { Preamble = ctx.Preamble
+                                  Failed = ref false
                                   // REVIEW FIX (Codex, PR #13): this sent branch
                                   // status straight to the GLOBAL sink, bypassing
                                   // the enclosing stage's. `stageStatus` therefore
