@@ -29,6 +29,21 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
 - Imported Jenkinsfiles are untrusted. Parsing is unconditional; **execution is
   allowlisted by executed surface**, on a no-egress network, in a disposable
   workspace.
+- **`tier1=0` OF 228 IS A POLICY FLOOR, NOT A PROGRESS NUMBER, AND IT WILL NOT MOVE BY
+  WORKING HARDER.** A tier-1 receipt requires RUNNING a job on both engines and comparing
+  the results; the rule directly above forbids running corpus files at all. So the corpus
+  count is zero BY CONSTRUCTION, and it stays zero for as long as both rules stand — no
+  amount of engine work changes it. WRITTEN DOWN 2026-08-15 BECAUSE AN OUTSIDE REVIEW READ
+  IT THE OTHER WAY, treating `0 of 228` as a gap to close by effort and making 'build
+  corpus-to-receipt coverage' its second priority. That reading is reasonable from the
+  scorecard alone, which reports the number without saying what produces it, and nothing in
+  this repository contradicted it. Moving that number is a DECISION, and the options are
+  not equivalent: relax the execution rule for a vetted subset and accept the risk the rule
+  exists to refuse; or build a bridge that yields comparable evidence without executing
+  third-party code, which nobody has designed. **THIS IS NOT AN ARGUMENT THAT THE GAP DOES
+  NOT MATTER.** The review's central point stands: 169 files that only PARSE are not
+  execution evidence, and a hand-written suite is a different population from the jobs this
+  engine is meant to replace. What is corrected is only the shape of the remedy.
 - Incomplete pattern matches fail the build (FS0025/FS0026).
 - No scalar compatibility percentage is ever published.
 - **A REDIRECT'S STATUS FOLLOWS ITS TARGET.** Four states only — DONE, TODO,
