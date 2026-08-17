@@ -1,11 +1,12 @@
-# Differential receipt — script-nested-wrappers-env.Jenkinsfile
+# Differential receipt — post-exit-env-read.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         380f231cf8c14cb1dab8388a6f155a35a341e0cc10c0161595308ef99de2f9a3
-case-digest:  d3a7a61f7844535688224ed3c6b333b5f32472d59d39aecffa3cbd385322d214
+seal:         14fcb4cd7369030eb47e4326b84f7112c968acd93ff5c56f6b3fb0b2b6a0c4b2
+case-digest:  aeef53b959b139195f431588d2babe5b09c4aa5d649ced1cca92860361924d89
 sealed-output: sequence
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (1)
+  - output line 1: jenkins=after:null fogell=after:one
 
 ## Comparison contract
   compared: terminal result
@@ -78,20 +79,14 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 1256b67995f74b125b2789a01726f43405693942ab8892dd920bc30d85a08574
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (2 lines):
-    | + printf a:one
-    | + printf t:prod
-  workspace:
-    1f1f0a3040cb  sub/a.txt
-    ebd734666bdf  sub/t.txt
+    | + true
+    | after:null
 
 ## Fogell
   result:         success
-  workspace-hash: 1256b67995f74b125b2789a01726f43405693942ab8892dd920bc30d85a08574
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (2 lines):
-    | + printf a:one
-    | + printf t:prod
-  workspace:
-    1f1f0a3040cb  sub/a.txt
-    ebd734666bdf  sub/t.txt
+    | + true
+    | after:one

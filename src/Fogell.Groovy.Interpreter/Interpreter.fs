@@ -525,10 +525,6 @@ module Interpreter =
                 // in the first case, which is exactly when they differ.
                 let bodyEnv = ref (defaultArg capturedEnv env)
 
-                // FG-179. The `env` cell THIS wrapper installed, if any — the identity
-                // that tells our binding from the script's. See the refresh below.
-                let ourEnvCell: (Value ref) option ref = ref None
-
                 let runBody =
                     bodyClosure
                     |> Option.map (fun c ->
@@ -601,15 +597,26 @@ module Interpreter =
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
                                 let fresh = VMap(Map.ofList current)
 
-                                match Map.tryFind "env" bodyEnv.Value.Vars, ourEnvCell.Value with
-                                | Some cell, Some ours when System.Object.ReferenceEquals(cell, ours) ->
-                                    cell.Value <- fresh
-                                | Some _, _ ->
+                                // FG-201. "Ours" is membership in JenkinsEnvCells — the set of
+                                // every cell hosted machinery installed — NOT the one cell THIS
+                                // invocation minted. The first version compared against a
+                                // per-invocation local, so a wrapper NESTED inside another
+                                // (dir { withEnv { … } }) found the outer wrapper's cell,
+                                // failed the identity check, took the leave-it-alone arm, and
+                                // its refresh silently never ran: `${env.A}` read the OUTER
+                                // environment and interpolated null. Receipt
+                                // `script-nested-wrappers-env` diverged on exactly that —
+                                // green build, a:null/t:null — for four days before the
+                                // FG-196 suite run caught it. Script-owned bindings still
+                                // refuse the refresh: a `def env` mints its cell through
+                                // `Env.withVar`, which never enters the set.
+                                match Map.tryFind "env" bodyEnv.Value.Vars with
+                                | Some cell when st.JenkinsEnvCells.Contains cell -> cell.Value <- fresh
+                                | Some _ ->
                                     // the script's own `env` — leave it alone entirely
                                     ()
-                                | None, _ ->
+                                | None ->
                                     let cell = ref fresh
-                                    ourEnvCell.Value <- Some cell
                                     st.JenkinsEnvCells.Add cell |> ignore
 
                                     bodyEnv.Value <-

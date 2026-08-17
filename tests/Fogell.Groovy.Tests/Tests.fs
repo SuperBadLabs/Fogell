@@ -599,6 +599,57 @@ let hostedSteps =
                   (fun () -> Interpreter.runHosted host Budget.defaults steps Env.empty (parseOk "sh 'a'\nsh 'b'") |> ignore)
                   "a host exception propagates rather than being swallowed"
           }
+
+          test "a NESTED wrapper still refreshes the Jenkins env binding" {
+              // FG-201. The refresh's "ours" check was a per-invocation cell, so a
+              // wrapper nested inside another found the OUTER wrapper's cell, failed
+              // the identity check, and silently skipped its refresh — `${env.A}`
+              // interpolated null under a green build. Receipt
+              // `script-nested-wrappers-env` diverged on exactly this shape for four
+              // days before a suite run caught it; CI cannot run the differential
+              // suite, so this pins the refresh where CI can see it. The host below
+              // maintains a real overlay stack for `withEnv`, which is the one thing
+              // the recording host's empty CurrentEnv cannot exercise.
+              let overlay: (string * string) list ref = ref []
+              let log = ResizeArray<string>()
+
+              let host =
+                  { Perform =
+                      fun name positional _named runBody ->
+                          (match name, positional with
+                           | "withEnv", [ VList entries ] ->
+                               let pairs =
+                                   entries
+                                   |> List.choose (function
+                                       | VStr s ->
+                                           match s.Split([| '=' |], 2) with
+                                           | [| k; v |] -> Some(k, v)
+                                           | _ -> None
+                                       | _ -> None)
+
+                               let saved = overlay.Value
+                               overlay.Value <- pairs @ saved
+                               runBody |> Option.iter (fun run -> run ())
+                               overlay.Value <- saved
+                           | "sh", [ VStr rendered ] -> log.Add rendered
+                           | _ -> runBody |> Option.iter (fun run -> run ()))
+
+                          VNull
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> overlay.Value
+                    TakesBlock = fun name -> Set.contains name (set [ "dir"; "withEnv" ]) }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (set [ "sh"; "dir"; "withEnv" ]) Env.empty
+                      (parseOk
+                          "dir('sub') {\n  withEnv(['A=one']) { sh \"a:${env.A}\" }\n  withEnv(['TARGET=prod']) { sh \"t:${env.TARGET}\" }\n}")
+
+              Expect.isNone outcome.Fault "the script ran"
+
+              // Both SIBLING wrappers under the outer `dir` must see their own
+              // binding: under the per-invocation check both interpolate null.
+              Expect.equal (List.ofSeq log) [ "a:one"; "t:prod" ] "each nested wrapper reads its own refresh"
+          }
         ]
 
 [<EntryPoint>]
