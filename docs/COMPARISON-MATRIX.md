@@ -13,6 +13,24 @@ last-verified: 2026-08-17
 > authority for every Fogell corpus number; figures here are quoted from it, never recomputed.
 > Numeric tokens use the `tier1=` form so `scripts/audit-board-numbers.bb` re-derives them.
 >
+> **REVISION 3, 2026-08-17.** Every `[D]` doc-cited cell was re-verified against CODE, with
+> architecture docs disallowed as evidence. **Nine confirmed and are now `[S]` with `file:line`
+> citations. Three were wrong**, and one of those matters more than any capability row here:
+>
+> - **`synchronous_commit=on` does not exist.** The string appears NOWHERE in McLoving's
+>   repository. Revision 2 stated that a 201 response implies a fsynced WAL, citing a doc. There
+>   is no such setting in code. The cell is now `[U]`. **This is the load-bearing claim under
+>   McLoving's durability story and under §7's argument that Fogell's speed is a
+>   no-durability artifact** — that argument still stands on Fogell's side, which genuinely
+>   does not journal, but McLoving's half of it is now unproven rather than doc-backed.
+> - **The dynamic provisioner claim was backwards.** Revision 2 said no production provider is
+>   claimed; there is a real outbound HTTPS client with a pinned CA.
+> - **Windows has no installer.** The binary IS a Windows service host, but nothing in code
+>   registers it — the parity doc's install/start/stop is not implemented where it was looked for.
+>
+> Two confirmations also came back stronger than stated: triggers are FIVE kinds, not two, and
+> lease-expiry requeue PRESERVES the fence rather than incrementing it.
+>
 > **REVISION 2, 2026-08-17.** Revision 1's McLoving column was built from a benchmark runbook
 > that covered roughly half the system, and **was wrong in both directions**. Ten cells are
 > corrected below, each marked **`[WAS: …]`** rather than silently edited. Source for the
@@ -28,7 +46,7 @@ terms and a bare checkmark hides that.
 | **R** | **Receipted** — a differential receipt against a real Jenkins names it. |
 | **B** | **Benchmarked** — measured on the trifecta bench. For McLoving, against a hand-authored twin. |
 | **S** | **Source-cited** — read from the code, with a path. |
-| **D** | **Doc-cited** — an architecture doc in the engine's own repo. Not executed, not read in code. |
+| **D** | **Doc-cited** — an architecture doc in the engine's own repo. Not executed, not read in code. **REVISION 3 ELIMINATED THIS BASIS**: all twelve `[D]` cells were checked against code. Nine confirmed and became `[S]`; three were wrong. The basis is kept in this table only so the retractions below can name what they were. |
 | **U** | **Unmeasured** — believed, nobody has run it. |
 | **N/A** | The row cannot be asked of this column. |
 
@@ -62,10 +80,10 @@ itself. This is the single most consequential correction in revision 2.
 |---|---|---|---|
 | Accepts a Jenkinsfile at runtime | yes | yes — declarative + scripted `[R]` | **no** `[S]` — no controller crate depends on the compiler |
 | Jenkinsfile compiler exists | n/a | n/a — it IS the engine | **yes, standalone** `[S]` — Clojure/Groovy worker, `compat/jenkins-worker/`, rootless Podman **[WAS: "no front end" — overstated]** |
-| Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[D]` — AST for conversion only, "no source is evaluated" |
+| Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[S]` — `compat/…/compiler.clj:133` stops at `CompilePhase/CONVERSION`; zero `GroovyShell`/`evaluate`/`GroovyClassLoader` hits |
 | Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=169` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
 | Step mapping catalogue | plugins | 14 modelled steps `[S]` | **exactly 1 mapping** `[S]` — literal `sh` → `/bin/sh -xe -c` |
-| Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[D]` |
+| Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[S]` |
 | Authoring format | Groovy | Groovy | strict YAML IR `[S]` — `pipeline-ir` |
 | Corpus rejected | n/a | `tier3=59` of 228 `[R]` | `N/A` — corpus is Groovy |
 
@@ -93,11 +111,11 @@ system designed around fail-closed admission, admission is accepting something u
 
 | | Jenkins | Fogell | McLoving |
 |---|---|---|---|
-| Windows execution | yes | **not supported, stated plainly** `[S]` — `FG-113` | **yes — native Windows service** `[D]` — `AGENT_RUNTIME.md:198-212`, `WINDOWS_PARITY_V1.md` WIN-001/002/003, `cmd.exe` + `powershell.exe` **[WAS: "linux only" — false]** |
+| Windows execution | yes | **not supported, stated plainly** `[S]` — `FG-113` | **yes — real Win32 spawn** `[S]` — `agent-runtime/src/executor/windows.rs:113`, `cmd.exe` `:358`, `powershell.exe` `:366`, `windows-job/src/lib.rs:258` `CreateProcessW` with `JOB_LIST`. A full peer of `executor/unix.rs`. Runs as a Windows service host (`bins/agent/src/main.rs:164`) but **NOTHING IN CODE INSTALLS IT** — no `CreateServiceW`/`OpenSCManager`/`sc.exe` anywhere **[WAS: "linux only" — false; then doc-cited via AGENT_RUNTIME.md, now code-cited]** |
 | SCM checkout | yes | `checkout`/`git` steps `[R]` | **git acquisition, pinned commits, submodule allowlists** `[S]` — `source-acquirer` **[WAS: absent]** |
 | Secrets / credentials | credentials plugin | masking `[R]`; same-UID open `[S]` — `FG-070b` | **grant/redeem broker, 15-min TTL, arg/env/file/stdin, zeroized** `[S]` — `secret-broker` **[WAS: "token length only"]** |
-| Triggers / webhooks | yes | absent `[S]` — `FG-053c` | **`scm_webhook` + timer, Postgres delivery machine** `[D]` — `TRIGGER_INGRESS_V1.md` **[WAS: `U`]** |
-| Dynamic agent provisioning | cloud plugins | absent `[S]` | **cloud provisioner, idempotency keys, fencing, quota policy** `[S]` **[WAS: absent]** — no production provider claimed `[D]` |
+| Triggers / webhooks | yes | absent `[S]` — `FG-053c` | **FIVE kinds** `[S]` — `controller-store/src/trigger_ingress.rs:18-24`: `ScmWebhook, Schedule, Upstream, RemoteApi, Plugin`; dispatch `controller-api/src/lib.rs:3726` **[WAS: `U`; then "scm_webhook + timer" — undercounted the enum]** |
+| Dynamic agent provisioning | cloud plugins | absent `[S]` | **real outbound HTTPS provider client** `[S]` — `provisioner/src/lib.rs:2677` `provider_create`, `:2803` `.send()`, `reqwest` with pinned CA `:850`, HTTPS enforced `:3899`. Bespoke `mcloving.provisioner.v1` protocol to one endpoint; no cloud SDK, no `trait` abstraction **[WAS: absent; then "no production provider claimed" — REFUTED, that was backwards]** |
 | Build caching | plugins | absent `[U]` | **`CacheKind::{Dependency, Build}`, tenant-isolated** `[S]` **[WAS: absent]** |
 | Dependency resolution | plugins | absent `[U]` | **maven/npm/pypi → signed canonical plan** `[S]` — `dependency-resolver` **[WAS: absent]** |
 | Release provenance / SBOM | plugins | absent `[S]` — `FG-080` open | **signed releases, SBOM, deployment receipts** `[S]` **[WAS: absent]** |
@@ -110,13 +128,13 @@ system designed around fail-closed admission, admission is accepting something u
 | Topology | controller + agents | one cold process per build `[B]` | embedded worker **or** mTLS agents `[S]` |
 | Concurrency | executors | parallel branches in-process `[B]` | embedded: **one claim at a time** `[S]` — `bins/controller/src/main.rs:1473` |
 | Store on execution path | XML | **none** `[S]` — does not journal | PostgreSQL `[S]` |
-| fsync on accept | configurable | **no policy selectable for a real run** `[S]` | `synchronous_commit=on` ⇒ 201 implies fsynced WAL `[D]` |
-| Terminal publication | n/a | fenced in store, off the exec path `[S]` | fenced exactly-once, lease-owner only `[D]` |
-| Crash / replay | resume | `script {}` re-runs whole block `[S]` — `FG-171` | lease expiry → requeue, fence increments `[D]` |
+| fsync on accept | configurable | **no policy selectable for a real run** `[S]` | **UNSUPPORTED BY CODE** `[U]` — the string `synchronous_commit` appears **NOWHERE** in the repository: not in `.rs`, `.sql`, `.toml`, `.yaml` or `deploy/`. The only real fsync is workspace file durability (`agent-runtime/src/executor/mod.rs:437`). **[WAS: "201 implies fsynced WAL", doc-cited — that claim is documentation with no implementation behind it]** |
+| Terminal publication | n/a | fenced in store, off the exec path `[S]` | fenced exactly-once `[S]` — `controller-store/src/lib.rs:5091`, predicate `fence AND restore_epoch AND lease_owner` `:5116`; identical replay commits, divergent rolls back `:5130` |
+| Crash / replay | resume | `script {}` re-runs whole block `[S]` — `FG-171` | lease expiry → requeue, **fence PRESERVED not incremented** `[S]` — `scheduler.rs:563`, `:724` omits `fence` from the SET list |
 | Effect ledger | n/a | absent `[S]` — `FG-026` P0 | outbox + object store `[S]` |
-| Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory `[D]` |
-| Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation on restart `[D]` |
-| Tenant isolation | folders/RBAC | absent `[S]` — `FG-028` | org/project scoping + forced RLS `[D]` |
+| Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory, **plaintext impossible** `[S]` — `bins/controller/src/main.rs:1216` builds `ServerTlsConfig` unconditionally; per-RPC rejection `:1377`; no optional-TLS branch |
+| Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation `[S]` — `bins/agent/src/lib.rs:848` binds boot-id + `/proc/<pid>/stat` start-ticks; mismatch → `RetireStale` `:748`, so a recycled PGID is never `killpg`-ed |
+| Tenant isolation | folders/RBAC | absent `[S]` — `FG-028` | org/project scoping + `FORCE ROW LEVEL SECURITY` in **19 migrations** `[S]` — e.g. `migrations/0003_public_api.sql:27` |
 | Sandbox | Groovy sandbox | structural — no host object in `Value` `[S]`; `FG-072` open, unproven | n/a — no interpreter |
 
 ## 6. Operability
@@ -131,7 +149,7 @@ system designed around fail-closed admission, admission is accepting something u
 | OpenAPI spec | plugin | absent `[U]` | `GET /openapi.json` `[S]` |
 | Auth | realms | absent `[U]` | OIDC start/callback, session refresh `[S]` |
 | Approvals / audit | plugins | approval lane exists `[R]` | `approvals`, `audit`, `credential-grants` routes `[S]` |
-| Health endpoint | yes | `U` | **none**; readiness via `scheduler/explain` `[D]` |
+| Health endpoint | yes | `U` | **none** `[S]` — zero `/health`​/`/healthz`/`/readyz` hits repo-wide; readiness via `scheduler/explain` |
 
 ## 7. Performance
 
@@ -197,6 +215,9 @@ Either is worth more than any further row here.
 - McLoving cells cite a path under `~/projects/mcloving-rel-001`; full survey and its stated
   coverage limits in [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).
 - **The survey read ~15 crates at header depth and grepped the spine. It did not read 167k
-  lines.** Cells marked `[D]` rest on McLoving's own architecture docs, not on code.
+  lines.** **NO CELL RESTS ON AN ARCHITECTURE DOC ANY MORE** — revision 3 checked all twelve
+  such cells against code, with docs disallowed as evidence. Nine became `[S]` with `file:line`;
+  three were wrong and are retracted in place. What remains unverified is marked `[U]`, and the
+  survey's coverage limit is unchanged: crates not named were not examined.
 - Performance from one named, dated result file. Re-run `luigi:~/trifecta-bench/harness/full-run.sh`
   to refresh; `jenkins-lab` is single-tenant.
