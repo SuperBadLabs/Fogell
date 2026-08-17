@@ -250,6 +250,69 @@ directions: FG-140 down from P1 once the symptom stopped being silent, FG-181 up
 the P2 its reviewer assigned once the receipt showed a green build carrying a wrong
 value. A rule that only ever ranks things up is a rule nobody is applying.
 
+### The duplication axis — added 2026-08-17, and it outranks the tracks
+
+**THE THREE TRACKS BELOW ASK HOW BAD EACH DEFECT IS. NONE OF THEM ASKS WHETHER THIS ENGINE
+SHOULD BE THE ONE TO FIX IT.** Reading McLoving's source
+([docs/MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates, code-cited) found that
+**eleven open Fogell tickets, including a P0, duplicate work that already exists and is
+code-cited in a sibling repository owned by the same person.**
+
+| Fogell ticket | McLoving equivalent, code-cited |
+|---|---|
+| `FG-062` agent protocol + mTLS | `bins/controller/src/main.rs:1216` — `ServerTlsConfig` unconditional, plaintext impossible |
+| `FG-063` agent death handling | `bins/agent/src/lib.rs:848` — boot-id + `/proc/<pid>/stat` start-ticks, `RetireStale` on mismatch |
+| `FG-028` tenant isolation / RLS | `FORCE ROW LEVEL SECURITY` across 19 migrations, e.g. `migrations/0003_public_api.sql:27` |
+| **`FG-026` fenced effect ledger (P0)** | `controller-store/src/lib.rs:5091` — `finalize_attempt`, fence + epoch + lease-owner predicate |
+| `FG-066` CLI | `bins/cli/src/lib.rs:236` — 22 subcommands |
+| `FG-067` Web UI | `controller-api/src/lib.rs:466` — served at `/` |
+| `FG-042b` artifact retrieval | artifact content-download route, `controller-api/src/lib.rs:311-468` |
+| `FG-053c` triggers | `trigger_ingress.rs:18-24` — five kinds, not two |
+| `FG-070b` secret isolation | `secret-broker` — grant/redeem, 15-min TTL, zeroized material |
+| `FG-080` reproducible packaging | `release-provenance` — signed releases, SBOM from `Cargo.lock` |
+| `FG-113` Windows | `agent-runtime/src/executor/windows.rs:113` — real `CreateProcessW` into a kill-on-close job |
+
+**SO THE FIRST QUESTION ABOUT AN OPEN ROW IS NOT ITS CLASS, IT IS WHICH BUCKET IT SITS IN.**
+
+| bucket | meaning | what a row needs |
+|---|---|---|
+| **UNIQUE** | only Fogell can do it | a priority — the tracks below apply normally |
+| **DUPLICATED** | built and code-cited in McLoving | **a DECISION: build, borrow, or drop.** A priority is the wrong output; ranking it against other Fogell work presumes the answer |
+| **NEITHER** | Fogell-specific, not platform | a priority, as today |
+
+**UNIQUE is the whole justification for Fogell existing separately**, and it is one thing:
+the breadth of Groovy it executes at runtime. 163 of 163 hand-written case receipts (a population authored FOR this engine, and NOT the
+corpus tier-1 count, which is `tier1=0`), `admitted=169` of 228 parsing, declarative and scripted, parallel branches, conditionals, 14 modelled steps.
+Against that, McLoving's compiler admits ONE job and its step catalogue holds ONE mapping, and
+it provably never evaluates Groovy
+(`compat/jenkins-worker/src/mcloving/compat/compiler.clj:133` stops at `CompilePhase/CONVERSION`).
+Nothing in its source suggests that breadth is close to being matched. FG-195, FG-179,
+FG-014/FG-015 and FG-177 are all UNIQUE and all remain ranked as the tracks say.
+
+**THE SHARPEST CONSEQUENCE LANDS ON TRACK 2, WHICH THIS BOARD CALLS BINDING.** FG-200 exists to
+produce Fogell's FIRST corpus receipt. **McLoving already has one** — `corpus-052`, certified
+equivalent against Jenkins 2.568.1 with a 90-plugin manifest and a sealed envelope, 1 of 228,
+against Fogell's `tier1=0`. So Track 2's question stops being "can this engine get a corpus
+receipt" and becomes "why are two engines racing for the same receipt". That is a decision, and
+this board cannot make it.
+
+**WHAT THIS SECTION DELIBERATELY DOES NOT DO.**
+
+- **It does not close, drop or re-rank any row.** Every ticket above stays exactly where it is
+  with the priority it had. The bucket is a SECOND fact about a row, not a replacement for its
+  class, and only the owner can convert a DUPLICATED row into a decision.
+- **It does not claim the eleven are equivalent in quality.** McLoving having a crate is not
+  McLoving having a working, proven feature; its own `DYNAMIC_PROVISIONER_V1.md` claims no
+  certified production provider, and none of its platform work has a differential receipt.
+- **PER-ROW TAGS ARE NOT APPLIED.** Eleven rows are named here and the other 78 open rows carry
+  no bucket. Tagging them is the remaining work, and doing it by inference rather than by
+  reading each row is exactly how this board has been wrong before.
+- **The evidence has a stated depth limit.** The survey read ~15 crates at header depth and
+  grepped the spine; eight cells are code-cited, and a few rows above lean on cells that were
+  confirmed rather than deeply read. **Before dropping a P0 on the strength of "McLoving has
+  it", read that crate properly.** Every pass over this comparison found the previous pass
+  wrong — runbook, then architecture docs, then code, then the code sweep itself.
+
 ### The three tracks, and which one is binding
 
 **THE CLASS SYSTEM RANKS DEFECTS, AND TWO KINDS OF OPEN WORK ARE NOT DEFECTS.** `adr/0001`'s
