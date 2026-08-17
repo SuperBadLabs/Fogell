@@ -41,9 +41,13 @@ and Env =
     /// below it — a comment disagreeing with itself about a ticket it does not own. The
     /// finding history lives on the board, which is written to be edited.
     ///
-    /// `Funcs` stays a plain map: a function binding is never reassigned.
+    /// FG-195. `Funcs` maps a name to its CANDIDATES, because Groovy resolves a call by
+    /// SIGNATURE and a name may carry several: `def pick()` beside `def pick(v)` is an
+    /// ordinary overload pair, and folding them into one slot by name made `pick()` run
+    /// the one-arg body — a call landing on something the language would not pick.
+    /// Candidates stay in declaration order; resolution is by arity at the call.
     { Vars: Map<string, Value ref>
-      Funcs: Map<string, string list * Stmt list> }
+      Funcs: Map<string, (string list * Stmt list) list> }
 
 module Value =
 
@@ -116,5 +120,22 @@ module Env =
         { Vars = vars |> Map.map (fun _ value -> ref value)
           Funcs = Map.empty }
 
+    /// FG-195. APPENDS a candidate rather than replacing the slot — overloads are real.
+    /// A structurally identical candidate is skipped, NOT appended: function hoisting
+    /// folds every top-level `def f()` into the env before execution and the execution
+    /// pass then visits the same statement again, and under append-always that made
+    /// every helper its own same-arity duplicate — ambiguous at its first call.
+    ///
+    /// THE SKIP HAS A COST, stated: an IN-SCRIPT byte-identical duplicate declaration
+    /// collapses to one candidate and its call RUNS, where Groovy compile-rejects any
+    /// duplicate signature. Narrow — any in-script `def f()` is already in a
+    /// Jenkins-rejected class, and the preamble path refuses all same-arity
+    /// duplicates upstream on the raw list — but it is a fact about this function,
+    /// not hygiene.
     let withFunc name ps body env =
-        { env with Funcs = Map.add name (ps, body) env.Funcs }
+        let existing = defaultArg (Map.tryFind name env.Funcs) []
+
+        if existing |> List.exists (fun c -> c = (ps, body)) then
+            env
+        else
+            { env with Funcs = Map.add name (existing @ [ ps, body ]) env.Funcs }

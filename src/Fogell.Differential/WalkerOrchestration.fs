@@ -2133,32 +2133,29 @@ module WalkerOrchestration =
                                         | _ -> None)
                                 | Result.Error _ -> []
 
-                        // OVERLOADS ARE NOT MODELLED, SO DUPLICATES FAIL CLOSED. Folding the
-                        // helpers into a map by NAME let the last declaration win, and
-                        // Groovy resolves by ARITY: `def pick() { 'zero' }` beside
-                        // `def pick(v) { 'one' }` made `pick()` run the one-arg body and
-                        // report success. A false success, and the SECOND of this class on
-                        // this branch after a local shadowing a helper — both are the same
-                        // shape, a name resolving to something the language would not pick.
-                        //
-                        // Refusing is not the end state; it is what honesty costs until
-                        // resolution is arity-aware. Naming the duplicate keeps the refusal
-                        // actionable.
-                        let duplicateHelpers =
+                        // FG-195. OVERLOADS RESOLVE BY ARITY NOW — `def pick()` beside
+                        // `def pick(v)` is an ordinary pair and the interpreter picks per
+                        // call — so only a SAME-ARITY duplicate fails closed here: Groovy
+                        // rejects a duplicate method signature at compile time, and Fogell
+                        // will not guess which body such a call means. This refusal was
+                        // any-duplicate until the signature model landed.
+                        let duplicateSignatures =
                             preambleFuncs
-                            |> List.countBy fst
-                            |> List.filter (fun (_, n) -> n > 1)
+                            |> List.countBy (fun (n, (ps, _)) -> n, List.length ps)
+                            |> List.filter (fun (_, count) -> count > 1)
                             |> List.map fst
 
-                        match duplicateHelpers with
-                        | dup :: _ ->
+                        match duplicateSignatures with
+                        | (dup, arity) :: _ ->
                             fail
-                                $"script block: the preamble declares '{dup}' more than once; Fogell does not model overloads and will not guess which body a call means"
+                                $"script block: the preamble declares '{dup}' more than once with {arity} parameter(s); Groovy rejects the duplicate signature and Fogell will not guess which body a call means"
                         | [] ->
 
                         let genv =
-                            { Env.ofValues (asValues |> Map.add "env" (VMap asValues)) with
-                                Funcs = Map.ofList preambleFuncs }
+                            preambleFuncs
+                            |> List.fold
+                                (fun acc (n, (ps, body)) -> Env.withFunc n ps body acc)
+                                (Env.ofValues (asValues |> Map.add "env" (VMap asValues)))
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted

@@ -40,11 +40,15 @@ expect_pass() {
 # Plant a row INSIDE the Track 1 table, not appended at EOF — the checker scans
 # only the queue region, and a fixture outside it would prove nothing while
 # reporting rejected (the vacuous-coverage mistake prove-board-numbers.sh names).
+# Anchored on the TABLE HEADER SEPARATOR, not on any ticket row: the first anchor
+# was the FG-195 row, and the proof died loudly in the gate the day that row was
+# marked DONE — a ticket row is a moving target, the table's own shape is not.
 plant_row() {
   local cell=$1 out=$2
   awk -v cell="$cell" '
     { print }
-    /^\| 1 \| \*\*B\*\* \| FG-195 \|/ && !done {
+    /^### Track 1 /       { in1 = 1 }
+    in1 && /^\|---/ && !done {
       print "| 99 | — | FG-999 | TODO | " cell " |"
       done = 1
     }

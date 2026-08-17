@@ -30,7 +30,11 @@ module Sandbox =
             [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
               "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
               "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
-              "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus" ]
+              "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus"
+              // FG-189/FG-195: `f.call(x)` is the explicit closure-invocation spelling;
+              // the interpreter dispatches it only on a VClosure receiver, so admitting
+              // the NAME opens nothing else
+              "call" ]
 
     /// Names that are unambiguously an escape attempt. Kept as an explicit
     /// deny-list purely so the *diagnostic* names what was tried; the closed

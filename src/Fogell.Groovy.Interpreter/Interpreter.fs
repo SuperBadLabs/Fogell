@@ -236,7 +236,14 @@ module Interpreter =
                 | Some v -> v
                 | None ->
                     match Map.tryFind n env.Funcs with
-                    | Some(ps, body) -> VFunc(n, ps, body)
+                    // FG-195: a name may carry several candidates; reading it as a VALUE
+                    // takes the first declaration. Groovy raises MissingPropertyException
+                    // for ANY value read of a method name — rendering `<function n>` here
+                    // is a pre-existing divergence the verifier re-flagged, carried as a
+                    // residual on the FG-195 ticket; resolution by arity happens at a
+                    // CALL, not here.
+                    | Some((ps, body) :: _) -> VFunc(n, ps, body)
+                    | Some []
                     | None ->
                         if st.StrictVars then
                             // MEASURED (receipt `gstring-unresolved-property`): Groovy's
@@ -371,6 +378,67 @@ module Interpreter =
             raise (Stop(Unsupported $"operator '{op}' is not modelled for these operand types"))
         | _ -> VNull
 
+    /// FG-195. Groovy's argument-forming rules, in ONE place for every callable kind
+    /// — helper, overload, closure value: a named-argument group is a single Map
+    /// argument passed FIRST, and a trailing closure is a single FINAL argument
+    /// closing over the call site. The fourth measured shape existed because a guard
+    /// counted positionals while looking at only one of these three forms.
+    and private effectiveArgList (env: Env) (positional: Value list) (named: (string * Value) list) (trailing: Closure option) =
+        (if List.isEmpty named then [] else [ VMap(Map.ofList named) ])
+        @ positional
+        @ (match trailing with
+           | Some c -> [ VClosure(c, env) ]
+           | None -> [])
+
+    /// FG-189, folded into FG-195: a closure VALUE is callable. A bare closure has
+    /// the implicit `it` — bound null when no argument arrives, which is Groovy's
+    /// rule — and declared parameters bind by exact arity. A mismatch is a refusal
+    /// naming the attempted signature, the same contract as helper resolution.
+    ///
+    /// NAMED RESIDUAL (verifier, this diff): the parser erases `{ -> … }` into
+    /// `Params = []`, so an explicitly zero-parameter closure called WITH an
+    /// argument takes the implicit-`it` arm and RUNS where Groovy throws — a false
+    /// success one spelling from shape (c). The fix needs the arrow kept in the
+    /// AST, which is parser scope; carried on the FG-195 ticket, not silently.
+    and private invokeClosureValue (st: State) (name: string) (c: Closure) (closureEnv: Env) (callArgs: Value list) =
+        let bound =
+            match c.Params, callArgs with
+            | [], [] -> Env.withVar "it" VNull closureEnv
+            | [], [ one ] -> Env.withVar "it" one closureEnv
+            | ps, args when List.length ps = List.length args ->
+                List.zip ps args |> List.fold (fun acc (p, v) -> Env.withVar p v acc) closureEnv
+            | ps, args ->
+                raise (
+                    Stop(
+                        Unsupported
+                            $"closure '{name}' takes {List.length ps} parameter(s) and was called with {List.length args} argument(s); a named-argument group counts as one Map argument"
+                    )
+                )
+
+        st.Depth <- st.Depth + 1
+
+        // implicit-return discipline shared with `applyClosure`: the trailing
+        // expression is the value, LastValue saved/restored on both exits.
+        // Depth decrements in a FINALLY: a fault escaping the body can be caught
+        // by a script-level try/catch and execution then CONTINUES — a decrement
+        // skipped on that path leaks depth until an innocent loop of caught
+        // faults exhausts the call-depth budget where Jenkins runs on. Raised by
+        // the verifier on this diff, which had copied the fragile shape.
+        try
+            try
+                let outer = st.LastValue
+
+                try
+                    st.LastValue <- None
+                    execBlock st bound c.Body |> ignore
+                    defaultArg st.LastValue VNull
+                finally
+                    st.LastValue <- outer
+            with ReturnSignal v ->
+                v
+        finally
+            st.Depth <- st.Depth - 1
+
     and private evalCall (st: State) (env: Env) (target: CallTarget) (args: Arg list) (trailing: Closure option) : Value =
         tick st
 
@@ -422,24 +490,37 @@ module Interpreter =
             positionalLazy.Value |> ignore
             namedLazy.Value |> ignore
 
-            // FG-188. A LOCAL SHADOWS A PREAMBLE HELPER, and until a closure value can be
-            // invoked (FG-189) the honest answer is to refuse rather than call the helper.
-            //
-            // Making `env.Funcs` names admissible let `def x = { 'LOCAL' }` followed by
-            // `x()` reach the PREAMBLE's `x` — Groovy resolves the local, so Fogell ran
-            // different code and reported success. A false success introduced by the fix
-            // that put those helpers in scope, caught in review before it shipped.
-            //
-            // Refusing is not the end state; it is the correct behaviour while the local
-            // cannot be called. A silent wrong answer would be the worse trade, and the
-            // reason is named so the message does not send an author hunting.
-            if Map.containsKey name env.Vars && Map.containsKey name env.Funcs then
+            // FG-195/FG-189. A LOCAL BINDING SHADOWS A HELPER, and a local CLOSURE is
+            // callable — Groovy resolves the local, and the refusal that stood here sent
+            // ordinary code away (measured shape (a): `def x = { 'LOCAL' }` after a
+            // preamble `def x()` runs the LOCAL on Jenkins). A registered STEP name keeps
+            // its current routing: a local sharing a step's name is unmeasured territory
+            // and the boundary is stated here rather than silently decided. A NON-closure
+            // local beside a helper stays a refusal — Groovy's method fallback for that
+            // shape is unmeasured, and a named refusal beats a guessed dispatch.
+            let shadowingLocal =
+                if st.RegisteredSteps.Contains name then
+                    None
+                else
+                    match Map.tryFind name env.Vars with
+                    | Some cell ->
+                        match cell.Value with
+                        | VClosure(c, closureEnv) -> Some(Choice1Of2(c, closureEnv))
+                        | other when Map.containsKey name env.Funcs -> Some(Choice2Of2 other)
+                        | _ -> None
+                    | None -> None
+
+            match shadowingLocal with
+            | Some(Choice1Of2(c, closureEnv)) ->
+                invokeClosureValue st name c closureEnv (effectiveArgList env positionalLazy.Value namedLazy.Value trailing)
+            | Some(Choice2Of2 other) ->
                 raise (
                     Stop(
                         Unsupported
-                            $"'{name}' is bound as a local AND declared as a helper; Fogell cannot yet invoke the local (FG-189)"
+                            $"'{name}' is bound as a non-closure local ({Value.toDisplay other}) and declared as a helper; Groovy's fallback for this shape is unmeasured, so Fogell refuses rather than guesses"
                     )
                 )
+            | None ->
 
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
@@ -715,40 +796,39 @@ module Interpreter =
                     VNull
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
-                | Some(ps, body) ->
-                    // FG-195. ARITY IS CHECKED BEFORE THE BODY RUNS. `List.truncate` on both
-                    // sides meant a mismatched call simply bound fewer parameters and ran
-                    // anyway: `def constant(v) { … }` called as `constant()` has no zero-arg
-                    // overload in Groovy, so Jenkins rejects the pipeline while Fogell ran
-                    // the body and could report success.
-                    //
-                    // THE THIRD CALLABLE-RESOLUTION DEFECT ON THIS BRANCH — after a local
-                    // shadowing a helper and duplicate helper names — and all three are one
-                    // shape: a call resolving to something the language would not pick. This
-                    // is the stop-ship refusal; FG-195 owns the signature model that makes
-                    // the question answerable instead of refused.
-                    // NAMED ARGUMENTS AND A TRAILING CLOSURE COUNT TOO. Groovy passes named
-                    // arguments as a single Map and a trailing closure as a final argument —
-                    // the builtin path below documents the first rule already — so
-                    // `def zero() { … }` called as `zero(foo: 1)` is a ONE-argument call that
-                    // Groovy rejects. Counting positionals alone admitted it and ran the
-                    // body. Fourth occurrence of the class FG-195 owns; refusing an
-                    // unmodelled call shape is the same stop-ship move as the other three.
-                    if not (List.isEmpty namedLazy.Value) || Option.isSome trailing then
-                        raise (
-                            Stop(
-                                Unsupported
-                                    $"'{b}' is a script helper called with named arguments or a block; Fogell models neither as a Groovy argument (FG-195)"
-                            )
-                        )
+                | Some candidates ->
+                    // FG-195. RESOLUTION IS BY SIGNATURE, as Groovy's is — the model that
+                    // replaced four one-at-a-time refusals, checked against all four shapes
+                    // at once because the fourth was found inside the guard written for the
+                    // third. The effective argument list counts Groovy's argument forms:
+                    // a named-argument group is ONE Map argument, passed FIRST, and a
+                    // trailing closure is a FINAL argument. Candidates are matched on
+                    // arity; no match, or two declarations sharing one arity, is a refusal
+                    // NAMING the attempted signature — never a silent nearest fit.
+                    let effectiveArgs = effectiveArgList env positionalLazy.Value namedLazy.Value trailing
 
-                    if List.length positionalLazy.Value <> List.length ps then
+                    let arityOf (ps: string list, _) = List.length ps
+                    let wanted = List.length effectiveArgs
+
+                    match candidates |> List.filter (fun c -> arityOf c = wanted) with
+                    | [] ->
+                        let have =
+                            candidates |> List.map (arityOf >> string) |> String.concat ", "
+
                         raise (
                             Stop(
                                 Unsupported
-                                    $"'{b}' takes {List.length ps} argument(s) and was called with {List.length positionalLazy.Value}; Fogell does not model overloads"
+                                    $"no declaration of '{b}' takes {wanted} argument(s) — candidates take {have}; a named-argument group counts as one Map argument and a trailing block as one final argument"
                             )
                         )
+                    | _ :: _ :: _ ->
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' is declared more than once with {wanted} parameter(s); Groovy rejects the duplicate signature and Fogell will not guess which body a call means"
+                            )
+                        )
+                    | [ (ps, body) ] ->
 
                     st.Depth <- st.Depth + 1
 
@@ -766,17 +846,22 @@ module Interpreter =
                     // second regression of the ref-cell change, and it is the same shape as
                     // the first: cells made an existing sloppiness observable.
                     let callEnv =
-                        List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
+                        List.zip ps effectiveArgs
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) { Env.empty with Funcs = env.Funcs }
 
+                    // Depth decrements in a FINALLY — same leak class as
+                    // `invokeClosureValue`, same verifier finding: a fault caught by a
+                    // script-level try/catch skipped the decrement here too.
                     let result =
                         try
-                            execBlock st callEnv body |> ignore
-                            VNull
-                        with ReturnSignal v ->
-                            v
+                            try
+                                execBlock st callEnv body |> ignore
+                                VNull
+                            with ReturnSignal v ->
+                                v
+                        finally
+                            st.Depth <- st.Depth - 1
 
-                    st.Depth <- st.Depth - 1
                     result
                 | None -> evalBuiltin st env b VNull positionalLazy.Value namedLazy.Value trailing
 
@@ -806,34 +891,50 @@ module Interpreter =
                 | [] -> Env.withVar "it" item closureEnv
                 | p :: _ -> Env.withVar p item closureEnv
 
+            // Depth decrements in a FINALLY — the same leak class the verifier found
+            // in `invokeClosureValue`, pre-existing here: a fault caught by a
+            // script-level try/catch skipped the decrement and an innocent loop of
+            // caught faults exhausted the call-depth budget where Jenkins runs on.
             let r =
                 try
-                    // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
-                    // VNull returned unless the closure used an explicit `return`. So
-                    // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
-                    // and therefore Jenkins — evaluates as true. Groovy's implicit
-                    // closure return is the trailing expression, and LastValue is
-                    // saved/restored around the call so an inner closure cannot
-                    // clobber the enclosing block's trailing value.
-                    // REVIEW FIX (Copilot, PR #14): the restore only happened on the
-                    // NON-return path, so a closure using an explicit `return` still
-                    // clobbered the enclosing block's trailing value. try/finally, so
-                    // both exits restore it.
-                    let outer = st.LastValue
-
                     try
-                        st.LastValue <- None
-                        execBlock st bound c.Body |> ignore
-                        defaultArg st.LastValue VNull
-                    finally
-                        st.LastValue <- outer
-                with ReturnSignal v ->
-                    v
+                        // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
+                        // VNull returned unless the closure used an explicit `return`. So
+                        // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
+                        // and therefore Jenkins — evaluates as true. Groovy's implicit
+                        // closure return is the trailing expression, and LastValue is
+                        // saved/restored around the call so an inner closure cannot
+                        // clobber the enclosing block's trailing value.
+                        // REVIEW FIX (Copilot, PR #14): the restore only happened on the
+                        // NON-return path, so a closure using an explicit `return` still
+                        // clobbered the enclosing block's trailing value. try/finally, so
+                        // both exits restore it.
+                        let outer = st.LastValue
 
-            st.Depth <- st.Depth - 1
+                        try
+                            st.LastValue <- None
+                            execBlock st bound c.Body |> ignore
+                            defaultArg st.LastValue VNull
+                        finally
+                            st.LastValue <- outer
+                    with ReturnSignal v ->
+                        v
+                finally
+                    st.Depth <- st.Depth - 1
+
             r
 
         match name, recv, args with
+        // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
+        // with the same binding rules and refusal contract as `f(x)` — for a closure
+        // held in a LOCAL. A closure held in the script BINDING (assigned without
+        // `def`) reaches this arm through EVar and runs, while the bare `f()`
+        // spelling consults `env.Vars` only and still denies it — a named residual
+        // on the FG-195 ticket, in the safe (false-refusal) direction. The
+        // named-argument group and a trailing block count as arguments here too,
+        // through the same one place that forms every callable's argument list.
+        | "call", VClosure(c, closureEnv), _ ->
+            invokeClosureValue st "call" c closureEnv (effectiveArgList env args namedArgs trailing)
         | "size", VList xs, _
         | "length", VList xs, _ -> VInt(int64 xs.Length)
         | "size", VStr s, _

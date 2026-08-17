@@ -672,6 +672,110 @@ let hostedSteps =
           }
         ]
 
+/// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are
+/// asserted TOGETHER because three refusals were added one at a time, each looking
+/// complete, and the fourth was found inside the guard written for the third — a
+/// signature model is only a fix if all four hold at once.
+let callableResolution =
+    // preamble helpers arrive exactly as the walker supplies them: SFunc folded into
+    // the incoming env, so the tests exercise the same seam the script block uses
+    let helperEnv src =
+        parseOk src
+        |> List.fold
+            (fun acc s ->
+                match s with
+                | Fogell.Groovy.SFunc(n, ps, b) -> Env.withFunc n ps b acc
+                | _ -> acc)
+            Env.empty
+
+    let runWith env src =
+        Interpreter.runStrictVars Budget.defaults steps env (parseOk src)
+
+    let faultText (o: Outcome) =
+        match o.Fault with
+        | Some(Unsupported m) -> m
+        | other -> failtestf "expected an Unsupported refusal, got %A" other
+
+    testList
+        "FG-195 callable resolution by signature"
+        [ test "shape (a): a local closure SHADOWS a preamble helper" {
+              let o = runWith (helperEnv "def x() { return 'HELPER' }") "def x = { 'LOCAL' }\nreturn x()"
+              Expect.isNone o.Fault "runs"
+              Expect.equal o.Returned (Some(VStr "LOCAL")) "Groovy resolves the local"
+          }
+
+          test "shape (b): overloads resolve by ARITY, both directions" {
+              let env = helperEnv "def pick() { return 'zero' }\ndef pick(v) { return 'one' }"
+              Expect.equal ((runWith env "return pick()").Returned) (Some(VStr "zero")) "zero-arg body"
+              Expect.equal ((runWith env "return pick(1)").Returned) (Some(VStr "one")) "one-arg body"
+          }
+
+          test "shape (c): no matching arity is a refusal NAMING the signature" {
+              let o = runWith (helperEnv "def constant(v) { return v }") "return constant()"
+              let m = faultText o
+              Expect.stringContains m "0 argument(s)" "names what was attempted"
+              Expect.stringContains m "candidates take 1" "names what exists"
+          }
+
+          test "shape (d): a named-argument group is ONE Map argument" {
+              let o = runWith (helperEnv "def zero() { return 'z' }") "return zero(foo: 1)"
+              Expect.stringContains (faultText o) "1 argument(s)" "the Map counted as an argument"
+          }
+
+          test "a named-argument group binds as a Map, FIRST" {
+              let env = helperEnv "def one(m) { return m }"
+              match (runWith env "return one(foo: 'bar')").Returned with
+              | Some(VMap m) -> Expect.equal (Map.tryFind "foo" m) (Some(VStr "bar")) "the group arrived as a Map"
+              | other -> failtestf "expected a Map return, got %A" other
+          }
+
+          test "a trailing closure is a FINAL argument, and the parameter is callable" {
+              // exercises helper resolution AND closure-value invocation in one shape:
+              // the block binds to `c`, and `c()` is a local-closure call (FG-189)
+              let env = helperEnv "def wrap(c) { return c() }"
+              let o = runWith env "return wrap { 'FROM-BLOCK' }"
+              Expect.isNone o.Fault "runs"
+              Expect.equal o.Returned (Some(VStr "FROM-BLOCK")) "block passed, then invoked"
+          }
+
+          test "a closure with declared parameters binds by arity" {
+              let o = runWith Env.empty "def f = { a, b -> a + b }\nreturn f(1, 2)"
+              Expect.equal o.Returned (Some(VInt 3L)) "two arguments bound"
+          }
+
+          test "a closure arity mismatch is a refusal naming the signature" {
+              let o = runWith Env.empty "def f = { a, b -> a + b }\nreturn f(1)"
+              Expect.stringContains (faultText o) "2 parameter(s)" "names the closure's arity"
+          }
+
+          test "a SAME-ARITY duplicate is refused at the call, not silently last-wins" {
+              let o = runWith Env.empty "def d() { return 'one' }\ndef d() { return 'two' }\nreturn d()"
+              Expect.stringContains (faultText o) "more than once" "the ambiguity is named"
+          }
+
+          test "the .call spelling resolves exactly as the bare call does" {
+              let o = runWith Env.empty "def f = { v -> v }\nreturn f.call('VIA-CALL')"
+              Expect.equal o.Returned (Some(VStr "VIA-CALL")) "explicit call spelling"
+          }
+
+          test "a caught fault inside a closure does not leak call depth" {
+              // the verifier's construction: each caught fault skipped the depth
+              // decrement, so 70 caught faults exhausted the 64-deep call budget
+              // with an UNCATCHABLE refusal where Jenkins prints and succeeds
+              let o =
+                  runWith
+                      Env.empty
+                      "def boom = { 1 / 0 }\nfor (i in 1..70) { try { boom() } catch (e) { } }\nreturn 'SURVIVED'"
+
+              Expect.isNone o.Fault "depth restored on the fault path"
+              Expect.equal o.Returned (Some(VStr "SURVIVED")) "the loop of caught faults completes"
+          }
+
+          test "in-script overloads resolve too, not only preamble ones" {
+              let o = runWith Env.empty "def pick() { return 'zero' }\ndef pick(v) { return 'one' }\nreturn pick(9)"
+              Expect.equal o.Returned (Some(VStr "one")) "arity picks among hoisted candidates"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution ])
