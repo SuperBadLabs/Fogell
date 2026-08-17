@@ -11,7 +11,7 @@ apache/activemq	activemq-6.3.1	81d7cc285075	8441	maven
 apache/maven	maven-3.10.0-rc-1	1f7f1a5410f3	8246	maven	latest release is an RC; re-pin when 3.10.0 GA lands
 apache/cxf	cxf-4.2.3	33259395b45b	5005	maven	
 apache/dubbo	dubbo-3.2.20	d390d2bedc6c	4731	maven	highest-starred project in the set (41.5k)
-jenkinsci/git-plugin	git-5.10.1	3eb1e0816022	326	maven	buildPlugin — needs the implicit shared library
+jenkinsci/git-plugin	git-5.10.1	3eb1e0816022	326	maven	MODIFIED PIN: windows axis dropped, see bench/DEVIATIONS.md. buildPlugin — needs the implicit shared library
 jenkinsci/workflow-cps-plugin	4362.v9b_991749898e	9b991749898e	252	maven	buildPlugin
 jenkinsci/configuration-as-code-plugin	2117.vc05a_0b_e6b_f4e	c05a0be6bf4e	218	maven	buildPlugin
 apache/zookeeper	UNRESOLVED	-	-	maven	has a root Jenkinsfile at HEAD; tag resolution returned a malformed name and no Jenkinsfile at that ref. Pin it before use — do not substitute HEAD
