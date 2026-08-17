@@ -1,0 +1,17 @@
+# FG-201 build bench — pinned projects. Generated 2026-08-16; re-pin deliberately, never drift.
+# Selection: real OSS projects with a ROOT Jenkinsfile at the pinned tag. Many large projects
+# (kafka, hadoop, hbase, pulsar, nifi, jetty) have MIGRATED TO GITHUB ACTIONS and have no
+# Jenkinsfile at all — that is a finding about the population, not a gap in this list.
+# jf_bytes is the Jenkinsfile size at the tag: a proxy for how much surface a build exercises.
+#
+# repo	tag	commit	jf_bytes	build	notes
+jenkinsci/jenkins	jenkins-2.577	82c37634b354	10833	maven	the oracle's own source; largest Jenkinsfile here
+apache/camel	camel-4.22.0	1a54683f4bec	11390	maven	largest Jenkinsfile in the set
+apache/activemq	activemq-6.3.1	81d7cc285075	8441	maven	
+apache/maven	maven-3.10.0-rc-1	1f7f1a5410f3	8246	maven	latest release is an RC; re-pin when 3.10.0 GA lands
+apache/cxf	cxf-4.2.3	33259395b45b	5005	maven	
+apache/dubbo	dubbo-3.2.20	d390d2bedc6c	4731	maven	highest-starred project in the set (41.5k)
+jenkinsci/git-plugin	git-5.10.1	3eb1e0816022	326	maven	MODIFIED PIN: windows axis dropped, see bench/DEVIATIONS.md. buildPlugin — needs the implicit shared library
+jenkinsci/workflow-cps-plugin	4362.v9b_991749898e	9b991749898e	252	maven	buildPlugin
+jenkinsci/configuration-as-code-plugin	2117.vc05a_0b_e6b_f4e	c05a0be6bf4e	218	maven	buildPlugin
+apache/zookeeper	UNRESOLVED	-	-	maven	has a root Jenkinsfile at HEAD; tag resolution returned a malformed name and no Jenkinsfile at that ref. Pin it before use — do not substitute HEAD
