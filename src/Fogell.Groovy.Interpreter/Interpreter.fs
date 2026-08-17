@@ -28,9 +28,9 @@ type Effect =
 ///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
 ///     host returns null and value uses stay refused;
 ///   - per-step journaling is POSSIBLE here — the hooks are keyed
-///     `stage -> stepIndex` and a nested identity needs the journal format change
-///     FG-135 carries (FG-171 closed by measuring that a crash mid-block refuses
-///     rather than re-runs).
+///     `stage -> stepIndex`, and per-CHILD identity inside a block is FG-204:
+///     FG-135's stage-level attempt markers do not deliver it, and FG-171 closed
+///     by measuring that a crash mid-block refuses rather than re-runs.
 /// The earlier wording claimed all four as delivered.
 ///
 /// [RunBody] is present when the call had a trailing block; invoking it evaluates that

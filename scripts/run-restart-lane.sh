@@ -200,5 +200,134 @@ for m in s1 s2; do
 done
 echo "reconciled resume: block skipped WHOLE (s3 deliberately absent — the stated limit), every effect exactly once"
 
+echo "=== FG-135: a SIGKILL mid-attempt of a RETRIED stage — attempts have identity ==="
+# The defect this proves fixed: with records keyed (stage, index) only, attempt
+# 1's `step-finished failure` read as durably finished, so a resumed build
+# printed Retrying for each remaining attempt while NEVER re-running the shell,
+# and completed failure. The retry-attempt marker supersedes a failed attempt's
+# records, the resume refuses on the LIVE attempt's interrupted step, and after
+# reconciliation the loop CONTINUES from the journaled attempt — each attempt's
+# step running exactly once across the crash. `input` inside a journaled
+# retried stage stays refused (approval identity has no attempt dimension yet).
+R_LANE="$LANE/fg135"
+mkdir -p "$R_LANE/ws"
+R_JOURNAL="$R_LANE/build.journal"
+R_TRIES="$R_LANE/ws/fg135/tries.txt"
+
+cat > "$R_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Flaky') {
+            options { retry(3) }
+            steps {
+                sh 'echo try >> tries.txt; n=$(wc -l < tries.txt); if [ "$n" -lt 3 ]; then if [ "$n" -eq 2 ]; then sleep 15; fi; exit 1; fi'
+            }
+        }
+    }
+}
+JF
+
+"${HOST[@]}" "$R_LANE/Jenkinsfile" "$R_LANE/ws" fg135 "$R_JOURNAL" > "$R_LANE/run1.log" 2>&1 &
+R_PID=$!
+# attempt 1 fails fast; attempt 2 writes its try THEN sleeps — kill in the sleep
+for _ in $(seq 1 120); do
+  [ -f "$R_TRIES" ] && [ "$(wc -l < "$R_TRIES")" -ge 2 ] && break
+  sleep 0.25
+done
+[ "$(wc -l < "$R_TRIES")" -ge 2 ] || { echo "FAIL: attempt 2 never started"; exit 1; }
+kill -9 "$R_PID"
+wait "$R_PID" 2>/dev/null || true
+R_HOST_RE="^$(printf '%s' "$HOST_BIN" | sed 's/[.[\*^$()+?{}|\\]/\\&/g') .*$(printf '%s' "$R_LANE" | sed 's/[.[\*^$()+?{}|\\]/\\&/g')"
+for _ in 1 2 3 4; do pgrep -f "$R_HOST_RE" >/dev/null || break; sleep 0.5; done
+pgrep -f "$R_HOST_RE" >/dev/null && { echo "FAIL: a host survived the FG-135 SIGKILL"; pgrep -af "$R_HOST_RE"; exit 1; }
+grep -q '^completed:' "$R_LANE/run1.log" && { echo "FAIL: run 1 completed despite the kill"; exit 1; }
+
+# the journal must show: attempt 1 finished-failure, the attempt-2 marker, and
+# attempt 2 started — the marker BETWEEN them is what gives attempts identity
+grep -q $'^retry-attempt\tFlaky\t2$' "$R_JOURNAL" || { echo "FAIL: no attempt-2 marker"; sed 's/^/  | /' "$R_JOURNAL"; exit 1; }
+
+set +e
+"${HOST[@]}" "$R_LANE/Jenkinsfile" "$R_LANE/ws" fg135 "$R_JOURNAL" > "$R_LANE/run2.log" 2>&1
+R_RC=$?
+set -e
+# THE DEFECT'S OWN ASSERTION: pre-fix this resume SKIPPED Flaky#0 as durably
+# finished (attempt 1's failure) and completed failure without re-running
+# anything. With attempt identity it refuses on the LIVE attempt's interrupted
+# step instead.
+[ "$R_RC" -eq 3 ] || { echo "FAIL: expected refusal exit 3, got $R_RC"; cat "$R_LANE/run2.log"; exit 1; }
+grep -q 'needs-reconciliation: Flaky#0' "$R_LANE/run2.log" || { echo "FAIL: refusal did not name the live attempt's step"; exit 1; }
+[ "$(wc -l < "$R_TRIES")" -eq 2 ] || { echo "FAIL: the refused resume ran something"; exit 1; }
+echo "refused on the LIVE attempt's step — the superseded failure no longer reads as finished"
+
+# operator: the try count shows attempt 2's step ran and its shell then died — a failure
+printf 'step-finished\tFlaky\t0\tfailure\n' >> "$R_JOURNAL"
+"${HOST[@]}" "$R_LANE/Jenkinsfile" "$R_LANE/ws" fg135 "$R_JOURNAL" > "$R_LANE/run3.log" 2>&1
+grep -q 'skip (durably finished): Flaky#0' "$R_LANE/run3.log" || { echo "FAIL: reconciled attempt-2 not replayed"; exit 1; }
+grep -q 'completed: success' "$R_LANE/run3.log" || { echo "FAIL: resume did not complete"; cat "$R_LANE/run3.log"; exit 1; }
+[ "$(wc -l < "$R_TRIES")" -eq 3 ] || { echo "FAIL: attempt 3 did not run exactly once (tries=$(wc -l < "$R_TRIES"))"; exit 1; }
+grep -q $'^retry-attempt\tFlaky\t3$' "$R_JOURNAL" || { echo "FAIL: the live attempt 3 journaled no marker"; exit 1; }
+[ "$(grep -c $'^retry-attempt\tFlaky\t2$' "$R_JOURNAL")" -eq 1 ] || { echo "FAIL: attempt-2 marker not exactly once"; exit 1; }
+echo "reconciled resume CONTINUED the loop: attempt 3 ran once, build success, every attempt's step exactly once"
+
+echo "=== FG-135: input inside a journaled retried stage stays REFUSED ==="
+I_LANE="$LANE/fg135-input"
+mkdir -p "$I_LANE/ws"
+cat > "$I_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Gate') {
+            options { retry(2) }
+            steps {
+                timeout(time: 5, unit: 'SECONDS') { input message: 'go?' }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$I_LANE/Jenkinsfile" "$I_LANE/ws" fg135i "$I_LANE/build.journal" > "$I_LANE/run.log" 2>&1
+I_RC=$?
+set -e
+[ "$I_RC" -eq 1 ] || { echo "FAIL: expected failure exit 1, got $I_RC"; exit 1; }
+grep -q 'completed: failure' "$I_LANE/run.log" || { echo "FAIL: not a failed build"; exit 1; }
+# the journal proves WHICH path failed it: the refusal fires before any step, so
+# a step-started here means the timeout path ran instead (FG-114 keeps the
+# reason text out of the log, so the journal is the discriminating evidence)
+grep -q $'^step-started' "$I_LANE/build.journal" && { echo "FAIL: the gate step RAN — the approval refusal did not fire"; exit 1; }
+echo "refused before any step — a prior attempt's approval can never be replayed"
+
+echo "=== FG-135: NESTED stages under a journaled retry stay REFUSED (leaf-only) ==="
+N_LANE="$LANE/fg135-nested"
+mkdir -p "$N_LANE/ws"
+cat > "$N_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Parent') {
+            options { retry(2) }
+            stages {
+                stage('Child') {
+                    steps { sh 'echo ran >> nested.txt' }
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$N_LANE/Jenkinsfile" "$N_LANE/ws" fg135n "$N_LANE/build.journal" > "$N_LANE/run.log" 2>&1
+N_RC=$?
+set -e
+[ "$N_RC" -eq 1 ] || { echo "FAIL: expected failure exit 1, got $N_RC"; cat "$N_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$N_LANE/run.log" || { echo "FAIL: not a failed build"; exit 1; }
+# the refusal fires before any step: nested steps journal under the CHILD's name,
+# which the parent's marker cannot supersede, so running them would rebuild the
+# exact defect one level down
+grep -q $'^step-started' "$N_LANE/build.journal" && { echo "FAIL: a nested step RAN under a journaled retry"; exit 1; }
+[ -f "$N_LANE/ws/fg135n/nested.txt" ] && { echo "FAIL: the nested step's effect landed"; exit 1; }
+echo "refused before any step — nested records cannot masquerade as the live attempt's"
+
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"
