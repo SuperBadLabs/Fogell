@@ -250,6 +250,91 @@ directions: FG-140 down from P1 once the symptom stopped being silent, FG-181 up
 the P2 its reviewer assigned once the receipt showed a green build carrying a wrong
 value. A rule that only ever ranks things up is a rule nobody is applying.
 
+### The duplication axis — added 2026-08-17, and it outranks the tracks
+
+**THE THREE TRACKS BELOW ASK HOW BAD EACH DEFECT IS. NONE OF THEM ASKS WHETHER THIS ENGINE
+SHOULD BE THE ONE TO FIX IT.** McLoving — a sibling engine in a repository owned by the same
+person — has a large, code-cited platform: mTLS agents, fenced terminal publication, forced RLS
+tenancy, a 22-subcommand CLI, a served UI, artifact download, five trigger kinds, a secret
+broker, signed releases, a real Win32 executor
+([MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates). Several Fogell rows look
+like they cover the same ground.
+
+**A TABLE NAMING ELEVEN SPECIFIC DUPLICATED TICKETS WAS WRITTEN HERE ON 2026-08-17 AND IS
+WITHDRAWN. REVIEW REFUTED SIX OF THE ELEVEN, AND THE SIXTH ONE SETTLED IT: THE METHOD WAS WRONG,
+NOT THE ENTRIES.** The table was built by matching McLoving capability names against Fogell
+ticket TITLES. It never read the tickets' ACCEPTANCE FIELDS, which is where each one says what
+would actually discharge it — and every refutation came from there:
+
+| claimed duplicate | why it is not |
+|---|---|
+| `FG-113` Windows | it is a DIFFERENTIAL lane — acceptance needs Fogell and Jenkins on one Windows host to license a parity claim |
+| `FG-070b` secret isolation | acceptance is same-UID isolation, proving `/proc/<pid>/environ` unreadable; a grant/redeem broker with a TTL is a different threat model |
+| `FG-026` effect ledger | acceptance is a FOUR-STATE external-effect checkpoint ledger, not fenced attempt publication |
+| `FG-063` agent death | acceptance requires announcing a bounded reconnect window, not process-identity revalidation |
+| `FG-053c` triggers | it is Jenkinsfile FRONT-END work — the declarative `triggers` block — not platform trigger ingress |
+| `FG-080` packaging | acceptance is REPRODUCIBILITY evidence, byte-identical output; signed releases and an SBOM are not that |
+
+**THE GENERAL RULE, WHICH IS THE ONLY DURABLE THING THIS PASS PRODUCED: A SIBLING ENGINE HAVING A
+CAPABILITY DOES NOT SATISFY A TICKET WHOSE ACCEPTANCE IS ENGINE-SPECIFIC.** Most of this board's
+platform rows demand evidence ABOUT FOGELL — a differential against Jenkins, a named threat
+model discharged, a byte-identical rebuild. No amount of working code in another engine
+discharges that.
+
+**WHAT SURVIVES, AND IT IS A QUESTION RATHER THAN AN ANSWER.** The axis is worth having: for any
+open platform row, ask whether Fogell should be the engine that builds it, given that a sibling
+already has something adjacent. That is a real question and this board could not previously ask
+it. What it CANNOT do is answer the question per row from capability names. **Doing that properly
+means reading each row's acceptance field against McLoving's code, one row at a time — work this
+pass did not do, and whose absence produced a table that was 55% wrong.**
+
+**SO THE FIRST QUESTION ABOUT AN OPEN ROW IS NOT ITS CLASS, IT IS WHICH BUCKET IT SITS IN.**
+
+| bucket | meaning | what a row needs |
+|---|---|---|
+| **UNIQUE** | only Fogell can do it | a priority — the tracks below apply normally |
+| **DUPLICATED** | acceptance demonstrably dischargeable by McLoving's existing work — **established per row by reading its acceptance field, NOT by capability name. No row currently carries this tag** | **a DECISION: build, borrow, or drop.** A priority is the wrong output; ranking it against other Fogell work presumes the answer |
+| **DISTINCT** | platform work whose acceptance McLoving's existing work does NOT discharge — `FG-026`'s four-state effect ledger is the worked example, and it is the bucket the first draft of this table had no room for | a priority — it is Fogell's to build |
+| **NEITHER** | Fogell-specific, not platform | a priority, as today |
+
+**UNIQUE is the whole justification for Fogell existing separately**, and it is one thing:
+the breadth of Groovy it executes at runtime. 163 of 163 hand-written case receipts (a population authored FOR this engine, and NOT the
+corpus tier-1 count, which is `tier1=0`), `admitted=169` of 228 parsing, declarative and scripted, parallel branches, conditionals, 14 modelled steps.
+Against that, McLoving's compiler admits ONE job and its step catalogue holds ONE mapping, and
+it provably never evaluates Groovy
+(`compat/jenkins-worker/src/mcloving/compat/compiler.clj:133` stops at `CompilePhase/CONVERSION`).
+Nothing in its source suggests that breadth is close to being matched. FG-195, FG-179,
+FG-014/FG-015 and FG-177 are all UNIQUE and all remain ranked as the tracks say.
+
+**A CONSEQUENCE FOR TRACK 2 WAS CLAIMED HERE AND IS WITHDRAWN.** This section argued that
+because McLoving holds a corpus receipt (`corpus-052`, certified against Jenkins 2.568.1, 1 of
+228) while Fogell is at `tier1=0`, FG-200's question changes from "can this engine get a corpus
+receipt" to "why are two engines racing for the same receipt". **Review refuted it and the
+refutation is simple: A RECEIPT CERTIFIES THE ENGINE THAT PRODUCED IT.** McLoving's result says
+nothing about Fogell's compatibility and does not answer FG-200, whose stated question is the
+COST of executing a real corpus file through Fogell. FG-200 stands exactly as written, and
+Track 2 stays binding for the reason it already gave. The comparison remains interesting to an
+owner deciding where to spend; it is not a fact about Fogell's evidence.
+
+**WHAT THIS SECTION DELIBERATELY DOES NOT DO.**
+
+- **It does not close, drop or re-rank any row.** Every ticket above stays exactly where it is
+  with the priority it had. The bucket is a SECOND fact about a row, not a replacement for its
+  class, and only the owner can convert a DUPLICATED row into a decision.
+- **It does not claim the eleven are equivalent in quality.** McLoving having a crate is not
+  McLoving having a working, proven feature; its own `DYNAMIC_PROVISIONER_V1.md` claims no
+  certified production provider, and none of its platform work has a differential receipt.
+- **NO ROW CARRIES A BUCKET.** The withdrawn table named eleven; nothing replaced it, so all **89
+  open rows are untagged**. An earlier draft of this line said "eleven named, 78 untagged" and
+  kept both figures after the table that produced them was withdrawn — stale in the same pass
+  that withdrew it. Tagging is the remaining work and it is per-row acceptance reading, not
+  inference.
+- **The evidence has a stated depth limit.** The survey read ~15 crates at header depth and
+  grepped the spine; eight cells are code-cited, and a few rows above lean on cells that were
+  confirmed rather than deeply read. **Before dropping a P0 on the strength of "McLoving has
+  it", read that crate properly.** Every pass over this comparison found the previous pass
+  wrong — runbook, then architecture docs, then code, then the code sweep itself.
+
 ### The three tracks, and which one is binding
 
 **THE CLASS SYSTEM RANKS DEFECTS, AND TWO KINDS OF OPEN WORK ARE NOT DEFECTS.** `adr/0001`'s
