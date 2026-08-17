@@ -167,10 +167,14 @@ module WalkerStep =
                   // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
                   // deliberately not part of this condition.
                   CaptureStdout = wantsStdout
-                  TimeoutMs =
-                    match WalkerCancellation.remainingMs runCtx deadline with
-                    | Some ms -> Some ms
-                    | None -> Some 120_000L
+                  // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
+                  // default. A 120 s constant sat here and aborted any step
+                  // outliving two minutes, invisible to every case that
+                  // finishes in seconds. MEASURED: receipt `undeclared-deadline-unbounded`
+                  // sleeps past the old constant and both engines succeed. None is
+                  // not fail-open: interrupt and failFast still arrive through
+                  // Interrupt, and the executor waits interrupt-only.
+                  TimeoutMs = WalkerCancellation.remainingMs runCtx deadline
                   OnLine = Some runCtx.Emit
                   // External cancellation only — a failFast sibling. The
                   // deadline reaches the shell runner through TimeoutMs and
