@@ -83,7 +83,7 @@ itself. This is the single most consequential correction in revision 2.
 | Accepts a Jenkinsfile at runtime | yes | yes — declarative + scripted `[R]` | **no** `[S]` — no controller crate depends on the compiler |
 | Jenkinsfile compiler exists | n/a | n/a — it IS the engine | **yes, standalone** `[S]` — Clojure/Groovy worker, `compat/jenkins-worker/`, rootless Podman **[WAS: "no front end" — overstated]** |
 | Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[S]` — `compat/jenkins-worker/src/mcloving/compat/compiler.clj:133` stops at `CompilePhase/CONVERSION`; zero `GroovyShell`/`evaluate`/`GroovyClassLoader` hits |
-| Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=169` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
+| Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=168` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
 | Step mapping catalogue | plugins | 14 modelled steps `[S]` | **exactly 1 mapping** `[S]` — literal `sh` → `/bin/sh -xe -c` |
 | Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[D]` — `JENKINS_SHARED_LIBRARY_ADMISSION_V1.md`. **STILL DOC-CITED: REVISION 3 UPGRADED THIS TO `[S]` WITHOUT A CODE PATH AND THAT WAS WRONG.** The code check covered whether Groovy is evaluated, not how many cases are executable; the count has no code citation. Caught in review on PR #92 |
 | Authoring format | Groovy | Groovy | strict YAML IR `[S]` — `pipeline-ir` |
@@ -190,7 +190,7 @@ triggers, caching, dependency resolution, release provenance, a CLI, a UI and a 
 not a spine waiting for a front end. It is a platform with a deliberately tiny front end.
 
 **Fogell's remaining advantage is one thing, and it is real: the breadth of Groovy it executes
-at runtime.** 163 receipted cases, declarative and scripted, `admitted=169` of 228 parsing,
+at runtime.** 164 receipted cases, declarative and scripted, `admitted=168` of 228 parsing,
 14 modelled steps, parallel and conditionals — against McLoving's one-job compiler and
 one-step catalogue. Nothing in McLoving's source suggests that breadth is close to being
 matched, and its compiler explicitly never evaluates Groovy.
@@ -211,8 +211,11 @@ Either is worth more than any further row here.
 
 ## 9. Verification
 
-- Fogell corpus figures quoted from the generated scorecard; tokens `tier1=0`, `tier3=59`,
-  `admitted=169` re-derive via `scripts/audit-board-numbers.bb`.
+- Fogell corpus figures quoted from the generated scorecard; tokens `tier1=1`, `tier3=59`,
+  `admitted=168` match the ledger BY HAND — `scripts/audit-board-numbers.bb` reads only
+  `EXECUTION_BOARD.md`, so this file's copies are outside its reach and drift silently
+  (they did: three `admitted=169` cells survived the token's move, caught by the
+  FG-201-cycle verifier).
 - Fogell steps from `src/Fogell.Differential/WalkerRules.fs`; gaps are open board rows by id.
 - McLoving cells cite a path under `~/projects/mcloving-rel-001`; full survey and its stated
   coverage limits in [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).

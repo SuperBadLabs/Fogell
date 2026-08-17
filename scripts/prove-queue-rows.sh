@@ -79,6 +79,18 @@ expect_pass "quoted retraction with bare apostrophe (exempt)" "$LAB/retraction.m
 sed 's/^### Track 1 — Correctness$/### Renamed Away/' "$BOARD" > "$LAB/no-queue.md"
 expect_fail "queue tables missing (refuses vacuous pass)" "$LAB/no-queue.md"
 
+# 6. an ESCAPED pipe is literal cell text, not a cell boundary — splitting on it
+#    truncated the scanned cell one character before the tell, a confirmed evasion
+#    from the FG-201-cycle verifier
+plant_row "Measured once; the fix is a placement walk \\\\| and the rest of the cell" "$LAB/escaped-pipe.md"
+expect_fail "tell hidden behind an escaped pipe" "$LAB/escaped-pipe.md"
+
+# 7. two ADJACENT quoted spans must not have their flanking words merged into a
+#    tell — substituting a bare space for each span produced `the … fix … is`
+#    from a compliant retraction, the verifier's confirmed false positive
+plant_row "This row once said the \"wrong thing about a\" fix \"and the claim\" is withdrawn with its receipt" "$LAB/adjacent-quotes.md"
+expect_pass "adjacent quoted spans do not merge into a tell" "$LAB/adjacent-quotes.md"
+
 if [ "$FAILED" -eq 0 ]; then
   echo "QUEUE-ROW PROOF: the audit fails every planted shape, passes the committed board and the quoted retraction, and refuses a board it cannot parse"
 else

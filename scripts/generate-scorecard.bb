@@ -6,11 +6,16 @@
 ;; reason recorded: a prior engine had 146 non-empty IRs and 5 files of proven
 ;; parity, and a single percentage would have implied 64%.
 ;;
-;; THE SAME TRAP IS LIVE IN THIS REPO RIGHT NOW. There are 118 differential receipts
-;; and 228 corpus files, and the NAME OVERLAP BETWEEN THEM IS ZERO: every receipt is
-;; for a hand-written case in `differential/cases`, not for a corpus Jenkinsfile.
-;; Printing "118 proven" anywhere near "228 files" invites 118/228 = 52%, and the
-;; true corpus figure for proven parity is 0 of 228. The two populations are
+;; THE SAME TRAP IS LIVE IN THIS REPO. Nearly every differential receipt is for a
+;; hand-written case in `differential/cases`, not for a corpus Jenkinsfile — the
+;; name overlap between the two populations is the handful of corpus receipts the
+;; ledger's tier-1 rows name (zero until 2026-08-17, when FG-200 landed the first).
+;; Printing a case count anywhere near "228 files" invites dividing one by the
+;; other, and the corpus figure for proven parity is the tier-1 count alone.
+;; (This header once carried the live counts — "118 receipts", "0 of 228" — and
+;; both went stale in place, caught by the FG-201-cycle verifier: a .bb comment is
+;; outside every audit's reach, so it must not carry a number an audit cannot see.)
+;; The two populations are
 ;; therefore reported in SEPARATE SECTIONS, each with its own denominator stated on
 ;; the same line as its count, and no ratio is ever computed.
 ;;
@@ -154,8 +159,9 @@
       ;; it ran; if the CURRENT engine cannot parse the file, "proven compatible" is a
       ;; claim about a binary that no longer exists. The receipt branch used to come
       ;; first, so a parser regression on a receipted file would have published it as
-      ;; tier 1 — unreachable today (no corpus file has a receipt) and wrong by
-      ;; construction, the same correct-by-accident shape as the PROVEN-PARTIAL match.
+      ;; tier 1 — wrong by construction, the same correct-by-accident shape as the
+      ;; PROVEN-PARTIAL match. (This line said "unreachable today (no corpus file has
+      ;; a receipt)" until FG-200 made the branch reachable, and its receipt rides it.)
       ;;
       ;; :admitted IS NOT ADR TIER 2. The ADR defines tier 2 as parses AND EXECUTES;
       ;; this scorer only parses, because corpus files are untrusted and are never run.

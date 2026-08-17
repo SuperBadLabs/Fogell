@@ -74,10 +74,17 @@ STRIP = [
     re.compile(r"(?<!\w)'([^']*?)'(?!\w)"),
 ]
 
+# The replacement is a bracketed sentinel, NOT a bare space: substituting a space
+# merges the words flanking two adjacent quoted spans, and the FG-201-cycle
+# verifier planted `said the "…" fix "…" is withdrawn` and watched the audit flag
+# the seam as `the fix is`. `[q]` is non-word text, so no \b-anchored tell can
+# match across it, and it cannot itself complete a tell.
+QUOTE_SENTINEL = " [q] "
+
 
 def unquoted(text: str) -> str:
     for pat in STRIP:
-        text = pat.sub(" ", text)
+        text = pat.sub(QUOTE_SENTINEL, text)
     return text
 
 
@@ -102,7 +109,11 @@ def queue_rows(lines, tracks_seen):
             continue
         if not in_queue or not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        # Split on UNESCAPED pipes only: `\|` is literal text inside a Markdown
+        # table cell, and splitting on it truncated the scanned cell at the
+        # escape — a one-character evasion of every tell, found by the
+        # FG-201-cycle verifier planting `the fix is … \| and the rest`.
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
         if len(cells) < 3:
             continue
         # header and separator rows
