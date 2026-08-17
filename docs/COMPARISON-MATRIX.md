@@ -14,8 +14,10 @@ last-verified: 2026-08-17
 > Numeric tokens use the `tier1=` form so `scripts/audit-board-numbers.bb` re-derives them.
 >
 > **REVISION 3, 2026-08-17.** Every `[D]` doc-cited cell was re-verified against CODE, with
-> architecture docs disallowed as evidence. **Nine confirmed and are now `[S]` with `file:line`
-> citations. Three were wrong**, and one of those matters more than any capability row here:
+> architecture docs disallowed as evidence. **Eight confirmed and are now `[S]` with `file:line`
+> citations. Three were wrong. One stays `[D]`** — the shared-library case count, which this
+> revision first upgraded on no evidence and review sent back. Of the three that were wrong, one
+> matters more than any capability row here:
 >
 > - **`synchronous_commit=on` does not exist.** The string appears NOWHERE in McLoving's
 >   repository. Revision 2 stated that a 201 response implies a fsynced WAL, citing a doc. There
@@ -46,7 +48,7 @@ terms and a bare checkmark hides that.
 | **R** | **Receipted** — a differential receipt against a real Jenkins names it. |
 | **B** | **Benchmarked** — measured on the trifecta bench. For McLoving, against a hand-authored twin. |
 | **S** | **Source-cited** — read from the code, with a path. |
-| **D** | **Doc-cited** — an architecture doc in the engine's own repo. Not executed, not read in code. **REVISION 3 ELIMINATED THIS BASIS**: all twelve `[D]` cells were checked against code. Nine confirmed and became `[S]`; three were wrong. The basis is kept in this table only so the retractions below can name what they were. |
+| **D** | **Doc-cited** — an architecture doc in the engine's own repo. Not executed, not read in code. **REVISION 3 DID NOT ELIMINATE THIS BASIS, THOUGH IT CLAIMED TO.** All twelve `[D]` cells were checked against code: eight confirmed and became `[S]`, three were wrong, and one — the shared-library case count — was upgraded with no code path and reverted here after review. |
 | **U** | **Unmeasured** — believed, nobody has run it. |
 | **N/A** | The row cannot be asked of this column. |
 
@@ -80,10 +82,10 @@ itself. This is the single most consequential correction in revision 2.
 |---|---|---|---|
 | Accepts a Jenkinsfile at runtime | yes | yes — declarative + scripted `[R]` | **no** `[S]` — no controller crate depends on the compiler |
 | Jenkinsfile compiler exists | n/a | n/a — it IS the engine | **yes, standalone** `[S]` — Clojure/Groovy worker, `compat/jenkins-worker/`, rootless Podman **[WAS: "no front end" — overstated]** |
-| Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[S]` — `compat/…/compiler.clj:133` stops at `CompilePhase/CONVERSION`; zero `GroovyShell`/`evaluate`/`GroovyClassLoader` hits |
+| Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[S]` — `compat/jenkins-worker/src/mcloving/compat/compiler.clj:133` stops at `CompilePhase/CONVERSION`; zero `GroovyShell`/`evaluate`/`GroovyClassLoader` hits |
 | Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=169` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
 | Step mapping catalogue | plugins | 14 modelled steps `[S]` | **exactly 1 mapping** `[S]` — literal `sh` → `/bin/sh -xe -c` |
-| Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[S]` |
+| Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[D]` — `JENKINS_SHARED_LIBRARY_ADMISSION_V1.md`. **STILL DOC-CITED: REVISION 3 UPGRADED THIS TO `[S]` WITHOUT A CODE PATH AND THAT WAS WRONG.** The code check covered whether Groovy is evaluated, not how many cases are executable; the count has no code citation. Caught in review on PR #92 |
 | Authoring format | Groovy | Groovy | strict YAML IR `[S]` — `pipeline-ir` |
 | Corpus rejected | n/a | `tier3=59` of 228 `[R]` | `N/A` — corpus is Groovy |
 
@@ -215,9 +217,12 @@ Either is worth more than any further row here.
 - McLoving cells cite a path under `~/projects/mcloving-rel-001`; full survey and its stated
   coverage limits in [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).
 - **The survey read ~15 crates at header depth and grepped the spine. It did not read 167k
-  lines.** **NO CELL RESTS ON AN ARCHITECTURE DOC ANY MORE** — revision 3 checked all twelve
-  such cells against code, with docs disallowed as evidence. Nine became `[S]` with `file:line`;
-  three were wrong and are retracted in place. What remains unverified is marked `[U]`, and the
+  lines.** Revision 3 checked all twelve doc-cited cells against code, with docs disallowed as
+  evidence: eight became `[S]` with `file:line`, three were wrong and are retracted in place, and
+  **ONE REMAINS `[D]`** — the shared-library case count, which revision 3 upgraded without a code
+  path and review caught. **The first draft of this line said NO cell rests on a doc, which was
+  false the moment that upgrade was unjustified**; a sweep that reports total success is the
+  claim to distrust. What remains unverified is marked `[U]`, and the
   survey's coverage limit is unchanged: crates not named were not examined.
 - Performance from one named, dated result file. Re-run `luigi:~/trifecta-bench/harness/full-run.sh`
   to refresh; `jenkins-lab` is single-tenant.
