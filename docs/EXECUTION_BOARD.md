@@ -294,6 +294,7 @@ pass did not do, and whose absence produced a table that was 55% wrong.**
 |---|---|---|
 | **UNIQUE** | only Fogell can do it | a priority — the tracks below apply normally |
 | **DUPLICATED** | acceptance demonstrably dischargeable by McLoving's existing work — **established per row by reading its acceptance field, NOT by capability name. No row currently carries this tag** | **a DECISION: build, borrow, or drop.** A priority is the wrong output; ranking it against other Fogell work presumes the answer |
+| **DISTINCT** | platform work whose acceptance McLoving's existing work does NOT discharge — `FG-026`'s four-state effect ledger is the worked example, and it is the bucket the first draft of this table had no room for | a priority — it is Fogell's to build |
 | **NEITHER** | Fogell-specific, not platform | a priority, as today |
 
 **UNIQUE is the whole justification for Fogell existing separately**, and it is one thing:
@@ -323,9 +324,11 @@ owner deciding where to spend; it is not a fact about Fogell's evidence.
 - **It does not claim the eleven are equivalent in quality.** McLoving having a crate is not
   McLoving having a working, proven feature; its own `DYNAMIC_PROVISIONER_V1.md` claims no
   certified production provider, and none of its platform work has a differential receipt.
-- **PER-ROW TAGS ARE NOT APPLIED.** Eleven rows are named here and the other 78 open rows carry
-  no bucket. Tagging them is the remaining work, and doing it by inference rather than by
-  reading each row is exactly how this board has been wrong before.
+- **NO ROW CARRIES A BUCKET.** The withdrawn table named eleven; nothing replaced it, so all **89
+  open rows are untagged**. An earlier draft of this line said "eleven named, 78 untagged" and
+  kept both figures after the table that produced them was withdrawn — stale in the same pass
+  that withdrew it. Tagging is the remaining work and it is per-row acceptance reading, not
+  inference.
 - **The evidence has a stated depth limit.** The survey read ~15 crates at header depth and
   grepped the spine; eight cells are code-cited, and a few rows above lean on cells that were
   confirmed rather than deeply read. **Before dropping a P0 on the strength of "McLoving has
