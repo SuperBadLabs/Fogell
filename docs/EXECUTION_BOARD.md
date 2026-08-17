@@ -254,9 +254,19 @@ value. A rule that only ever ranks things up is a rule nobody is applying.
 
 **THE THREE TRACKS BELOW ASK HOW BAD EACH DEFECT IS. NONE OF THEM ASKS WHETHER THIS ENGINE
 SHOULD BE THE ONE TO FIX IT.** Reading McLoving's source
-([docs/MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates, code-cited) found that
-**eleven open Fogell tickets, including a P0, duplicate work that already exists and is
+([MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates, code-cited) found that
+**nine open Fogell tickets, including a P0, duplicate work that already exists and is
 code-cited in a sibling repository owned by the same person.**
+
+**THIS TABLE FIRST LISTED ELEVEN. TWO WERE WRONG AND REVIEW REMOVED THEM, FOR ONE REASON THAT
+APPLIES TO EVERY ROW HERE: A SIBLING ENGINE HAVING A CAPABILITY DOES NOT SATISFY A TICKET WHOSE
+ACCEPTANCE IS ENGINE-SPECIFIC.** `FG-113` is Fogell's Windows DIFFERENTIAL lane — its acceptance
+requires Fogell and Jenkins on the same Windows host to license a parity claim, which McLoving's
+executor cannot provide however real it is. `FG-070b` requires isolating secrets from another
+process under the SAME UID, proving `/proc/<pid>/environ` and the secret file unreadable; a
+grant/redeem broker with a TTL does not address that threat. Both are removed. **Read the
+remaining nine against their own acceptance fields before treating any as settled** — the same
+conflation may survive in them.
 
 | Fogell ticket | McLoving equivalent, code-cited |
 |---|---|
@@ -268,9 +278,7 @@ code-cited in a sibling repository owned by the same person.**
 | `FG-067` Web UI | `controller-api/src/lib.rs:466` — served at `/` |
 | `FG-042b` artifact retrieval | artifact content-download route, `controller-api/src/lib.rs:311-468` |
 | `FG-053c` triggers | `trigger_ingress.rs:18-24` — five kinds, not two |
-| `FG-070b` secret isolation | `secret-broker` — grant/redeem, 15-min TTL, zeroized material |
 | `FG-080` reproducible packaging | `release-provenance` — signed releases, SBOM from `Cargo.lock` |
-| `FG-113` Windows | `agent-runtime/src/executor/windows.rs:113` — real `CreateProcessW` into a kill-on-close job |
 
 **SO THE FIRST QUESTION ABOUT AN OPEN ROW IS NOT ITS CLASS, IT IS WHICH BUCKET IT SITS IN.**
 
@@ -289,12 +297,15 @@ it provably never evaluates Groovy
 Nothing in its source suggests that breadth is close to being matched. FG-195, FG-179,
 FG-014/FG-015 and FG-177 are all UNIQUE and all remain ranked as the tracks say.
 
-**THE SHARPEST CONSEQUENCE LANDS ON TRACK 2, WHICH THIS BOARD CALLS BINDING.** FG-200 exists to
-produce Fogell's FIRST corpus receipt. **McLoving already has one** — `corpus-052`, certified
-equivalent against Jenkins 2.568.1 with a 90-plugin manifest and a sealed envelope, 1 of 228,
-against Fogell's `tier1=0`. So Track 2's question stops being "can this engine get a corpus
-receipt" and becomes "why are two engines racing for the same receipt". That is a decision, and
-this board cannot make it.
+**A CONSEQUENCE FOR TRACK 2 WAS CLAIMED HERE AND IS WITHDRAWN.** This section argued that
+because McLoving holds a corpus receipt (`corpus-052`, certified against Jenkins 2.568.1, 1 of
+228) while Fogell is at `tier1=0`, FG-200's question changes from "can this engine get a corpus
+receipt" to "why are two engines racing for the same receipt". **Review refuted it and the
+refutation is simple: A RECEIPT CERTIFIES THE ENGINE THAT PRODUCED IT.** McLoving's result says
+nothing about Fogell's compatibility and does not answer FG-200, whose stated question is the
+COST of executing a real corpus file through Fogell. FG-200 stands exactly as written, and
+Track 2 stays binding for the reason it already gave. The comparison remains interesting to an
+owner deciding where to spend; it is not a fact about Fogell's evidence.
 
 **WHAT THIS SECTION DELIBERATELY DOES NOT DO.**
 
