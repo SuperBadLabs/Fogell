@@ -253,39 +253,47 @@ value. A rule that only ever ranks things up is a rule nobody is applying.
 ### The duplication axis — added 2026-08-17, and it outranks the tracks
 
 **THE THREE TRACKS BELOW ASK HOW BAD EACH DEFECT IS. NONE OF THEM ASKS WHETHER THIS ENGINE
-SHOULD BE THE ONE TO FIX IT.** Reading McLoving's source
-([MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates, code-cited) found that
-**nine open Fogell tickets, including a P0, duplicate work that already exists and is
-code-cited in a sibling repository owned by the same person.**
+SHOULD BE THE ONE TO FIX IT.** McLoving — a sibling engine in a repository owned by the same
+person — has a large, code-cited platform: mTLS agents, fenced terminal publication, forced RLS
+tenancy, a 22-subcommand CLI, a served UI, artifact download, five trigger kinds, a secret
+broker, signed releases, a real Win32 executor
+([MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md), 30 crates). Several Fogell rows look
+like they cover the same ground.
 
-**THIS TABLE FIRST LISTED ELEVEN. TWO WERE WRONG AND REVIEW REMOVED THEM, FOR ONE REASON THAT
-APPLIES TO EVERY ROW HERE: A SIBLING ENGINE HAVING A CAPABILITY DOES NOT SATISFY A TICKET WHOSE
-ACCEPTANCE IS ENGINE-SPECIFIC.** `FG-113` is Fogell's Windows DIFFERENTIAL lane — its acceptance
-requires Fogell and Jenkins on the same Windows host to license a parity claim, which McLoving's
-executor cannot provide however real it is. `FG-070b` requires isolating secrets from another
-process under the SAME UID, proving `/proc/<pid>/environ` and the secret file unreadable; a
-grant/redeem broker with a TTL does not address that threat. Both are removed. **Read the
-remaining nine against their own acceptance fields before treating any as settled** — the same
-conflation may survive in them.
+**A TABLE NAMING ELEVEN SPECIFIC DUPLICATED TICKETS WAS WRITTEN HERE ON 2026-08-17 AND IS
+WITHDRAWN. REVIEW REFUTED SIX OF THE ELEVEN, AND THE SIXTH ONE SETTLED IT: THE METHOD WAS WRONG,
+NOT THE ENTRIES.** The table was built by matching McLoving capability names against Fogell
+ticket TITLES. It never read the tickets' ACCEPTANCE FIELDS, which is where each one says what
+would actually discharge it — and every refutation came from there:
 
-| Fogell ticket | McLoving equivalent, code-cited |
+| claimed duplicate | why it is not |
 |---|---|
-| `FG-062` agent protocol + mTLS | `bins/controller/src/main.rs:1216` — `ServerTlsConfig` unconditional, plaintext impossible |
-| `FG-063` agent death handling | `bins/agent/src/lib.rs:848` — boot-id + `/proc/<pid>/stat` start-ticks, `RetireStale` on mismatch |
-| `FG-028` tenant isolation / RLS | `FORCE ROW LEVEL SECURITY` across 19 migrations, e.g. `migrations/0003_public_api.sql:27` |
-| **`FG-026` fenced effect ledger (P0)** | `controller-store/src/lib.rs:5091` — `finalize_attempt`, fence + epoch + lease-owner predicate |
-| `FG-066` CLI | `bins/cli/src/lib.rs:236` — 22 subcommands |
-| `FG-067` Web UI | `controller-api/src/lib.rs:466` — served at `/` |
-| `FG-042b` artifact retrieval | artifact content-download route, `controller-api/src/lib.rs:311-468` |
-| `FG-053c` triggers | `trigger_ingress.rs:18-24` — five kinds, not two |
-| `FG-080` reproducible packaging | `release-provenance` — signed releases, SBOM from `Cargo.lock` |
+| `FG-113` Windows | it is a DIFFERENTIAL lane — acceptance needs Fogell and Jenkins on one Windows host to license a parity claim |
+| `FG-070b` secret isolation | acceptance is same-UID isolation, proving `/proc/<pid>/environ` unreadable; a grant/redeem broker with a TTL is a different threat model |
+| `FG-026` effect ledger | acceptance is a FOUR-STATE external-effect checkpoint ledger, not fenced attempt publication |
+| `FG-063` agent death | acceptance requires announcing a bounded reconnect window, not process-identity revalidation |
+| `FG-053c` triggers | it is Jenkinsfile FRONT-END work — the declarative `triggers` block — not platform trigger ingress |
+| `FG-080` packaging | acceptance is REPRODUCIBILITY evidence, byte-identical output; signed releases and an SBOM are not that |
+
+**THE GENERAL RULE, WHICH IS THE ONLY DURABLE THING THIS PASS PRODUCED: A SIBLING ENGINE HAVING A
+CAPABILITY DOES NOT SATISFY A TICKET WHOSE ACCEPTANCE IS ENGINE-SPECIFIC.** Most of this board's
+platform rows demand evidence ABOUT FOGELL — a differential against Jenkins, a named threat
+model discharged, a byte-identical rebuild. No amount of working code in another engine
+discharges that.
+
+**WHAT SURVIVES, AND IT IS A QUESTION RATHER THAN AN ANSWER.** The axis is worth having: for any
+open platform row, ask whether Fogell should be the engine that builds it, given that a sibling
+already has something adjacent. That is a real question and this board could not previously ask
+it. What it CANNOT do is answer the question per row from capability names. **Doing that properly
+means reading each row's acceptance field against McLoving's code, one row at a time — work this
+pass did not do, and whose absence produced a table that was 55% wrong.**
 
 **SO THE FIRST QUESTION ABOUT AN OPEN ROW IS NOT ITS CLASS, IT IS WHICH BUCKET IT SITS IN.**
 
 | bucket | meaning | what a row needs |
 |---|---|---|
 | **UNIQUE** | only Fogell can do it | a priority — the tracks below apply normally |
-| **DUPLICATED** | built and code-cited in McLoving | **a DECISION: build, borrow, or drop.** A priority is the wrong output; ranking it against other Fogell work presumes the answer |
+| **DUPLICATED** | acceptance demonstrably dischargeable by McLoving's existing work — **established per row by reading its acceptance field, NOT by capability name. No row currently carries this tag** | **a DECISION: build, borrow, or drop.** A priority is the wrong output; ranking it against other Fogell work presumes the answer |
 | **NEITHER** | Fogell-specific, not platform | a priority, as today |
 
 **UNIQUE is the whole justification for Fogell existing separately**, and it is one thing:
