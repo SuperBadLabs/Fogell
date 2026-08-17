@@ -329,7 +329,7 @@ owner deciding where to spend; it is not a fact about Fogell's evidence.
   open rows are untagged**. An earlier draft of this line said "eleven named, 78 untagged" and
   kept both figures after the table that produced them was withdrawn — stale in the same pass
   that withdrew it. Tagging is the remaining work and it is per-row acceptance reading, not
-  inference.
+  inference. THAT READING NOW EXISTS AS RECOMMENDATIONS — [DUPLICATION-AXIS-RECOMMENDATIONS.md](DUPLICATION-AXIS-RECOMMENDATIONS.md) reads all 26 open platform-adjacent rows by acceptance field (2 UNIQUE, 1 provisional DUPLICATED, 17 DISTINCT, 6 NEITHER, each with its survey citation and depth). Still no tag is applied on this board: a recommendation is not a decision, and conversion remains the owner's.
 - **The evidence has a stated depth limit.** The survey read ~15 crates at header depth and
   grepped the spine; eight cells are code-cited, and a few rows above lean on cells that were
   confirmed rather than deeply read. **Before dropping a P0 on the strength of "McLoving has
