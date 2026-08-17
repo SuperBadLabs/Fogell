@@ -1,0 +1,202 @@
+---
+title: Fogell vs McLoving — capability and performance, Jenkins as touchstone
+audience: internal
+category: engineering-comparison
+purpose: Steering document. What each engine does, what is PROVEN about it, and where they overlap.
+lifecycle: live
+last-verified: 2026-08-17
+---
+
+# Fogell vs McLoving, with Jenkins as the touchstone
+
+> **HAND-MAINTAINED, NOT GENERATED.** `docs/COMPATIBILITY-SCORECARD.md` is generated and is the
+> authority for every Fogell corpus number; figures here are quoted from it, never recomputed.
+> Numeric tokens use the `tier1=` form so `scripts/audit-board-numbers.bb` re-derives them.
+>
+> **REVISION 2, 2026-08-17.** Revision 1's McLoving column was built from a benchmark runbook
+> that covered roughly half the system, and **was wrong in both directions**. Ten cells are
+> corrected below, each marked **`[WAS: …]`** rather than silently edited. Source for the
+> corrections: [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).
+
+## How to read this
+
+Every cell carries its evidence basis, because the engines are not measurable on the same
+terms and a bare checkmark hides that.
+
+| basis | means |
+|---|---|
+| **R** | **Receipted** — a differential receipt against a real Jenkins names it. |
+| **B** | **Benchmarked** — measured on the trifecta bench. For McLoving, against a hand-authored twin. |
+| **S** | **Source-cited** — read from the code, with a path. |
+| **D** | **Doc-cited** — an architecture doc in the engine's own repo. Not executed, not read in code. |
+| **U** | **Unmeasured** — believed, nobody has run it. |
+| **N/A** | The row cannot be asked of this column. |
+
+`N/A` is not "absent". **No cell is blank** — a blank reads as "no", and an absence read as a
+result is the failure this document has already made once.
+
+**No score, no total, no winner column** — the reason `adr/0001` forbids a scalar compatibility
+percentage. A total across incommensurable rows invents a comparison nobody performed.
+
+**Nothing in the McLoving column was executed by us.** Its strongest basis is `S`. Its own
+receipts are recorded where they exist and attributed to McLoving's evidence, not ours.
+
+---
+
+## 1. Jenkins evidence — the row that reorders everything
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| Differential vs real Jenkins | reference | 163 hand-written cases proven `[R]` | **1 corpus case certified equivalent** `[S]` — `crates/jenkins-differential`, Jenkins 2.568.1, 90-plugin manifest, sealed 35-file envelope **[WAS: "never compared at all" — false]** |
+| Corpus files proven | n/a | **`tier1=0` of 228** `[R]` — generated scorecard | **1 of 228** `[S]` — `JENKINS_NATIVE_DIFFERENTIAL_V1.md` |
+| Population of the evidence | n/a | hand-written, authored for this engine | a real third-party corpus job |
+| Wider differential programme | n/a | none beyond the case suite `[S]` | DIFF-002 state/policy (20 scenarios), DIFF-003 boundaries (13), MIG-006 aggregate `[S]` |
+
+**On the denominator both engines share, McLoving has proven one more corpus file than Fogell
+has.** Fogell's 163 is the larger number and the weaker claim: it is a population it wrote for
+itself. This is the single most consequential correction in revision 2.
+
+## 2. Input language
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| Accepts a Jenkinsfile at runtime | yes | yes — declarative + scripted `[R]` | **no** `[S]` — no controller crate depends on the compiler |
+| Jenkinsfile compiler exists | n/a | n/a — it IS the engine | **yes, standalone** `[S]` — Clojure/Groovy worker, `compat/jenkins-worker/`, rootless Podman **[WAS: "no front end" — overstated]** |
+| Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[D]` — AST for conversion only, "no source is evaluated" |
+| Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=169` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
+| Step mapping catalogue | plugins | 14 modelled steps `[S]` | **exactly 1 mapping** `[S]` — literal `sh` → `/bin/sh -xe -c` |
+| Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[D]` |
+| Authoring format | Groovy | Groovy | strict YAML IR `[S]` — `pipeline-ir` |
+| Corpus rejected | n/a | `tier3=59` of 228 `[R]` | `N/A` — corpus is Groovy |
+
+**The compiler is real and it is one job wide.** Admitted surface is
+`corpus-052-cinqict_jenkinsdev`; policy is `unknown_step: unsupported`.
+
+## 3. Pipeline surface
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| Sequential stages | yes | yes `[R]` | yes, `MAX_STAGES=128` `[S]` |
+| Steps per stage | unbounded | unbounded `[S]` — `FG-037` open | **1 — but enforced at EXECUTION, not admission** `[S]` **[WAS: "enforced" — imprecise]** |
+| Parallel branches | yes | yes `[R]` | not via the user surface `[S]`; **store supports join nodes and fan-out** `[S]` **[WAS: "not expressible" — true only of the front end]** |
+| `matrix` / `axes` | yes | absent `[S]` — `FG-017` | **store has `MAX_MATRIX_AXES`/`MAX_MATRIX_CELLS`**, no YAML surface `[S]` **[WAS: `N/A`]** |
+| Conditional stages | yes | yes `[R]`, `FG-175` PARTIAL | `Succeeded`/`Completed` edge conditions in the store `[S]` |
+| `script { }` blocks | yes | yes `[R]` | `N/A` |
+| DAG shape | arbitrary | follows the Jenkinsfile `[R]` | **general DAG in the store; linear chain is a COMPILER choice** `[S]` — `controller-store/src/dag.rs` **[WAS: "linear chain only"]** |
+| Step types | plugins | 14 `[S]` | **1** — `Step::Process` only `[S]`; modes `Direct\|WindowsCmd\|PowerShell` |
+
+**A latent defect worth naming.** A two-step stage passes `validate`, passes `plan`, is accepted
+at submit — and fails only when an agent claims it (`execution-spine/src/lib.rs:150`). In a
+system designed around fail-closed admission, admission is accepting something unexecutable.
+
+## 4. Platform — where revision 1 was most wrong
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| Windows execution | yes | **not supported, stated plainly** `[S]` — `FG-113` | **yes — native Windows service** `[D]` — `AGENT_RUNTIME.md:198-212`, `WINDOWS_PARITY_V1.md` WIN-001/002/003, `cmd.exe` + `powershell.exe` **[WAS: "linux only" — false]** |
+| SCM checkout | yes | `checkout`/`git` steps `[R]` | **git acquisition, pinned commits, submodule allowlists** `[S]` — `source-acquirer` **[WAS: absent]** |
+| Secrets / credentials | credentials plugin | masking `[R]`; same-UID open `[S]` — `FG-070b` | **grant/redeem broker, 15-min TTL, arg/env/file/stdin, zeroized** `[S]` — `secret-broker` **[WAS: "token length only"]** |
+| Triggers / webhooks | yes | absent `[S]` — `FG-053c` | **`scm_webhook` + timer, Postgres delivery machine** `[D]` — `TRIGGER_INGRESS_V1.md` **[WAS: `U`]** |
+| Dynamic agent provisioning | cloud plugins | absent `[S]` | **cloud provisioner, idempotency keys, fencing, quota policy** `[S]` **[WAS: absent]** — no production provider claimed `[D]` |
+| Build caching | plugins | absent `[U]` | **`CacheKind::{Dependency, Build}`, tenant-isolated** `[S]` **[WAS: absent]** |
+| Dependency resolution | plugins | absent `[U]` | **maven/npm/pypi → signed canonical plan** `[S]` — `dependency-resolver` **[WAS: absent]** |
+| Release provenance / SBOM | plugins | absent `[S]` — `FG-080` open | **signed releases, SBOM, deployment receipts** `[S]` **[WAS: absent]** |
+| External effects | plugins | absent `[U]` | signed single-action connector + shadow replayer `[S]` **[WAS: absent]** |
+
+## 5. Execution, durability, security
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| Topology | controller + agents | one cold process per build `[B]` | embedded worker **or** mTLS agents `[S]` |
+| Concurrency | executors | parallel branches in-process `[B]` | embedded: **one claim at a time** `[S]` — `bins/controller/src/main.rs:1473` |
+| Store on execution path | XML | **none** `[S]` — does not journal | PostgreSQL `[S]` |
+| fsync on accept | configurable | **no policy selectable for a real run** `[S]` | `synchronous_commit=on` ⇒ 201 implies fsynced WAL `[D]` |
+| Terminal publication | n/a | fenced in store, off the exec path `[S]` | fenced exactly-once, lease-owner only `[D]` |
+| Crash / replay | resume | `script {}` re-runs whole block `[S]` — `FG-171` | lease expiry → requeue, fence increments `[D]` |
+| Effect ledger | n/a | absent `[S]` — `FG-026` P0 | outbox + object store `[S]` |
+| Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory `[D]` |
+| Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation on restart `[D]` |
+| Tenant isolation | folders/RBAC | absent `[S]` — `FG-028` | org/project scoping + forced RLS `[D]` |
+| Sandbox | Groovy sandbox | structural — no host object in `Value` `[S]`; `FG-072` open, unproven | n/a — no interpreter |
+
+## 6. Operability
+
+| | Jenkins | Fogell | McLoving |
+|---|---|---|---|
+| REST API | yes | `Fogell.Controller.Api`, **off the execution path** `[S]` | full REST `[S]` — `controller-api/src/lib.rs:311-468` |
+| Artifact retrieval | yes | absent `[S]` — `FG-042b` | **list, metadata, content download, upload, commit** `[S]` **[WAS: "object caps" only]** |
+| Logs / graph API | yes | progressive console `[S]` — `FG-064` DONE | `builds/{id}/logs`, `builds/{id}/graph` `[S]` |
+| CLI | yes | absent `[S]` — `FG-066` | **22 subcommands** `[S]` — `bins/cli/src/lib.rs:236` **[WAS: bare name]** |
+| Web UI | yes | absent `[S]` — `FG-067` | **served at `/`, `/app.js`, `/app.css`** `[S]` **[WAS: "none" — false]** |
+| OpenAPI spec | plugin | absent `[U]` | `GET /openapi.json` `[S]` |
+| Auth | realms | absent `[U]` | OIDC start/callback, session refresh `[S]` |
+| Approvals / audit | plugins | approval lane exists `[R]` | `approvals`, `audit`, `credential-grants` routes `[S]` |
+| Health endpoint | yes | `U` | **none**; readiness via `scheduler/explain` `[D]` |
+
+## 7. Performance
+
+`luigi:~/trifecta-bench/results/trifecta-1785471289423.json`, **dated 2026-07-31**, medians ms,
+15 iterations. Unchanged in revision 2.
+
+| engine | `echo-e2e` | `parallel` 8×10 `sh` | failures |
+|---|---:|---:|---|
+| jenkins | 1657.51 | 12350.75 | 0 |
+| jenkins-perfopt | 970.43 | 3829.13 | 0 |
+| **fogell** | **321.80** | **1003.08** | 0 |
+| **mcloving** | **452.53** | `N/A` — not expressible via the front end | 15 of 15 |
+
+1. **Fogell's figures are a NO-DURABILITY configuration.** The execution path does not journal
+   and no flag selects an `FsyncPolicy` for a real run. `321.80` compares to Jenkins
+   PERFORMANCE_OPTIMIZED (`970.43`), **not** to Jenkins default or to McLoving, both of which
+   persist. "5× faster than Jenkins" compares an engine that does not persist against ones that
+   do.
+2. **McLoving's parallel result is a front-end capability fact**, not a flake and not an engine
+   limit — the store supports fan-out; the YAML surface does not expose it.
+3. **The engine benchmarked is not the shipped engine** — the `fogell-run` wrapper "exists only
+   in this clone/publish, not upstream"; ~0.11 s .NET cold-start floor.
+4. **McLoving ran a hand-authored twin**, not the same pipeline — `cases.bb` line 2.
+
+Cases are trivial by design and measure engine overhead — the only regime where three engines
+compare at all. The real-project bench (`bench/PROJECTS.tsv`, `jenkins-bench` on luigi:18085)
+has reached a Maven invocation and no further on either target.
+
+## 8. What this says for steering — REWRITTEN in revision 2
+
+**Revision 1 argued the engines are complementary: Fogell the front end, McLoving the spine.
+The corrected rows do not support that as stated.**
+
+McLoving has a Jenkins compiler, a corpus receipt Fogell lacks, Windows, SCM, secrets,
+triggers, caching, dependency resolution, release provenance, a CLI, a UI and a full API. It is
+not a spine waiting for a front end. It is a platform with a deliberately tiny front end.
+
+**Fogell's remaining advantage is one thing, and it is real: the breadth of Groovy it executes
+at runtime.** 163 receipted cases, declarative and scripted, `admitted=169` of 228 parsing,
+14 modelled steps, parallel and conditionals — against McLoving's one-job compiler and
+one-step catalogue. Nothing in McLoving's source suggests that breadth is close to being
+matched, and its compiler explicitly never evaluates Groovy.
+
+**So the question is narrower and sharper than revision 1 put it.** Not "which engine wins",
+but: *is Fogell's Groovy breadth worth more than everything McLoving has already built around
+it?* That is a judgement about where the remaining work is cheapest, and this document does
+not answer it.
+
+**What would settle it, and neither exists:**
+
+- A measurement of what it costs to widen McLoving's compiler from one job toward the corpus —
+  the mapping catalogue's `unknown_step: unsupported` policy makes that cost enumerable.
+- A measurement of what it costs to give Fogell durability, agents and tenancy — every one of
+  which is an open P0/P1 on its board and already built in McLoving.
+
+Either is worth more than any further row here.
+
+## 9. Verification
+
+- Fogell corpus figures quoted from the generated scorecard; tokens `tier1=0`, `tier3=59`,
+  `admitted=169` re-derive via `scripts/audit-board-numbers.bb`.
+- Fogell steps from `src/Fogell.Differential/WalkerRules.fs`; gaps are open board rows by id.
+- McLoving cells cite a path under `~/projects/mcloving-rel-001`; full survey and its stated
+  coverage limits in [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).
+- **The survey read ~15 crates at header depth and grepped the spine. It did not read 167k
+  lines.** Cells marked `[D]` rest on McLoving's own architecture docs, not on code.
+- Performance from one named, dated result file. Re-run `luigi:~/trifecta-bench/harness/full-run.sh`
+  to refresh; `jenkins-lab` is single-tenant.
