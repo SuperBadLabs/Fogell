@@ -2309,12 +2309,14 @@ module WalkerOrchestration =
                             // NOTHING TO REPLAY: the steps ran as the script reached them.
                             // `Outcome.Effects` is empty in hosted mode by construction.
                             //
-                            // DURABILITY still bites here and FG-171 stays open: these
-                            // steps go through the dispatcher without their own
-                            // `OnStepStarted`/`OnStepFinished`, so the whole block remains
-                            // one durability unit and a crash mid-block re-runs it. Moving
-                            // the boundary was the prerequisite for fixing that, not the
-                            // fix itself.
+                            // DURABILITY: these steps go through the dispatcher without
+                            // their own `OnStepStarted`/`OnStepFinished`, so the whole
+                            // block is ONE durability unit. A crash mid-block REFUSES
+                            // resume by name — measured for FG-171, whose row had claimed
+                            // a re-run; the FG-171 scenario in run-restart-lane.sh pins
+                            // both the refusal and that no child effect duplicates.
+                            // Per-child identity needs the journal format change FG-135
+                            // carries.
                             ()
 
             | _ -> runStepInner ctx stage cwd step deadline

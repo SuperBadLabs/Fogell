@@ -183,7 +183,14 @@ module Resume =
     /// body to reach the prompt would re-run those too, which is exactly the
     /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
     /// `input` files use the wrapped shape, so the limit is stated on the board
-    /// rather than buried here.
+    /// rather than buried here. `script { }` IS this limit too — the block is
+    /// one unit, a crash between its children refuses by name, and operator
+    /// attestation covers the WHOLE block — asserted by the FG-171 scenario in
+    /// `scripts/run-restart-lane.sh`, written because the FG-171 row claimed the
+    /// opposite failure: the lane proves no child ever duplicates, and that a
+    /// child the crash never reached does not run on a reconciled resume.
+    /// Fine-grained resume inside any block shares the journal redesign FG-135
+    /// carries.
     ///
     /// That a bare top-level `input` asks exactly ONE prompt — occurrence 1 — is
     /// load-bearing beyond this function: this is the only place a resumed

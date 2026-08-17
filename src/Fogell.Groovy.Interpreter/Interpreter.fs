@@ -27,8 +27,10 @@ type Effect =
 ///     REFUSES it, because Fogell's overlay does not yet cross the script boundary;
 ///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
 ///     host returns null and value uses stay refused;
-///   - per-step journaling is POSSIBLE here — FG-171 is open; the hooks are keyed
-///     `stage -> stepIndex` and a nested identity needs a journal format change.
+///   - per-step journaling is POSSIBLE here — the hooks are keyed
+///     `stage -> stepIndex` and a nested identity needs the journal format change
+///     FG-135 carries (FG-171 closed by measuring that a crash mid-block refuses
+///     rather than re-runs).
 /// The earlier wording claimed all four as delivered.
 ///
 /// [RunBody] is present when the call had a trailing block; invoking it evaluates that
