@@ -629,8 +629,15 @@ let hostedSteps =
 
                                let saved = overlay.Value
                                overlay.Value <- pairs @ saved
-                               runBody |> Option.iter (fun run -> run ())
-                               overlay.Value <- saved
+
+                               // restore in a FINALLY, as the walker does — a body
+                               // fault must leave CurrentEnv reporting the enclosing
+                               // overlay, or the FG-202 abnormal-exit read below
+                               // would be asserted against a harness bug
+                               try
+                                   runBody |> Option.iter (fun run -> run ())
+                               finally
+                                   overlay.Value <- saved
                            | "sh", [ VStr rendered ] -> log.Add rendered
                            | _ -> runBody |> Option.iter (fun run -> run ()))
 
@@ -642,13 +649,26 @@ let hostedSteps =
               let outcome =
                   Interpreter.runHosted host Budget.defaults (set [ "sh"; "dir"; "withEnv" ]) Env.empty
                       (parseOk
-                          "dir('sub') {\n  withEnv(['A=one']) { sh \"a:${env.A}\" }\n  withEnv(['TARGET=prod']) { sh \"t:${env.TARGET}\" }\n}")
+                          "dir('sub') {\n  withEnv(['A=one']) { sh \"a:${env.A}\" }\n  sh \"after:${env.A}\"\n  try { withEnv(['B=two']) { def x = 1 / 0 } } catch (e) { }\n  sh \"catch:${env.B}\"\n  withEnv(['TARGET=prod']) { sh \"t:${env.TARGET}\" }\n}")
 
               Expect.isNone outcome.Fault "the script ran"
 
               // Both SIBLING wrappers under the outer `dir` must see their own
               // binding: under the per-invocation check both interpolate null.
-              Expect.equal (List.ofSeq log) [ "a:one"; "t:prod" ] "each nested wrapper reads its own refresh"
+              // The `catch:` read is the ABNORMAL exit — the faulting body leaves
+              // `withEnv` by exception, a script-level catch swallows it, and the
+              // read after it must still see the restored environment: the
+              // verifier's construction against the first (return-only) spelling
+              // of the FG-202 exit refresh.
+              // And the read BETWEEN them must see the RESTORED outer environment,
+              // not the first wrapper's retained snapshot — FG-202, the shape the
+              // verifier constructed against the FG-201 fix (probe
+              // `post-exit-env-read`: jenkins after:null, fogell read after:one
+              // until the exit re-refresh landed).
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "a:one"; "after:null"; "catch:null"; "t:prod" ]
+                  "entry refreshes inside each wrapper; exit restores on return AND on fault"
           }
         ]
 

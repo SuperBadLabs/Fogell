@@ -54,6 +54,11 @@ type PerformStep =
       /// host points at the wrapper's context for the body's duration and restores it
       /// afterwards, so only the host can say what the environment is at the moment the
       /// body runs.
+      ///
+      /// MUST NOT THROW. FG-202's exit re-refresh calls this inside a FINALLY while a
+      /// body fault may be propagating, and a throw there would REPLACE the body's
+      /// exception with its own — misreporting the failure. The production host is pure
+      /// list/map folding over an always-populated ref; keep any future host that way.
       CurrentEnv: unit -> (string * string) list
       /// FG-184. Does this step take a BLOCK? Asked before a final closure argument is
       /// normalised into a hosted body.
@@ -667,7 +672,33 @@ module Interpreter =
                     // whatever context it establishes — the batch model evaluated it
                     // immediately and flattened it, which is how `dir('x') { … }` lost its
                     // directory.
-                    host.Perform s positionalArgs namedLazy.Value runBody
+                    // FG-202. A block-taking step has POPPED whatever overlay it pushed by
+                    // the time Perform finishes, and a hosted `env` cell visible at THIS
+                    // call site may still carry the body's last entry-refresh — so a read
+                    // AFTER the block held the inner snapshot where Jenkins restores the
+                    // outer (receipt `post-exit-env-read`: jenkins after:null — the shape
+                    // the FG-201 verifier constructed, then measured). Re-refresh from the
+                    // host, which reports the enclosing overlay again. IN A FINALLY,
+                    // because a fault raised inside the body — thrown, divide-by-zero —
+                    // leaves Perform by exception, can be caught by a script-level
+                    // try/catch, and execution then CONTINUES with the stale cell; the
+                    // first version refreshed after a plain return only, and the verifier
+                    // constructed exactly that escape. The walker restores its overlay in
+                    // its own finally before the exception reaches here, so CurrentEnv()
+                    // is already the enclosing scope's on both exits. Script-owned
+                    // bindings stay untouched for the FG-201 reason: their cells never
+                    // enter JenkinsEnvCells. Refreshing even when the host declined to
+                    // run the body only moves the cell TOWARD the live environment,
+                    // which is where every hosted read should land.
+                    try
+                        host.Perform s positionalArgs namedLazy.Value runBody
+                    finally
+                        if runBody.IsSome then
+                            match Map.tryFind "env" env.Vars with
+                            | Some cell when st.JenkinsEnvCells.Contains cell ->
+                                let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                cell.Value <- VMap(Map.ofList current)
+                            | _ -> ()
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     //
