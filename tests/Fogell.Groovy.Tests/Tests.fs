@@ -1015,6 +1015,59 @@ let fg180Grammar =
               | other -> failtestf "merged into a declaration: %A" other
           } ]
 
+/// FG-190 + FG-192. Break-in-trivia carried out of `ws` as parser state, and
+/// bracket-group depth beside it. The first test pins FG-190's silent
+/// swallow; the rest hold both directions of the depth rule.
+let triviaState =
+    let ast src = parseOk src
+
+    testList
+        "FG-190/FG-192 trivia state"
+        [ test "a comment whose text contains /* cannot hide the break (FG-190)" {
+              // The backward scan paired the inner /* and swallowed the second
+              // statement into an index expression — two statements became one
+              // and neither ran. Forward-carried state cannot mis-pair.
+              match ast "def xs = [1, 2]\n/* first line\n text /* marker */ [0].each { echo 'x' }" with
+              | [ SDef("xs", Some(EList _)); SExpr(ECall(MethodCall(EList _, "each"), _, _)) ] -> ()
+              | other -> failtestf "swallowed: %A" other
+          }
+
+          test "an ordinary same-line comment still permits the index" {
+              match ast "def v = xs /* c */ [0]" with
+              | [ SDef("v", Some(EIndex _)) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "a grouped index continues across a line break (FG-192)" {
+              match ast "def v = (xs\n[0])" with
+              | [ SDef("v", Some(EIndex(EVar "xs", EInt 0L))) ] -> ()
+              | other -> failtestf "falsely refused or wrong: %A" other
+          }
+
+          test "a call argument's index continues across a line break" {
+              match ast "f(xs\n[0])" with
+              | [ SExpr(ECall(FreeCall "f", [ APos(EIndex _) ], None)) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "statement level still splits — the FG-187 pin holds" {
+              match ast "def a = false\n[1].each { echo 'x' }" with
+              | [ SDef("a", Some(EBool false)); SExpr(ECall(MethodCall(EList _, "each"), _, _)) ] -> ()
+              | other -> failtestf "swallowed at statement level: %A" other
+          }
+
+          test "a closure body is statement context even inside a call's parens" {
+              // Depth resets inside `{ }`: the two lines are two statements of
+              // the closure, not one index expression, though `f(`'s group is
+              // still open around it.
+              match ast "f({ def x = false\n[1].each { echo 'y' } })" with
+              | [ SExpr(ECall(FreeCall "f", [ APos(EClosure c) ], None)) ] ->
+                  match c.Body with
+                  | [ SDef("x", Some(EBool false)); SExpr(ECall(MethodCall(EList _, "each"), _, _)) ] -> ()
+                  | other -> failtestf "closure body swallowed: %A" other
+              | other -> failtestf "wrong AST: %A" other
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg180Grammar; triviaState; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])

@@ -14,84 +14,129 @@ open Fogell.Admission
 /// `=~`/`==~`, typed closure params, `final`, `x++`, C-style `for`, ranges,
 /// `switch`, `instanceof`, spread-dot, multi-assign.
 
-type private P<'a> = Parser<'a, unit>
+/// FG-190 + FG-192. The two facts a token-level guard kept trying to
+/// reconstruct after the fact, now carried FORWARD as parser state:
+///
+///   - `BreakInTrivia`: did the most recent trivia run cross a line break —
+///     including breaks inside comments? A comment's opener is a
+///     forward-lexing fact; two backward-scanning versions of the old guard
+///     were wrong in exactly that way (FG-187's original, then FG-190's
+///     mis-pairing: a block comment whose own TEXT contains `/*` paired the
+///     wrong opener and swallowed the next statement into an index
+///     expression). The scanner that CONSUMES the trivia is the only place
+///     that knows; `ws` records it as it goes.
+///   - `GroupDepth`: how many `(`/`[` groups are open. Groovy continues an
+///     expression across a line break while a bracket is open, so the
+///     statement-level index guard is the WRONG question inside a group —
+///     `(xs\n[0])` is an ordinary index there and was falsely refused
+///     (FG-192). Closure and function bodies RESET the depth: statements
+///     inside `{ }` are newline-sensitive again, whatever surrounds them.
+type LexState =
+    { BreakInTrivia: bool
+      GroupDepth: int }
+
+type private P<'a> = Parser<'a, LexState>
 
 let private lineComment: P<unit> = skipString "//" >>. skipRestOfLine false
 let private blockComment: P<unit> = skipString "/*" >>. skipCharsTillString "*/" true System.Int32.MaxValue
-let private ws: P<unit> = skipMany (choice [ skipMany1 (anyOf " \t\r\n"); lineComment; blockComment ])
-let private lexeme (p: P<'a>) = p .>> ws
-let private symbol s : P<unit> = lexeme (skipString s)
 
-/// FG-187. Succeeds only when NO line break separates this position from the last thing on
-/// the line before it — counting breaks INSIDE comments, which is where the first version
-/// of this went wrong.
-///
-/// WHY IT LOOKS BACKWARDS. `ws` skips breaks and comments, and a token's trailing `ws` runs
-/// before the next token is attempted, so by the time a postfix `[` is tried the trivia
-/// before it is consumed and unrecorded. It exists only in the stream behind us.
-///
-/// THE FIRST VERSION WALKED SPACES AND TABS ONLY, and recorded that a comment would defeat
-/// it as an acceptable narrowing that "errs toward the old behaviour". Wrong about the
-/// direction, and that is the part worth keeping: here the old behaviour is a SILENT FALSE
-/// SUCCESS. `def xs = [1, 2]` then `/* c */ [0].each { … }` swallowed the second statement
-/// into an index expression, ran neither it nor its block, and reported success. A
-/// limitation that quietly drops work is not a narrower fix; it is the defect with a
-/// smaller footprint. Raised by the pre-push verifier on PR #54.
-///
-/// BLOCK COMMENTS ARE THE ONLY HARD CASE: a line comment cannot sit between a break and a
-/// `[` without its own terminating break, so meeting one already means a break.
-///
-/// AND ORDINARY ONES ARE ALL IT HANDLES — FG-190. The scan pairs `*/` with the nearest
-/// `/*` to its LEFT, and Groovy block comments do not nest, so a comment whose own text
-/// contains `/*` pairs the wrong opener and this returns success. An opener is a
-/// FORWARD-lexing fact and no right-to-left scan recovers it; the real fix carries the
-/// break out of `ws` itself.
-let private notAfterLineBreak: P<unit> =
+/// Skips spaces, breaks and both comment forms, recording whether a break was
+/// crossed — anywhere in the run, comment interiors included. The flag is
+/// written ONLY when the run consumed something: `ws` runs back to back (a
+/// token's trailing trivia, then the next parser's leading `ws`), and a
+/// zero-width second run must not erase what the first one learned.
+let private ws: P<unit> =
     fun stream ->
-        let here = stream.Index
-
-        let charAt (i: int64) =
-            stream.Seek i
-            stream.Peek()
-
-        let mutable i = here - 1L
+        let start = stream.Index
         let mutable sawBreak = false
         let mutable scanning = true
+        let mutable failed = false
 
-        while scanning && i >= 0L do
-            let c = charAt i
+        while scanning && not failed do
+            let c = stream.Peek()
 
-            if c = '\n' || c = '\r' then
+            if c = ' ' || c = '\t' then
+                stream.Skip()
+            elif c = '\n' || c = '\r' then
                 sawBreak <- true
-                scanning <- false
-            elif c = ' ' || c = '\t' then
-                i <- i - 1L
-            elif c = '/' && i >= 1L && charAt (i - 1L) = '*' then
-                // just past a `*/`: step back to its `/*`, noticing any break inside
-                let mutable j = i - 2L
+                stream.Skip()
+            elif c = '/' && stream.Peek(1) = '/' then
+                stream.Skip(2)
+
+                while not (stream.IsEndOfStream) && stream.Peek() <> '\n' && stream.Peek() <> '\r' do
+                    stream.Skip()
+            elif c = '/' && stream.Peek(1) = '*' then
+                stream.Skip(2)
                 let mutable closed = false
 
-                while not closed && j >= 1L do
-                    let d = charAt j
+                while not closed && not stream.IsEndOfStream do
+                    let d = stream.Peek()
 
-                    if d = '\n' || d = '\r' then sawBreak <- true
-
-                    if d = '*' && charAt (j - 1L) = '/' then
+                    if d = '\n' || d = '\r' then
+                        sawBreak <- true
+                        stream.Skip()
+                    elif d = '*' && stream.Peek(1) = '/' then
+                        stream.Skip(2)
                         closed <- true
-                        j <- j - 2L
                     else
-                        j <- j - 1L
+                        stream.Skip()
 
-                if sawBreak || not closed then scanning <- false else i <- j
+                // an unterminated block comment fails the parse, as the old
+                // skipCharsTillString-based trivia did
+                if not closed then failed <- true
             else
                 scanning <- false
 
-        stream.Seek here
-
-        if sawBreak then
-            Reply(Error, expected "no line break before '['")
+        if failed then
+            Reply(Error, expected "a terminated block comment")
         else
+            if stream.Index <> start then
+                stream.UserState <- { stream.UserState with BreakInTrivia = sawBreak }
+
             Reply(())
+
+let private lexeme (p: P<'a>) = p .>> ws
+let private symbol s : P<unit> = lexeme (skipString s)
+
+/// FG-192. Runs `p` one bracket group deeper; the index guard reads the depth.
+let private inGroup (p: P<'a>) : P<'a> =
+    (updateUserState (fun s -> { s with GroupDepth = s.GroupDepth + 1 }) >>. p)
+    .>> updateUserState (fun s -> { s with GroupDepth = s.GroupDepth - 1 })
+
+/// A closure or function BODY is statement context whatever surrounds it:
+/// `f({ x\n[0] })` is two statements inside the closure even though the call's
+/// parens are open. Depth saved and restored around the body.
+let private atStatementDepth (p: P<'a>) : P<'a> =
+    getUserState
+    >>= fun saved ->
+            (updateUserState (fun s -> { s with GroupDepth = 0 }) >>. p)
+            .>> updateUserState (fun s -> { s with GroupDepth = saved.GroupDepth })
+
+/// FG-187/FG-190. Succeeds only when the most recent trivia run crossed no
+/// line break. Two backward-scanning versions of this guard were wrong the
+/// same way — a comment's opener is a forward-lexing fact no right-to-left
+/// scan recovers (the mis-pair: a block comment whose own text contains `/*`)
+/// — so the fact is now RECORDED by `ws` as it consumes, and this only reads
+/// it. Statement-level uses (the command form's first argument, a `return`'s
+/// value) stay strict at any depth.
+let private notAfterLineBreak: P<unit> =
+    getUserState
+    >>= fun s ->
+            if s.BreakInTrivia then
+                fail "no line break before the token"
+            else
+                preturn ()
+
+/// FG-192. The INDEX guard's spelling: strict at statement level, RELAXED
+/// inside an open `(`/`[` group, where Groovy continues the expression across
+/// the break and refusing it was a false refusal of `(xs\n[0])`.
+let private noBreakBeforeIndex: P<unit> =
+    getUserState
+    >>= fun s ->
+            if s.BreakInTrivia && s.GroupDepth = 0 then
+                fail "no line break before '['"
+            else
+                preturn ()
 
 
 let private isIdentStart c = isLetter c || c = '_'
@@ -143,13 +188,13 @@ let private slashy: P<Expr> =
                 manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
             |>> EStr))
 
-let private exprRef, private exprImpl = createParserForwardedToRef<Expr, unit> ()
-let private stmtRef, private stmtImpl = createParserForwardedToRef<Stmt, unit> ()
+let private exprRef, private exprImpl = createParserForwardedToRef<Expr, LexState> ()
+let private stmtRef, private stmtImpl = createParserForwardedToRef<Stmt, LexState> ()
 
 /// FG-180. An expression position that ALSO admits a command-form call —
 /// forwarded because GStrings need it before the call grammar exists.
 let private exprOrCommandRef, private exprOrCommandImpl =
-    createParserForwardedToRef<Expr, unit> ()
+    createParserForwardedToRef<Expr, LexState> ()
 
 /// GString: literal runs plus `${…}` and `$ref` interpolations, kept apart so
 /// the interpreter — not the lexer — decides what an interpolation means.
@@ -193,10 +238,10 @@ let private closureParams: P<string list> =
     <|> attempt (sepBy1 typedParam (symbol ",") .>> symbol "->")
 
 let private closure: P<Closure> =
-    between (symbol "{") (symbol "}") (
+    between (symbol "{") (symbol "}") (atStatementDepth (
         ws >>. (opt (attempt closureParams) |>> Option.defaultValue [])
         .>>. many (attempt stmtRef)
-        |>> fun (ps, body) -> { Params = ps; Body = body })
+        |>> fun (ps, body) -> { Params = ps; Body = body }))
 
 let private mapKey: P<string> =
     let dollarKey = attempt (skipChar '$' >>. rawIdent |>> fun n -> "$" + n)
@@ -207,11 +252,11 @@ let private mapKey: P<string> =
     lexeme (dollarKey <|> attempt rawIdent <|> strKey) .>> symbol ":"
 
 let private listOrMap: P<Expr> =
-    between (symbol "[") (symbol "]") (
+    between (symbol "[") (symbol "]") (inGroup (
         choice
             [ attempt (symbol ":" >>% EMap [])
               attempt (sepEndBy1 (attempt (mapKey .>>. exprRef)) (symbol ",") |>> EMap)
-              (sepEndBy exprRef (symbol ",") |>> EList) ])
+              (sepEndBy exprRef (symbol ",") |>> EList) ]))
 
 let private arg: P<Arg> =
     // FG-180. A named argument's NAME may be a string literal — `parallel
@@ -253,7 +298,7 @@ let private noDuplicateNames (args: Arg list) : P<Arg list> =
         | None -> preturn args
 
 let private argsInParens: P<Arg list> =
-    between (symbol "(") (symbol ")") (sepEndBy arg (symbol ",")) >>= noDuplicateNames
+    between (symbol "(") (symbol ")") (inGroup (sepEndBy arg (symbol ","))) >>= noDuplicateNames
 
 /// Command form: `sh 'make'`, `echo "x"`, `stash name: 's', includes: '*'`.
 /// Only admitted when what follows cannot start a binary operator, so
@@ -302,7 +347,7 @@ let private primary: P<Expr> =
             [ attempt literal
               attempt listOrMap
               attempt (closure |>> EClosure)
-              attempt (between (symbol "(") (symbol ")") exprRef)
+              attempt (between (symbol "(") (symbol ")") (inGroup exprRef))
               attempt slashy
               // A constructor IS a call, so it must reach the sandbox's call gate.
               // Parsing it as a variable named "new X" made `new File(...)`
@@ -342,7 +387,7 @@ let private postfixChain (start: Expr) : P<Expr> =
               // This masked FG-179 for months: every probe of closure capture was written
               // across newlines, so the confound sat in the evidence for both sides of that
               // argument and two observers agreed on a wrong cause.
-              attempt (notAfterLineBreak >>. between (symbol "[") (symbol "]") exprRef |>> fun i -> EIndex(e, i))
+              attempt (noBreakBeforeIndex >>. between (symbol "[") (symbol "]") (inGroup exprRef) |>> fun i -> EIndex(e, i))
               attempt (argsInParens .>>. opt (attempt closure)
                        |>> fun (args, t) ->
                                match e with
@@ -358,7 +403,7 @@ let private postfixChain (start: Expr) : P<Expr> =
 
     loop start
 
-let private unaryRef, private unaryImpl = createParserForwardedToRef<Expr, unit> ()
+let private unaryRef, private unaryImpl = createParserForwardedToRef<Expr, LexState> ()
 
 unaryImpl.Value <-
     ws
@@ -428,7 +473,8 @@ exprImpl.Value <-
 
 // --- statements ------------------------------------------------------------
 
-let private block: P<Stmt list> = between (symbol "{") (symbol "}") (ws >>. many (attempt stmtRef))
+let private block: P<Stmt list> =
+    between (symbol "{") (symbol "}") (atStatementDepth (ws >>. many (attempt stmtRef)))
 let private blockOrSingle: P<Stmt list> = attempt block <|> (stmtRef |>> List.singleton)
 
 let private annotationStmt: P<Stmt> =
@@ -520,7 +566,7 @@ let private typedVar: P<Stmt> =
 
 let private ifStmt: P<Stmt> =
     attempt (
-        keyword "if" >>. between (symbol "(") (symbol ")") exprRef
+        keyword "if" >>. between (symbol "(") (symbol ")") (inGroup exprRef)
         .>>. blockOrSingle
         .>>. opt (attempt (keyword "else" >>. blockOrSingle))
         |>> fun ((c, t), e) -> SIf(c, t, defaultArg e []))
@@ -551,7 +597,7 @@ let private forStmt: P<Stmt> =
     keyword "for" >>. (forIn <|> forC)
 
 let private whileStmt: P<Stmt> =
-    attempt (keyword "while" >>. between (symbol "(") (symbol ")") exprRef .>>. blockOrSingle |>> SWhile)
+    attempt (keyword "while" >>. between (symbol "(") (symbol ")") (inGroup exprRef) .>>. blockOrSingle |>> SWhile)
 
 let private tryStmt: P<Stmt> =
     attempt (
@@ -603,7 +649,7 @@ let private tryStmt: P<Stmt> =
 /// rather than by the language.
 let private switchStmt: P<Stmt> =
     attempt (
-        keyword "switch" >>. between (symbol "(") (symbol ")") exprRef
+        keyword "switch" >>. between (symbol "(") (symbol ")") (inGroup exprRef)
         .>>. between (symbol "{") (symbol "}") (
             ws
             >>. many (
@@ -685,7 +731,7 @@ stmtImpl.Value <-
 
 /// A `#!` shebang is legal Groovy but only on the first line.
 let private shebang: P<unit> =
-    let atStart (stream: CharStream<unit>) =
+    let atStart (stream: CharStream<LexState>) =
         if stream.Index = 0L then Reply(()) else Reply(Error, expected "start of script")
 
     attempt (atStart >>. skipString "#!" >>. skipRestOfLine true)
@@ -696,7 +742,7 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Script, Admission
     match Limits.precheck limits source with
     | Result.Error e -> Result.Error e
     | Result.Ok() ->
-        match runParserOnString program () "script" source with
+        match runParserOnString program { BreakInTrivia = false; GroupDepth = 0 } "script" source with
         | ParserResult.Success(s, _, _) -> Result.Ok s
         | ParserResult.Failure(msg, err, _) ->
             let firstLine =

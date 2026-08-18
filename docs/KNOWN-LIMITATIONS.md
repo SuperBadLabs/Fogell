@@ -20,55 +20,50 @@ Files: **27**
 - `Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile`
 - …and 24 more (see the ledger)
 
-## Expecting: '['
+## Expecting: '}'
 
-Files: **8**
+Files: **7**
 
 - `camiloribeiro_cdeasy.Jenkinsfile`
+- `cloudogu_ces-build-lib.Jenkinsfile`
+- `j8kin_habr-jenkinsfile.Jenkinsfile`
+- …and 4 more (see the ledger)
+
+## Expecting: ')'
+
+Files: **5**
+
 - `cloudogu_continuous-delivery-slides.Jenkinsfile`
 - `cloudogu_reveal.js-docker-example.Jenkinsfile`
-- …and 5 more (see the ledger)
+- `gdemengin_pipeline-logparser.Jenkinsfile`
+- …and 2 more (see the ledger)
 
-## reserved
+## script block did not parse as Groovy: malformed_syntax at 1:151: Expecting: '}'
 
-Files: **2**
+Files: **1**
 
-- `cloudogu_ces-build-lib.Jenkinsfile`
-- `merken_netCoreBuild.Jenkinsfile`
+- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
 
-## Expecting: any char in ‘ ’, '/*' or '//'
-
-Files: **2**
-
-- `jenkinsci_jenkins.Jenkinsfile`
-- `judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 9:47: Expecting: '['
+## script block did not parse as Groovy: malformed_syntax at 1:347: , 'true', 'try', 'while', '{' or '||'
 
 Files: **1**
 
 - `Terradue_DotNetOpenSearchClient.Jenkinsfile`
+
+## 'try', 'while' or '{'
+
+Files: **1**
+
+- `jenkinsci_jenkinsfile-runner.Jenkinsfile`
+
+## 'true', 'try', 'while' or '{'
+
+Files: **1**
+
+- `mjuuso_provisioning_example.Jenkinsfile`
 
 ## an opaque section
 
 Files: **1**
 
 - `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
-
-## 'switch', 'throw', 'true', 'try', 'while' or '{'
-
-Files: **1**
-
-- `jenkinsci_jenkinsfile-runner.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 5:40: Expecting: any char in ‘ ’, '/*' or '//'
-
-Files: **1**
-
-- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
-
-## 'return', 'switch', 'throw', 'true', 'try', 'while' or '{'
-
-Files: **1**
-
-- `mjuuso_provisioning_example.Jenkinsfile`
