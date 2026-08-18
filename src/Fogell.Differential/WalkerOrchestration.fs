@@ -61,6 +61,11 @@ type PersistenceHooks =
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
       OnStageCommitted: string -> unit
+      /// FG-114. stage -> stepIndex -> the ERROR-shaped diagnostic a FAILED (or
+      /// aborted) step emitted — the REASON, made durable beside the status,
+      /// because `failure` alone sent every reader to a console that no longer
+      /// says why. Called after OnStepFinished, only when a reason was captured.
+      OnStepReason: string -> int -> string -> unit
       /// FG-135. stage -> retry attempt N (>= 2) is starting. Journaled (and made
       /// durable) BEFORE the attempt's first step, so a resume can tell a failed
       /// prior attempt's records from the live attempt's. Implementations also
@@ -537,6 +542,15 @@ module WalkerOrchestration =
                 // audit caught the gap, which is the one thing a refactor most
                 // easily loses.
                 let attemptStatus = ref BuildStatus.Success
+
+                // FG-114. Freshened THROUGH the shared ref, not replaced like
+                // `Failed`: the dispatch loop journals whatever this ref holds at
+                // the step's final finish, so a write here must stay visible
+                // there. Without it, a superseded attempt's diagnostic (a shell
+                // failure the retry absorbed) journals as the reason for a final
+                // disposition it does not explain — e.g. a human rejection on the
+                // last attempt. Only the final attempt's own capture may survive.
+                ctx.LastDiagnostic.Value <- None
 
                 let attemptCtx =
                     { ctx with
@@ -1680,6 +1694,9 @@ module WalkerOrchestration =
 
                 match approver, unsupportedOption with
                 | Some _, Some(option, why) ->
+                    // FG-114: the DISTINCT per-option reason scenario O could
+                    // never assert, captured for the durable record
+                    ctx.LastDiagnostic.Value <- Some $"input `{option}` {why}"
                     emit $"ERROR: input `{option}` {why}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
@@ -1687,6 +1704,10 @@ module WalkerOrchestration =
 
                 match approver, deadline with
                 | None, None ->
+                    // FG-114: the reason scenario E could never assert, captured
+                    ctx.LastDiagnostic.Value <-
+                        Some "input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
+
                     emit "ERROR: input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
@@ -2132,6 +2153,8 @@ module WalkerOrchestration =
                     // argument and parse refusals below are unchanged. Raised in review
                     // on PR #53.
                     let atCtx = fst hostAt.Value
+                    // FG-114: the refusal's reason, captured for the durable record
+                    atCtx.LastDiagnostic.Value <- Some why
                     emit $"ERROR: {why}"
                     atCtx.Failed.Value <- true
                     atCtx.Sink BuildStatus.Failure
@@ -2486,6 +2509,10 @@ module WalkerOrchestration =
                                             fun st ->
                                                 observed.Value <- BuildStatus.worstOf observed.Value st
                                                 ctx.Sink st
+                                        // FG-114: FRESH per step, so a step whose
+                                        // own path emits nothing cannot inherit
+                                        // its predecessor's reason
+                                        LastDiagnostic = ref None
                                         // FG-046b: the key this step's durable
                                         // records are written under, so a step
                                         // that needs to consult them (`input`)
@@ -2495,7 +2522,14 @@ module WalkerOrchestration =
                                         DurabilityKey = Some(stage.Name, i) }
 
                                 runStepDispatch observing cwd stage step deadline
-                                hooks.OnStepFinished stage.Name i observed.Value)
+                                hooks.OnStepFinished stage.Name i observed.Value
+
+                                // FG-114: the reason travels only beside a failed
+                                // or aborted finish — a green step's diagnostics
+                                // are narration, not explanation
+                                if observed.Value = BuildStatus.Failure || observed.Value = BuildStatus.Aborted then
+                                    observing.LastDiagnostic.Value
+                                    |> Option.iter (fun r -> hooks.OnStepReason stage.Name i r))
 
 
 
@@ -2567,6 +2601,7 @@ module WalkerOrchestration =
                                   // the branches, so an `input` inside two branches
                                   // would answer to one shared key.
                                   DurabilityKey = None
+                                  LastDiagnostic = ref None
                                   // INHERITED, unlike the key: a human declining a
                                   // gate in any branch is a rejection of the
                                   // enclosing attempt, and an enclosing `retry`

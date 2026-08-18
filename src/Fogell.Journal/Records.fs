@@ -117,6 +117,18 @@ type Record =
     /// can re-judge eligibility itself — FG-046c, which starts with a
     /// measurement.
     | InputPromptCancellable of stage: string * stepIndex: int * occurrence: int
+    /// FG-114. WHY a step finished the way it did — the ERROR-shaped diagnostic
+    /// the walker emitted, made durable beside the status it explains. Written
+    /// only for failed or aborted steps, and only when one of the CAPTURE SITES
+    /// held the text: step-result classification, the script-arm fail helper,
+    /// and the two input option refusals. A refusal raised elsewhere (a
+    /// credential binding, a git step, a `when` condition) still journals its
+    /// disposition with no reason — tighten a lane on one of those and the
+    /// assertion fails until its site captures too. A durable build record
+    /// whose whole explanation is the word `failure` sent every reader to a
+    /// console that no longer says why, and four approval-lane scenarios could
+    /// prove a refusal happened without being able to prove WHICH rule refused.
+    | StepReason of stage: string * stepIndex: int * reason: string
     /// FG-135. Retry attempt N of a JOURNALED retried stage is starting. The
     /// records BEFORE this marker for that stage belong to superseded attempts:
     /// a failed attempt's `step-finished failure` must not read as durably
@@ -164,6 +176,7 @@ module Record =
         | InputDecisionVoided(stage, i, occurrence) -> $"input-decision-voided\t{oneLine stage}\t{i}\t{occurrence}"
         | InputPromptCancellable(stage, i, occurrence) -> $"input-prompt-cancellable\t{oneLine stage}\t{i}\t{occurrence}"
         | RetryAttemptStarted(stage, attempt) -> $"retry-attempt\t{oneLine stage}\t{attempt}"
+        | StepReason(stage, i, reason) -> $"step-reason\t{oneLine stage}\t{i}\t{oneLine reason}"
         | InputAnswerProvisional(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
             $"input-answer-provisional\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
@@ -186,6 +199,10 @@ module Record =
         | [| "input-decision-voided"; stage; i; occurrence |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with
             | (true, idx), (true, occ) -> Some(InputDecisionVoided(stage, idx, occ))
+            | _ -> None
+        | [| "step-reason"; stage; i; reason |] ->
+            match System.Int32.TryParse i with
+            | true, idx -> Some(StepReason(stage, idx, reason))
             | _ -> None
         | [| "retry-attempt"; stage; attempt |] ->
             match System.Int32.TryParse attempt with
