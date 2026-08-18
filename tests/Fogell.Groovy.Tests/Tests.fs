@@ -725,7 +725,7 @@ let callableResolution =
           test "a named-argument group binds as a Map, FIRST" {
               let env = helperEnv "def one(m) { return m }"
               match (runWith env "return one(foo: 'bar')").Returned with
-              | Some(VMap m) -> Expect.equal (Map.tryFind "foo" m) (Some(VStr "bar")) "the group arrived as a Map"
+              | Some(VMap m) -> Expect.equal (Map.tryFind "foo" m.Value) (Some(VStr "bar")) "the group arrived as a Map"
               | other -> failtestf "expected a Map return, got %A" other
           }
 
@@ -776,6 +776,61 @@ let callableResolution =
               Expect.equal o.Returned (Some(VStr "one")) "arity picks among hoisted candidates"
           } ]
 
+/// FG-193: a Groovy map is a REFERENCE object. Aliases share the ref; the Jenkins
+/// environment is recognised by the MAP's identity, however many rebinds away.
+let mapIdentity =
+    testList
+        "FG-193 map reference identity"
+        [ test "a mutation through an alias is visible to every name" {
+              // measured: jenkins=alias:x fogell=alias:null before the ref
+              let o = Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk "def local = [:]\ndef other = local\nother.FOO = 'x'\nreturn local.FOO")
+              Expect.equal o.Returned (Some(VStr "x")) "the write reached the shared map"
+          }
+
+          // the statement-level index spelling (`n['b'] = …`) is FG-015b's open
+          // parse gap and cannot be covered here until it parses
+
+          test "a non-map receiver's property write faults CATCHABLY in strict mode" {
+              // measured: Jenkins throws and a script-level catch intercepts it —
+              // the fault class matters as much as the fault (the first spelling
+              // raised an uncatchable refusal and diverged where parity had held)
+              let uncaught = Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk "def s = 'str'\ns.FOO = 'x'\nreturn 'SURVIVED'")
+
+              match uncaught.Fault with
+              | Some(UnknownProperty k) -> Expect.equal k "FOO" "names the property"
+              | other -> failtestf "expected UnknownProperty, got %A" other
+
+              let caught =
+                  Interpreter.runStrictVars Budget.defaults steps Env.empty
+                      (parseOk "def s = 'str'\ntry { s.FOO = 'x' } catch (Exception e) { }\nreturn 'SURVIVED'")
+
+              Expect.isNone caught.Fault "the catch intercepted it"
+              Expect.equal caught.Returned (Some(VStr "SURVIVED")) "execution continued, as on Jenkins"
+          }
+
+          test "the Jenkins env is recognised by VALUE identity through a rebind" {
+              // measured: the aliased write reached Jenkins' shell and silently
+              // vanished here — it must route to the host exactly as the direct
+              // spelling does, however many rebinds separate it
+              let sets = ResizeArray<string * string>()
+
+              let host =
+                  { Perform = fun _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
+                    SetEnv = fun k v -> sets.Add(k, v)
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let seeded =
+                  { Env.ofValues (Map.ofList [ "x", VNull ]) with Vars = Map.ofList [ "env", ref (VMap(ref Map.empty)) ] }
+
+              let o =
+                  Interpreter.runHosted host Budget.defaults steps seeded
+                      (parseOk "def saved = env\ndef env = saved\nenv.FOO = 'bar'\nreturn 'DONE'")
+
+              Expect.isNone o.Fault "ran"
+              Expect.equal (List.ofSeq sets) [ "FOO", "bar" ] "the aliased write reached the host"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity ])

@@ -11,7 +11,11 @@ type Value =
     | VInt of int64
     | VStr of string
     | VList of Value list
-    | VMap of Map<string, Value>
+    /// FG-193. A Groovy map is a REFERENCE object: aliases see each other's
+    /// mutations. The ref is the identity, exactly as ref cells are for locals —
+    /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
+    /// and alias:null here while the write vanished into a dropped match arm.
+    | VMap of Map<string, Value> ref
     | VClosure of Closure * Env
     | VFunc of name: string * parameters: string list * body: Stmt list
 
@@ -60,7 +64,7 @@ module Value =
         | VList xs -> "[" + (xs |> List.map toDisplay |> String.concat ", ") + "]"
         | VMap m ->
             "["
-            + (m |> Map.toList |> List.map (fun (k, v) -> $"{k}:{toDisplay v}") |> String.concat ", ")
+            + (m.Value |> Map.toList |> List.map (fun (k, v) -> $"{k}:{toDisplay v}") |> String.concat ", ")
             + "]"
         | VClosure _ -> "<closure>"
         | VFunc(n, _, _) -> $"<function {n}>"
@@ -73,7 +77,7 @@ module Value =
         | VInt i -> i <> 0L
         | VStr s -> s <> ""
         | VList xs -> not (List.isEmpty xs)
-        | VMap m -> not (Map.isEmpty m)
+        | VMap m -> not (Map.isEmpty m.Value)
         | VClosure _
         | VFunc _ -> true
 

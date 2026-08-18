@@ -2232,7 +2232,7 @@ module WalkerOrchestration =
                             preambleFuncs
                             |> List.fold
                                 (fun acc (n, (ps, body)) -> Env.withFunc n ps body acc)
-                                (Env.ofValues (asValues |> Map.add "env" (VMap asValues)))
+                                (Env.ofValues (asValues |> Map.add "env" (VMap(ref asValues))))
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted

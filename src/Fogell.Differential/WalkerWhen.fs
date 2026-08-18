@@ -178,7 +178,7 @@ module WalkerWhen =
                 let asValues = env |> Map.map (fun _ v -> VStr v)
 
                 let genv =
-                    Env.ofValues (asValues |> Map.add "env" (VMap asValues))
+                    Env.ofValues (asValues |> Map.add "env" (VMap(ref asValues)))
 
                 let outcome = Interpreter.run Budget.defaults Set.empty genv script
 

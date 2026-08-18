@@ -174,6 +174,13 @@ module Interpreter =
           /// Jenkins runs on. Provenance by cell identity answers it without naming a
           /// syntactic form, exactly as the hosted refresh does.
           JenkinsEnvCells: System.Collections.Generic.HashSet<Value ref>
+          /// FG-193. The MAPS that are the Jenkins environment, by reference — the
+          /// value-level twin of JenkinsEnvCells. `def saved = env; def env = saved`
+          /// mints a fresh CELL outside the cell set, but the VALUE it carries is
+          /// still the Jenkins map, and a write through it must reach the host's
+          /// refusal exactly as the direct spelling does — measured: the aliased
+          /// write reached Jenkins' shell and silently vanished here.
+          JenkinsEnvMaps: System.Collections.Generic.HashSet<Map<string, Value> ref>
           mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
@@ -226,7 +233,7 @@ module Interpreter =
             |> String.concat ""
             |> VStr
         | EList xs -> VList(xs |> List.map (evalExpr st env))
-        | EMap kvs -> VMap(kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList)
+        | EMap kvs -> VMap(ref (kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList))
         | EVar n ->
             // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
@@ -264,7 +271,7 @@ module Interpreter =
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
             | VList xs, VInt i when i >= 0L && int i < xs.Length -> xs.[int i]
-            | VMap m, VStr k -> defaultArg (Map.tryFind k m) VNull
+            | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
@@ -293,7 +300,7 @@ module Interpreter =
 
     and private evalProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
-        | VMap m -> defaultArg (Map.tryFind name m) VNull
+        | VMap m -> defaultArg (Map.tryFind name m.Value) VNull
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -386,7 +393,7 @@ module Interpreter =
     /// closing over the call site. The fourth measured shape existed because a guard
     /// counted positionals while looking at only one of these three forms.
     and private effectiveArgList (env: Env) (positional: Value list) (named: (string * Value) list) (trailing: Closure option) =
-        (if List.isEmpty named then [] else [ VMap(Map.ofList named) ])
+        (if List.isEmpty named then [] else [ VMap(ref (Map.ofList named)) ])
         @ positional
         @ (match trailing with
            | Some c -> [ VClosure(c, env) ]
@@ -683,7 +690,12 @@ module Interpreter =
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let fresh = VMap(Map.ofList current)
+                                let freshMap = ref (Map.ofList current)
+                                // FG-193: the minted map IS the Jenkins environment,
+                                // by value identity — an aliased write must route to
+                                // the host however many rebinds separate it
+                                st.JenkinsEnvMaps.Add freshMap |> ignore
+                                let fresh = VMap freshMap
 
                                 // FG-201. "Ours" is membership in JenkinsEnvCells — the set of
                                 // every cell hosted machinery installed — NOT the one cell THIS
@@ -780,7 +792,9 @@ module Interpreter =
                             match Map.tryFind "env" env.Vars with
                             | Some cell when st.JenkinsEnvCells.Contains cell ->
                                 let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                cell.Value <- VMap(Map.ofList current)
+                                let freshMap = ref (Map.ofList current)
+                                st.JenkinsEnvMaps.Add freshMap |> ignore
+                                cell.Value <- VMap freshMap
                             | _ -> ()
                 | None ->
                     // BATCH: a step is a request, not something we perform.
@@ -941,7 +955,7 @@ module Interpreter =
         | "length", VList xs, _ -> VInt(int64 xs.Length)
         | "size", VStr s, _
         | "length", VStr s, _ -> VInt(int64 s.Length)
-        | "size", VMap m, _ -> VInt(int64 m.Count)
+        | "size", VMap m, _ -> VInt(int64 m.Value.Count)
         | "isEmpty", VList xs, _ -> VBool(List.isEmpty xs)
         | "isEmpty", VStr s, _ -> VBool(s = "")
         | "toString", v, _ -> VStr(Value.toDisplay v)
@@ -971,8 +985,8 @@ module Interpreter =
         | "sort", VList xs, _ -> VList(List.sortWith compare xs)
         | "first", VList(x :: _), _ -> x
         | "last", VList xs, _ when not xs.IsEmpty -> List.last xs
-        | "keySet", VMap m, _ -> VList(m |> Map.toList |> List.map (fst >> VStr))
-        | "values", VMap m, _ -> VList(m |> Map.toList |> List.map snd)
+        | "keySet", VMap m, _ -> VList(m.Value |> Map.toList |> List.map (fst >> VStr))
+        | "values", VMap m, _ -> VList(m.Value |> Map.toList |> List.map snd)
         | "each", VList xs, _ ->
             match trailing with
             | Some c ->
@@ -1062,7 +1076,21 @@ module Interpreter =
         // reusing an earlier truthy value. Groovy assignments yield their RHS whatever
         // the target shape is.
         | SAssign(target, v) ->
-            evalExpr st env target |> ignore
+            // The RECEIVER (and a computed index) evaluate BEFORE the RHS —
+            // Groovy's order, which the blanket whole-target eval this replaces
+            // also preserved. Only the receiver: evaluating the property READ too
+            // double-evaluated computed receivers and faulted on shapes whose
+            // WRITE is the thing being decided below.
+            let recvAndKey =
+                match target with
+                | EProp(r, name) -> Some(evalExpr st env r, name)
+                | EIndex(r, idx) ->
+                    let rv = evalExpr st env r
+                    Some(rv, Value.toDisplay (evalExpr st env idx))
+                | other ->
+                    evalExpr st env other |> ignore
+                    None
+
             let value = evalExpr st env v
             st.LastValue <- Some value
 
@@ -1080,38 +1108,41 @@ module Interpreter =
             // The host decides what it means: today it fails the build, because Fogell's
             // environment overlay does not yet cross the script boundary. That refusal is
             // now COMPLETE rather than best-effort.
-            // FG-179. WHICH `env`? Decided by the cell's identity, not by the name. A
-            // script that writes `def env = [:]` owns a plain map, and mutating it is
-            // ordinary Groovy that Jenkins runs; only the Jenkins environment goes to the
-            // host. Routing on the SYNTAX sent both to `host.SetEnv`, which refuses, so
-            // `def env = [:]; env.FOO = 'local'; sh 'touch ok.txt'` failed here and
-            // succeeded there.
-            let isJenkinsEnv name =
-                match Map.tryFind name env.Vars with
-                | Some cell -> st.JenkinsEnvCells.Contains cell
-                | None -> true // no local binding at all: the script binding, i.e. Jenkins'
+            // FG-179/FG-193. WHICH env, and WHICH map? Decided by IDENTITY, never by
+            // name — first the cell's (a script's own `def env = [:]` owns a plain
+            // map), and now the VALUE's: `def saved = env; def env = saved` mints a
+            // fresh cell outside the cell set while the value it carries is still
+            // the Jenkins map, and `def other = local` aliases a plain map that
+            // mutation must reach THROUGH the shared ref, not by replacing one
+            // binding's copy. Both measured: the aliased env write reached Jenkins'
+            // shell and vanished here; the aliased map write printed alias:x there
+            // and alias:null here — this arm's old name-keyed match dropped every
+            // non-`env`-named target at `| _ -> ()`.
+            let assignInto (recv: Value) (key: string) =
+                match recv with
+                | VMap mr ->
+                    match st.Host with
+                    | Some host when st.JenkinsEnvMaps.Contains mr ->
+                        // the Jenkins environment, however many rebinds away: the
+                        // host decides, and today it refuses — the same named
+                        // refusal as the direct spelling, instead of a silent local
+                        // write the shell never sees
+                        host.SetEnv key (Value.toDisplay value)
+                    | _ -> mr.Value <- Map.add key value mr.Value
+                // Not a map: Groovy REJECTS the write (MissingPropertyException on
+                // a String, NPE on null) and a script-level catch INTERCEPTS it —
+                // measured: `try { s.FOO = 'x' } catch (Exception e)` runs on and
+                // SUCCEEDS on Jenkins. So the strict fault must be CATCHABLE:
+                // UnknownProperty is what the old blanket target-eval raised here,
+                // and the first spelling of this arm raised Unsupported instead —
+                // uncatchable, a false refusal the verifier caught by asking what
+                // class the fault was, not whether it fired. Lax keeps the no-op.
+                | _ when st.StrictVars -> raise (Stop(UnknownProperty key))
+                | _ -> ()
 
-            let mutateLocalMap name key =
-                match Map.tryFind name env.Vars with
-                | Some cell ->
-                    match cell.Value with
-                    | VMap m -> cell.Value <- VMap(Map.add key value m)
-                    // Not a map: Groovy would set a property on whatever object this is,
-                    // which this interpreter does not model. Left alone rather than
-                    // guessed at.
-                    | _ -> ()
-                | None -> ()
-
-            match st.Host, target with
-            | Some host, EProp(EVar "env", name) when isJenkinsEnv "env" ->
-                host.SetEnv name (Value.toDisplay value)
-            | _, EProp(EVar "env", name) -> mutateLocalMap "env" name
-            | Some host, EIndex(EVar "env", idx) when isJenkinsEnv "env" ->
-                // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
-                // the pre-scan only recognised a literal string.
-                host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
-            | _, EIndex(EVar "env", idx) -> mutateLocalMap "env" (Value.toDisplay (evalExpr st env idx))
-            | _ -> ()
+            match recvAndKey with
+            | Some(recv, key) -> assignInto recv key
+            | None -> ()
 
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
@@ -1330,8 +1361,18 @@ module Interpreter =
         // syntax at each assignment.
         let jenkinsEnvCells = System.Collections.Generic.HashSet<Value ref>(HashIdentity.Reference)
 
+        let jenkinsEnvMaps =
+            System.Collections.Generic.HashSet<Map<string, Value> ref>(HashIdentity.Reference)
+
         match Map.tryFind "env" env.Vars with
-        | Some cell -> jenkinsEnvCells.Add cell |> ignore
+        | Some cell ->
+            jenkinsEnvCells.Add cell |> ignore
+
+            // FG-193: the caller-seeded env VALUE is the Jenkins map by identity,
+            // exactly as its cell is the Jenkins cell
+            match cell.Value with
+            | VMap mr -> jenkinsEnvMaps.Add mr |> ignore
+            | _ -> ()
         | None -> ()
 
         let st =
@@ -1346,6 +1387,7 @@ module Interpreter =
               StrictVars = strictVars
               NewBindings = []
               JenkinsEnvCells = jenkinsEnvCells
+              JenkinsEnvMaps = jenkinsEnvMaps
               // FG-179: the BINDING is a value map, not cells — it is Groovy's script
               // binding, already shared and mutable in its own right, so it needs no second
               // sharing mechanism. Seeded from a SNAPSHOT of the caller's locals.
