@@ -1259,12 +1259,9 @@ let returnFlagContract =
               Expect.equal (Map.tryFind "deleteDir" WalkerRules.positionalArity) (Some 0) "empty constructor"
           }
 
-          test "every hosted wrapper has a signature case" {
-              Expect.equal
-                  WalkerRules.scriptWrappersWithHostedBody
-                  WalkerRules.hostedWrappersWithSignatureCase
-                  "a wrapper admitted without a signature case is validated by nothing"
-          }
+          // "every hosted wrapper has a signature case" retired with the arms it
+          // compared against — the FG-177 schema's row-coverage test holds the
+          // same line against the table itself
 
           test "bat carries the same contract as sh" {
               // On CONTRACT, not on evidence: there is no Windows lane and no receipt
@@ -1272,6 +1269,35 @@ let returnFlagContract =
               // claims — see WalkerRules for why that is not coverage.
               Expect.equal (contract "bat" true true) WalkerRules.ExitStatus "same durable-task options"
               Expect.equal (contract "bat" true false) WalkerRules.CapturedStdout "same durable-task options"
+          } ]
+
+/// FG-177. The schema table is load-bearing: every hosted wrapper must carry a
+/// row, and the rows must hold the measured caveats the arms they replaced held.
+let hostedSignatures =
+    testList
+        "FG-177 hosted signature schema"
+        [ test "every hosted wrapper has a schema row" {
+              // the was-missing-arm class (timeout sat unchecked for a whole
+              // cycle) is a TEST now, not a review round
+              for name in WalkerRules.scriptWrappersWithHostedBody do
+                  Expect.isTrue
+                      (Map.containsKey name WalkerRules.hostedSignatures)
+                      $"hosted wrapper '{name}' has no signature row — any call shape would pass unchecked"
+          }
+
+          test "the rows hold the arms' measured rules" {
+              let s name = Map.find name WalkerRules.hostedSignatures
+              // retry: named count valid, non-int refused, zero NOT refused (clamps, measured)
+              Expect.isNone ((s "retry").Check [] [ "count", Fogell.Groovy.Interpreter.VInt 2L ]) "named count is valid Jenkins"
+              Expect.isNone ((s "retry").Check [ Fogell.Groovy.Interpreter.VInt 0L ] []) "retry(0) runs clamped — refusing was the measured false refusal"
+              Expect.isSome ((s "retry").Check [ Fogell.Groovy.Interpreter.VStr "nope" ] []) "a non-integer count refuses"
+              // withEnv: entry without '=' refused, well-formed passes
+              Expect.isSome ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList [ Fogell.Groovy.Interpreter.VStr "BADENTRY" ] ] []) "an entry without = refuses"
+              Expect.isNone ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList [ Fogell.Groovy.Interpreter.VStr "A=1" ] ] []) "NAME=VALUE passes"
+              // dir: exactly one positional
+              Expect.isSome ((s "dir").Check [] []) "dir with nothing refuses"
+              // timeout: types deliberately unchecked
+              Expect.isNone ((s "timeout").Check [ Fogell.Groovy.Interpreter.VStr "weird" ] []) "timeout's argument types are deliberately unchecked"
           } ]
 
 [<EntryPoint>]
@@ -1282,7 +1308,8 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ userOutputSurvives
+            [ hostedSignatures
+              userOutputSurvives
               stringModel
               sealBindsCaseSource
               caseSnapshotIsOneRead

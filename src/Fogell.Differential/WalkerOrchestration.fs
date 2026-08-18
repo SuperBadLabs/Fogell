@@ -288,121 +288,39 @@ module WalkerOrchestration =
             // finding of this class: the right rule in the wrong scope. `timeout`'s own
             // mixed branch is GONE rather than left beside this one, because a dead
             // branch that can never fire reads as a second opinion.
-            match name with
-            | "withEnv" ->
-                match positional, named with
-                | [ VList items ], [] ->
-                    items
-                    |> List.map Value.toDisplay
-                    |> List.tryFind (fun e -> e.IndexOf '=' <= 0)
-                    |> Option.map (fun bad ->
-                        $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
-                | _ -> wrongShape "takes exactly one list argument of NAME=VALUE strings"
-            | "dir" ->
-                match positional, named with
-                | [ _ ], [] -> None
-                | _ -> wrongShape "takes exactly one path argument"
-            | "retry" ->
-                // THE TYPE, not just the arity — and NOT the sign. MEASURED against pinned
-                // Jenkins rather than assumed, because the review that raised this said
-                // Jenkins "rejects the count" for both shapes and that is only half true:
-                //   retry(0)       -> Jenkins SUCCEEDS and runs the body once (clamped).
-                //                     Receipt: script-retry-zero.receipt.txt.
-                //   retry('nope')  -> Jenkins FAILS, IllegalArgumentException from RetryStep.
-                //                     UNPROVEN in-repo: that probe diverges on Jenkins'
-                //                     Java stack trace, so it cannot be a suite case.
-                // A first fix refused non-positive counts too and made Fogell STRICTER than
-                // Jenkins, which is a false refusal — the opposite error, still a
-                // divergence. Probed both before settling on this.
-                //
-                // Negative counts are UNTESTED and treated like 0; `runWithRetry` clamps to
-                // one attempt, which is what Jenkins does with 0.
-                //
-                // NAMED `count:` IS VALID JENKINS, and refusing it was a FALSE REFUSAL —
-                // the opposite error to everything else in this function, and the one
-                // `retry(0)` already taught. MEASURED: `script { retry(count: 2) { … } }`
-                // succeeds on Jenkins and failed here, with the ordinary stage-level
-                // reader (`WalkerRules.retryCountOpt`) already accepting the same spelling.
-                // An arm stricter than the reader it guards is a refusal with no rule
-                // behind it. Raised in review on PR #53.
-                let countArg =
-                    match positional, named |> List.tryFind (fun (k, _) -> k = "count") with
-                    | [ v ], None -> Some v
-                    | [], Some(_, v) -> Some v
-                    // Both spellings at once is not a shape Jenkins takes either.
-                    | _ -> None
-
-                match countArg with
-                | None -> wrongShape "takes one attempt count, either positionally or as `count:`"
-                | Some(VInt _) ->
-                    // `conditions:` is real Jenkins and NOT implemented here. Refusing it
-                    // by name beats accepting it and retrying unconditionally, which would
-                    // retry on failures the pipeline asked to leave alone.
-                    match named |> List.filter (fun (k, _) -> k <> "count") with
-                    | [] -> None
-                    | (k, _) :: _ -> wrongShape $"does not support `{k}`; only the attempt count is implemented"
-                | Some other -> wrongShape $"needs an integer attempt count, not `{Value.toDisplay other}`"
-            | "timeout" ->
-                // MEASURED on the pinned lab, not inferred from the other arms, and held
-                // by receipt `script-timeout-two-positionals`: Jenkins accepts ONE
-                // positional (minutes) or named arguments, and `timeout(1, 2)` raises
-                // `IllegalArgumentException: Expected named arguments but got [1, 2]`. Fogell read the FIRST positional as one
-                // minute, silently dropped the `2`, ran the body and reported SUCCESS.
-                //
-                // The probe also decided WHERE this belongs: Jenkins ran the earlier
-                // STAGE before failing, so this is a RUNTIME signature rejection and not
-                // a compile-time one like a duplicated named argument. Refusing at
-                // dispatch is therefore right here, where it was wrong there.
-                //
-                // ARITY ONLY. `timeoutMs` already reads `time`/`unit` and a bare
-                // positional, and the TYPE of a single argument is left alone
-                // deliberately — refusing a shape Jenkins accepts is the false-refusal
-                // error `retry(0)` taught, and nothing here has been measured.
-                // EITHER FORM, NEVER BOTH. Measured on the pinned lab, and the mixed
-                // shape had to be probed separately — an arity-only check passed
-                // `timeout(1, unit: 'SECONDS')`, `timeoutMs` then combined the positional
-                // duration with the named unit, and the body RAN where Jenkins rejects
-                // the call and leaves the workspace empty. Raised in review on PR #53.
-                match positional, named with
-                | _ :: _ :: _, _ ->
+            // FG-177. ONE VALIDATOR, DRIVEN BY DATA. The four hand-written arms this
+            // replaces produced thirteen findings across FG-172/FG-174 — too
+            // permissive and too strict across the set — and each arm's rules now
+            // live as a row in `WalkerRules.hostedSignatures`, where a step's whole
+            // shape reads in one place and a vocabulary step with no row fails a
+            // test. Slice 1 is a refactor-to-data: behaviour is the arms',
+            // measured caveats included (retry(0) runs clamped, timeout's argument
+            // TYPES deliberately unchecked, unknown NAMED arguments on schema-less
+            // steps still pass — the stated gap). Refusal wording is unified;
+            // nothing asserted the old texts (swept) and receipts exclude
+            // diagnostic wording.
+            match Map.tryFind name WalkerRules.hostedSignatures with
+            | Some s ->
+                if List.length positional > s.Arity then
                     let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-                    wrongShape $"takes one positional argument or named ones; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
-                | _ -> None
-            | _ ->
-                // DEFAULT DENY ON ARITY, rather than a thirteenth hand-written arm.
-                //
-                // Reaching here means the step has no arm of its own — `sh`, `echo`,
-                // `git` and the rest. That used to be a silent pass, so
-                // `script { sh('echo ran > ran.txt', 'ignored') }` ran the FIRST
-                // positional and dropped the second, while Jenkins rejects the call and
-                // leaves the workspace EMPTY. Measured. Two more arms would have closed
-                // `sh` and `script` and left the next step open, which is the trend
-                // FG-177 exists to end.
-                //
-                // ONE positional is the Jenkins shape: DescribableModel maps a single
-                // positional onto the sole required parameter, and named arguments
-                // otherwise. CHECKED AGAINST THE CLOSED VOCABULARY rather than assumed —
-                // `sh`, `echo`, `archiveArtifacts`, `junit`, `checkout`, `git`, `stash`,
-                // `unstable`, `unstash`, `deleteDir` — none of which takes two.
-                //
-                // WHAT THIS STILL DOES NOT CATCH, said plainly because the last thing
-                // this class needs is another comment claiming more than it delivers:
-                // it is an ARITY rule only, so no unknown NAMED argument is rejected
-                // anywhere. That needs the per-step schema in FG-177.
-                //
-                // THIS PASSAGE ALSO NAMED `deleteDir('x')` AS STILL ADMITTED WITH AN
-                // ARGUMENT, and that stopped being true in the very change described
-                // below it: `positionalArity` records `deleteDir` at ZERO, and receipt
-                // `script-deletedir-argument` holds the refusal. A caveat that outlives
-                // its defect is the same drift as a claim outrunning its evidence, and
-                // this one sat inside a paragraph warning against precisely that, which
-                // is how it survived several reads.
-                // PER-STEP, from `WalkerRules.positionalArity` — FG-177's first slice.
-                // A blanket "zero or one" could not express a ZERO-argument step, and
-                // `deleteDir('ignored')` duly passed it: the arm ignored the argument,
-                // Fogell DELETED THE WORKSPACE and continued, where Jenkins keeps the
-                // files and fails. Measured. A default cannot distinguish a step with a
-                // sole required parameter from one with none, so the answer is data.
+                    Some $"`{name}` {s.ShapeText}; Jenkins rejects `[{shown}]`"
+                else
+                    match s.NamedKeys with
+                    | Some allowed ->
+                        match named |> List.tryFind (fun (k, _) -> not (List.contains k allowed)) with
+                        | Some(k, _) when List.isEmpty allowed -> Some $"`{name}` {s.ShapeText}; `{k}:` is not accepted"
+                        | Some(k, _) ->
+                            let only = allowed |> List.map (sprintf "`%s:`") |> String.concat ", "
+                            Some $"`{name}` does not support `{k}`; only {only} is implemented"
+                        | None -> s.Check positional named
+                    | None -> s.Check positional named
+            | None ->
+                // DEFAULT DENY ON ARITY for every schema-less step, per
+                // `WalkerRules.positionalArity` — a blanket rule cannot tell a
+                // zero-argument step from a sole-required-parameter one, so the
+                // answer is data there too. Unknown NAMED arguments are NOT
+                // checked here: that is the remaining gap the FG-177 row states,
+                // closable only step by step with measurements.
                 let allowed = Map.tryFind name WalkerRules.positionalArity |> Option.defaultValue 1
 
                 if List.length positional > allowed then
