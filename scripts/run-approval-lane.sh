@@ -287,9 +287,13 @@ set -e
 grep -q 'completed: failure' "$E/run.log" || { echo "FAIL: did not fail closed"; cat "$E/run.log"; exit 1; }
 # FG-114: the REASON is durable now — `step-reason` beside the failed finish —
 # so this scenario finally asserts WHICH rule refused, not merely that one did.
-# A regression that genericised the diagnostic fails here by name.
-grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'".*no approver" "$E/build.journal" || {
-  echo "FAIL: the journal does not carry the no-approver reason"; sed 's/^/  | /' "$E/build.journal"; exit 1; }
+# THE FULL WORDING, not a substring: the first spelling grepped `.*no approver`
+# and the comment above it claimed a genericised diagnostic "fails here by
+# name" — true only while that phrase stayed unique among Gate diagnostics,
+# which is a coincidence, not an assertion. Found by the fleet session's
+# review of merged PR #97.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"input requires human approval and this engine has no approver; wrap it in a timeout to get Jenkins' abort-on-expiry behaviour$" "$E/build.journal" || {
+  echo "FAIL: the journal does not carry the no-approver reason in its own words"; sed 's/^/  | /' "$E/build.journal"; exit 1; }
 [ "$(tail -1 "$E/run.log")" = "| Ship it or Abort" ] || {
   echo "FAIL: something ran after the unanswerable prompt"; cat "$E/run.log"; exit 1; }
 echo "failed closed at the prompt with the reason on the durable record (FG-114)"

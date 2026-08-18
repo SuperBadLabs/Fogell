@@ -331,5 +331,99 @@ grep -q $'^step-started' "$N_LANE/build.journal" && { echo "FAIL: a nested step 
 [ -f "$N_LANE/ws/fg135n/nested.txt" ] && { echo "FAIL: the nested step's effect landed"; exit 1; }
 echo "refused before any step — nested records cannot masquerade as the live attempt's"
 
+echo "=== FG-206: an ABSORBED failure's reason does not explain a later refusal ==="
+# A script-level catch absorbs a captured failure but nothing cleared the
+# shared reason ref, so a later child failing through a NON-capturing site
+# (here a dir traversal refusal) journaled the absorbed diagnostic as the
+# WHY of a disposition it does not explain — `script returned exit code 3`
+# durable, the real cause nowhere. Found by the fleet session's review of
+# PR #97; the per-hosted-child freshening is the third site of the FG-114
+# invariant. Honest ABSENCE is the fixed behaviour: the terminal site does
+# not capture, so no reason may journal.
+S_LANE="$LANE/fg206-stale"
+mkdir -p "$S_LANE/ws"
+cat > "$S_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Gate') {
+            steps {
+                script {
+                    try { sh "exit 3" } catch (e) { echo "absorbed" }
+                    dir("../outside") { sh "echo x" }
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$S_LANE/Jenkinsfile" "$S_LANE/ws" fg206 "$S_LANE/build.journal" > "$S_LANE/run.log" 2>&1
+set -e
+grep -q 'completed: failure' "$S_LANE/run.log" || { echo "FAIL: the refused build did not fail"; cat "$S_LANE/run.log"; exit 1; }
+grep -q "dir refused" "$S_LANE/run.log" || { echo "FAIL: the terminal cause is not the dir refusal"; cat "$S_LANE/run.log"; exit 1; }
+grep -q $'^step-reason' "$S_LANE/build.journal" && {
+  echo "FAIL: an absorbed failure's reason journaled as the explanation of a later refusal"
+  cat "$S_LANE/build.journal"; exit 1; }
+grep -q $'^step-finished\tGate\t0\tfailure' "$S_LANE/build.journal" || { echo "FAIL: the failure itself is not journaled"; exit 1; }
+
+# CONTROL: an UNCAUGHT captured failure still journals its own reason — the
+# freshening must not suppress the legitimate explanation.
+C_LANE="$LANE/fg206-control"
+mkdir -p "$C_LANE/ws"
+cat > "$C_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Gate') {
+            steps {
+                script {
+                    sh "exit 3"
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$C_LANE/Jenkinsfile" "$C_LANE/ws" fg206c "$C_LANE/build.journal" > "$C_LANE/run.log" 2>&1
+set -e
+grep -q $'^step-reason\tGate\t0\tscript returned exit code 3' "$C_LANE/build.journal" || {
+  echo "FAIL: the uncaught failure's own reason did not journal — the freshening over-suppresses"
+  cat "$C_LANE/build.journal"; exit 1; }
+echo "an absorbed reason cannot explain a later refusal, and an uncaught one still explains itself"
+
+# THIRD DIRECTION, from the verifier's refutation of the first fix: after a
+# refusal HALTS the branch, later calls still enter the host to be skipped —
+# and the unguarded freshening wiped the reason the refusal had just written.
+# A refused call WITH A SUCCESSOR must still journal its own reason.
+H_LANE="$LANE/fg206-halted"
+mkdir -p "$H_LANE/ws"
+cat > "$H_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('Gate') {
+            steps {
+                script {
+                    sh('invalid', 'extra')
+                    sh 'echo after'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$H_LANE/Jenkinsfile" "$H_LANE/ws" fg206h "$H_LANE/build.journal" > "$H_LANE/run.log" 2>&1
+set -e
+grep -q 'completed: failure' "$H_LANE/run.log" || { echo "FAIL: the refused build did not fail"; cat "$H_LANE/run.log"; exit 1; }
+grep -q $'^step-reason\tGate\t0\t' "$H_LANE/build.journal" || {
+  echo "FAIL: a refusal with a successor call lost its durable reason — the freshening fired on a halted entry"
+  cat "$H_LANE/build.journal"; exit 1; }
+grep -q "positional argument" "$H_LANE/build.journal" || {
+  echo "FAIL: the journaled reason is not the refusal's own"; cat "$H_LANE/build.journal"; exit 1; }
+echo "a refused call with a successor keeps its own reason on the durable record"
+
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"
