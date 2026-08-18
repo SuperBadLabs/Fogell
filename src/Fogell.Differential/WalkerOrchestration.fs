@@ -2318,6 +2318,42 @@ module WalkerOrchestration =
                         let host: PerformStep =
                             { Perform =
                                 fun name rawPositional rawNamed runBody ->
+                                    // FG-206. Freshened THROUGH the shared ref at a hosted
+                                    // child's entry — the third site of the FG-114
+                                    // invariant (per hooked step, per retry attempt, and
+                                    // now per hosted child): only the site that owns the
+                                    // final disposition may explain it. Without this, a
+                                    // captured failure ABSORBED by a script-level catch
+                                    // left its diagnostic in the ref, and a later child
+                                    // failing through a NON-capturing site (a dir
+                                    // traversal refusal, an unstash failure) journaled
+                                    // the absorbed reason as the explanation for a
+                                    // disposition it does not explain: the
+                                    // try/sh-exit-3/catch then dir('../outside') shape
+                                    // journaled `script returned exit code 3` while the
+                                    // run log's terminal cause was the dir refusal.
+                                    //
+                                    // ONLY when the child will actually DISPATCH. The
+                                    // first spelling cleared unconditionally, and the
+                                    // verifier measured the regression before any lane
+                                    // could: after a refusal HALTS the branch, later
+                                    // calls still ENTER here to be skipped by the
+                                    // `halted` guard below (FG-182), and each entry wiped
+                                    // the reason the refusal had just written — erasing
+                                    // FG-114's durable reason for any refused call with a
+                                    // successor. An absorbed failure never sets Failed
+                                    // (the FG-176 observing sink absorbs it), so the
+                                    // catch shape still freshens; a refusal does, so
+                                    // post-halt entries leave its reason standing.
+                                    //
+                                    // The FG-206 scenarios in run-restart-lane.sh pin all
+                                    // three directions — no journal comparison against
+                                    // Jenkins exists, so this is lane-pinned, not
+                                    // receipt-backed. Found by the fleet session's review
+                                    // of merged PR #97; the per-site overwrite protects
+                                    // only paths that END in a capturing site.
+                                    if not (halted (fst hostAt.Value)) then
+                                        (fst hostAt.Value).LastDiagnostic.Value <- None
                                     // SHAPE FIRST, then everything downstream sees one
                                     // form — the Step record, the signature arms and the
                                     // typed `HostedArgs` a wrapper reads.
