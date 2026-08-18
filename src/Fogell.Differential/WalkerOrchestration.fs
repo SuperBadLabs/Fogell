@@ -546,7 +546,26 @@ module WalkerOrchestration =
                         HumanRejected = ref false
                         Sink = fun st -> attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value st }
 
-                runBody attemptCtx
+                // FG-186. A CATCHABLE fault escaping the body is an attempt failure —
+                // Jenkins retries a body that throws, and a retry that cannot recover
+                // from the faults it exists to absorb is not a retry. A refusal or an
+                // exhausted budget re-raises untouched: catching Fogell's own
+                // modelling gaps would diverge silently from an engine that has no
+                // such gap. The fault is HELD so the FINAL attempt can re-raise it —
+                // an uncaught fault must fail the build with its own diagnostic, not
+                // a generic exhausted-retries one.
+                let mutable attemptFault = None
+
+                match Interpreter.catchRetryable (fun () -> runBody attemptCtx) with
+                | Some f ->
+                    attemptFault <- Some f
+                    attemptStatus.Value <- BuildStatus.worstOf attemptStatus.Value BuildStatus.Failure
+                    attemptCtx.Failed.Value <- true
+                | None -> ()
+
+                if attemptFault.IsSome && attempt >= attempts then
+                    // final attempt: the fault continues out with its own identity
+                    Interpreter.reraiseFault attemptFault.Value
 
                 if not attemptCtx.Failed.Value then
                     // A retried body may still have gone unstable; that is not a
@@ -2340,12 +2359,43 @@ module WalkerOrchestration =
                                     let slot = ref VNull
 
                                     if not (halted dispatchCtx) then
-                                        runStepDispatch
-                                            { dispatchCtx with HostedResult = Some slot }
-                                            atCwd
-                                            stage
-                                            called
-                                            effectiveDeadline
+                                        // FG-176. OBSERVED, not sunk directly: a SHELL step's
+                                        // failure surfaces to the script as the catchable,
+                                        // retryable fault Jenkins raises (AbortException),
+                                        // instead of silently marking the branch failed where
+                                        // no try/catch could ever see it. Every other status —
+                                        // aborts included, whose FG-101 classification must
+                                        // win — re-sinks exactly as before, and every NON-shell
+                                        // step keeps the old fail-loud path until its own
+                                        // measurement moves it: a Fogell refusal caught by a
+                                        // script would recover from a gap in this engine while
+                                        // Jenkins ran the real step.
+                                        let observedStatus = ref BuildStatus.Success
+                                        let observedFailed = ref false
+
+                                        let observing =
+                                            { dispatchCtx with
+                                                HostedResult = Some slot
+                                                Failed = observedFailed
+                                                Sink =
+                                                    fun s ->
+                                                        observedStatus.Value <- BuildStatus.worstOf observedStatus.Value s }
+
+                                        runStepDispatch observing atCwd stage called effectiveDeadline
+
+                                        if
+                                            observedStatus.Value = BuildStatus.Failure
+                                            // `sh` alone: `bat` is outside the script
+                                            // vocabulary today, so a bat arm here would
+                                            // be dead code wearing a parity claim
+                                            && name = "sh"
+                                        then
+                                            Interpreter.raiseStepFailed name
+                                        else
+                                            dispatchCtx.Sink observedStatus.Value
+
+                                            if observedFailed.Value then
+                                                dispatchCtx.Failed.Value <- true
 
                                     // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
                                     // stdout, `sh(returnStatus: true)` its exit code as an
@@ -2381,6 +2431,14 @@ module WalkerOrchestration =
                             | Denied d when scriptStepsRefusedWithReason.ContainsKey d.Attempted ->
                                 fail
                                     $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
+                            | StepFailed _ ->
+                                // FG-176. The failing step already narrated its own ERROR at
+                                // dispatch; an uncaught escape must fail the build exactly as
+                                // the old direct sink did — quietly here, or the console
+                                // carries the failure twice where Jenkins prints it once.
+                                let activeCtx, _ = hostAt.Value
+                                activeCtx.Failed.Value <- true
+                                activeCtx.Sink BuildStatus.Failure
                             | _ -> fail $"script block: {fault}"
                         | None ->
                             // NOTHING TO REPLAY: the steps ran as the script reached them.

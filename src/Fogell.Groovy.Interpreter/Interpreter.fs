@@ -82,6 +82,14 @@ type Fault =
     | Denied of Denial
     | Unsupported of construct: string
     | Thrown of Value
+    /// FG-176/FG-186. A SHELL STEP inside a hosted body FAILED — the outcome
+    /// Jenkins surfaces as a catchable, retryable AbortException. Distinct from
+    /// a refusal on purpose: a refusal says Fogell cannot MODEL the call, and
+    /// letting a script catch that would let a pipeline recover from a gap in
+    /// this engine while Jenkins ran the real step — a silent divergence. Only
+    /// the shell steps carry this fault; every other failure keeps the old
+    /// fail-loud path until its own measurement moves it.
+    | StepFailed of stepName: string
     | BudgetExhausted of what: string
     /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
     /// throws MissingPropertyException here; the default mode's late-binding null
@@ -1358,6 +1366,26 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            // Which declared types can intercept a failed shell step. Jenkins
+            // surfaces it as hudson.AbortException < IOException < Exception —
+            // NOT a RuntimeException, so `catch (RuntimeException e)` must let
+            // it escape where the MissingProperty list would catch. Measured at
+            // the untyped/`Exception` spellings (receipt `script-try-catches-sh-failure`);
+            // IOException is Groovy-default-imported ancestry, unprobed, noted.
+            // BARE `AbortException` IS DELIBERATELY ABSENT: `hudson.*` is not a
+            // Groovy default import and the script arm discards preamble
+            // imports, so Jenkins likely fails to RESOLVE the name where a
+            // catch here would recover — a false-success risk the verifier
+            // constructed. Escaping instead fails the build on both engines.
+            // (This absence shipped one commit late: the edit died in an
+            // aborted batch script while the board already claimed it, and
+            // Copilot caught the code contradicting the row on PR #95.)
+            let catchesStepFailure =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) -> [ "Exception"; "Throwable"; "IOException" ] |> List.contains t
+                | None -> false
+
             let afterTry =
                 try
                     try
@@ -1367,6 +1395,11 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
+                    | Stop(StepFailed name) when catchesStepFailure ->
+                        // FG-176. The step's own ERROR narration already reached the
+                        // console at dispatch; what the handler binds is the exception
+                        // Jenkins hands a catch.
+                        handle (VStr $"hudson.AbortException: script returned exit code (step '{name}')")
                     | Stop(UnknownProperty n) when catchesMissingProperty ->
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
                 with e ->
@@ -1492,3 +1525,35 @@ module Interpreter =
 
     let runDefault registeredSteps script =
         run Budget.defaults registeredSteps Env.empty script
+
+    /// FG-176. The HOST's one sanctioned channel for surfacing a failed shell
+    /// step INTO the running script as the catchable, retryable fault Jenkins
+    /// raises there. `Stop` itself stays private — a host that could fabricate
+    /// arbitrary interpreter control flow would make every fault contract here
+    /// advisory — so this constructor is deliberately narrow: one fault kind,
+    /// carrying only the step's name.
+    // NoInlining on all three: F#'s cross-module optimizer inlines small
+    // bodies into the CALLER'S assembly, where the private Stop constructor
+    // is not accessible — a MethodAccessException at runtime, found by the
+    // first probe of this seam.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseStepFailed (stepName: string) : 'a = raise (Stop(StepFailed stepName))
+
+    /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
+    /// classes — a throw, a missing property, a failed shell step — into a
+    /// returned fault the loop treats as attempt failure. A refusal or an
+    /// exhausted budget re-raises untouched: catching Fogell's own modelling
+    /// gaps would diverge silently from an engine that has no such gap.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let catchRetryable (body: unit -> unit) : Fault option =
+        try
+            body ()
+            None
+        with Stop((Thrown _ | UnknownProperty _ | StepFailed _) as f) ->
+            Some f
+
+    /// FG-186's other half: the FINAL attempt re-raises the held fault so an
+    /// uncaught failure carries its own diagnostic out, not a generic
+    /// exhausted-retries one. Narrow on purpose, like [raiseStepFailed].
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let reraiseFault (f: Fault) : 'a = raise (Stop f)
