@@ -75,13 +75,13 @@
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
 # after only `approve` had landed. A lane that cannot see a defect does not
 # cover it.
-# Everything the scenario headings claim is asserted. Two things they used to
-# claim are NOT assertable from here and no longer appear: the WORDING of the
-# engine's refusal in E and O. `ERROR:`-shaped diagnostics are consumed by
-# Trace.isDiagnosticLine, which keeps only a ReportedFailureReason BOOLEAN, so
-# the text never reaches this log or the journal. The lane proves those two fail
-# closed; it cannot see WHY, and said otherwise until a reviewer checked.
-# FG-114 makes the reason durable so these can be tightened.
+# Everything the scenario headings claim is asserted. The WORDING of the
+# engine's refusals in E, O and Z6 spent a month unassertable — the console
+# text kept only a ReportedFailureReason BOOLEAN — until FG-114 journaled a
+# `step-reason` record beside the failed finish; those three now assert the
+# refusal's own words from the journal. The reason is captured at four sites
+# (step classification, the script-arm fail helper, the two input refusals);
+# a refusal outside those sites is still durable only as its disposition.
 # The transcript is the lane's evidence — for exactly what it asserts.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -285,16 +285,14 @@ set -e
 [ "$RC" -ne 124 ] || { echo "FAIL: an un-timed prompt with no approver HUNG (silently, since output is buffered)"; exit 1; }
 [ "$RC" -eq 1 ] || { echo "FAIL: expected a failed build (exit 1), got $RC"; cat "$E/run.log"; exit 1; }
 grep -q 'completed: failure' "$E/run.log" || { echo "FAIL: did not fail closed"; cat "$E/run.log"; exit 1; }
-# the REASON is NOT asserted, and this scenario no longer claims it is.
-# `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine, which
-# retains a ReportedFailureReason BOOLEAN and discards the text, so the wording
-# reaches neither this log nor the journal. A regression that genericised the
-# diagnostic would still pass every line below. What IS proven: it stops, it
-# stops at the prompt, and it stops with a failure. FG-114 is what would let
-# this assert the reason itself.
+# FG-114: the REASON is durable now — `step-reason` beside the failed finish —
+# so this scenario finally asserts WHICH rule refused, not merely that one did.
+# A regression that genericised the diagnostic fails here by name.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'".*no approver" "$E/build.journal" || {
+  echo "FAIL: the journal does not carry the no-approver reason"; sed 's/^/  | /' "$E/build.journal"; exit 1; }
 [ "$(tail -1 "$E/run.log")" = "| Ship it or Abort" ] || {
   echo "FAIL: something ran after the unanswerable prompt"; cat "$E/run.log"; exit 1; }
-echo "failed closed at the prompt, exit $RC — no hang (the reason is unasserted; FG-114)"
+echo "failed closed at the prompt with the reason on the durable record (FG-114)"
 
 # ---------------------------------------------------------------- scenario F
 echo "=== F: neither a fragment nor an ambiguous two-line answer counts ==="
@@ -764,14 +762,13 @@ grep -q '^input-decision' "$O/param.journal" 2>/dev/null && {
   echo "FAIL: submitterParameter recorded an approval"; exit 1; }
 grep -q '^shipped$' "$O/ws2/gate/markers.txt" 2>/dev/null && {
   echo "FAIL: the step after a submitterParameter gate ran"; exit 1; }
-# the refusal WORDING is not assertable here, and the line below no longer says
-# it is. `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine,
-# which keeps a ReportedFailureReason BOOLEAN and drops the text. An engine that
-# refused BOTH options with the SAME wording — or the wrong one — would pass
-# every assertion above while this scenario printed "refused by name". Saying so
-# was the defect; a transcript is evidence, and evidence that overstates is worse
-# than none. FG-114 makes the reason durable so this can assert it.
-echo "both options failed closed, nothing published (the distinct reasons are unasserted; FG-114)"
+# FG-114: both reasons are durable and DISTINCT — each names its own option, so
+# an engine refusing both with one wording, or the wrong one, fails here.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"input \`submitter\`" "$O/build.journal" || {
+  echo "FAIL: the submitter journal does not carry its own reason"; sed 's/^/  | /' "$O/build.journal"; exit 1; }
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"input \`submitterParameter\`" "$O/param.journal" || {
+  echo "FAIL: the submitterParameter journal does not carry its own reason"; sed 's/^/  | /' "$O/param.journal"; exit 1; }
+echo "both options failed closed with their own reasons on the durable record (FG-114)"
 
 # ---------------------------------------------------------------- scenario P
 echo "=== P: a VOIDED answer is not replayed by a resumed attempt ==="
@@ -1670,13 +1667,12 @@ grep -q 'completed: success' "$Z6/run.log" && {
 if [ -f "$Z6/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z6/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a refused script-block gate"; exit 1
 fi
-# THE REASON IS UNASSERTED, and said so rather than quietly dropped: this host does not
-# surface emitted console text to the captured log — `run.log` holds only
-# `completed: failure` — so the lane can prove the REFUSAL but not its WORDING. Same gap
-# as scenarios E, J and O record against FG-114. The message itself is covered by the
-# named-reason map in `WalkerOrchestration`, which a reader can check; what matters here
-# and IS proven is that nothing published and no work ran past the gate.
-echo "a script-block input was refused and nothing published (the reason text is unasserted; FG-114)"
+# FG-114: the script-arm `fail` helper captures, so the refusal's WORDING is in
+# the journal — assert it names the vocabulary refusal, not some other failure.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"script block calls \`input\`" "$Z6/build.journal" || {
+  echo "FAIL: the journal does not carry the script-block input refusal's reason"
+  cat "$Z6/build.journal"; exit 1; }
+echo "a script-block input was refused by name in the journal and nothing published"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"

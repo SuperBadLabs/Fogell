@@ -293,8 +293,10 @@ set -e
 [ "$I_RC" -eq 1 ] || { echo "FAIL: expected failure exit 1, got $I_RC"; exit 1; }
 grep -q 'completed: failure' "$I_LANE/run.log" || { echo "FAIL: not a failed build"; exit 1; }
 # the journal proves WHICH path failed it: the refusal fires before any step, so
-# a step-started here means the timeout path ran instead (FG-114 keeps the
-# reason text out of the log, so the journal is the discriminating evidence)
+# a step-started here means the timeout path ran instead. FG-114's step-reason
+# does NOT cover this refusal — it journals beside a hooked step's finish, and
+# this fires before any step exists — so record ABSENCE is the discriminating
+# evidence, and the reason text stays non-durable here (a true FG-114 residual)
 grep -q $'^step-started' "$I_LANE/build.journal" && { echo "FAIL: the gate step RAN — the approval refusal did not fire"; exit 1; }
 echo "refused before any step — a prior attempt's approval can never be replayed"
 

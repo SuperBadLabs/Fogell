@@ -326,7 +326,17 @@ module WalkerStep =
             // signal to process / Terminated"), and silence on an abort is
             // the JB-DUR-005 defect we promised to beat.
             if result.Status = BuildStatus.Failure || result.Status = BuildStatus.Aborted then
-                result.Diagnostic |> Option.iter (fun d -> runCtx.Emit $"ERROR: {d}")
+                result.Diagnostic
+                |> Option.iter (fun d ->
+                    // FG-114: the reason exists HERE as a string; the console copy
+                    // is consumed to a boolean downstream, so the durable record
+                    // captures now. MASKED before storing (Codex P1, PR #97): the
+                    // journal is durable and outlives the run, and `Emit` masks
+                    // only its own copy — a diagnostic carrying a bound credential
+                    // (`archiveArtifacts artifacts: "${TOKEN}/…"`) would persist
+                    // the secret verbatim.
+                    ctx.LastDiagnostic.Value <- Some(runCtx.MaskSecrets d)
+                    runCtx.Emit $"ERROR: {d}")
 
             // Only a FAILED or ABORTED step halts the branch. An
             // unstable one does not: `junit` marks the build unstable and
