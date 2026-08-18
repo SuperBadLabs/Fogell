@@ -887,6 +887,134 @@ let cyclicValues =
               Expect.equal o.Returned (Some(VBool true)) "same ref, no walk"
           } ]
 
+/// FG-180. Command-form calls in EXPRESSION position, and the constructs the
+/// same corpus sweep recovered. The first test pins the defect that made this
+/// P1: the positional form ADMITTED with a wrong AST — two statements, the
+/// variable bound to an unresolved name — which no file count can see.
+let fg180Grammar =
+    let ast src = parseOk src
+
+    testList
+        "FG-180 expression-position command form"
+        [ test "positional command-form initialiser is a CALL, not two statements" {
+              match ast "def m = tool 'M3'" with
+              | [ SDef("m", Some(ECall(FreeCall "tool", [ APos(EStr "M3") ], None))) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "the call actually runs — effects, not just shape" {
+              let o = run "def out = sh 'make'\n"
+              Expect.contains (stepNames o) "sh" "initialiser RHS reached the effect list"
+          }
+
+          test "named command-form initialiser" {
+              let o = run "def st = sh script: 'make', returnStatus: true\n"
+              Expect.contains (stepNames o) "sh" "named args in expression position"
+          }
+
+          test "command form inside a GString placeholder" {
+              Expect.isTrue (parses "def p = \"${tool 'M3'}/bin\"\n") "placeholder holds a whole expression"
+          }
+
+          test "plain assignment RHS command form" {
+              match ast "mvnHome = tool 'M3'" with
+              | [ SAssign(EVar "mvnHome", ECall(FreeCall "tool", _, _)) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "a line break ends the command form — the next statement is not swallowed" {
+              match ast "def x = foo\n'M3'" with
+              | [ SDef("x", Some(EVar "foo")); SExpr(EStr "M3") ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "binary operators never read as command arguments" {
+              match ast "def x = a - 1" with
+              | [ SDef("x", Some(EBinary("-", _, _))) ] -> ()
+              | other -> failtestf "subtraction was consumed: %A" other
+
+              match ast "def y = 10 / 2" with
+              | [ SDef("y", Some(EBinary("/", _, _))) ] -> ()
+              | other -> failtestf "division was consumed: %A" other
+          }
+
+          test "a duplicate named argument is refused in expression position too" {
+              Expect.isFalse (parses "def n = tool name: 'a', name: 'b'\n") "FG-174 reaches the new position"
+          }
+
+          test "string-named arguments in both call forms" {
+              Expect.isTrue (parses "parallel 'UI Tests': { echo 'x' }, 'API': { echo 'y' }\n") "command form"
+              Expect.isTrue (parses "parallel('UI Tests': { echo 'x' })\n") "parenthesised"
+          }
+
+          test "an index assignment is not swallowed into a command call" {
+              match ast "builds['a'] = { echo 'x' }" with
+              | [ SAssign(EIndex(EVar "builds", _), EClosure _) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "typed function declarations, return type and parameter types erased" {
+              let s = ast "void report(Maven mvn) { echo 'x' }"
+              Expect.contains (Ast.definedFunctions s) "report" "typed decl recognised"
+              let s2 = ast "def helmLint(String chart_dir) { echo 'x' }"
+              Expect.contains (Ast.definedFunctions s2) "helmLint" "typed param in def decl"
+          }
+
+          test "a default parameter value is REFUSED, not silently dropped" {
+              // `SFunc` cannot carry the value; admitting the declaration and
+              // losing the default would fault a valid zero-arg call at runtime.
+              Expect.isFalse (parses "def f(x = true) { echo 'x' }\n") "honest refusal until the AST can hold it"
+          }
+
+          test "a bare return does not swallow the next line's step" {
+              // The verifier's construction on this diff: `if (skip) return`
+              // then `sh 'make'` must run the sh exactly when Groovy does —
+              // on the fall-through path, never on the return path.
+              match ast "if (skip) return\nsh 'make'" with
+              | [ SIf(_, [ SReturn None ], []); SExpr(ECall(FreeCall "sh", _, _)) ] -> ()
+              | other -> failtestf "the return swallowed the step: %A" other
+          }
+
+          test "a return value on the return's own line still parses" {
+              match ast "def f() {\n  return tool 'M3'\n}" with
+              | [ SFunc("f", [], [ SReturn(Some(ECall(FreeCall "tool", _, _))) ]) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "an operator chains after a slashy literal across a space" {
+              // The slashy was the one literal not lexeme-wrapped; `/a/ + x`
+              // consumed the slashy and stopped dead at the operator.
+              match ast "def m = /Deploy; / + env.TARGET" with
+              | [ SDef("m", Some(EBinary("+", EStr "Deploy; ", EProp(EVar "env", "TARGET")))) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
+          test "a multi-assignment's source is evaluated ONCE" {
+              // The lowering copied the source into one binding per target, so
+              // an effectful RHS ran once per name — step effects duplicated,
+              // names possibly bound from different results (Codex P1, PR #98;
+              // the copy predates the command form and bit paren calls too).
+              let o = run "def (a, b) = sh 'once'\n"
+              Expect.equal (stepNames o) [ "sh" ] "one call, not one per target"
+          }
+
+          test "a multi-assignment still binds by index" {
+              let o = run "def (a, b) = ['first', 'second']\necho a\necho b\n"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "first" ]; "echo", [ "second" ] ]
+                  "each name reads its own index of the one evaluation"
+          }
+
+          test "a typed declaration cannot merge two lines" {
+              // `echo msg` then `(x) { … }` is two statements; reading them as
+              // a declaration of `msg` drops the echo — FG-187's class.
+              match ast "echo msg\n(x) { echo 'y' }" with
+              | SExpr(ECall(FreeCall "echo", _, _)) :: _ -> ()
+              | other -> failtestf "merged into a declaration: %A" other
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])

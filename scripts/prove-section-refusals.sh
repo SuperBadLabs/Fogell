@@ -6,9 +6,16 @@
 # times running. FG-143 taught the STAGE fallback to refuse `steps`. FG-150 taught
 # the TOP-LEVEL fallback to refuse `options`/`stages`. Neither carried `options`
 # back to the stage fallback, so a stage's
-# `options { timeout(...); bogus(/x) y/) }` was still swallowed whole and its
+# `options { timeout(...); bogus("x) y) }` was still swallowed whole and its
 # TIMEOUT SILENTLY DROPPED — measured `completed: success` against a control that
 # aborts. A dropped timeout is a build that runs past a bound Jenkins enforces.
+#
+# THE FIXTURES MOVED 2026-08-18: every bad arm used a SLASHY as its unparseable
+# content, and FG-141 made slashy parse — two arms then "failed" by succeeding
+# at the thing they existed to be refused for (top-level options accept-and-
+# ignore an unknown name once it parses; a slashy input gate simply gates). An
+# UNTERMINATED double-quoted literal is the replacement: no grammar change can
+# close a quote the author never closed, so the refusal class stays testable.
 #
 # COVERAGE, enumerated: stage `options`, top-level `options`, stage `steps`, and
 # `environment` at BOTH levels. The banner this file prints used to say "every
@@ -90,7 +97,7 @@ expect_refusal stage-opts-bad 'pipeline {
         stage("one") {
             options {
                 timeout(time: 1, unit: "SECONDS")
-                bogus(/x) y/)
+                bogus("x) y)
             }
             steps {
                 sh "sleep 3; echo done > marker.txt"
@@ -117,7 +124,7 @@ expect_refusal top-opts-bad 'pipeline {
     agent any
     options {
         timeout(time: 1, unit: "SECONDS")
-        bogus(/x) y/)
+        bogus("x) y)
     }
     stages {
         stage("one") {
@@ -172,7 +179,7 @@ expect_refusal top-env-bad "pipeline {
     agent any
     environment {
         FOO = \"ok\"
-        bogus(/x) y/)
+        bogus(\"x) y)
     }
     stages {
         stage(\"one\") {
@@ -202,7 +209,7 @@ expect_refusal stage-env-bad "pipeline {
         stage(\"one\") {
             environment {
                 FOO = \"ok\"
-                bogus(/x) y/)
+                bogus(\"x) y)
             }
             steps {
                 sh 'echo \${FOO:-dropped} > marker.txt'
@@ -257,7 +264,7 @@ expect_refusal stage-steps-bad 'pipeline {
         stage("one") {
             steps {
                 sh "echo ran > marker.txt"
-                input(/Deploy { / + env.TARGET, ok: "Ship it")
+                input(message: "Deploy, ok: "Ship it")
             }
         }
     }
