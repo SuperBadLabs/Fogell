@@ -67,13 +67,13 @@ receipts are recorded where they exist and attributed to McLoving's evidence, no
 
 | | Jenkins | Fogell | McLoving |
 |---|---|---|---|
-| Differential vs real Jenkins | reference | 163 hand-written cases proven `[R]` | **1 corpus case certified equivalent** `[S]` — `crates/jenkins-differential`, Jenkins 2.568.1, 90-plugin manifest, sealed 35-file envelope **[WAS: "never compared at all" — false]** |
+| Differential vs real Jenkins | reference | 181 hand-written cases proven `[R]` (163 at this matrix's revision 3; the count is the scorecard's, restated here BY HAND — see the basis note) | **1 corpus case certified equivalent** `[S]` — `crates/jenkins-differential`, Jenkins 2.568.1, 90-plugin manifest, sealed 35-file envelope **[WAS: "never compared at all" — false]** |
 | Corpus files proven | n/a | **`tier1=0` of 228** `[R]` — generated scorecard | **1 of 228** `[S]` — `JENKINS_NATIVE_DIFFERENTIAL_V1.md` |
 | Population of the evidence | n/a | hand-written, authored for this engine | a real third-party corpus job |
 | Wider differential programme | n/a | none beyond the case suite `[S]` | DIFF-002 state/policy (20 scenarios), DIFF-003 boundaries (13), MIG-006 aggregate `[S]` |
 
 **On the denominator both engines share, McLoving has proven one more corpus file than Fogell
-has.** Fogell's 163 is the larger number and the weaker claim: it is a population it wrote for
+has.** Fogell's case count (181 as of 2026-08-17) is the larger number and the weaker claim: it is a population it wrote for
 itself. This is the single most consequential correction in revision 2.
 
 ## 2. Input language
@@ -190,7 +190,7 @@ triggers, caching, dependency resolution, release provenance, a CLI, a UI and a 
 not a spine waiting for a front end. It is a platform with a deliberately tiny front end.
 
 **Fogell's remaining advantage is one thing, and it is real: the breadth of Groovy it executes
-at runtime.** 164 receipted cases, declarative and scripted, `admitted=168` of 228 parsing,
+at runtime.** 181 receipted cases, declarative and scripted, `admitted=168` of 228 parsing,
 14 modelled steps, parallel and conditionals — against McLoving's one-job compiler and
 one-step catalogue. Nothing in McLoving's source suggests that breadth is close to being
 matched, and its compiler explicitly never evaluates Groovy.

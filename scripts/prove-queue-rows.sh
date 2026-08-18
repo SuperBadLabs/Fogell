@@ -95,6 +95,11 @@ expect_fail "tell hidden behind an escaped pipe" "$LAB/escaped-pipe.md"
 plant_row "This row once said the \"wrong thing about a\" fix \"and the claim\" is withdrawn with its receipt" "$LAB/adjacent-quotes.md"
 expect_pass "adjacent quoted spans do not merge into a tell" "$LAB/adjacent-quotes.md"
 
+# 8. a track whose HEADING survives while its TABLE vanished must refuse —
+#    aggregate row counts let the other tracks vouch for it (Codex, PR #94)
+awk 'BEGIN{intr=0} /^### Track 2 /{intr=1; print; next} intr && /^\|/{next} intr && /^#/{intr=0} {print}' "$BOARD" > "$LAB/track2-gone.md"
+expect_fail "a track heading with no table beneath it" "$LAB/track2-gone.md"
+
 if [ "$FAILED" -eq 0 ]; then
   echo "QUEUE-ROW PROOF: the audit fails every planted shape, passes the committed board and the quoted retraction, and refuses a board it cannot parse"
 else

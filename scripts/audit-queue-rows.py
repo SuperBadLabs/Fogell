@@ -97,10 +97,12 @@ def queue_rows(lines, tracks_seen):
     was no longer checking all of.
     """
     in_queue = False
+    current_track = ""
     for i, line in enumerate(lines, start=1):
         m = re.match(r"^### Track ([123]) ", line)
         if m:
             tracks_seen.add(m.group(1))
+            current_track = m.group(1)
             in_queue = True
             continue
         # any heading that is not a Track heading ends the queue region
@@ -122,7 +124,7 @@ def queue_rows(lines, tracks_seen):
         row_id = next((c for c in cells if "FG-" in c), cells[0])
         # strip markdown emphasis so \b anchors see the words, not asterisks
         why = cells[-1].replace("**", "")
-        yield i, row_id, why
+        yield i, row_id, why, current_track
 
 
 def main() -> int:
@@ -133,7 +135,16 @@ def main() -> int:
     lines = BOARD.read_text(encoding="utf-8").splitlines()
     tracks_seen: set = set()
     rows = list(queue_rows(lines, tracks_seen))
-    if tracks_seen != {"1", "2", "3"} or not rows:
+
+    # rows are required PER TRACK, not in aggregate: a heading whose table
+    # vanished would otherwise be vouched for by the other tracks' rows
+    # (Codex, PR #94 head review — the same shape the proof's renamed-heading
+    # arm covers only when heading AND table go together)
+    rows_by_track: dict = {}
+    for _, _, why, track in rows:
+        rows_by_track[track] = rows_by_track.get(track, 0) + 1
+
+    if tracks_seen != {"1", "2", "3"} or any(rows_by_track.get(k, 0) == 0 for k in ("1", "2", "3")):
         # A board with a missing track table is a parse failure, not a clean
         # board — the FG-158 shape (a checker reading absence as approval).
         missing = sorted({"1", "2", "3"} - tracks_seen)
@@ -142,7 +153,7 @@ def main() -> int:
         return 2
 
     findings = []
-    for line_no, row_id, why in rows:
+    for line_no, row_id, why, _ in rows:
         text = unquoted(why)
         for name, pat in TELLS:
             m = pat.search(text)
