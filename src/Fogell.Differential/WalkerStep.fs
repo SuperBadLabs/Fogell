@@ -330,8 +330,12 @@ module WalkerStep =
                 |> Option.iter (fun d ->
                     // FG-114: the reason exists HERE as a string; the console copy
                     // is consumed to a boolean downstream, so the durable record
-                    // captures now
-                    ctx.LastDiagnostic.Value <- Some d
+                    // captures now. MASKED before storing (Codex P1, PR #97): the
+                    // journal is durable and outlives the run, and `Emit` masks
+                    // only its own copy — a diagnostic carrying a bound credential
+                    // (`archiveArtifacts artifacts: "${TOKEN}/…"`) would persist
+                    // the secret verbatim.
+                    ctx.LastDiagnostic.Value <- Some(runCtx.MaskSecrets d)
                     runCtx.Emit $"ERROR: {d}")
 
             // Only a FAILED or ABORTED step halts the branch. An
