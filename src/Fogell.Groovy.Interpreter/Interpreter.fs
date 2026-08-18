@@ -1371,12 +1371,19 @@ module Interpreter =
             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
             // it escape where the MissingProperty list would catch. Measured at
             // the untyped/`Exception` spellings (receipt `script-try-catches-sh-failure`);
-            // the narrower types are Groovy ancestry, unprobed, noted.
+            // IOException is Groovy-default-imported ancestry, unprobed, noted.
+            // BARE `AbortException` IS DELIBERATELY ABSENT: `hudson.*` is not a
+            // Groovy default import and the script arm discards preamble
+            // imports, so Jenkins likely fails to RESOLVE the name where a
+            // catch here would recover — a false-success risk the verifier
+            // constructed. Escaping instead fails the build on both engines.
+            // (This absence shipped one commit late: the edit died in an
+            // aborted batch script while the board already claimed it, and
+            // Copilot caught the code contradicting the row on PR #95.)
             let catchesStepFailure =
                 match catch with
                 | Some(None, _, _) -> true
-                | Some(Some t, _, _) ->
-                    [ "Exception"; "Throwable"; "IOException"; "AbortException" ] |> List.contains t
+                | Some(Some t, _, _) -> [ "Exception"; "Throwable"; "IOException" ] |> List.contains t
                 | None -> false
 
             let afterTry =
