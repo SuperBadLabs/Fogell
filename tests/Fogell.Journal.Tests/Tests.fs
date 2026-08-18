@@ -20,6 +20,7 @@ let roundTrip =
                   [ StepStarted("Build", 0, "sh")
                     StepFinished("Build", 0, BuildStatus.Success)
                     StepFinished("Build", 1, BuildStatus.Failure)
+                    StepReason("Build", 1, "script returned exit code 7")
                     StageCommitted "Build"
                     BuildFinished BuildStatus.Unstable ]
 
@@ -255,6 +256,44 @@ let retryAttempts =
               Expect.equal (Resume.dispositionOf plan "Flaky" 0) Interrupted "attempt 3's live state"
           } ]
 
+let stepReasons =
+    testList
+        "FG-114 step reasons"
+        [ test "an embedded tab or newline cannot break the 4-field wire format" {
+              // The reason is executor output — it can hold anything. Encode
+              // flattens; the decoded record is the flattened one, one line.
+              let encoded =
+                  Record.encode (StepReason("Gate", 1, "line one\nline two\tcolumn"))
+
+              Expect.isFalse (encoded.Contains "\n") "one line on the wire"
+
+              Expect.equal
+                  (Record.decode encoded)
+                  (Some(StepReason("Gate", 1, "line one line two column")))
+                  "flattened, still decodable"
+          }
+
+          test "a reason explains a disposition; it never is one" {
+              // The reason lands AFTER its failed finish. If the plan read it as
+              // a step record, a retry marker's segmentation could drop or keep
+              // it differently from the finish it annotates. It must change no
+              // disposition, wherever it appears.
+              let plan =
+                  Resume.plan
+                      [ StepStarted("Gate", 0, "input")
+                        StepFinished("Gate", 0, BuildStatus.Aborted)
+                        StepReason("Gate", 0, "input requires human approval")
+                        RetryAttemptStarted("Flaky", 2)
+                        StepReason("Flaky", 0, "script returned exit code 7") ]
+
+              Expect.equal (Resume.dispositionOf plan "Gate" 0) (AlreadyFinished BuildStatus.Aborted) "unchanged"
+              Expect.equal (Resume.dispositionOf plan "Flaky" 0) NotStarted "a reason is not a start"
+              Expect.isEmpty plan.NeedsReconciliation "nothing interrupted"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Journal" [ roundTrip; resumePlanning; retryAttempts; crashResume ]))
+    runTestsWithCLIArgs
+        []
+        argv
+        (testSequenced (testList "Fogell.Journal" [ roundTrip; resumePlanning; retryAttempts; stepReasons; crashResume ]))

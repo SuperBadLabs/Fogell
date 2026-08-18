@@ -260,16 +260,14 @@ let stringLiteral: P<string> =
 ///
 /// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
 /// [stringLiteral] above enumerates triple-single, triple-double, single, double
-/// and slashy. [balancedRaw] below skips `'`, `"` and comments escape-aware —
-/// but NOT slashy, which this comment previously claimed. It is a real gap, not
-/// a wording slip: a slashy carrying the active closing delimiter, such as
-/// `/a}b/` inside a `when { expression { … } }`, is counted as a brace and ends
-/// the balanced region early. UNPROVEN BY RECEIPT — not for FG-129's reason but
-/// because this documents an OPEN DEFECT: no case can be PROVEN against
-/// behaviour the engine gets wrong, and the receipt arrives with the FG-140
-/// fix. Measured against the host, which reports
-/// `no_stages: pipeline declares no stages`, the whole structure collapsed by a
-/// regex. FG-140. `Parser` needed the same knowledge to
+/// and slashy. [balancedRaw] below skips `'`, `"`, comments AND — since FG-141
+/// landed 2026-08-18 — position-decided slashy spans. The gap this paragraph
+/// used to document as OPEN: a slashy carrying the active closing delimiter,
+/// such as `/a}b/` inside a `when { expression { … } }`, was counted as a brace
+/// and ended the balanced region early (measured then against the host as
+/// `no_stages: pipeline declares no stages`, the whole structure collapsed).
+/// PROVEN NOW by receipts `when-slashy-brace` and `script-slashy-brace`, the
+/// receipts this note promised would arrive with the fix. FG-140. `Parser` needed the same knowledge to
 /// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
 /// scanner instead. Five review rounds found five forms it had missed, and two
 /// intermediate states produced SILENT no-ops — a build exiting 0 with no
@@ -353,9 +351,29 @@ let stringSpanRaw: P<string> =
 
 // --- balanced raw capture --------------------------------------------------
 
+/// FG-141. Can the character ending the text so far END an expression? This is
+/// the context the slashy-versus-division decision needs, and it is a fact a
+/// linear scanner CAN carry: after an identifier character, a closing bracket
+/// or a string, a `/` is division; anywhere else — after `=`, `(`, `,`, `:`,
+/// an operator, or at the start — Groovy has no left operand, so a `/` can
+/// only open a slashy literal. The over-broad fix this ticket twice rejected
+/// treated every `/` as an opener and swallowed `10 / 2`; the position test is
+/// what makes the narrow claim safe. `}` counts as an ender on purpose: a
+/// closure literal is an operand, and mis-deciding division there reproduces
+/// the OLD behaviour (slashy unprotected) rather than a new wrong one.
+let endsExpression (c: char) =
+    isLetter c || isDigit c || c = '_' || c = ')' || c = ']' || c = '}' || c = '\'' || c = '"'
+
 /// Capture the raw source of a balanced region, skipping over strings and
 /// comments so their delimiters never affect the depth count. Used for
 /// argument lists and for `expression { }` bodies that the interpreter owns.
+///
+/// FG-141. Slashy spans are skipped too, when the position says slashy (see
+/// [endsExpression]): `def pattern = /}/` inside a `script { }` body counted
+/// the brace and ended the block early, rejecting the whole pipeline as
+/// `opaque section` — a false refusal of valid Groovy. An unterminated
+/// candidate span falls back to the ordinary single character, which is
+/// exactly the pre-FG-141 reading — the fix can only remove derailments.
 let balancedRaw (opening: char) (closing: char) : P<string> =
     let inner (stream: CharStream<unit>) =
         if stream.Peek() <> opening then
@@ -365,6 +383,9 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
             stream.Skip()
             let mutable depth = 1
             let mutable failed = false
+            // the region opener starts an expression context; a `/` first thing
+            // in the body is a slashy opener
+            let mutable lastSig = ' '
 
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
@@ -400,6 +421,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                                 stream.Skip()
 
                         if not closed then failed <- true
+                        lastSig <- q // a completed literal ends an expression
                     else
 
                     stream.Skip()
@@ -419,6 +441,8 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             closed <- true // unterminated single-quote: bail
                         else
                             stream.Skip()
+
+                    lastSig <- q // a completed literal ends an expression
                 elif c = '/' && stream.Peek(1) = '/' then
                     while not stream.IsEndOfStream && stream.Peek() <> '\n' do
                         stream.Skip()
@@ -435,10 +459,39 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             ended <- true
                         else
                             stream.Skip()
+                elif c = '/' && not (endsExpression lastSig) then
+                    // FG-141: no left operand, so this `/` can only open a
+                    // slashy. Skip its span; on no closer, rewind and read the
+                    // `/` as the ordinary character it always was.
+                    let before = stream.Index
+                    stream.Skip()
+                    let mutable closed = false
+
+                    while not closed && not stream.IsEndOfStream do
+                        let d = stream.Peek()
+
+                        if d = '\\' then
+                            stream.Skip()
+                            if not stream.IsEndOfStream then stream.Skip()
+                        elif d = '/' then
+                            stream.Skip()
+                            closed <- true
+                        else
+                            stream.Skip()
+
+                    if closed then
+                        lastSig <- '\'' // a completed literal ends an expression
+                    else
+                        stream.Seek(before)
+                        stream.Skip()
+                        lastSig <- '/'
                 else
                     if c = opening then depth <- depth + 1
                     elif c = closing then depth <- depth - 1
                     stream.Skip()
+
+                    if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
+                        lastSig <- c
 
             if depth <> 0 then
                 Reply(Error, messageError $"unbalanced '{opening}'")

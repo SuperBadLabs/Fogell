@@ -540,9 +540,68 @@ let structure =
               Expect.equal (err src).Code MalformedSyntax "and `parse` still agrees"
           } ]
 
+/// FG-141. Slashy versus division, decided by POSITION: a `/` after something
+/// that can end an expression is division; with no left operand it can only
+/// open a slashy. The over-broad fix (every `/` opens a span) was an approval
+/// bypass — `input message: 10 / 2` lost its prompt — and the narrow one here
+/// must hold both directions at both scanner sites.
+let slashyPosition =
+    let steps body =
+        mk $"    stage(\"S\") {{\n      steps {{\n{body}\n      }}\n    }}"
+
+    testList
+        "FG-141 slashy versus division"
+        [ test "division in a named argument never opens a span (scenario W's shape)" {
+              let p = ok (steps "        input message: 10 / 2")
+              Expect.equal (Pipeline.totalSteps p) 1 "the gate survives"
+          }
+
+          test "a slashy carrying a stop character is consumed whole" {
+              // `}` is in the raw-argument stop set; truncating there loses the
+              // literal's tail and the closing delimiter.
+              let p = ok (steps "        input message: /a}b/")
+              Expect.equal (Pipeline.totalSteps p) 1 "arg intact"
+          }
+
+          test "a slashy after an operator inside a larger expression" {
+              let p = ok (steps "        echo 'x' + /a}b/")
+              Expect.equal (Pipeline.totalSteps p) 1 "mid-expression span"
+          }
+
+          test "a script body's brace-carrying slashy does not end the block" {
+              let p =
+                  ok (steps "        script {\n          def pattern = /}/\n          sh \"saw:${pattern}\"\n        }")
+
+              Expect.equal (Pipeline.totalSteps p) 1 "block intact"
+          }
+
+          test "a script body's division is not read as a span opener" {
+              let p =
+                  ok (steps "        script {\n          def x = 10 / 2\n          echo \"v:${x}\"\n        }")
+
+              Expect.equal (Pipeline.totalSteps p) 1 "division intact"
+          }
+
+          test "a when-expression's slashy does not end the expression body" {
+              let p =
+                  ok (
+                      mk
+                          "    stage(\"S\") {\n      when { expression { env.B ==~ /a}b/ } }\n      steps {\n        echo 'ran'\n      }\n    }"
+                  )
+
+              Expect.equal (Pipeline.totalSteps p) 1 "when body intact"
+          }
+
+          test "an unterminated slashy candidate falls back to the old reading" {
+              // The `/` stays ordinary text; the argument still parses and the
+              // nonsense fails loudly at evaluation, not silently at parse.
+              let p = ok (steps "        echo env.A + / 2")
+              Expect.equal (Pipeline.totalSteps p) 1 "no cross-line hunt"
+          } ]
+
 [<EntryPoint>]
 let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testList "Fogell.Pipeline.Parser" [ admissionLimits; declarativeDetection; structure ])
+        (testList "Fogell.Pipeline.Parser" [ admissionLimits; declarativeDetection; structure; slashyPosition ])

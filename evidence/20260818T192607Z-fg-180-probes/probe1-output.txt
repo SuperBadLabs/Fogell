@@ -1,0 +1,32 @@
+=== positional command-form initialiser ===
+SRC: def m = tool 'Maven 3.3.9'
+OK: [SDef ("m", Some (EVar "tool")); SExpr (EStr "Maven 3.3.9")]
+
+=== named command-form initialiser ===
+SRC: def pom = readMavenPom file: 'pom.xml'
+ERR: Expecting: '[' @{ Line = 1L
+  Column = 28L } (MalformedSyntax)
+
+=== named command-form statement ===
+SRC: readMavenPom file: 'pom.xml'
+OK: [SExpr
+   (ECall (FreeCall "readMavenPom", [ANamed ("file", EStr "pom.xml")], None))]
+
+=== positional command-form statement ===
+SRC: tool 'Maven 3.3.9'
+OK: [SExpr (ECall (FreeCall "tool", [APos (EStr "Maven 3.3.9")], None))]
+
+=== slashy string initialiser ===
+SRC: def p = /a}b/
+OK: [SDef ("p", Some (EStr "a}b"))]
+
+=== division initialiser ===
+SRC: def x = 10 / 2
+OK: [SDef ("x", Some (EBinary ("/", EInt 10L, EInt 2L)))]
+
+=== division then use ===
+SRC: def x = 10 / 2
+echo x
+OK: [SDef ("x", Some (EBinary ("/", EInt 10L, EInt 2L)));
+ SExpr (ECall (FreeCall "echo", [APos (EVar "x")], None))]
+

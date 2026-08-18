@@ -914,6 +914,12 @@ let main argv =
                         printfn $"skip (durably finished): {stage}#{i}"
 
                     run
+              OnStepReason =
+                fun stage i reason ->
+                    // beside the finish it explains; the finish's own durability
+                    // policy carries both (no extra sync — a lost reason after a
+                    // crash costs an explanation, never a disposition)
+                    journal.Append(StepReason(stage, i, reason))
               OnRetryAttempt =
                 fun stage n ->
                     // durable BEFORE the attempt's first step, like OnStepStarted:

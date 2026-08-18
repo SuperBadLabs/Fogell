@@ -1,0 +1,26 @@
+ERR  cmd-form inside GString placeholder            Expecting: '[' @1:7
+ERR  named cmd-form initialiser (again)             Expecting: '[' @1:18
+OK   $class map key
+ERR  subscript assign closure RHS                   Expecting: '[' @1:13
+ERR  gstring subscript assign                       Expecting: '[' @1:20
+ERR  .new call                                      reserved @1:22
+OK   multiline list literal
+OK   multiline call parens
+OK   try-catch same line
+OK   try-catch newline before catch
+OK   try-catch catch on brace line
+ERR  string-named args (parallel)                   Expecting: '[' @1:13
+ERR  in operator                                    reserved @1:11
+OK   ternary
+ERR  paren-in-ternary                               Expecting: '[' @1:7
+OK   trailing + continuation
+ERR  gstring property name                          Expecting: any char in ‘ ’, '/*' or '//' @1:2
+OK   multiline block comment
+OK   elvis
+OK   safe navigation
+OK   spread/star import
+OK   annotation @Field
+ERR  c-style for (again)                            'switch', 'throw', 'true', 'try', 'while' or '{' @1:1
+ERR  typed fn decl (again)                          Expecting: '[' @1:7
+ERR  default param fn decl                          Expecting: '[' @1:6
+ERR  typed param fn decl                            Expecting: '[' @1:6

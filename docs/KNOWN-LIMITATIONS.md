@@ -8,8 +8,8 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Of 228 corpus files: **1** proven, **168** admitted (parsed — NOT a
-parity claim), **59** rejected. This page covers the rejected set.
+Of 228 corpus files: **1** proven, **183** admitted (parsed — NOT a
+parity claim), **44** rejected. This page covers the rejected set.
 
 ## opaque section
 
@@ -22,27 +22,26 @@ Files: **27**
 
 ## Expecting: '['
 
-Files: **21**
+Files: **8**
 
-- `Ableton_python-pipeline-utils.Jenkinsfile`
-- `Jotschi_maven-release-workflow-test.Jenkinsfile`
-- `alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile`
-- …and 18 more (see the ledger)
+- `camiloribeiro_cdeasy.Jenkinsfile`
+- `cloudogu_continuous-delivery-slides.Jenkinsfile`
+- `cloudogu_reveal.js-docker-example.Jenkinsfile`
+- …and 5 more (see the ledger)
 
 ## reserved
 
-Files: **3**
+Files: **2**
 
 - `cloudogu_ces-build-lib.Jenkinsfile`
-- `jenkinsci_docker.Jenkinsfile`
 - `merken_netCoreBuild.Jenkinsfile`
 
-## script block did not parse as Groovy: malformed_syntax at 7:21: Expecting: '['
+## Expecting: any char in ‘ ’, '/*' or '//'
 
 Files: **2**
 
-- `Romeh_spring-boot-ignite.Jenkinsfile`
-- `Romeh_spring-boot-sample-app.Jenkinsfile`
+- `jenkinsci_jenkins.Jenkinsfile`
+- `judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile`
 
 ## script block did not parse as Groovy: malformed_syntax at 9:47: Expecting: '['
 
@@ -56,23 +55,17 @@ Files: **1**
 
 - `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
 
-## script block did not parse as Groovy: malformed_syntax at 3:40: Expecting: '['
-
-Files: **1**
-
-- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '['
-
-Files: **1**
-
-- `varunpalekar_php-ci-cd.Jenkinsfile`
-
 ## 'switch', 'throw', 'true', 'try', 'while' or '{'
 
 Files: **1**
 
 - `jenkinsci_jenkinsfile-runner.Jenkinsfile`
+
+## script block did not parse as Groovy: malformed_syntax at 5:40: Expecting: any char in ‘ ’, '/*' or '//'
+
+Files: **1**
+
+- `MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile`
 
 ## 'return', 'switch', 'throw', 'true', 'try', 'while' or '{'
 

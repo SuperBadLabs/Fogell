@@ -81,6 +81,9 @@ module Resume =
                     // them here means the plan's dispositions are always the LATEST
                     // attempt's.
                     | RetryAttemptStarted(stage, _) -> acc |> Map.filter (fun (s, _) _ -> s <> stage)
+                    // FG-114: a reason explains a disposition, it never IS one —
+                    // and it survives retry markers as audit trail
+                    | StepReason _ -> acc
                     | StageCommitted _
                     | BuildFinished _
                     | ScriptDigest _

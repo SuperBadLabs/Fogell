@@ -21,46 +21,105 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, unit>
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
 /// FG-138. A raw (unquoted) argument value: single- and double-quoted SPANS consumed
-/// whole via `Lexeme.stringSpanRaw`, everything else scanned to a stop character.
-/// Not slashy (FG-141) and not dollar-slashy, which nothing parses.
+/// whole via `Lexeme.stringSpanRaw`, slashy spans consumed whole when position says
+/// slashy (FG-141), everything else scanned to a stop character. Dollar-slashy
+/// stays unparsed everywhere.
 ///
 /// The stop set can therefore include `;` without truncating an expression that
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
-/// A slashy `/; …/` is NOT protected — `/` is ordinary raw text here (FG-141). Five review rounds on FG-134 each found another string
+/// and since FG-141 a slashy `/; …/` too. Five review rounds on FG-134 each found another string
 /// form a hand-rolled character test had missed, and two of the intermediate
 /// states produced SILENT no-ops. `Lexeme` knew MORE forms than the hand-rolled test
-/// did, and asking it beat enumerating again — but this path protects QUOTE-DELIMITED
-/// spans only, single/double/triple. Slashy and dollar-slashy are excluded two comments
-/// above, so "already knew every form" overstated what this code does. Third place that
-/// same sentence had to be retracted.
+/// did, and asking it beat enumerating again.
 let private rawArgValue (stops: char list) : P<string> =
-    // `/` IS ORDINARY EXPRESSION TEXT HERE, NOT A SLASHY OPENER.
+    // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY POSITION — see `slash`
+    // below. The history that shaped the rule, kept because both failure
+    // directions actually shipped:
     //
-    // Treating it as one was an APPROVAL BYPASS. `input message: 10 / 2` — plain
-    // division — sent `/` into `stringSpanRaw`, which found no closing delimiter,
-    // so the argument failed to parse; `steps` is wrapped in `attempt`, that
-    // failure backtracked, the section became EMPTY, and the build reported
-    // SUCCESS having never published a prompt. UNPROVEN BY RECEIPT — the
-    // differential compares OUTPUT and WORKSPACE, and neither shows whether a
-    // prompt was published at all, which is exactly why every receipt passed
-    // while this was live. ASSERTED BY `scripts/run-approval-lane.sh` scenario W,
-    // proven to fail: restoring the slashy assumption gives
-    // `FAIL: a gate with an expression argument published NO prompt`.
-    // Measured against merged main,
-    // which runs the gate and waits (step-started=1, prompts=1) where this
-    // exited 0 with neither.
+    // Treating EVERY `/` as a span opener was an APPROVAL BYPASS. `input
+    // message: 10 / 2` — plain division — sent `/` into `stringSpanRaw`, which
+    // found no closing delimiter, so the argument failed to parse; `steps` is
+    // wrapped in `attempt`, that failure backtracked, the section became
+    // EMPTY, and the build reported SUCCESS having never published a prompt.
+    // UNPROVEN BY RECEIPT — the differential compares OUTPUT and WORKSPACE,
+    // and neither shows whether a prompt was published at all. ASSERTED BY
+    // `scripts/run-approval-lane.sh` scenario W, proven to fail: restoring
+    // the every-`/`-opens assumption gives `FAIL: a gate with an expression
+    // argument published NO prompt`. A human gate silently skipped is the
+    // guarantee FG-046b exists to hold.
     //
-    // A human gate silently skipped is the guarantee FG-046b exists to hold, so
-    // slashy support in a raw argument is not worth any amount of correctness
-    // elsewhere. It never worked here before FG-138 either — `/` was plain text.
-    // Distinguishing a slashy literal from division needs context this scanner
-    // does not have: FG-141.
+    // Treating NO `/` as an opener — the interim FG-141 state — truncated a
+    // slashy at any stop character inside it and refused valid pipelines.
+    // The position test (one character of lookbehind) is what lets both
+    // scenario W and the slashy gates Z2/Z3 hold at once.
     let plain: P<string> =
-        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"')
+        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"' && c <> '/')
 
     let quotedSpan: P<string> = attempt (lookAhead (anyOf "'\"") >>. stringSpanRaw)
 
-    many1Strings (quotedSpan <|> plain)
+    // FG-141. The context this scanner "does not have" is one character of
+    // lookbehind: a `/` after something that can END an expression is division
+    // and stays ordinary text — `input message: 10 / 2` is scenario W's
+    // approval bypass and must never change reading. A `/` with NO left
+    // operand can only open a slashy, whose span is consumed whole so a stop
+    // character inside it (`/a}b/`, `/a;b/`) cannot truncate the argument.
+    // The span must CLOSE ON ITS OWN LINE — a raw argument is line-bounded,
+    // and letting a candidate span hunt across lines for a closer would
+    // swallow later statements on a typo. Unterminated falls back to the
+    // ordinary character, the exact pre-FG-141 reading.
+    let slash: P<string> =
+        fun stream ->
+            if stream.Peek() <> '/' then
+                Reply(Error, expected "'/'")
+            else
+                let here = stream.Index
+                let mutable i = here - 1L
+                let mutable lastSig = ' '
+                let mutable scanning = true
+
+                while scanning && i >= 0L do
+                    stream.Seek i
+                    let ch = stream.Peek()
+
+                    if ch = ' ' || ch = '\t' then
+                        i <- i - 1L
+                    else
+                        lastSig <- ch
+                        scanning <- false
+
+                stream.Seek here
+
+                if Lexeme.endsExpression lastSig then
+                    stream.Skip()
+                    Reply("/") // division: the ordinary character
+                else
+                    let sb = System.Text.StringBuilder()
+                    sb.Append(stream.Read(1)) |> ignore
+                    let mutable closed = false
+                    let mutable bad = false
+
+                    while not closed && not bad && not stream.IsEndOfStream do
+                        let d = stream.Peek()
+
+                        if d = '\\' then
+                            sb.Append(stream.Read(1)) |> ignore
+                            if not stream.IsEndOfStream then sb.Append(stream.Read(1)) |> ignore
+                        elif d = '/' then
+                            sb.Append(stream.Read(1)) |> ignore
+                            closed <- true
+                        elif d = '\n' then
+                            bad <- true
+                        else
+                            sb.Append(stream.Read(1)) |> ignore
+
+                    if closed then
+                        Reply(sb.ToString())
+                    else
+                        stream.Seek here
+                        stream.Skip()
+                        Reply("/")
+
+    many1Strings (quotedSpan <|> plain <|> slash)
 
 /// A string literal wins ONLY when it is the WHOLE value.
 ///

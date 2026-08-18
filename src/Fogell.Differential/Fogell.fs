@@ -422,6 +422,7 @@ module FogellSide =
                   // set per top-level step by runStageBody; nothing outside a
                   // stage's step list is journaled, so the root carries none
                   DurabilityKey = None
+                  LastDiagnostic = ref None
                   HumanRejected = ref false }
 
             let mutable scmWrapperEnv: (string * string) list = []

@@ -38,6 +38,14 @@ type BranchCtx =
       /// Branch-local failure. Deliberately NOT the build status: a failed
       /// branch fails the build but does not halt its siblings.
       Failed: bool ref
+      /// FG-114. The LAST ERROR-shaped diagnostic this branch emitted, captured
+      /// where the string exists so a failed step's REASON can be journaled —
+      /// `Trace.isDiagnosticLine` consumes the console copy down to a boolean,
+      /// and a durable build record whose only explanation of a failure is the
+      /// word `failure` sent every reader to a log that no longer says why.
+      /// Freshened per hooked step by the dispatch loop, so a step cannot
+      /// inherit its predecessor's reason.
+      LastDiagnostic: string option ref
       /// Where this branch's step statuses go. Normally the build status; inside
       /// a `retry` attempt, a throwaway sink — a failed attempt that is retried
       /// must not leave a permanent mark on the build, and the build status is a

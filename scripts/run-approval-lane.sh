@@ -75,13 +75,13 @@
 # unbounded hang, and `approve alice` read as a complete approval by "unknown"
 # after only `approve` had landed. A lane that cannot see a defect does not
 # cover it.
-# Everything the scenario headings claim is asserted. Two things they used to
-# claim are NOT assertable from here and no longer appear: the WORDING of the
-# engine's refusal in E and O. `ERROR:`-shaped diagnostics are consumed by
-# Trace.isDiagnosticLine, which keeps only a ReportedFailureReason BOOLEAN, so
-# the text never reaches this log or the journal. The lane proves those two fail
-# closed; it cannot see WHY, and said otherwise until a reviewer checked.
-# FG-114 makes the reason durable so these can be tightened.
+# Everything the scenario headings claim is asserted. The WORDING of the
+# engine's refusals in E, O and Z6 spent a month unassertable — the console
+# text kept only a ReportedFailureReason BOOLEAN — until FG-114 journaled a
+# `step-reason` record beside the failed finish; those three now assert the
+# refusal's own words from the journal. The reason is captured at four sites
+# (step classification, the script-arm fail helper, the two input refusals);
+# a refusal outside those sites is still durable only as its disposition.
 # The transcript is the lane's evidence — for exactly what it asserts.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -285,16 +285,14 @@ set -e
 [ "$RC" -ne 124 ] || { echo "FAIL: an un-timed prompt with no approver HUNG (silently, since output is buffered)"; exit 1; }
 [ "$RC" -eq 1 ] || { echo "FAIL: expected a failed build (exit 1), got $RC"; cat "$E/run.log"; exit 1; }
 grep -q 'completed: failure' "$E/run.log" || { echo "FAIL: did not fail closed"; cat "$E/run.log"; exit 1; }
-# the REASON is NOT asserted, and this scenario no longer claims it is.
-# `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine, which
-# retains a ReportedFailureReason BOOLEAN and discards the text, so the wording
-# reaches neither this log nor the journal. A regression that genericised the
-# diagnostic would still pass every line below. What IS proven: it stops, it
-# stops at the prompt, and it stops with a failure. FG-114 is what would let
-# this assert the reason itself.
+# FG-114: the REASON is durable now — `step-reason` beside the failed finish —
+# so this scenario finally asserts WHICH rule refused, not merely that one did.
+# A regression that genericised the diagnostic fails here by name.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'".*no approver" "$E/build.journal" || {
+  echo "FAIL: the journal does not carry the no-approver reason"; sed 's/^/  | /' "$E/build.journal"; exit 1; }
 [ "$(tail -1 "$E/run.log")" = "| Ship it or Abort" ] || {
   echo "FAIL: something ran after the unanswerable prompt"; cat "$E/run.log"; exit 1; }
-echo "failed closed at the prompt, exit $RC — no hang (the reason is unasserted; FG-114)"
+echo "failed closed at the prompt with the reason on the durable record (FG-114)"
 
 # ---------------------------------------------------------------- scenario F
 echo "=== F: neither a fragment nor an ambiguous two-line answer counts ==="
@@ -764,14 +762,13 @@ grep -q '^input-decision' "$O/param.journal" 2>/dev/null && {
   echo "FAIL: submitterParameter recorded an approval"; exit 1; }
 grep -q '^shipped$' "$O/ws2/gate/markers.txt" 2>/dev/null && {
   echo "FAIL: the step after a submitterParameter gate ran"; exit 1; }
-# the refusal WORDING is not assertable here, and the line below no longer says
-# it is. `ERROR:`-shaped diagnostics are consumed by Trace.isDiagnosticLine,
-# which keeps a ReportedFailureReason BOOLEAN and drops the text. An engine that
-# refused BOTH options with the SAME wording — or the wrong one — would pass
-# every assertion above while this scenario printed "refused by name". Saying so
-# was the defect; a transcript is evidence, and evidence that overstates is worse
-# than none. FG-114 makes the reason durable so this can assert it.
-echo "both options failed closed, nothing published (the distinct reasons are unasserted; FG-114)"
+# FG-114: both reasons are durable and DISTINCT — each names its own option, so
+# an engine refusing both with one wording, or the wrong one, fails here.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"input \`submitter\`" "$O/build.journal" || {
+  echo "FAIL: the submitter journal does not carry its own reason"; sed 's/^/  | /' "$O/build.journal"; exit 1; }
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"input \`submitterParameter\`" "$O/param.journal" || {
+  echo "FAIL: the submitterParameter journal does not carry its own reason"; sed 's/^/  | /' "$O/param.journal"; exit 1; }
+echo "both options failed closed with their own reasons on the durable record (FG-114)"
 
 # ---------------------------------------------------------------- scenario P
 echo "=== P: a VOIDED answer is not replayed by a resumed attempt ==="
@@ -1369,13 +1366,17 @@ echo "=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ==
 # `steps { … }` as `SecOther` once the `attempt` around it backtracked. The stage
 # then ran with NO STEPS and the build reported SUCCESS.
 #
-# MEASURED before the fix, with the slashy argument below: prompts=0, the gate
+# MEASURED before the fix, with a slashy argument: prompts=0, the gate
 # stage's workspace EMPTY, and the following stage's marker PRESENT — the human
 # approval skipped AND the work it guards dropped, with no diagnostic anywhere.
 #
-# Fogell does not parse slashy strings in expression arguments. That is a real
-# limit, and this scenario asserts the HONEST behaviour for it: refuse the
-# pipeline.
+# THE FIXTURE MOVED ON 2026-08-18: FG-141 made slashy literals parse (position
+# decides slashy versus division), so the slashy spelling became a VALID gate
+# and lives in Z2/Z3 as positive scenarios. The refusal CLASS still needs a
+# parse-time member, and an UNTERMINATED literal is one that stays honest:
+# no grammar can close a quote the author never closed. Dollar-slashy
+# ($/…/$) is NOT usable here — it fails at EVALUATION, not parse, so it
+# guards a different door.
 #
 # COVERAGE, stated exactly: an unparseable NAMED argument, unparenthesised (Z) and
 # parenthesised (Z2); and an unparseable POSITIONAL argument standing before an
@@ -1398,7 +1399,7 @@ pipeline {
     stages {
         stage("Gate") {
             steps {
-                input message: /Deploy; / + env.TARGET, ok: "Ship it"
+                input message: 'Deploy
                 sh "echo shipped >> markers.txt"
             }
         }
@@ -1428,20 +1429,19 @@ grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z/run.log" || {
   echo "FAIL: the pipeline was dropped without any diagnostic"; cat "$Z/run.log"; exit 1; }
 echo "an unparseable gate argument was refused, not silently skipped"
 
-# Z2, the PARENTHESISED spelling of the same property. Found by the verifier after
-# Z was written and declared to hold for every uncovered form.
-#
-# This one was NOT a bypass, which is why the FG-143 fix did not catch it and why
-# it needs its own assertions: a prompt WAS published and the gate DID wait. The
-# published text was the raw argument body — `message: /Deploy; / + env.TARGET, ok:
-# "Ship it"` — so a human approved words the author never wrote, and `ok` was
-# dropped. A gate that stops the build while showing the wrong prompt still fails
-# the property this lane exists to defend.
-echo "=== Z2: a PARENTHESISED unparseable gate argument is REFUSED ==="
+# Z2, the PARENTHESISED slashy spelling — POSITIVE since 2026-08-18 (FG-141).
+# Its history is why the assertion demands EXACT WORDS: before the guard
+# hardened, this spelling published the RAW ARGUMENT BODY as the prompt —
+# `message: /Deploy; / + env.TARGET, ok: "Ship it"` — so a human approved
+# words the author never wrote, and `ok` was dropped. A refusal scenario
+# could only prove the downgrade gone; this asserts the gate shows the
+# EVALUATED message, which fails on refusal AND on any raw-body regression.
+echo "=== Z2: a PARENTHESISED slashy gate message publishes its EVALUATED words ==="
 Z2="$LANE/z2"; mkdir -p "$Z2/approvals"
 cat > "$Z2/Jenkinsfile" <<'Z2JF'
 pipeline {
     agent any
+    environment { TARGET = "prod" }
     stages {
         stage("Gate") {
             steps {
@@ -1452,56 +1452,41 @@ pipeline {
     }
 }
 Z2JF
-# BOUNDED. A refusal scenario must never WAIT: when the property is broken the
-# downgrade publishes a prompt and the host blocks for a decision nobody writes,
-# so an unbounded run HANGS instead of failing. It did exactly that during this
-# scenario's own mutation proof — the lane sat for minutes and only reported the
-# defect once the host was killed by hand. A checker that hangs is worse than one
-# that fails: in CI it burns the timeout and returns no verdict at all. The same
-# bounded-wait hardening was applied to scenarios Q and W earlier, and this
-# scenario was still written without it.
-set +e
-timeout 60 "$HOST_BIN" "$Z2/Jenkinsfile" "$Z2/ws" gate "$Z2/build.journal" "$Z2/approvals" > "$Z2/run.log" 2>&1
-Z2_RC=$?
-set -e
-[ "$Z2_RC" -eq 124 ] && {
-  echo "FAIL: the parenthesised gate WAITED on a prompt instead of refusing — the raw body became the prompt text"
-  cat "$Z2/run.log"; exit 1; }
-grep -q 'completed: success' "$Z2/run.log" && {
-  echo "FAIL: a parenthesised unparseable gate argument completed successfully"
-  cat "$Z2/run.log"; exit 1; }
-# ANY prompt is a failure, not merely one containing `message:`. Testing for the
-# raw body's own text made the assertion as narrow as the defect I had in mind:
-# a host publishing some OTHER prompt, or failing for an unrelated reason before
-# the work ran, still printed this scenario's success line.
-[ -z "$(ls -A "$Z2/approvals" 2>/dev/null)" ] || {
-  echo "FAIL: a refused pipeline published an approval prompt"; ls -1 "$Z2/approvals"; exit 1; }
-grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z2/run.log" || {
-  echo "FAIL: the parenthesised pipeline was dropped without any diagnostic"; cat "$Z2/run.log"; exit 1; }
-if [ -f "$Z2/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z2/ws/gate/markers.txt"; then
-  echo "FAIL: work ran past a gate whose arguments did not parse"; exit 1
-fi
-echo "a parenthesised unparseable gate argument was refused, not published as raw text"
+"$HOST_BIN" "$Z2/Jenkinsfile" "$Z2/ws" gate "$Z2/build.journal" "$Z2/approvals" > "$Z2/run.log" 2>&1 &
+PID=$!
+Z2ID=$(await_pending "$Z2/approvals") || {
+  echo "FAIL: the parenthesised slashy gate published NO prompt — the build would ship unapproved"
+  cat "$Z2/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q "prompt	Deploy; prod" "$Z2/approvals/$Z2ID.pending" || {
+  echo "FAIL: the prompt was not the EVALUATED \`Deploy; prod\` — the operator would approve different words"
+  cat "$Z2/approvals/$Z2ID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$Z2/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the slashy gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the slashy prompt was pending"; cat "$Z2/run.log"; exit 1; }
+printf 'approve zelda\n' > "$Z2/approvals/$Z2ID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Z2/run.log" || {
+  echo "FAIL: the answered slashy gate did not complete"; cat "$Z2/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Z2/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the slashy gate did not run exactly once"; exit 1; }
+echo "a parenthesised slashy gate published its evaluated words and waited"
 
-# Z3, a positional slashy carrying an ACTIVE DELIMITER before a named argument.
-# The `{` inside `/Deploy { /` is what the previous guard could not see: it tracked
-# bracket depth without skipping slashy spans, so the brace opened a level that never
-# closed and the later top-level `ok:` was hidden behind a non-zero depth. The earlier
-# spelling of this scenario used `/Ship; /`, which does not perturb the depth scanner
-# and therefore passed while this form was still broken.
-#
-# MIXED positional and named. The guard for Z2 tested only a LEADING `ident:`
-# while the ticket and the board row said "the body carries named-argument syntax" —
-# the code was the narrow thing and the claim was the class, one round after that
-# pattern was named on this branch. So `input("Deploy?", ok: /Ship; / + env.TARGET)`
-# still downgraded: the operator was shown `"Deploy?", ok: /Ship; / + env.TARGET`,
-# answered it, and the guarded step ran. Found by the verifier, not by scenario Z2,
-# which asserts the same property one spelling away.
-echo "=== Z3: a MIXED positional+named unparseable gate argument is REFUSED ==="
+# Z3, a positional slashy carrying an ACTIVE DELIMITER before a named argument —
+# POSITIVE since 2026-08-18 (FG-141). The `{` inside `/Deploy { /` is what the
+# pre-fix scanner could not see: it tracked bracket depth without skipping
+# slashy spans, so the brace opened a level that never closed and the later
+# top-level `ok:` was hidden behind a non-zero depth. The earlier spelling used
+# `/Ship; /`, which does not perturb the depth scanner and passed while this
+# form was still broken — the brace stays in the fixture BECAUSE it is the
+# hard case. Positive now for Z2's reason: exact evaluated words, or fail.
+echo "=== Z3: a MIXED positional slashy gate with an ACTIVE '{' publishes its words ==="
 Z3="$LANE/z3"; mkdir -p "$Z3/approvals"
 cat > "$Z3/Jenkinsfile" <<'Z3JF'
 pipeline {
     agent any
+    environment { TARGET = "prod" }
     stages {
         stage("Gate") {
             steps {
@@ -1512,24 +1497,26 @@ pipeline {
     }
 }
 Z3JF
-set +e
-timeout 60 "$HOST_BIN" "$Z3/Jenkinsfile" "$Z3/ws" gate "$Z3/build.journal" "$Z3/approvals" > "$Z3/run.log" 2>&1
-Z3_RC=$?
-set -e
-[ "$Z3_RC" -eq 124 ] && {
-  echo "FAIL: a mixed positional+named gate WAITED on a prompt instead of refusing"
-  cat "$Z3/run.log"; exit 1; }
-grep -q 'completed: success' "$Z3/run.log" && {
-  echo "FAIL: a mixed positional+named unparseable gate completed successfully"
-  cat "$Z3/run.log"; exit 1; }
-[ -z "$(ls -A "$Z3/approvals" 2>/dev/null)" ] || {
-  echo "FAIL: a refused mixed-argument pipeline published an approval prompt"; ls -1 "$Z3/approvals"; exit 1; }
-grep -qE 'no_stages|malformed_syntax|refus|parse' "$Z3/run.log" || {
-  echo "FAIL: the mixed-argument pipeline was dropped without any diagnostic"; cat "$Z3/run.log"; exit 1; }
-if [ -f "$Z3/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z3/ws/gate/markers.txt"; then
-  echo "FAIL: work ran past a mixed gate whose arguments did not parse"; exit 1
-fi
-echo "a mixed positional+named unparseable gate was refused, not published as raw text"
+"$HOST_BIN" "$Z3/Jenkinsfile" "$Z3/ws" gate "$Z3/build.journal" "$Z3/approvals" > "$Z3/run.log" 2>&1 &
+PID=$!
+Z3ID=$(await_pending "$Z3/approvals") || {
+  echo "FAIL: the mixed slashy gate published NO prompt — the build would ship unapproved"
+  cat "$Z3/run.log"; kill -9 "$PID" 2>/dev/null; exit 1; }
+grep -q "prompt	Deploy { prod" "$Z3/approvals/$Z3ID.pending" || {
+  echo "FAIL: the prompt was not the EVALUATED \`Deploy { prod\`"
+  cat "$Z3/approvals/$Z3ID.pending"; kill -9 "$PID" 2>/dev/null; exit 1; }
+sleep 2
+grep -q '^shipped$' "$Z3/ws/gate/markers.txt" 2>/dev/null && {
+  echo "FAIL: the step past the mixed slashy gate ran before anyone answered it"; kill -9 "$PID" 2>/dev/null; exit 1; }
+kill -0 "$PID" 2>/dev/null || {
+  echo "FAIL: the host exited while the mixed slashy prompt was pending"; cat "$Z3/run.log"; exit 1; }
+printf 'approve zorro\n' > "$Z3/approvals/$Z3ID.decision"
+set +e; wait "$PID"; set -e
+grep -q 'completed: success' "$Z3/run.log" || {
+  echo "FAIL: the answered mixed slashy gate did not complete"; cat "$Z3/run.log"; exit 1; }
+[ "$(grep -c '^shipped$' "$Z3/ws/gate/markers.txt")" -eq 1 ] || {
+  echo "FAIL: the step past the mixed slashy gate did not run exactly once"; exit 1; }
+echo "a mixed positional slashy gate published its evaluated words and waited"
 
 # ---------------------------------------------------------------- scenario Z4
 echo "=== Z4: a VALID triple-quoted gate publishes its MESSAGE and waits ==="
@@ -1670,13 +1657,12 @@ grep -q 'completed: success' "$Z6/run.log" && {
 if [ -f "$Z6/ws/gate/markers.txt" ] && grep -q '^shipped$' "$Z6/ws/gate/markers.txt"; then
   echo "FAIL: work ran past a refused script-block gate"; exit 1
 fi
-# THE REASON IS UNASSERTED, and said so rather than quietly dropped: this host does not
-# surface emitted console text to the captured log — `run.log` holds only
-# `completed: failure` — so the lane can prove the REFUSAL but not its WORDING. Same gap
-# as scenarios E, J and O record against FG-114. The message itself is covered by the
-# named-reason map in `WalkerOrchestration`, which a reader can check; what matters here
-# and IS proven is that nothing published and no work ran past the gate.
-echo "a script-block input was refused and nothing published (the reason text is unasserted; FG-114)"
+# FG-114: the script-arm `fail` helper captures, so the refusal's WORDING is in
+# the journal — assert it names the vocabulary refusal, not some other failure.
+grep -q $'^step-reason\tGate\t'"[0-9]*"$'\t'"script block calls \`input\`" "$Z6/build.journal" || {
+  echo "FAIL: the journal does not carry the script-block input refusal's reason"
+  cat "$Z6/build.journal"; exit 1; }
+echo "a script-block input was refused by name in the journal and nothing published"
 
 LANE_OK=1
 echo "APPROVAL LANE: ALL ASSERTIONS PASSED"
