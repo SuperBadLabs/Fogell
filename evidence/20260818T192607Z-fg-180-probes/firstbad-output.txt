@@ -1,0 +1,46 @@
+arun-gupta_docker-jenkins-pipeline.Jenkinsfile               first bad line 3:   env.PATH = "${tool 'Maven3'}/bin:${env.PATH}"
+                                                               context -1:   checkout scm
+Jotschi_maven-release-workflow-test.Jenkinsfile              first bad line 35:         def splits = splitTests parallelism: [$class: 'CountDrivenParallelism', size: 10], generateInclusions: true
+                                                               context -1:       } else {
+jenkinsci_jenkins.Jenkinsfile                                first bad line 67:   builds["${platform}-jdk${jdk}"] = {
+                                                               context -1:   }
+cloudogu_ces-build-lib.Jenkinsfile                           first bad line 14:     def mvn = cesBuildLib.MavenWrapperInDocker.new(this, 'eclipse-temurin:11.0.25_9-jdk-alpine')
+                                                               context -1: 
+jenkinsci_docker.Jenkinsfile                                 first bad line 19: def architecturesAndCiJioAgentLabels = [
+                                                               context -1: // Note: not taken in account on trusted.ci.jenkins.io as Linux builds are multiarch there
+merken_netCoreBuild.Jenkinsfile                              first bad line 40:         catch (e) {
+                                                               context -1:         }
+ricardozanini_soccer-stats.Jenkinsfile                       first bad line 14:         withEnv(["PATH+MAVEN=${tool 'm3'}/bin"]) {
+                                                               context -1:         git GIT_URL
+Ableton_python-pipeline-utils.Jenkinsfile                    first bad line 7: devToolsProject.run(
+                                                               context -1: 
+captjt_jenkins-pipeline-express.Jenkinsfile                  first bad line 4:         def node = tool name: 'Node-7.4.0', type: 'jenkins.plugins.nodejs.tools.NodeJSInstallation'
+                                                               context -1:         echo 'Initializing...'
+camiloribeiro_cdeasy.Jenkinsfile                             first bad line 3:     parallel (
+                                                               context -1:   stage 'Build'
+esign-consulting_logistics.Jenkinsfile                       first bad line 48:             parallel 'UI Tests': {
+                                                               context -1:         stage('Tests against AWS') {
+jalogut_jenkinsfile-basic-sample.Jenkinsfile                 first bad line 13: 	        parallel 'static': {
+                                                               context -1:         stage ('Tests') {
+kesselborn_jenkinsfile.Jenkinsfile                           first bad line 25:    parallel 'test': {
+                                                               context -1:    stage 'test'
+microsoft_movie-db-java-on-azure.Jenkinsfile                 first bad line 8:   def targetEnv = (branchName in ['test','prod']) ? branchName : 'dev'
+                                                               context -1:   def branchName = scm.branches[0].name.split('/').last()
+mraible_ng-demo.Jenkinsfile                                  first bad line 2:     def nodeHome = tool name: 'node-18', type: 'jenkins.plugins.nodejs.tools.NodeJSInstallation'
+                                                               context -1: node {
+cloudogu_reveal.js-docker-example.Jenkinsfile                first bad line 67:             sh "tempContainer=\$(docker create ${image.id}) && " +
+                                                               context -1:             // Extract rendered reveal webapp from container
+gdemengin_pipeline-logparser.Jenkinsfile                     first bad line 60:     expectedLogMap."$name" = ''
+                                                               context -1:     def line
+alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile         first bad line 86: def get_branch_type(String branch_name) {
+                                                               context -1: // Utility functions
+kishorebhatia_pipeline-as-code-demo.Jenkinsfile              first bad line 37:     sh "${tool 'Maven 3.x'}/bin/mvn ${args}"
+                                                               context -1: def mvn(args) {
+judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile first bad line 10: def helmLint(String chart_dir) {
+                                                               context -1: 
+jenkinsci_docker-agents.Jenkinsfile                          first bad line 3: properties([
+                                                               context -1: 
+j8kin_habr-jenkinsfile.Jenkinsfile                           first bad line 75: def generateExecuteStagesList(String packName) {
+                                                               context -1: 
+jenkinsci_jenkinsfile-runner.Jenkinsfile                     first bad line 10: /* These platforms correspond to labels in ci.jenkins.io, see:
+                                                               context -1: 

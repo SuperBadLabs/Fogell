@@ -1,0 +1,71 @@
+=== bare call + closure ===
+OK: [SExpr
+   (ECall
+      (FreeCall "node",
+       [APos
+          (EClosure
+             { Params = []
+               Body =
+                [SExpr (ECall (FreeCall "echo", [APos (EStr "hi")], None))] })],
+       None))]
+
+=== paren call + closure ===
+OK: [SExpr
+   (ECall
+      (FreeCall "node", [APos (EStr "docker")],
+       Some
+         { Params = []
+           Body = [SExpr (ECall (FreeCall "echo", [APos (EStr "hi")], None))] }))]
+
+=== dotted call + closure ===
+OK: [SExpr
+   (ECall
+      (MethodCall
+         (ECall (MethodCall (EVar "axes", "values"), [], None), "combinations"),
+       [],
+       Some
+         { Params = []
+           Body = [SExpr (ECall (FreeCall "echo", [APos (EStr "hi")], None))] }))]
+
+=== def function decl ===
+OK: [SFunc
+   ("mvn", ["args"], [SExpr (ECall (FreeCall "sh", [APos (EVar "args")], None))])]
+
+=== typed function decl ===
+ERR: Expecting: '[' @{ Line = 1L
+  Column = 12L }
+
+=== default param decl ===
+ERR: Expecting: '[' @{ Line = 1L
+  Column = 15L }
+
+=== romeh shape ===
+OK: [SDef ("mvnHome", None);
+ SExpr
+   (ECall
+      (FreeCall "node",
+       [APos
+          (EClosure
+             { Params = []
+               Body =
+                [SAssign (EVar "mvnHome", EVar "tool"); SExpr (EStr "M3");
+                 SExpr
+                   (ECall
+                      (FreeCall "stage", [APos (EStr "x")],
+                       Some
+                         { Params = []
+                           Body =
+                            [SExpr
+                               (ECall (FreeCall "echo", [APos (EStr "y")], None))] }));
+                 SIf
+                   (ECall (FreeCall "isUnix", [], None),
+                    [SExpr (ECall (FreeCall "sh", [APos (EStr "ls")], None))],
+                    [])] })], None))]
+
+=== assignment in env-style block ===
+OK: [SAssign (EVar "DB_USERNAME", EStr "laravel_test")]
+
+=== c-style for ===
+ERR: 'switch', 'throw', 'true', 'try', 'while' or '{' @{ Line = 1L
+  Column = 1L }
+

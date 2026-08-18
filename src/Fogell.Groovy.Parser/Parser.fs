@@ -139,12 +139,19 @@ let private slashy: P<Expr> =
 let private exprRef, private exprImpl = createParserForwardedToRef<Expr, unit> ()
 let private stmtRef, private stmtImpl = createParserForwardedToRef<Stmt, unit> ()
 
+/// FG-180. An expression position that ALSO admits a command-form call —
+/// forwarded because GStrings need it before the call grammar exists.
+let private exprOrCommandRef, private exprOrCommandImpl =
+    createParserForwardedToRef<Expr, unit> ()
+
 /// GString: literal runs plus `${…}` and `$ref` interpolations, kept apart so
 /// the interpreter — not the lexer — decides what an interpolation means.
 let private gstring (q: string) : P<Expr> =
     let part =
         choice
-            [ attempt (skipString "${" >>. ws >>. exprRef .>> ws .>> skipString "}") |>> GExpr
+            [ // FG-180: `"${tool 'M3'}/bin"` — a placeholder holds a whole
+              // expression, so the command form is admitted here too.
+              attempt (skipString "${" >>. ws >>. exprOrCommandRef .>> ws .>> skipString "}") |>> GExpr
               attempt (skipChar '$' >>. rawIdent .>>. many (attempt (skipChar '.' >>. rawIdent))
                        |>> fun (h, tail) -> GExpr(List.fold (fun acc n -> EProp(acc, n)) (EVar h) tail))
               (escaped |>> (string >> GLit))
@@ -200,7 +207,21 @@ let private listOrMap: P<Expr> =
               (sepEndBy exprRef (symbol ",") |>> EList) ])
 
 let private arg: P<Arg> =
-    attempt (plainIdent .>>? symbol ":" .>>. exprRef |>> ANamed) <|> (exprRef |>> APos)
+    // FG-180. A named argument's NAME may be a string literal — `parallel
+    // 'UI Tests': { … }` is how real corpus files label parallel branches.
+    // Constant strings only, mirroring `mapKey`: Groovy assembles named
+    // arguments into a map literal, and a computed key is a different
+    // construct this grammar does not claim.
+    let strName =
+        lexeme (attempt tripleSingle <|> singleQuoted)
+        >>= function
+            | EStr s -> preturn s
+            | _ -> fail "named-argument name must be a constant string"
+
+    choice
+        [ attempt (plainIdent .>>? symbol ":" .>>. exprRef |>> ANamed)
+          attempt (strName .>>? symbol ":" .>>. exprRef |>> ANamed)
+          (exprRef |>> APos) ]
 
 /// FG-174. Refuses a DUPLICATE NAMED ARGUMENT — the same rule the declarative parser
 /// applies, for the same reason: Groovy assembles a call's named arguments into a MAP
@@ -232,6 +253,41 @@ let private argsInParens: P<Arg list> =
 /// `a + b` is never read as a call to `a`.
 let private commandArgs: P<Arg list> =
     attempt (sepBy1 arg (symbol ",")) >>= noDuplicateNames
+
+/// FG-180. Command-form free call in EXPRESSION position: `def m = tool 'M3'`,
+/// `def n = tool name: 'x', type: 'y'`, `"${tool 'M3'}/bin"`. Before this the
+/// named form refused the whole script and the positional form parsed as TWO
+/// statements — `m` bound to the variable `tool`, the argument a no-op — an
+/// admission with a wrong AST (evidence/20260818T192607Z-fg-180-probes).
+///
+/// Admitted only where a HOST POSITION opts in via `exprOrCommand`
+/// (initialisers, assignment RHS, `return`, GString placeholders) — never
+/// inside the expression grammar itself, so a command call can head a value
+/// but not sit inside a binary chain, which is Groovy's own rule. Two guards
+/// keep every existing parse intact:
+///   - the first argument sits on the HEAD's line: Groovy ends the command
+///     form at a line break, and without this `def x = foo` would swallow the
+///     next line's statement as an argument;
+///   - the first argument starts with a token that cannot CONTINUE an
+///     expression — a quote, a digit, or an identifier. Operators, `(`, `[`,
+///     `{` and `/` never commit: those belong to the expression grammar's own
+///     forms (paren call, index, closure, division/slashy), and `a - b` must
+///     stay subtraction.
+let private commandExpr: P<Expr> =
+    let argStart =
+        nextCharSatisfies (fun c -> c = '\'' || c = '"' || isDigit c || isIdentStart c)
+
+    attempt (
+        plainIdent
+        .>>? notAfterLineBreak
+        .>>? argStart
+        .>>. commandArgs
+        .>>. opt (attempt closure)
+        |>> fun ((n, args), t) -> ECall(FreeCall n, args, t))
+
+exprOrCommandImpl.Value <- attempt commandExpr <|> exprRef
+
+let private exprOrCommand: P<Expr> = exprOrCommandRef
 
 let private primary: P<Expr> =
     ws
@@ -384,10 +440,35 @@ let private importStmt: P<Stmt> =
         >>. lexeme (many1Chars (satisfy (fun c -> isLetter c || isDigit c || c = '.' || c = '_' || c = '*')))
         |>> fun path -> SExpr(ECall(FreeCall "import", [ APos(EStr path) ], None)))
 
+let private funcParams: P<string list> =
+    // `String s` or bare `s` — the TYPE is erased, as `typedVar` and the
+    // closure grammar already erase it: dispatch is by arity (FG-195), not by
+    // static type. A DEFAULT (`x = true`) is NOT admitted: it changes the
+    // function's callable arities, `SFunc` has nowhere to carry the value,
+    // and dropping it silently would fault a valid zero-arg call at runtime —
+    // the honest refusal stands until the AST can hold it (FG-180 residual).
+    let param = attempt (plainIdent >>? ws >>? plainIdent) <|> plainIdent
+    between (symbol "(") (symbol ")") (sepEndBy param (symbol ","))
+
 let private defFunc: P<Stmt> =
     attempt (
         keyword "def" >>. plainIdent
-        .>>. between (symbol "(") (symbol ")") (sepEndBy plainIdent (symbol ","))
+        .>>. funcParams
+        .>>. block
+        |>> fun ((n, ps), b) -> SFunc(n, ps, b))
+
+/// FG-180. `void f(Maven m) { … }`, `String g() { … }` — a TYPED function
+/// declaration; the return type is erased exactly as parameter types are.
+/// Commits only on `<ident> <ident> ( … ) {`, so `echo foo(1)` stays a
+/// command call (no block follows) and `String s = "x"` stays `typedVar`
+/// (no parameter list).
+let private typedFunc: P<Stmt> =
+    attempt (
+        plainIdent >>? ws >>? plainIdent
+        .>>? notAfterLineBreak // `echo msg` then `(x) { … }` on the next line
+                               // is two statements, never a declaration —
+                               // the FG-187 defect class one level up
+        .>>.? funcParams
         .>>. block
         |>> fun ((n, ps), b) -> SFunc(n, ps, b))
 
@@ -398,7 +479,7 @@ let private multiAssign: P<Stmt> =
         keyword "def"
         >>. between (symbol "(") (symbol ")") (sepBy1 plainIdent (symbol ","))
         .>> symbol "="
-        .>>. exprRef
+        .>>. exprOrCommand
         |>> fun (names, src) ->
                 let binds =
                     names |> List.mapi (fun i n -> SDef(n, Some(EIndex(src, EInt(int64 i)))))
@@ -406,19 +487,19 @@ let private multiAssign: P<Stmt> =
                 SIf(EBool true, binds, []))
 
 let private defVar: P<Stmt> =
-    attempt (keyword "def" >>. plainIdent .>>. opt (attempt (symbol "=" >>. exprRef)) |>> SDef)
+    attempt (keyword "def" >>. plainIdent .>>. opt (attempt (symbol "=" >>. exprOrCommand)) |>> SDef)
 
 let private finalStmt: P<Stmt> =
     attempt (
         keyword "final"
         >>. opt (attempt (plainIdent .>>? followedBy (plainIdent .>> ws .>> skipString "=")))
-        >>. plainIdent .>> symbol "=" .>>. exprRef
+        >>. plainIdent .>> symbol "=" .>>. exprOrCommand
         |>> fun (n, v) -> SDef(n, Some v))
 
 let private typedVar: P<Stmt> =
     // `String s = "x"` — commits only on `<Type> <name> =`
     attempt (
-        plainIdent >>? ws >>? plainIdent .>>? symbol "=" .>>. exprRef
+        plainIdent >>? ws >>? plainIdent .>>? symbol "=" .>>. exprOrCommand
         |>> fun (n, v) -> SDef(n, Some v))
 
 let private ifStmt: P<Stmt> =
@@ -516,13 +597,26 @@ let private switchStmt: P<Stmt> =
                     .>>. many (attempt stmtRef))))
         |>> SSwitch)
 
-let private returnStmt: P<Stmt> = attempt (keyword "return" >>. opt exprRef |>> SReturn)
+let private returnStmt: P<Stmt> =
+    // FG-180 (verifier's construction on this diff). The value must START on
+    // the `return`'s own line: Groovy ends a `return` at a line break, and
+    // without the guard `if (skip) return` followed by `sh 'make'` swallowed
+    // the sh into the return — EXECUTING it on the path Groovy skips and
+    // dropping it from the path Groovy runs. The pre-guard grammar had the
+    // same swallow with a plain variable (`return` then `foo` on the next
+    // line); the command form escalated a loud strict-mode fault into silent
+    // wrong execution, so the guard closes both.
+    attempt (keyword "return" >>. opt (attempt (notAfterLineBreak >>. exprOrCommand)) |>> SReturn)
 let private throwStmt: P<Stmt> = attempt (keyword "throw" >>. exprRef |>> SThrow)
 
 /// Command-form free call with no parentheses: `sh 'make'`, `echo "x"`.
 let private commandCall: P<Stmt> =
+    // `[` is excluded from starting command arguments — FG-180: `builds['a']
+    // = { … }` was read as a call `builds(['a'])`, leaving `= { … }` to fail
+    // as a statement of its own. An index-assignment swallowed into a call is
+    // a wrong AST; the rare `foo [list]` command spelling loses to it.
     attempt (
-        plainIdent .>>? (notFollowedBy (choice [ symbol "="; symbol "." ; symbol "(" ]))
+        plainIdent .>>? (notFollowedBy (choice [ symbol "="; symbol "." ; symbol "("; symbol "[" ]))
         .>>. commandArgs
         .>>. opt (attempt closure)
         |>> fun ((n, args), t) -> SExpr(ECall(FreeCall n, args, t)))
@@ -542,7 +636,7 @@ let private assignOrExpr: P<Stmt> =
                 [ attempt ((attempt (symbol "++") >>% "+") <|> (attempt (symbol "--") >>% "-")
                            |>> fun op -> SAssign(lhs, EBinary(op, lhs, EInt 1L)))
                   attempt (assignOp >>= fun op ->
-                              exprRef
+                              exprOrCommand
                               |>> fun rhs ->
                                       match op with
                                       | None -> SAssign(lhs, rhs)
@@ -555,6 +649,7 @@ stmtImpl.Value <-
             [ annotationStmt
               importStmt
               attempt defFunc
+              attempt typedFunc
               attempt multiAssign
               finalStmt
               defVar

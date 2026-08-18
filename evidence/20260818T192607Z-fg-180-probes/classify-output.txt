@@ -1,0 +1,296 @@
+59 malformed_syntax rows
+
+=== Ableton_python-pipeline-utils.Jenkinsfile
+    malformed_syntax Expecting: '[' @7:20
+    line 7: devToolsProject.run(
+    caret:                    ^
+
+=== DeekshithSN_Jenkinsfile.Jenkinsfile
+    malformed_syntax opaque section @3:5
+    line 3:     stages {
+    caret:     ^
+
+=== HariSekhon_Jenkins.Jenkinsfile
+    malformed_syntax opaque section @413:3
+    line 413:   stages {
+    caret:   ^
+
+=== Jotschi_maven-release-workflow-test.Jenkinsfile
+    malformed_syntax Expecting: '[' @9:23
+    line 9: node("jenkins-slave") {
+    caret:                       ^
+
+=== MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile
+    malformed_syntax script block did not parse as Groovy: malformed_syntax at 3:40: Expecting: '[' @225:5
+    inner 3:40 -> file line ~227: 					}
+    caret:                                        ^ (col in block-relative line)
+
+=== Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile
+    malformed_syntax opaque section @3:5
+    line 3:     tools {
+    caret:     ^
+
+=== Romeh_spring-boot-ignite.Jenkinsfile
+    malformed_syntax script block did not parse as Groovy: malformed_syntax at 7:21: Expecting: '[' @12:17
+    inner 7:21 -> file line ~18:                     if (isUnix()) {
+    caret:                     ^ (col in block-relative line)
+
+=== Romeh_spring-boot-sample-app.Jenkinsfile
+    malformed_syntax script block did not parse as Groovy: malformed_syntax at 7:21: Expecting: '[' @13:17
+    inner 7:21 -> file line ~19:                     if (isUnix()) {
+    caret:                     ^ (col in block-relative line)
+
+=== SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile
+    malformed_syntax opaque section @7:5
+    line 7:     parameters {
+    caret:     ^
+
+=== SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile
+    malformed_syntax opaque section @3:5
+    line 3:     tools {
+    caret:     ^
+
+=== Terradue_DotNetOpenSearchClient.Jenkinsfile
+    malformed_syntax script block did not parse as Groovy: malformed_syntax at 9:47: Expecting: '[' @92:9
+    inner 9:47 -> file line ~100:   //               sh "curl -s -X POST -H 'Authorization: token ${env.GITHUB_TOKEN}' -H 'Content-Type: application/zip' --data-binary @\$(ls ${ARTIFACT_PATH}) '${uploadUrl}?name=${ARTIFACT_NAME}'"
+    caret:                                               ^ (col in block-relative line)
+
+=== VAD37_unity-jenkinsfile.Jenkinsfile
+    malformed_syntax opaque section @7:5
+    line 7:     else {
+    caret:     ^
+
+=== alanmacgowan_WebApplication.Jenkinsfile
+    malformed_syntax opaque section @13:4
+    line 13: 			stages {
+    caret:    ^
+
+=== alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile
+    malformed_syntax Expecting: '[' @86:20
+    line 86: def get_branch_type(String branch_name) {
+    caret:                    ^
+
+=== arun-gupta_docker-jenkins-pipeline.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== aws-samples_ecs-bg-external-controller.Jenkinsfile
+    malformed_syntax opaque section @14:5
+    line 14:     stages {
+    caret:     ^
+
+=== beifei1_fire-cloud.Jenkinsfile
+    malformed_syntax opaque section @12:5
+    line 12:     tools {
+    caret:     ^
+
+=== buildit_jenkins-pipeline-libraries.Jenkinsfile
+    malformed_syntax opaque section @11:3
+    line 11:   tools {
+    caret:   ^
+
+=== camiloribeiro_cdeasy.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== captjt_jenkins-pipeline-express.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:17
+    line 1: node('testing') {
+    caret:                 ^
+
+=== cloudogu_ces-build-lib.Jenkinsfile
+    malformed_syntax reserved @3:16
+    line 3: node('docker') {
+    caret:                ^
+
+=== cloudogu_continuous-delivery-slides.Jenkinsfile
+    malformed_syntax Expecting: '[' @113:21
+    line 113: String createPdfName(boolean includeDate = true) {
+    caret:                     ^
+
+=== cloudogu_gitops-build-lib.Jenkinsfile
+    malformed_syntax Expecting: '[' @48:40
+    line 48: void generateCoverageReportForSonarQube(Maven mvn) {
+    caret:                                        ^
+
+=== cloudogu_gitops-playground.Jenkinsfile
+    malformed_syntax opaque section @16:5
+    line 16:     parameters {
+    caret:     ^
+
+=== cloudogu_reveal.js-docker-example.Jenkinsfile
+    malformed_syntax Expecting: '[' @10:16
+    line 10: node('docker') {
+    caret:                ^
+
+=== esign-consulting_logistics.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile
+    malformed_syntax opaque section @78:5
+    line 78: 
+    caret:     ^
+
+=== gdemengin_pipeline-logparser.Jenkinsfile
+    malformed_syntax Expecting: '[' @58:15
+    line 58: def testBranch(name, loop, expectedLogMap) {
+    caret:               ^
+
+=== holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile
+    malformed_syntax opaque section @3:5
+    line 3:     tools {
+    caret:     ^
+
+=== hungbang_spring-boot-aws-docdb-example.Jenkinsfile
+    malformed_syntax opaque section @8:5
+    line 8:     tools {
+    caret:     ^
+
+=== j8kin_habr-jenkinsfile.Jenkinsfile
+    malformed_syntax Expecting: '[' @75:30
+    line 75: def generateExecuteStagesList(String packName) {
+    caret:                              ^
+
+=== jalogut_jenkinsfile-basic-sample.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== jenkinsci_docker-agents.Jenkinsfile
+    malformed_syntax Expecting: '[' @9:18
+    line 9: def agentSelector(String imageType, retryCounter) {
+    caret:                  ^
+
+=== jenkinsci_docker.Jenkinsfile
+    malformed_syntax reserved @46:16
+    line 46: stage('Build') {
+    caret:                ^
+
+=== jenkinsci_jenkins.Jenkinsfile
+    malformed_syntax Expecting: '[' @62:28
+    line 62: axes.values().combinations {
+    caret:                            ^
+
+=== jenkinsci_jenkinsfile-runner.Jenkinsfile
+    malformed_syntax 'switch', 'throw', 'true', 'try', 'while' or '{' @16:1
+    line 16: for (int i = 0; i < platforms.size(); ++i) {
+    caret: ^
+
+=== jerearista_python-jenkinsfile-testing.Jenkinsfile
+    malformed_syntax opaque section @18:5
+    line 18:     }
+    caret:     ^
+
+=== jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile
+    malformed_syntax opaque section @12:5
+    line 12:     stages {
+    caret:     ^
+
+=== judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile
+    malformed_syntax Expecting: '[' @10:13
+    line 10: def helmLint(String chart_dir) {
+    caret:             ^
+
+=== k11h-de_zap-jenkins.Jenkinsfile
+    malformed_syntax opaque section @18:2
+    line 18: 	parameters {
+    caret:  ^
+
+=== kesselborn_jenkinsfile.Jenkinsfile
+    malformed_syntax Expecting: '[' @5:6
+    line 5: node {
+    caret:      ^
+
+=== kishorebhatia_pipeline-as-code-demo.Jenkinsfile
+    malformed_syntax Expecting: '[' @36:15
+    line 36: def mvn(args) {
+    caret:               ^
+
+=== maajor_Blender-Geometry-CI.Jenkinsfile
+    malformed_syntax opaque section @3:5
+    line 3:     stages {
+    caret:     ^
+
+=== maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile
+    malformed_syntax opaque section @41:5
+    line 41:     stages {
+    caret:     ^
+
+=== merken_netCoreBuild.Jenkinsfile
+    malformed_syntax reserved @6:6
+    line 6: node {
+    caret:      ^
+
+=== metersphere_jenkins-plugin.Jenkinsfile
+    malformed_syntax opaque section @44:5
+    line 44:         }
+    caret:     ^
+
+=== microsoft_movie-db-java-on-azure.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== mjah_kubernetes-jenkins-cicd-pipeline-example.Jenkinsfile
+    malformed_syntax opaque section @47:3
+    line 47:   stages {
+    caret:   ^
+
+=== mjuuso_provisioning_example.Jenkinsfile
+    malformed_syntax 'return', 'switch', 'throw', 'true', 'try', 'while' or '{' @1:1
+    line 1: # Sample Jenkinsfile
+    caret: ^
+
+=== mraible_ng-demo.Jenkinsfile
+    malformed_syntax Expecting: '[' @1:6
+    line 1: node {
+    caret:      ^
+
+=== narasimhavuppala_jenkins-calculator.Jenkinsfile
+    malformed_syntax opaque section @3:3
+    line 3:   stages {
+    caret:   ^
+
+=== nikoly_selenium-grid-docker.Jenkinsfile
+    malformed_syntax opaque section @9:3
+    line 9:   stages {
+    caret:   ^
+
+=== pavankjadda_BookStore.Jenkinsfile
+    malformed_syntax opaque section @5:9
+    line 5:         tools
+    caret:         ^
+
+=== ricardozanini_soccer-stats.Jenkinsfile
+    malformed_syntax Expecting: '[' @11:16
+    line 11: stage('Build') {
+    caret:                ^
+
+=== rosineygp_mkdkr.Jenkinsfile
+    malformed_syntax opaque section @6:3
+    line 6:   }
+    caret:   ^
+
+=== saidsef_alpine-jenkins-dockerfile.Jenkinsfile
+    malformed_syntax an opaque section @15:3
+    line 15:   environment {
+    caret:   ^
+
+=== sidd-harth_apigee-cicd.Jenkinsfile
+    malformed_syntax opaque section @7:5
+    line 7:     tools {
+    caret:     ^
+
+=== varunpalekar_php-ci-cd.Jenkinsfile
+    malformed_syntax script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '[' @22:17
+    inner 6:21 -> file line ~27:                 DB_USERNAME = "laravel_test"
+    caret:                     ^ (col in block-relative line)
+
+=== yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile
+    malformed_syntax opaque section @4:3
+    line 4:   stages{
+    caret:   ^
