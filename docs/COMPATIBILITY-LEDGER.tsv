@@ -64,7 +64,7 @@ cloudogu_gitops-build-lib.Jenkinsfile	3	malformed_syntax	malformed_syntax Expect
 cloudogu_gitops-playground.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @16:5
 cloudogu_reveal.js-docker-example.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @10:16
 concur_jenkins-yml-workflowLibs.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-cvitter_jenkins-pipeline-examples.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+cvitter_jenkins-pipeline-examples.Jenkinsfile	1	-	receipt:cvitter_jenkins-pipeline-examples
 darinpope_jenkinsfile-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 devops-ws_learn-pipeline-java.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 eggsy84_gcp-spring-boot-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2

@@ -145,7 +145,7 @@ module GString =
                 // reassignment wins, exactly as Groovy's Binding does — but they do
                 // NOT enter the `env` map: `${x = 'ok'}` does not create env.x.
                 let seeded = Map.fold (fun m k v -> Map.add k v m) asValues carried
-                let bindings = seeded |> Map.add "env" (VMap asValues)
+                let bindings = seeded |> Map.add "env" (VMap(ref asValues))
 
                 // STRICT propagates into expressions, not just bare names — and it is
                 // enforced at READ time, in the interpreter, not by a static scan.
@@ -193,7 +193,13 @@ module GString =
                                 // changed or new key here is a real binding update
                                 if k = "env" then acc
                                 elif (match Map.tryFind k bindings with
-                                      | Some old -> old <> v
+                                      // FG-191: cycle-aware — a cyclic value
+                                      // reads as CHANGED (re-render is the safe
+                                      // side), never as a process-killing walk
+                                      | Some old ->
+                                          match Value.tryEq old v with
+                                          | Value.Answer same -> not same
+                                          | Value.CycleDetected -> true
                                       | None -> true) then
                                     Map.add k v acc
                                 else

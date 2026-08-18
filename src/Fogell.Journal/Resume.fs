@@ -50,6 +50,11 @@ type ResumePlan =
       /// disposition alone does not say WHICH step was interrupted, and the
       /// re-run rule below applies to `input` and to nothing else.
       InputSteps: Set<string * int>
+      /// FG-135. stage -> the LATEST retry attempt the journal shows started,
+      /// absent meaning 1. A resumed retried stage continues from this attempt
+      /// rather than replaying the loop from the top against dispositions that
+      /// only describe the latest attempt.
+      RetryAttempts: Map<string, int>
       /// Steps that started without finishing. Non-empty means a human or a
       /// policy must decide, because the engine genuinely does not know.
       NeedsReconciliation: (string * int) list }
@@ -69,6 +74,13 @@ module Resume =
                         | Some(AlreadyFinished _) -> acc
                         | _ -> Map.add (stage, i) Interrupted acc
                     | StepFinished(stage, i, status) -> Map.add (stage, i) (AlreadyFinished status) acc
+                    // FG-135. A new retry attempt SUPERSEDES the stage's step records
+                    // so far: they describe attempts that already failed, and reading
+                    // a failed attempt's `step-finished` as durably-finished is what
+                    // made a resume skip the step the next attempt needed. Dropping
+                    // them here means the plan's dispositions are always the LATEST
+                    // attempt's.
+                    | RetryAttemptStarted(stage, _) -> acc |> Map.filter (fun (s, _) _ -> s <> stage)
                     | StageCommitted _
                     | BuildFinished _
                     | ScriptDigest _
@@ -106,6 +118,16 @@ module Resume =
                 Map.empty
 
         { Steps = steps
+          RetryAttempts =
+            records
+            |> List.fold
+                (fun acc r ->
+                    match r with
+                    // later markers overwrite: the LAST attempt started is the one
+                    // a resume continues
+                    | RetryAttemptStarted(stage, n) -> Map.add stage n acc
+                    | _ -> acc)
+                Map.empty
           AnsweredKeys =
             records
             |> List.choose (function
@@ -183,7 +205,15 @@ module Resume =
     /// body to reach the prompt would re-run those too, which is exactly the
     /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
     /// `input` files use the wrapped shape, so the limit is stated on the board
-    /// rather than buried here.
+    /// rather than buried here. `script { }` IS this limit too — the block is
+    /// one unit, a crash between its children refuses by name, and operator
+    /// attestation covers the WHOLE block — asserted by the FG-171 scenario in
+    /// `scripts/run-restart-lane.sh`, written because the FG-171 row claimed the
+    /// opposite failure: the lane proves no child ever duplicates, and that a
+    /// child the crash never reached does not run on a reconciled resume.
+    /// Fine-grained resume inside any block needs per-child durable identity,
+    /// which FG-135's stage-level attempt markers do not deliver — that is
+    /// FG-204.
     ///
     /// That a bare top-level `input` asks exactly ONE prompt — occurrence 1 — is
     /// load-bearing beyond this function: this is the only place a resumed

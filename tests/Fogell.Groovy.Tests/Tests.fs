@@ -599,8 +599,294 @@ let hostedSteps =
                   (fun () -> Interpreter.runHosted host Budget.defaults steps Env.empty (parseOk "sh 'a'\nsh 'b'") |> ignore)
                   "a host exception propagates rather than being swallowed"
           }
+
+          test "a NESTED wrapper still refreshes the Jenkins env binding" {
+              // FG-201. The refresh's "ours" check was a per-invocation cell, so a
+              // wrapper nested inside another found the OUTER wrapper's cell, failed
+              // the identity check, and silently skipped its refresh — `${env.A}`
+              // interpolated null under a green build. Receipt
+              // `script-nested-wrappers-env` diverged on exactly this shape for four
+              // days before a suite run caught it; CI cannot run the differential
+              // suite, so this pins the refresh where CI can see it. The host below
+              // maintains a real overlay stack for `withEnv`, which is the one thing
+              // the recording host's empty CurrentEnv cannot exercise.
+              let overlay: (string * string) list ref = ref []
+              let log = ResizeArray<string>()
+
+              let host =
+                  { Perform =
+                      fun name positional _named runBody ->
+                          (match name, positional with
+                           | "withEnv", [ VList entries ] ->
+                               let pairs =
+                                   entries
+                                   |> List.choose (function
+                                       | VStr s ->
+                                           match s.Split([| '=' |], 2) with
+                                           | [| k; v |] -> Some(k, v)
+                                           | _ -> None
+                                       | _ -> None)
+
+                               let saved = overlay.Value
+                               overlay.Value <- pairs @ saved
+
+                               // restore in a FINALLY, as the walker does — a body
+                               // fault must leave CurrentEnv reporting the enclosing
+                               // overlay, or the FG-202 abnormal-exit read below
+                               // would be asserted against a harness bug
+                               try
+                                   runBody |> Option.iter (fun run -> run ())
+                               finally
+                                   overlay.Value <- saved
+                           | "sh", [ VStr rendered ] -> log.Add rendered
+                           | _ -> runBody |> Option.iter (fun run -> run ()))
+
+                          VNull
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> overlay.Value
+                    TakesBlock = fun name -> Set.contains name (set [ "dir"; "withEnv" ]) }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (set [ "sh"; "dir"; "withEnv" ]) Env.empty
+                      (parseOk
+                          "dir('sub') {\n  withEnv(['A=one']) { sh \"a:${env.A}\" }\n  sh \"after:${env.A}\"\n  try { withEnv(['B=two']) { def x = 1 / 0 } } catch (e) { }\n  sh \"catch:${env.B}\"\n  withEnv(['TARGET=prod']) { sh \"t:${env.TARGET}\" }\n}")
+
+              Expect.isNone outcome.Fault "the script ran"
+
+              // Both SIBLING wrappers under the outer `dir` must see their own
+              // binding: under the per-invocation check both interpolate null.
+              // The `catch:` read is the ABNORMAL exit — the faulting body leaves
+              // `withEnv` by exception, a script-level catch swallows it, and the
+              // read after it must still see the restored environment: the
+              // verifier's construction against the first (return-only) spelling
+              // of the FG-202 exit refresh.
+              // And the read BETWEEN them must see the RESTORED outer environment,
+              // not the first wrapper's retained snapshot — FG-202, the shape the
+              // verifier constructed against the FG-201 fix (probe
+              // `post-exit-env-read`: jenkins after:null, fogell read after:one
+              // until the exit re-refresh landed).
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "a:one"; "after:null"; "catch:null"; "t:prod" ]
+                  "entry refreshes inside each wrapper; exit restores on return AND on fault"
+          }
         ]
+
+/// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are
+/// asserted TOGETHER because three refusals were added one at a time, each looking
+/// complete, and the fourth was found inside the guard written for the third — a
+/// signature model is only a fix if all four hold at once.
+let callableResolution =
+    // preamble helpers arrive exactly as the walker supplies them: SFunc folded into
+    // the incoming env, so the tests exercise the same seam the script block uses
+    let helperEnv src =
+        parseOk src
+        |> List.fold
+            (fun acc s ->
+                match s with
+                | Fogell.Groovy.SFunc(n, ps, b) -> Env.withFunc n ps b acc
+                | _ -> acc)
+            Env.empty
+
+    let runWith env src =
+        Interpreter.runStrictVars Budget.defaults steps env (parseOk src)
+
+    let faultText (o: Outcome) =
+        match o.Fault with
+        | Some(Unsupported m) -> m
+        | other -> failtestf "expected an Unsupported refusal, got %A" other
+
+    testList
+        "FG-195 callable resolution by signature"
+        [ test "shape (a): a local closure SHADOWS a preamble helper" {
+              let o = runWith (helperEnv "def x() { return 'HELPER' }") "def x = { 'LOCAL' }\nreturn x()"
+              Expect.isNone o.Fault "runs"
+              Expect.equal o.Returned (Some(VStr "LOCAL")) "Groovy resolves the local"
+          }
+
+          test "shape (b): overloads resolve by ARITY, both directions" {
+              let env = helperEnv "def pick() { return 'zero' }\ndef pick(v) { return 'one' }"
+              Expect.equal ((runWith env "return pick()").Returned) (Some(VStr "zero")) "zero-arg body"
+              Expect.equal ((runWith env "return pick(1)").Returned) (Some(VStr "one")) "one-arg body"
+          }
+
+          test "shape (c): no matching arity is a refusal NAMING the signature" {
+              let o = runWith (helperEnv "def constant(v) { return v }") "return constant()"
+              let m = faultText o
+              Expect.stringContains m "0 argument(s)" "names what was attempted"
+              Expect.stringContains m "candidates take 1" "names what exists"
+          }
+
+          test "shape (d): a named-argument group is ONE Map argument" {
+              let o = runWith (helperEnv "def zero() { return 'z' }") "return zero(foo: 1)"
+              Expect.stringContains (faultText o) "1 argument(s)" "the Map counted as an argument"
+          }
+
+          test "a named-argument group binds as a Map, FIRST" {
+              let env = helperEnv "def one(m) { return m }"
+              match (runWith env "return one(foo: 'bar')").Returned with
+              | Some(VMap m) -> Expect.equal (Map.tryFind "foo" m.Value) (Some(VStr "bar")) "the group arrived as a Map"
+              | other -> failtestf "expected a Map return, got %A" other
+          }
+
+          test "a trailing closure is a FINAL argument, and the parameter is callable" {
+              // exercises helper resolution AND closure-value invocation in one shape:
+              // the block binds to `c`, and `c()` is a local-closure call (FG-189)
+              let env = helperEnv "def wrap(c) { return c() }"
+              let o = runWith env "return wrap { 'FROM-BLOCK' }"
+              Expect.isNone o.Fault "runs"
+              Expect.equal o.Returned (Some(VStr "FROM-BLOCK")) "block passed, then invoked"
+          }
+
+          test "a closure with declared parameters binds by arity" {
+              let o = runWith Env.empty "def f = { a, b -> a + b }\nreturn f(1, 2)"
+              Expect.equal o.Returned (Some(VInt 3L)) "two arguments bound"
+          }
+
+          test "a closure arity mismatch is a refusal naming the signature" {
+              let o = runWith Env.empty "def f = { a, b -> a + b }\nreturn f(1)"
+              Expect.stringContains (faultText o) "2 parameter(s)" "names the closure's arity"
+          }
+
+          test "a SAME-ARITY duplicate is refused at the call, not silently last-wins" {
+              let o = runWith Env.empty "def d() { return 'one' }\ndef d() { return 'two' }\nreturn d()"
+              Expect.stringContains (faultText o) "more than once" "the ambiguity is named"
+          }
+
+          test "the .call spelling resolves exactly as the bare call does" {
+              let o = runWith Env.empty "def f = { v -> v }\nreturn f.call('VIA-CALL')"
+              Expect.equal o.Returned (Some(VStr "VIA-CALL")) "explicit call spelling"
+          }
+
+          test "a caught fault inside a closure does not leak call depth" {
+              // the verifier's construction: each caught fault skipped the depth
+              // decrement, so 70 caught faults exhausted the 64-deep call budget
+              // with an UNCATCHABLE refusal where Jenkins prints and succeeds
+              let o =
+                  runWith
+                      Env.empty
+                      "def boom = { 1 / 0 }\nfor (i in 1..70) { try { boom() } catch (e) { } }\nreturn 'SURVIVED'"
+
+              Expect.isNone o.Fault "depth restored on the fault path"
+              Expect.equal o.Returned (Some(VStr "SURVIVED")) "the loop of caught faults completes"
+          }
+
+          test "in-script overloads resolve too, not only preamble ones" {
+              let o = runWith Env.empty "def pick() { return 'zero' }\ndef pick(v) { return 'one' }\nreturn pick(9)"
+              Expect.equal o.Returned (Some(VStr "one")) "arity picks among hoisted candidates"
+          } ]
+
+/// FG-193: a Groovy map is a REFERENCE object. Aliases share the ref; the Jenkins
+/// environment is recognised by the MAP's identity, however many rebinds away.
+let mapIdentity =
+    testList
+        "FG-193 map reference identity"
+        [ test "a mutation through an alias is visible to every name" {
+              // measured: jenkins=alias:x fogell=alias:null before the ref
+              let o = Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk "def local = [:]\ndef other = local\nother.FOO = 'x'\nreturn local.FOO")
+              Expect.equal o.Returned (Some(VStr "x")) "the write reached the shared map"
+          }
+
+          // the statement-level index spelling (`n['b'] = …`) is FG-015b's open
+          // parse gap and cannot be covered here until it parses
+
+          test "a non-map receiver's property write faults CATCHABLY in strict mode" {
+              // measured: Jenkins throws and a script-level catch intercepts it —
+              // the fault class matters as much as the fault (the first spelling
+              // raised an uncatchable refusal and diverged where parity had held)
+              let uncaught = Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk "def s = 'str'\ns.FOO = 'x'\nreturn 'SURVIVED'")
+
+              match uncaught.Fault with
+              | Some(UnknownProperty k) -> Expect.equal k "FOO" "names the property"
+              | other -> failtestf "expected UnknownProperty, got %A" other
+
+              let caught =
+                  Interpreter.runStrictVars Budget.defaults steps Env.empty
+                      (parseOk "def s = 'str'\ntry { s.FOO = 'x' } catch (Exception e) { }\nreturn 'SURVIVED'")
+
+              Expect.isNone caught.Fault "the catch intercepted it"
+              Expect.equal caught.Returned (Some(VStr "SURVIVED")) "execution continued, as on Jenkins"
+          }
+
+          test "the Jenkins env is recognised by VALUE identity through a rebind" {
+              // measured: the aliased write reached Jenkins' shell and silently
+              // vanished here — it must route to the host exactly as the direct
+              // spelling does, however many rebinds separate it
+              let sets = ResizeArray<string * string>()
+
+              let host =
+                  { Perform = fun _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
+                    SetEnv = fun k v -> sets.Add(k, v)
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let seeded =
+                  { Env.ofValues (Map.ofList [ "x", VNull ]) with Vars = Map.ofList [ "env", ref (VMap(ref Map.empty)) ] }
+
+              let o =
+                  Interpreter.runHosted host Budget.defaults steps seeded
+                      (parseOk "def saved = env\ndef env = saved\nenv.FOO = 'bar'\nreturn 'DONE'")
+
+              Expect.isNone o.Fault "ran"
+              Expect.equal (List.ofSeq sets) [ "FOO", "bar" ] "the aliased write reached the host"
+          } ]
+
+/// FG-191: equality and display survive cyclic values. Three shapes killed the
+/// PROCESS before this — no fault, no receipt, walker dead — and each is pinned
+/// here where CI can see it, beside the identity semantics that replaced the
+/// structural walk for closures.
+let cyclicValues =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-191 cyclic values and closure identity"
+        [ test "displaying a self-referential map renders (this Map), as Groovy does" {
+              let o = runS "def m = [:]\nm.self = m\nreturn \"${m}\""
+              Expect.isNone o.Fault "survives"
+              Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
+          }
+
+          test "same-AST closures from two calls are NOT equal — identity, not structure" {
+              // this exact comparison was a process-killing stack overflow
+              let o = runS "def make() {\n    def r\n    r = { r }\n    return r\n}\ndef a = make()\ndef b = make()\nreturn a == b"
+              Expect.isNone o.Fault "survives"
+              Expect.equal o.Returned (Some(VBool false)) "distinct invocations, distinct closures"
+          }
+
+          test "an aliased closure IS equal; a distinct literal is not" {
+              let o = runS "def a = { 1 }\ndef b = { 1 }\ndef c = a\nreturn [a == b, a == c]"
+              Expect.equal o.Returned (Some(VList [ VBool false; VBool true ])) "reference semantics"
+          }
+
+          test "comparing two distinct cyclic maps FAULTS instead of dying" {
+              // Groovy's own chase is a JVM StackOverflowError and a failed build;
+              // the fault below is this runtime's survivable spelling of the same
+              let o = runS "def m = [:]\nm.self = m\ndef n = [:]\nn.self = n\nreturn m == n"
+
+              match o.Fault with
+              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "the matching fault"
+              | other -> failtestf "expected the cycle fault, got %A" other
+          }
+
+          test "closures minted by ONE literal in a loop are DISTINCT" {
+              // the identity model's first spelling compared the captured env
+              // RECORD, and a while body assigning through cells never changes
+              // it — this returned true, a false equality this branch's own
+              // probe caught before it shipped; every evaluation mints a fresh
+              // record now (receipt script-loop-closure-eq)
+              let o =
+                  Interpreter.runStrictVars Budget.defaults steps Env.empty
+                      (parseOk "def xs = []\ndef i = 0\nwhile (i < 2) {\n    xs = xs + [{ 9 }]\n    i = i + 1\n}\nreturn xs[0] == xs[1]")
+
+              Expect.equal o.Returned (Some(VBool false)) "per evaluation, not per source location"
+          }
+
+          test "a map compared WITH ITSELF is simply equal — identity short-circuits" {
+              let o = runS "def m = [:]\nm.self = m\nreturn m == m"
+              Expect.equal o.Returned (Some(VBool true)) "same ref, no walk"
+          } ]
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])

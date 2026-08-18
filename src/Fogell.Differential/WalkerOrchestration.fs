@@ -61,6 +61,16 @@ type PersistenceHooks =
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
       OnStageCommitted: string -> unit
+      /// FG-135. stage -> retry attempt N (>= 2) is starting. Journaled (and made
+      /// durable) BEFORE the attempt's first step, so a resume can tell a failed
+      /// prior attempt's records from the live attempt's. Implementations also
+      /// switch the stage to LIVE: once a marker this process wrote supersedes
+      /// the plan, ShouldExecute/SkippedStatus must stop consulting it.
+      OnRetryAttempt: string -> int -> unit
+      /// FG-135. stage -> the attempt the journal already shows started (1 when
+      /// none). A resumed retried stage CONTINUES from this attempt — the plan's
+      /// step dispositions describe exactly that attempt and no other.
+      RetryAttemptsSoFar: string -> int
       /// FG-046b. stage -> stepIndex -> occurrence -> prompt -> the answer, if
       /// one has been given. Polled while an `input` waits, and expected to be
       /// CHEAP: it is called on every poll of the wait loop.
@@ -476,12 +486,46 @@ module WalkerOrchestration =
         // not be re-asked, a nested rejection propagated to an enclosing retry —
         // would otherwise have to be reproduced correctly a second time.
         // Receipts: `retry-succeeds`, `retry-timeout-retries`.
-        let runWithRetry (ctx: BranchCtx) (attempts: int) (runBody: BranchCtx -> unit) =
+        let runWithRetry
+            (ctx: BranchCtx)
+            (attempts: int)
+            (startAttempt: int)
+            (onAttempt: int -> unit)
+            (runBody: BranchCtx -> unit)
+            =
             let attempts = max 1 attempts
-            let mutable attempt = 1
+            // FG-135. A RESUMED retried stage continues from the attempt the journal
+            // shows started rather than replaying the loop from attempt 1: the
+            // resume plan's dispositions describe the LATEST attempt only, and prior
+            // attempts need no re-observation — the loop only ever advances past an
+            // attempt that completed as a failure. Non-journaled callers pass 1.
+            let startAttempt = max 1 startAttempt
+
+            // FAIL CLOSED when the journal shows an attempt this run's declared
+            // budget cannot hold: the loop below would simply never run, and a
+            // stage that crashed mid-attempt-N would complete SUCCESS with its
+            // recorded failure never replayed. Reachable only if the rendered
+            // retry count shrinks across runs under an unchanged digest (an
+            // env-derived count) — low odds, silent-success consequence, so it
+            // refuses by name (the verifier's construction on this diff).
+            if startAttempt > attempts then
+                emit
+                    $"ERROR: the journal shows retry attempt {startAttempt} already started, but this run's declared budget is {attempts} attempt(s); the counts disagree, so the stage fails closed rather than completing silently"
+
+                ctx.Sink BuildStatus.Failure
+                ctx.Failed.Value <- true
+
+            let mutable attempt = startAttempt
             let mutable settled = false
 
             while not settled && attempt <= attempts do
+                // Journal the attempt marker BEFORE its first step, and only for
+                // attempts this run STARTS: the resumed attempt's own marker is
+                // already on disk, and re-writing it would make the plan's
+                // last-marker-wins fold read it as superseding the very records
+                // it belongs to.
+                if attempt > startAttempt then
+                    onAttempt attempt
                 // Each attempt gets a fresh failure flag AND a throwaway status
                 // sink. MEASURED (FG-035): a body that fails once then succeeds is
                 // a SUCCESS build. Bumping the build status from the failed attempt
@@ -767,26 +811,38 @@ module WalkerOrchestration =
                 // when the approval consequence surfaced, and this paragraph
                 // outlived it by one commit — describing behaviour the lines below
                 // now prevent.
+                // FG-135. Does any step of this stage — wrappers included — name
+                // `input`? The journal's attempt dimension makes retry durable, but
+                // an `input` inside a retried stage still shares its identity
+                // `(stage, index, occurrence)` across attempts, and replaying a
+                // human's approval is the guarantee FG-046b exists to hold — so that
+                // one combination keeps the fail-closed refusal. `script { }` bodies
+                // need no scan: `input` is out of the script vocabulary (FG-160c).
+                let rec anyInput (steps: Step list) =
+                    steps |> List.exists (fun s -> s.Name = "input" || anyInput s.Block)
+
                 match stage.Options |> List.tryFind (fun o -> o.Name = "retry"), persistence with
-                | Some _, Some _ ->
-                    // FAILS CLOSED UNDER PERSISTENCE (FG-135). Steps are journaled as
-                    // `step-finished <stage> <index> <status>` with no ATTEMPT
-                    // dimension, so a resume turns a failed attempt's record into
-                    // `AlreadyFinished` and skips the very step the next attempt
-                    // needs — printing retry progress while replaying the old
-                    // failure. Worse, an `input` before the failing step shares the
-                    // identity `(stage, index, occurrence)` across attempts, so a
-                    // PRIOR ATTEMPT'S APPROVAL can be reused for a later prompt.
-                    //
-                    // That second consequence is why this refuses rather than ships
-                    // degraded. A wrong retry count is a bug; replaying a human's
-                    // approval is the guarantee FG-046b exists to hold, and this
-                    // project fails closed on it. The differential harness runs
-                    // WITHOUT persistence, so the semantics stay receipt-proven —
-                    // what is refused is the durable path, until FG-135 gives the
-                    // journal an attempt identity.
+                | Some _, Some _ when not (List.isEmpty stage.Nested) ->
+                    // FG-135. JOURNALED RETRY IS FOR LEAF STAGES ONLY. Nested and
+                    // parallel content runs INSIDE runStageBody — inside the retry
+                    // loop — and its steps journal under the NESTED stages' names,
+                    // which the parent's retry-attempt marker does not supersede: a
+                    // resumed later attempt would read a failed earlier attempt's
+                    // nested `step-finished` as durably finished, the exact defect
+                    // this ticket closed one level down. The records alone cannot
+                    // map a nested name to its retried parent, so this refuses by
+                    // name rather than guessing.
                     emit
-                        $"ERROR: stage \"{stage.Name}\" declares options {{ retry }} and this run is journaled; retry attempts have no durable identity yet (FG-135), so a resume could skip the step or reuse an earlier approval — refusing rather than risking either"
+                        $"ERROR: stage \"{stage.Name}\" declares options {{ retry }} and holds nested or parallel stages, and this run is journaled; nested steps' durable records carry no attempt dimension, so a resume could replay a superseded attempt's outcomes — refusing rather than risking it"
+
+                    body.Failed.Value <- true
+                    body.Sink BuildStatus.Failure
+                | Some _, Some _ when anyInput stage.Steps ->
+                    // THE NARROWED FG-135 REFUSAL: attempts have durable identity
+                    // now, so what remains refused is exactly the approval hazard,
+                    // by name.
+                    emit
+                        $"ERROR: stage \"{stage.Name}\" declares options {{ retry }} and contains an input step, and this run is journaled; an approval's identity does not carry an attempt dimension, so a prior attempt's answer could satisfy a later prompt — refusing rather than replaying a human's decision"
 
                     // Through `body`, NOT `ctx`. `stageStatus` is accumulated by
                     // `body.Sink`, and stage `post` selects its arm from it — so
@@ -795,7 +851,7 @@ module WalkerOrchestration =
                     // this branch had it.
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
-                | Some o, None when
+                | Some o, _ when
                     not (List.isEmpty stage.Post)
                     && (WalkerRules.retryCountOpt (renderStepArgs body stage o) |> Option.defaultValue 1) > 1
                     ->
@@ -834,7 +890,10 @@ module WalkerOrchestration =
 
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
-                | Some _, None when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
+                // (Under persistence this arm is subsumed by the FG-135 leaf-only
+                // guard above, which refuses ANY journaled retry+nested stage; it
+                // still owns the non-journaled case.)
+                | Some _, _ when skipStagesAfterUnstable && not (List.isEmpty stage.Nested) ->
                     // REFUSED COMBINATION, FG-136 — runtime fail-closed, like FG-137
                     // above and for the same reason: this runs when the stage is
                     // reached, not at compile time. UNPROVEN BY RECEIPT because the
@@ -864,8 +923,22 @@ module WalkerOrchestration =
                     body.Failed.Value <- true
                     body.Sink BuildStatus.Failure
                 | Some o, None ->
-                    runWithRetry body (retryCount (renderStepArgs body stage o)) (fun attemptCtx ->
+                    runWithRetry body (retryCount (renderStepArgs body stage o)) 1 ignore (fun attemptCtx ->
                         runStageBody attemptCtx cwd deadline stage)
+                | Some o, Some hooks ->
+                    // FG-135. THE DURABLE RETRY PATH. The resume plan's dispositions
+                    // describe the latest attempt only (superseded ones are dropped
+                    // at the marker), so the loop CONTINUES from the attempt the
+                    // journal shows started, and each attempt this run begins is
+                    // journaled before its first step. The hooks flip the stage to
+                    // LIVE at the first marker they write, so a later attempt's
+                    // steps stop consulting a plan that no longer describes them.
+                    runWithRetry
+                        body
+                        (retryCount (renderStepArgs body stage o))
+                        (hooks.RetryAttemptsSoFar stage.Name)
+                        (fun n -> hooks.OnRetryAttempt stage.Name n)
+                        (fun attemptCtx -> runStageBody attemptCtx cwd deadline stage)
                 | None, _ -> runStageBody body cwd deadline stage
 
                 if body.Failed.Value then ctx.Failed.Value <- true
@@ -1058,7 +1131,11 @@ module WalkerOrchestration =
             | "retry", _ when not (List.isEmpty step.Block) || ctx.HostedBody.IsSome ->
                 let hosted = ctx.HostedBody
 
-                runWithRetry ctx (retryCount (renderStepArgs ctx stage step)) (fun attemptCtx ->
+                // FG-135 deliberately does NOT reach the retry STEP: at stage level
+                // the step is one durability unit (a crash inside refuses resume by
+                // name, the FG-171-measured contract), so its attempts need no
+                // durable identity and journal no markers.
+                runWithRetry ctx (retryCount (renderStepArgs ctx stage step)) 1 ignore (fun attemptCtx ->
                     // FG-172. EACH ATTEMPT re-runs the body, which is the point of `retry`
                     // and the reason the interpreter hands it over as a THUNK rather than
                     // pre-evaluated: the batch model had already run it once by the time
@@ -2133,32 +2210,29 @@ module WalkerOrchestration =
                                         | _ -> None)
                                 | Result.Error _ -> []
 
-                        // OVERLOADS ARE NOT MODELLED, SO DUPLICATES FAIL CLOSED. Folding the
-                        // helpers into a map by NAME let the last declaration win, and
-                        // Groovy resolves by ARITY: `def pick() { 'zero' }` beside
-                        // `def pick(v) { 'one' }` made `pick()` run the one-arg body and
-                        // report success. A false success, and the SECOND of this class on
-                        // this branch after a local shadowing a helper — both are the same
-                        // shape, a name resolving to something the language would not pick.
-                        //
-                        // Refusing is not the end state; it is what honesty costs until
-                        // resolution is arity-aware. Naming the duplicate keeps the refusal
-                        // actionable.
-                        let duplicateHelpers =
+                        // FG-195. OVERLOADS RESOLVE BY ARITY NOW — `def pick()` beside
+                        // `def pick(v)` is an ordinary pair and the interpreter picks per
+                        // call — so only a SAME-ARITY duplicate fails closed here: Groovy
+                        // rejects a duplicate method signature at compile time, and Fogell
+                        // will not guess which body such a call means. This refusal was
+                        // any-duplicate until the signature model landed.
+                        let duplicateSignatures =
                             preambleFuncs
-                            |> List.countBy fst
-                            |> List.filter (fun (_, n) -> n > 1)
+                            |> List.countBy (fun (n, (ps, _)) -> n, List.length ps)
+                            |> List.filter (fun (_, count) -> count > 1)
                             |> List.map fst
 
-                        match duplicateHelpers with
-                        | dup :: _ ->
+                        match duplicateSignatures with
+                        | (dup, arity) :: _ ->
                             fail
-                                $"script block: the preamble declares '{dup}' more than once; Fogell does not model overloads and will not guess which body a call means"
+                                $"script block: the preamble declares '{dup}' more than once with {arity} parameter(s); Groovy rejects the duplicate signature and Fogell will not guess which body a call means"
                         | [] ->
 
                         let genv =
-                            { Env.ofValues (asValues |> Map.add "env" (VMap asValues)) with
-                                Funcs = Map.ofList preambleFuncs }
+                            preambleFuncs
+                            |> List.fold
+                                (fun acc (n, (ps, body)) -> Env.withFunc n ps body acc)
+                                (Env.ofValues (asValues |> Map.add "env" (VMap(ref asValues))))
 
                         // STRICT VARIABLE READS. `Interpreter.run` is the lax mode where an
                         // unbound name reads as null — kept for consumers modelling scripted
@@ -2312,12 +2386,14 @@ module WalkerOrchestration =
                             // NOTHING TO REPLAY: the steps ran as the script reached them.
                             // `Outcome.Effects` is empty in hosted mode by construction.
                             //
-                            // DURABILITY still bites here and FG-171 stays open: these
-                            // steps go through the dispatcher without their own
-                            // `OnStepStarted`/`OnStepFinished`, so the whole block remains
-                            // one durability unit and a crash mid-block re-runs it. Moving
-                            // the boundary was the prerequisite for fixing that, not the
-                            // fix itself.
+                            // DURABILITY: these steps go through the dispatcher without
+                            // their own `OnStepStarted`/`OnStepFinished`, so the whole
+                            // block is ONE durability unit. A crash mid-block REFUSES
+                            // resume by name — measured for FG-171, whose row had claimed
+                            // a re-run; the FG-171 scenario in run-restart-lane.sh pins
+                            // both the refusal and that no child effect duplicates.
+                            // Per-child identity needs the journal format change FG-135
+                            // carries.
                             ()
 
             | _ -> runStepInner ctx stage cwd step deadline

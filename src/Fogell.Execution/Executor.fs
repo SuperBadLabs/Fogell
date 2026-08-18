@@ -242,7 +242,14 @@ module Executor =
                     Some code,
                     Some $"script returned exit code {code}"
                 | TimedOut ->
-                    let budget = defaultArg request.TimeoutMs 0
+                    // FG-196 made TimeoutMs = None the ordinary case, and the wait loop
+                    // cannot produce TimedOut without a budget — but a diagnostic must
+                    // not invent "0 ms" if that ever changes, so the absence is named
+                    // rather than defaulted.
+                    let budget =
+                        match request.TimeoutMs with
+                        | Some ms -> $"its {ms} ms timeout"
+                        | None -> "a timeout, yet carried NO budget — this should be unreachable; report it"
 
                     Aborted,
                     None,
@@ -255,7 +262,7 @@ module Executor =
                             | Some _ -> "the process group exited on SIGTERM"
                             | None -> "the process group could not be signalled"
 
-                        $"step exceeded its {budget} ms timeout; {how}")
+                        $"step exceeded {budget}; {how}")
                 | Cancelled -> Aborted, None, Some "step was cancelled"
 
             // FG-032/FG-103: a leak is a defect and an unavailable check is an

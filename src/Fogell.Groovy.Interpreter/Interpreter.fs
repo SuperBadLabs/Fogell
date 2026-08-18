@@ -27,8 +27,10 @@ type Effect =
 ///     REFUSES it, because Fogell's overlay does not yet cross the script boundary;
 ///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
 ///     host returns null and value uses stay refused;
-///   - per-step journaling is POSSIBLE here — FG-171 is open; the hooks are keyed
-///     `stage -> stepIndex` and a nested identity needs a journal format change.
+///   - per-step journaling is POSSIBLE here — the hooks are keyed
+///     `stage -> stepIndex`, and per-CHILD identity inside a block is FG-204:
+///     FG-135's stage-level attempt markers do not deliver it, and FG-171 closed
+///     by measuring that a crash mid-block refuses rather than re-runs.
 /// The earlier wording claimed all four as delivered.
 ///
 /// [RunBody] is present when the call had a trailing block; invoking it evaluates that
@@ -54,6 +56,11 @@ type PerformStep =
       /// host points at the wrapper's context for the body's duration and restores it
       /// afterwards, so only the host can say what the environment is at the moment the
       /// body runs.
+      ///
+      /// MUST NOT THROW. FG-202's exit re-refresh calls this inside a FINALLY while a
+      /// body fault may be propagating, and a throw there would REPLACE the body's
+      /// exception with its own — misreporting the failure. The production host is pure
+      /// list/map folding over an always-populated ref; keep any future host that way.
       CurrentEnv: unit -> (string * string) list
       /// FG-184. Does this step take a BLOCK? Asked before a final closure argument is
       /// normalised into a hosted body.
@@ -167,6 +174,13 @@ module Interpreter =
           /// Jenkins runs on. Provenance by cell identity answers it without naming a
           /// syntactic form, exactly as the hosted refresh does.
           JenkinsEnvCells: System.Collections.Generic.HashSet<Value ref>
+          /// FG-193. The MAPS that are the Jenkins environment, by reference — the
+          /// value-level twin of JenkinsEnvCells. `def saved = env; def env = saved`
+          /// mints a fresh CELL outside the cell set, but the VALUE it carries is
+          /// still the Jenkins map, and a write through it must reach the host's
+          /// refusal exactly as the direct spelling does — measured: the aliased
+          /// write reached Jenkins' shell and silently vanished here.
+          JenkinsEnvMaps: System.Collections.Generic.HashSet<Map<string, Value> ref>
           mutable Binding: Map<string, Value> }
 
     let private tick (st: State) =
@@ -219,7 +233,7 @@ module Interpreter =
             |> String.concat ""
             |> VStr
         | EList xs -> VList(xs |> List.map (evalExpr st env))
-        | EMap kvs -> VMap(kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList)
+        | EMap kvs -> VMap(ref (kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList))
         | EVar n ->
             // locals shadow the binding; the binding shadows declared functions
             match Map.tryFind n env.Vars with
@@ -231,7 +245,14 @@ module Interpreter =
                 | Some v -> v
                 | None ->
                     match Map.tryFind n env.Funcs with
-                    | Some(ps, body) -> VFunc(n, ps, body)
+                    // FG-195: a name may carry several candidates; reading it as a VALUE
+                    // takes the first declaration. Groovy raises MissingPropertyException
+                    // for ANY value read of a method name — rendering `<function n>` here
+                    // is a pre-existing divergence the verifier re-flagged, carried as a
+                    // residual on the FG-195 ticket; resolution by arity happens at a
+                    // CALL, not here.
+                    | Some((ps, body) :: _) -> VFunc(n, ps, body)
+                    | Some []
                     | None ->
                         if st.StrictVars then
                             // MEASURED (receipt `gstring-unresolved-property`): Groovy's
@@ -250,7 +271,7 @@ module Interpreter =
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
             | VList xs, VInt i when i >= 0L && int i < xs.Length -> xs.[int i]
-            | VMap m, VStr k -> defaultArg (Map.tryFind k m) VNull
+            | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
@@ -274,12 +295,21 @@ module Interpreter =
         | EElvis(a, b) ->
             let v = evalExpr st env a
             if Value.isTruthy v then v else evalExpr st env b
-        | EClosure c -> VClosure(c, env)
+        | EClosure c ->
+            // FG-191. EVERY EVALUATION MINTS A DISTINCT CLOSURE, as Groovy's does:
+            // equality compares the captured env RECORD by reference, and a loop
+            // body whose iterations assign through cells never changes the record
+            // — so without this fresh allocation, two closures minted by one
+            // literal in a `while` compared EQUAL where Groovy says false
+            // (measured, loopEq:true, a false equality this same branch would
+            // otherwise have shipped). The copy shares the cells, so capture
+            // stays by reference; only the record's identity is new.
+            VClosure(c, { env with Vars = env.Vars })
         | ECall(target, args, trailing) -> evalCall st env target args trailing
 
     and private evalProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
-        | VMap m -> defaultArg (Map.tryFind name m) VNull
+        | VMap m -> defaultArg (Map.tryFind name m.Value) VNull
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -327,8 +357,21 @@ module Interpreter =
         | "%", VInt x, VInt y -> VInt(x % y)
         | "<<", VList x, _ -> VList(x @ [ b ])
         | "<<", VStr x, _ -> VStr(x + Value.toDisplay b)
-        | "==", _, _ -> VBool(a = b)
-        | "!=", _, _ -> VBool(a <> b)
+        // FG-191. THROUGH the cycle-aware equality, never bare structural `=`:
+        // two self-referential maps compared here KILLED THE PROCESS (measured,
+        // exit 134), which no catch, receipt or budget can see. A detected cycle
+        // raises what Groovy's own chase produces — the JVM dies of
+        // StackOverflowError and the build fails — as a fault this runtime
+        // survives. (Groovy's Error is not caught by `catch (Exception)`; this
+        // Thrown is — a named residual on the FG-191 row, not a silent one.)
+        | "==", _, _ ->
+            match Value.tryEq a b with
+            | Value.Answer r -> VBool r
+            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+        | "!=", _, _ ->
+            match Value.tryEq a b with
+            | Value.Answer r -> VBool(not r)
+            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -365,6 +408,69 @@ module Interpreter =
             // and the unmodelled method. Refuse by name.
             raise (Stop(Unsupported $"operator '{op}' is not modelled for these operand types"))
         | _ -> VNull
+
+    /// FG-195. Groovy's argument-forming rules, in ONE place for every callable kind
+    /// — helper, overload, closure value: a named-argument group is a single Map
+    /// argument passed FIRST, and a trailing closure is a single FINAL argument
+    /// closing over the call site. The fourth measured shape existed because a guard
+    /// counted positionals while looking at only one of these three forms.
+    and private effectiveArgList (env: Env) (positional: Value list) (named: (string * Value) list) (trailing: Closure option) =
+        (if List.isEmpty named then [] else [ VMap(ref (Map.ofList named)) ])
+        @ positional
+        @ (match trailing with
+           // fresh record per evaluation, same as EClosure — a trailing block is
+           // one more closure minting site (FG-191)
+           | Some c -> [ VClosure(c, { env with Vars = env.Vars }) ]
+           | None -> [])
+
+    /// FG-189, folded into FG-195: a closure VALUE is callable. A bare closure has
+    /// the implicit `it` — bound null when no argument arrives, which is Groovy's
+    /// rule — and declared parameters bind by exact arity. A mismatch is a refusal
+    /// naming the attempted signature, the same contract as helper resolution.
+    ///
+    /// NAMED RESIDUAL (verifier, this diff): the parser erases `{ -> … }` into
+    /// `Params = []`, so an explicitly zero-parameter closure called WITH an
+    /// argument takes the implicit-`it` arm and RUNS where Groovy throws — a false
+    /// success one spelling from shape (c). The fix needs the arrow kept in the
+    /// AST, which is parser scope; carried on the FG-195 ticket, not silently.
+    and private invokeClosureValue (st: State) (name: string) (c: Closure) (closureEnv: Env) (callArgs: Value list) =
+        let bound =
+            match c.Params, callArgs with
+            | [], [] -> Env.withVar "it" VNull closureEnv
+            | [], [ one ] -> Env.withVar "it" one closureEnv
+            | ps, args when List.length ps = List.length args ->
+                List.zip ps args |> List.fold (fun acc (p, v) -> Env.withVar p v acc) closureEnv
+            | ps, args ->
+                raise (
+                    Stop(
+                        Unsupported
+                            $"closure '{name}' takes {List.length ps} parameter(s) and was called with {List.length args} argument(s); a named-argument group counts as one Map argument"
+                    )
+                )
+
+        st.Depth <- st.Depth + 1
+
+        // implicit-return discipline shared with `applyClosure`: the trailing
+        // expression is the value, LastValue saved/restored on both exits.
+        // Depth decrements in a FINALLY: a fault escaping the body can be caught
+        // by a script-level try/catch and execution then CONTINUES — a decrement
+        // skipped on that path leaks depth until an innocent loop of caught
+        // faults exhausts the call-depth budget where Jenkins runs on. Raised by
+        // the verifier on this diff, which had copied the fragile shape.
+        try
+            try
+                let outer = st.LastValue
+
+                try
+                    st.LastValue <- None
+                    execBlock st bound c.Body |> ignore
+                    defaultArg st.LastValue VNull
+                finally
+                    st.LastValue <- outer
+            with ReturnSignal v ->
+                v
+        finally
+            st.Depth <- st.Depth - 1
 
     and private evalCall (st: State) (env: Env) (target: CallTarget) (args: Arg list) (trailing: Closure option) : Value =
         tick st
@@ -417,24 +523,37 @@ module Interpreter =
             positionalLazy.Value |> ignore
             namedLazy.Value |> ignore
 
-            // FG-188. A LOCAL SHADOWS A PREAMBLE HELPER, and until a closure value can be
-            // invoked (FG-189) the honest answer is to refuse rather than call the helper.
-            //
-            // Making `env.Funcs` names admissible let `def x = { 'LOCAL' }` followed by
-            // `x()` reach the PREAMBLE's `x` — Groovy resolves the local, so Fogell ran
-            // different code and reported success. A false success introduced by the fix
-            // that put those helpers in scope, caught in review before it shipped.
-            //
-            // Refusing is not the end state; it is the correct behaviour while the local
-            // cannot be called. A silent wrong answer would be the worse trade, and the
-            // reason is named so the message does not send an author hunting.
-            if Map.containsKey name env.Vars && Map.containsKey name env.Funcs then
+            // FG-195/FG-189. A LOCAL BINDING SHADOWS A HELPER, and a local CLOSURE is
+            // callable — Groovy resolves the local, and the refusal that stood here sent
+            // ordinary code away (measured shape (a): `def x = { 'LOCAL' }` after a
+            // preamble `def x()` runs the LOCAL on Jenkins). A registered STEP name keeps
+            // its current routing: a local sharing a step's name is unmeasured territory
+            // and the boundary is stated here rather than silently decided. A NON-closure
+            // local beside a helper stays a refusal — Groovy's method fallback for that
+            // shape is unmeasured, and a named refusal beats a guessed dispatch.
+            let shadowingLocal =
+                if st.RegisteredSteps.Contains name then
+                    None
+                else
+                    match Map.tryFind name env.Vars with
+                    | Some cell ->
+                        match cell.Value with
+                        | VClosure(c, closureEnv) -> Some(Choice1Of2(c, closureEnv))
+                        | other when Map.containsKey name env.Funcs -> Some(Choice2Of2 other)
+                        | _ -> None
+                    | None -> None
+
+            match shadowingLocal with
+            | Some(Choice1Of2(c, closureEnv)) ->
+                invokeClosureValue st name c closureEnv (effectiveArgList env positionalLazy.Value namedLazy.Value trailing)
+            | Some(Choice2Of2 other) ->
                 raise (
                     Stop(
                         Unsupported
-                            $"'{name}' is bound as a local AND declared as a helper; Fogell cannot yet invoke the local (FG-189)"
+                            $"'{name}' is bound as a non-closure local ({Value.toDisplay other}) and declared as a helper; Groovy's fallback for this shape is unmeasured, so Fogell refuses rather than guesses"
                     )
                 )
+            | None ->
 
             match Sandbox.admitCall st.RegisteredSteps st.Defined name with
             | Error d -> raise (Stop(Denied d))
@@ -525,10 +644,6 @@ module Interpreter =
                 // in the first case, which is exactly when they differ.
                 let bodyEnv = ref (defaultArg capturedEnv env)
 
-                // FG-179. The `env` cell THIS wrapper installed, if any — the identity
-                // that tells our binding from the script's. See the refresh below.
-                let ourEnvCell: (Value ref) option ref = ref None
-
                 let runBody =
                     bodyClosure
                     |> Option.map (fun c ->
@@ -599,17 +714,33 @@ module Interpreter =
                             st.Host
                             |> Option.iter (fun h ->
                                 let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let fresh = VMap(Map.ofList current)
+                                let freshMap = ref (Map.ofList current)
+                                // FG-193: the minted map IS the Jenkins environment,
+                                // by value identity — an aliased write must route to
+                                // the host however many rebinds separate it
+                                st.JenkinsEnvMaps.Add freshMap |> ignore
+                                let fresh = VMap freshMap
 
-                                match Map.tryFind "env" bodyEnv.Value.Vars, ourEnvCell.Value with
-                                | Some cell, Some ours when System.Object.ReferenceEquals(cell, ours) ->
-                                    cell.Value <- fresh
-                                | Some _, _ ->
+                                // FG-201. "Ours" is membership in JenkinsEnvCells — the set of
+                                // every cell hosted machinery installed — NOT the one cell THIS
+                                // invocation minted. The first version compared against a
+                                // per-invocation local, so a wrapper NESTED inside another
+                                // (dir { withEnv { … } }) found the outer wrapper's cell,
+                                // failed the identity check, took the leave-it-alone arm, and
+                                // its refresh silently never ran: `${env.A}` read the OUTER
+                                // environment and interpolated null. Receipt
+                                // `script-nested-wrappers-env` diverged on exactly that —
+                                // green build, a:null/t:null — for four days before the
+                                // FG-196 suite run caught it. Script-owned bindings still
+                                // refuse the refresh: a `def env` mints its cell through
+                                // `Env.withVar`, which never enters the set.
+                                match Map.tryFind "env" bodyEnv.Value.Vars with
+                                | Some cell when st.JenkinsEnvCells.Contains cell -> cell.Value <- fresh
+                                | Some _ ->
                                     // the script's own `env` — leave it alone entirely
                                     ()
-                                | None, _ ->
+                                | None ->
                                     let cell = ref fresh
-                                    ourEnvCell.Value <- Some cell
                                     st.JenkinsEnvCells.Add cell |> ignore
 
                                     bodyEnv.Value <-
@@ -660,7 +791,35 @@ module Interpreter =
                     // whatever context it establishes — the batch model evaluated it
                     // immediately and flattened it, which is how `dir('x') { … }` lost its
                     // directory.
-                    host.Perform s positionalArgs namedLazy.Value runBody
+                    // FG-202. A block-taking step has POPPED whatever overlay it pushed by
+                    // the time Perform finishes, and a hosted `env` cell visible at THIS
+                    // call site may still carry the body's last entry-refresh — so a read
+                    // AFTER the block held the inner snapshot where Jenkins restores the
+                    // outer (receipt `post-exit-env-read`: jenkins after:null — the shape
+                    // the FG-201 verifier constructed, then measured). Re-refresh from the
+                    // host, which reports the enclosing overlay again. IN A FINALLY,
+                    // because a fault raised inside the body — thrown, divide-by-zero —
+                    // leaves Perform by exception, can be caught by a script-level
+                    // try/catch, and execution then CONTINUES with the stale cell; the
+                    // first version refreshed after a plain return only, and the verifier
+                    // constructed exactly that escape. The walker restores its overlay in
+                    // its own finally before the exception reaches here, so CurrentEnv()
+                    // is already the enclosing scope's on both exits. Script-owned
+                    // bindings stay untouched for the FG-201 reason: their cells never
+                    // enter JenkinsEnvCells. Refreshing even when the host declined to
+                    // run the body only moves the cell TOWARD the live environment,
+                    // which is where every hosted read should land.
+                    try
+                        host.Perform s positionalArgs namedLazy.Value runBody
+                    finally
+                        if runBody.IsSome then
+                            match Map.tryFind "env" env.Vars with
+                            | Some cell when st.JenkinsEnvCells.Contains cell ->
+                                let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                let freshMap = ref (Map.ofList current)
+                                st.JenkinsEnvMaps.Add freshMap |> ignore
+                                cell.Value <- VMap freshMap
+                            | _ -> ()
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     //
@@ -677,40 +836,39 @@ module Interpreter =
                     VNull
             | Ok(Builtin b) ->
                 match Map.tryFind b env.Funcs with
-                | Some(ps, body) ->
-                    // FG-195. ARITY IS CHECKED BEFORE THE BODY RUNS. `List.truncate` on both
-                    // sides meant a mismatched call simply bound fewer parameters and ran
-                    // anyway: `def constant(v) { … }` called as `constant()` has no zero-arg
-                    // overload in Groovy, so Jenkins rejects the pipeline while Fogell ran
-                    // the body and could report success.
-                    //
-                    // THE THIRD CALLABLE-RESOLUTION DEFECT ON THIS BRANCH — after a local
-                    // shadowing a helper and duplicate helper names — and all three are one
-                    // shape: a call resolving to something the language would not pick. This
-                    // is the stop-ship refusal; FG-195 owns the signature model that makes
-                    // the question answerable instead of refused.
-                    // NAMED ARGUMENTS AND A TRAILING CLOSURE COUNT TOO. Groovy passes named
-                    // arguments as a single Map and a trailing closure as a final argument —
-                    // the builtin path below documents the first rule already — so
-                    // `def zero() { … }` called as `zero(foo: 1)` is a ONE-argument call that
-                    // Groovy rejects. Counting positionals alone admitted it and ran the
-                    // body. Fourth occurrence of the class FG-195 owns; refusing an
-                    // unmodelled call shape is the same stop-ship move as the other three.
-                    if not (List.isEmpty namedLazy.Value) || Option.isSome trailing then
-                        raise (
-                            Stop(
-                                Unsupported
-                                    $"'{b}' is a script helper called with named arguments or a block; Fogell models neither as a Groovy argument (FG-195)"
-                            )
-                        )
+                | Some candidates ->
+                    // FG-195. RESOLUTION IS BY SIGNATURE, as Groovy's is — the model that
+                    // replaced four one-at-a-time refusals, checked against all four shapes
+                    // at once because the fourth was found inside the guard written for the
+                    // third. The effective argument list counts Groovy's argument forms:
+                    // a named-argument group is ONE Map argument, passed FIRST, and a
+                    // trailing closure is a FINAL argument. Candidates are matched on
+                    // arity; no match, or two declarations sharing one arity, is a refusal
+                    // NAMING the attempted signature — never a silent nearest fit.
+                    let effectiveArgs = effectiveArgList env positionalLazy.Value namedLazy.Value trailing
 
-                    if List.length positionalLazy.Value <> List.length ps then
+                    let arityOf (ps: string list, _) = List.length ps
+                    let wanted = List.length effectiveArgs
+
+                    match candidates |> List.filter (fun c -> arityOf c = wanted) with
+                    | [] ->
+                        let have =
+                            candidates |> List.map (arityOf >> string) |> String.concat ", "
+
                         raise (
                             Stop(
                                 Unsupported
-                                    $"'{b}' takes {List.length ps} argument(s) and was called with {List.length positionalLazy.Value}; Fogell does not model overloads"
+                                    $"no declaration of '{b}' takes {wanted} argument(s) — candidates take {have}; a named-argument group counts as one Map argument and a trailing block as one final argument"
                             )
                         )
+                    | _ :: _ :: _ ->
+                        raise (
+                            Stop(
+                                Unsupported
+                                    $"'{b}' is declared more than once with {wanted} parameter(s); Groovy rejects the duplicate signature and Fogell will not guess which body a call means"
+                            )
+                        )
+                    | [ (ps, body) ] ->
 
                     st.Depth <- st.Depth + 1
 
@@ -728,17 +886,22 @@ module Interpreter =
                     // second regression of the ref-cell change, and it is the same shape as
                     // the first: cells made an existing sloppiness observable.
                     let callEnv =
-                        List.zip (List.truncate positionalLazy.Value.Length ps) (List.truncate ps.Length positionalLazy.Value)
+                        List.zip ps effectiveArgs
                         |> List.fold (fun acc (p, v) -> Env.withVar p v acc) { Env.empty with Funcs = env.Funcs }
 
+                    // Depth decrements in a FINALLY — same leak class as
+                    // `invokeClosureValue`, same verifier finding: a fault caught by a
+                    // script-level try/catch skipped the decrement here too.
                     let result =
                         try
-                            execBlock st callEnv body |> ignore
-                            VNull
-                        with ReturnSignal v ->
-                            v
+                            try
+                                execBlock st callEnv body |> ignore
+                                VNull
+                            with ReturnSignal v ->
+                                v
+                        finally
+                            st.Depth <- st.Depth - 1
 
-                    st.Depth <- st.Depth - 1
                     result
                 | None -> evalBuiltin st env b VNull positionalLazy.Value namedLazy.Value trailing
 
@@ -768,39 +931,55 @@ module Interpreter =
                 | [] -> Env.withVar "it" item closureEnv
                 | p :: _ -> Env.withVar p item closureEnv
 
+            // Depth decrements in a FINALLY — the same leak class the verifier found
+            // in `invokeClosureValue`, pre-existing here: a fault caught by a
+            // script-level try/catch skipped the decrement and an innocent loop of
+            // caught faults exhausted the call-depth budget where Jenkins runs on.
             let r =
                 try
-                    // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
-                    // VNull returned unless the closure used an explicit `return`. So
-                    // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
-                    // and therefore Jenkins — evaluates as true. Groovy's implicit
-                    // closure return is the trailing expression, and LastValue is
-                    // saved/restored around the call so an inner closure cannot
-                    // clobber the enclosing block's trailing value.
-                    // REVIEW FIX (Copilot, PR #14): the restore only happened on the
-                    // NON-return path, so a closure using an explicit `return` still
-                    // clobbered the enclosing block's trailing value. try/finally, so
-                    // both exits restore it.
-                    let outer = st.LastValue
-
                     try
-                        st.LastValue <- None
-                        execBlock st bound c.Body |> ignore
-                        defaultArg st.LastValue VNull
-                    finally
-                        st.LastValue <- outer
-                with ReturnSignal v ->
-                    v
+                        // REVIEW FIX (Codex, PR #13 round 3): the result was discarded and
+                        // VNull returned unless the closure used an explicit `return`. So
+                        // `[1].any { it == 1 }` was FALSE and skipped a stage Groovy —
+                        // and therefore Jenkins — evaluates as true. Groovy's implicit
+                        // closure return is the trailing expression, and LastValue is
+                        // saved/restored around the call so an inner closure cannot
+                        // clobber the enclosing block's trailing value.
+                        // REVIEW FIX (Copilot, PR #14): the restore only happened on the
+                        // NON-return path, so a closure using an explicit `return` still
+                        // clobbered the enclosing block's trailing value. try/finally, so
+                        // both exits restore it.
+                        let outer = st.LastValue
 
-            st.Depth <- st.Depth - 1
+                        try
+                            st.LastValue <- None
+                            execBlock st bound c.Body |> ignore
+                            defaultArg st.LastValue VNull
+                        finally
+                            st.LastValue <- outer
+                    with ReturnSignal v ->
+                        v
+                finally
+                    st.Depth <- st.Depth - 1
+
             r
 
         match name, recv, args with
+        // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
+        // with the same binding rules and refusal contract as `f(x)` — for a closure
+        // held in a LOCAL. A closure held in the script BINDING (assigned without
+        // `def`) reaches this arm through EVar and runs, while the bare `f()`
+        // spelling consults `env.Vars` only and still denies it — a named residual
+        // on the FG-195 ticket, in the safe (false-refusal) direction. The
+        // named-argument group and a trailing block count as arguments here too,
+        // through the same one place that forms every callable's argument list.
+        | "call", VClosure(c, closureEnv), _ ->
+            invokeClosureValue st "call" c closureEnv (effectiveArgList env args namedArgs trailing)
         | "size", VList xs, _
         | "length", VList xs, _ -> VInt(int64 xs.Length)
         | "size", VStr s, _
         | "length", VStr s, _ -> VInt(int64 s.Length)
-        | "size", VMap m, _ -> VInt(int64 m.Count)
+        | "size", VMap m, _ -> VInt(int64 m.Value.Count)
         | "isEmpty", VList xs, _ -> VBool(List.isEmpty xs)
         | "isEmpty", VStr s, _ -> VBool(s = "")
         | "toString", v, _ -> VStr(Value.toDisplay v)
@@ -818,7 +997,16 @@ module Interpreter =
         | "startsWith", VStr s, [ VStr p ] -> VBool(s.StartsWith p)
         | "endsWith", VStr s, [ VStr p ] -> VBool(s.EndsWith p)
         | "contains", VStr s, [ VStr p ] -> VBool(s.Contains p)
-        | "contains", VList xs, [ v ] -> VBool(List.contains v xs)
+        | "contains", VList xs, [ v ] ->
+            // FG-191: through the cycle-aware equality, like `==` — a cyclic
+            // element reports rather than recurses
+            VBool(
+                xs
+                |> List.exists (fun x ->
+                    match Value.tryEq v x with
+                    | Value.Answer r -> r
+                    | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison"))))
+            )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
             VList(s.Split(d) |> Array.toList |> List.map VStr)
@@ -830,8 +1018,8 @@ module Interpreter =
         | "sort", VList xs, _ -> VList(List.sortWith compare xs)
         | "first", VList(x :: _), _ -> x
         | "last", VList xs, _ when not xs.IsEmpty -> List.last xs
-        | "keySet", VMap m, _ -> VList(m |> Map.toList |> List.map (fst >> VStr))
-        | "values", VMap m, _ -> VList(m |> Map.toList |> List.map snd)
+        | "keySet", VMap m, _ -> VList(m.Value |> Map.toList |> List.map (fst >> VStr))
+        | "values", VMap m, _ -> VList(m.Value |> Map.toList |> List.map snd)
         | "each", VList xs, _ ->
             match trailing with
             | Some c ->
@@ -921,7 +1109,21 @@ module Interpreter =
         // reusing an earlier truthy value. Groovy assignments yield their RHS whatever
         // the target shape is.
         | SAssign(target, v) ->
-            evalExpr st env target |> ignore
+            // The RECEIVER (and a computed index) evaluate BEFORE the RHS —
+            // Groovy's order, which the blanket whole-target eval this replaces
+            // also preserved. Only the receiver: evaluating the property READ too
+            // double-evaluated computed receivers and faulted on shapes whose
+            // WRITE is the thing being decided below.
+            let recvAndKey =
+                match target with
+                | EProp(r, name) -> Some(evalExpr st env r, name)
+                | EIndex(r, idx) ->
+                    let rv = evalExpr st env r
+                    Some(rv, Value.toDisplay (evalExpr st env idx))
+                | other ->
+                    evalExpr st env other |> ignore
+                    None
+
             let value = evalExpr st env v
             st.LastValue <- Some value
 
@@ -939,38 +1141,41 @@ module Interpreter =
             // The host decides what it means: today it fails the build, because Fogell's
             // environment overlay does not yet cross the script boundary. That refusal is
             // now COMPLETE rather than best-effort.
-            // FG-179. WHICH `env`? Decided by the cell's identity, not by the name. A
-            // script that writes `def env = [:]` owns a plain map, and mutating it is
-            // ordinary Groovy that Jenkins runs; only the Jenkins environment goes to the
-            // host. Routing on the SYNTAX sent both to `host.SetEnv`, which refuses, so
-            // `def env = [:]; env.FOO = 'local'; sh 'touch ok.txt'` failed here and
-            // succeeded there.
-            let isJenkinsEnv name =
-                match Map.tryFind name env.Vars with
-                | Some cell -> st.JenkinsEnvCells.Contains cell
-                | None -> true // no local binding at all: the script binding, i.e. Jenkins'
+            // FG-179/FG-193. WHICH env, and WHICH map? Decided by IDENTITY, never by
+            // name — first the cell's (a script's own `def env = [:]` owns a plain
+            // map), and now the VALUE's: `def saved = env; def env = saved` mints a
+            // fresh cell outside the cell set while the value it carries is still
+            // the Jenkins map, and `def other = local` aliases a plain map that
+            // mutation must reach THROUGH the shared ref, not by replacing one
+            // binding's copy. Both measured: the aliased env write reached Jenkins'
+            // shell and vanished here; the aliased map write printed alias:x there
+            // and alias:null here — this arm's old name-keyed match dropped every
+            // non-`env`-named target at `| _ -> ()`.
+            let assignInto (recv: Value) (key: string) =
+                match recv with
+                | VMap mr ->
+                    match st.Host with
+                    | Some host when st.JenkinsEnvMaps.Contains mr ->
+                        // the Jenkins environment, however many rebinds away: the
+                        // host decides, and today it refuses — the same named
+                        // refusal as the direct spelling, instead of a silent local
+                        // write the shell never sees
+                        host.SetEnv key (Value.toDisplay value)
+                    | _ -> mr.Value <- Map.add key value mr.Value
+                // Not a map: Groovy REJECTS the write (MissingPropertyException on
+                // a String, NPE on null) and a script-level catch INTERCEPTS it —
+                // measured: `try { s.FOO = 'x' } catch (Exception e)` runs on and
+                // SUCCEEDS on Jenkins. So the strict fault must be CATCHABLE:
+                // UnknownProperty is what the old blanket target-eval raised here,
+                // and the first spelling of this arm raised Unsupported instead —
+                // uncatchable, a false refusal the verifier caught by asking what
+                // class the fault was, not whether it fired. Lax keeps the no-op.
+                | _ when st.StrictVars -> raise (Stop(UnknownProperty key))
+                | _ -> ()
 
-            let mutateLocalMap name key =
-                match Map.tryFind name env.Vars with
-                | Some cell ->
-                    match cell.Value with
-                    | VMap m -> cell.Value <- VMap(Map.add key value m)
-                    // Not a map: Groovy would set a property on whatever object this is,
-                    // which this interpreter does not model. Left alone rather than
-                    // guessed at.
-                    | _ -> ()
-                | None -> ()
-
-            match st.Host, target with
-            | Some host, EProp(EVar "env", name) when isJenkinsEnv "env" ->
-                host.SetEnv name (Value.toDisplay value)
-            | _, EProp(EVar "env", name) -> mutateLocalMap "env" name
-            | Some host, EIndex(EVar "env", idx) when isJenkinsEnv "env" ->
-                // A COMPUTED index too: `env["FOO$suffix"] = …` is the same mutation, and
-                // the pre-scan only recognised a literal string.
-                host.SetEnv (Value.toDisplay (evalExpr st env idx)) (Value.toDisplay value)
-            | _, EIndex(EVar "env", idx) -> mutateLocalMap "env" (Value.toDisplay (evalExpr st env idx))
-            | _ -> ()
+            match recvAndKey with
+            | Some(recv, key) -> assignInto recv key
+            | None -> ()
 
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
@@ -1072,11 +1277,16 @@ module Interpreter =
                 arms
                 |> List.tryFindIndex (fun (k, _) ->
                     match k with
-                    // The SAME equality `==` uses (line 340), not a second opinion: a
+                    // The SAME equality `==` uses, not a second opinion: a
                     // switch that matched by a different rule than the operator would be
                     // its own defect, and the lowered form got this right by construction
-                    // because it literally built an `EBinary("==", …)`.
-                    | Some case -> v = evalExpr st env case
+                    // because it literally built an `EBinary("==", …)`. FG-191: the same
+                    // cycle-aware walk too, for the same process-death reason.
+                    | Some case ->
+                        match Value.tryEq v (evalExpr st env case) with
+                        | Value.Answer r -> r
+                        | Value.CycleDetected ->
+                            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 
@@ -1189,8 +1399,18 @@ module Interpreter =
         // syntax at each assignment.
         let jenkinsEnvCells = System.Collections.Generic.HashSet<Value ref>(HashIdentity.Reference)
 
+        let jenkinsEnvMaps =
+            System.Collections.Generic.HashSet<Map<string, Value> ref>(HashIdentity.Reference)
+
         match Map.tryFind "env" env.Vars with
-        | Some cell -> jenkinsEnvCells.Add cell |> ignore
+        | Some cell ->
+            jenkinsEnvCells.Add cell |> ignore
+
+            // FG-193: the caller-seeded env VALUE is the Jenkins map by identity,
+            // exactly as its cell is the Jenkins cell
+            match cell.Value with
+            | VMap mr -> jenkinsEnvMaps.Add mr |> ignore
+            | _ -> ()
         | None -> ()
 
         let st =
@@ -1205,6 +1425,7 @@ module Interpreter =
               StrictVars = strictVars
               NewBindings = []
               JenkinsEnvCells = jenkinsEnvCells
+              JenkinsEnvMaps = jenkinsEnvMaps
               // FG-179: the BINDING is a value map, not cells — it is Groovy's script
               // binding, already shared and mutable in its own right, so it needs no second
               // sharing mechanism. Seeded from a SNAPSHOT of the caller's locals.

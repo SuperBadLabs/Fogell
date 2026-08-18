@@ -883,22 +883,47 @@ let main argv =
                         consumeAnswer dir stage index occurrence
                         Some answer)
 
+        // FG-135. Stages this process has advanced past the resume plan: the first
+        // retry-attempt marker WE write supersedes the plan's dispositions for that
+        // stage, so consulting them any further would replay a superseded attempt's
+        // outcomes into a live one.
+        // CONCURRENT, like every other cross-thread structure in this file:
+        // parallel branches run stages on Task threads, a branch stage may itself
+        // declare retry, and a torn HashSet read returning false for a live stage
+        // would replay a superseded attempt's outcome — the exact silent defect
+        // FG-135 exists to remove (the verifier's P1 on this diff).
+        let liveRetryStages = System.Collections.Concurrent.ConcurrentDictionary<string, byte>()
+
         let hooks =
             { IsRestartedRun = resuming
               StageWasCommitted = fun stage -> Set.contains stage plan.CommittedStages
               SkippedStatus =
                 fun stage i ->
-                    match Resume.dispositionOf plan stage i with
-                    | AlreadyFinished st -> Some st
-                    | _ -> None
+                    if liveRetryStages.ContainsKey stage then
+                        None
+                    else
+                        match Resume.dispositionOf plan stage i with
+                        | AlreadyFinished st -> Some st
+                        | _ -> None
               ShouldExecute =
                 fun stage i ->
-                    let run = Resume.shouldExecute plan stage i
+                    let run =
+                        liveRetryStages.ContainsKey stage || Resume.shouldExecute plan stage i
 
                     if not run then
                         printfn $"skip (durably finished): {stage}#{i}"
 
                     run
+              OnRetryAttempt =
+                fun stage n ->
+                    // durable BEFORE the attempt's first step, like OnStepStarted:
+                    // a crash between marker and step must still supersede the
+                    // failed attempt's records on the next resume
+                    journal.Append(RetryAttemptStarted(stage, n))
+                    journal.Sync()
+                    liveRetryStages.TryAdd(stage, 0uy) |> ignore
+              RetryAttemptsSoFar =
+                fun stage -> Map.tryFind stage plan.RetryAttempts |> Option.defaultValue 1
               OnStepStarted =
                 fun stage i name ->
                     journal.Append(StepStarted(stage, i, name))

@@ -67,13 +67,13 @@ receipts are recorded where they exist and attributed to McLoving's evidence, no
 
 | | Jenkins | Fogell | McLoving |
 |---|---|---|---|
-| Differential vs real Jenkins | reference | 163 hand-written cases proven `[R]` | **1 corpus case certified equivalent** `[S]` — `crates/jenkins-differential`, Jenkins 2.568.1, 90-plugin manifest, sealed 35-file envelope **[WAS: "never compared at all" — false]** |
+| Differential vs real Jenkins | reference | 181 hand-written cases proven `[R]` (163 at this matrix's revision 3; the count is the scorecard's, restated here BY HAND — see the basis note) | **1 corpus case certified equivalent** `[S]` — `crates/jenkins-differential`, Jenkins 2.568.1, 90-plugin manifest, sealed 35-file envelope **[WAS: "never compared at all" — false]** |
 | Corpus files proven | n/a | **`tier1=0` of 228** `[R]` — generated scorecard | **1 of 228** `[S]` — `JENKINS_NATIVE_DIFFERENTIAL_V1.md` |
 | Population of the evidence | n/a | hand-written, authored for this engine | a real third-party corpus job |
 | Wider differential programme | n/a | none beyond the case suite `[S]` | DIFF-002 state/policy (20 scenarios), DIFF-003 boundaries (13), MIG-006 aggregate `[S]` |
 
 **On the denominator both engines share, McLoving has proven one more corpus file than Fogell
-has.** Fogell's 163 is the larger number and the weaker claim: it is a population it wrote for
+has.** Fogell's case count (181 as of 2026-08-17) is the larger number and the weaker claim: it is a population it wrote for
 itself. This is the single most consequential correction in revision 2.
 
 ## 2. Input language
@@ -83,7 +83,7 @@ itself. This is the single most consequential correction in revision 2.
 | Accepts a Jenkinsfile at runtime | yes | yes — declarative + scripted `[R]` | **no** `[S]` — no controller crate depends on the compiler |
 | Jenkinsfile compiler exists | n/a | n/a — it IS the engine | **yes, standalone** `[S]` — Clojure/Groovy worker, `compat/jenkins-worker/`, rootless Podman **[WAS: "no front end" — overstated]** |
 | Groovy evaluated | yes | bounded interpreter `[R]` | **never** `[S]` — `compat/jenkins-worker/src/mcloving/compat/compiler.clj:133` stops at `CompilePhase/CONVERSION`; zero `GroovyShell`/`evaluate`/`GroovyClassLoader` hits |
-| Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=169` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
+| Admitted Jenkinsfile syntax | all | declarative + scripted, `admitted=168` of 228 `[R]` | **`pipeline`, `agent any`, `stages`, literal names, `steps`, literal `sh`** `[S]` |
 | Step mapping catalogue | plugins | 14 modelled steps `[S]` | **exactly 1 mapping** `[S]` — literal `sh` → `/bin/sh -xe -c` |
 | Shared libraries | executed | not supported `[S]` | inventoried, **zero executable cases** `[D]` — `JENKINS_SHARED_LIBRARY_ADMISSION_V1.md`. **STILL DOC-CITED: REVISION 3 UPGRADED THIS TO `[S]` WITHOUT A CODE PATH AND THAT WAS WRONG.** The code check covered whether Groovy is evaluated, not how many cases are executable; the count has no code citation. Caught in review on PR #92 |
 | Authoring format | Groovy | Groovy | strict YAML IR `[S]` — `pipeline-ir` |
@@ -132,7 +132,7 @@ system designed around fail-closed admission, admission is accepting something u
 | Store on execution path | XML | **none** `[S]` — does not journal | PostgreSQL `[S]` |
 | fsync on accept | configurable | **no policy selectable for a real run** `[S]` | **UNSUPPORTED BY CODE** `[U]` — the string `synchronous_commit` appears **NOWHERE** in the repository: not in `.rs`, `.sql`, `.toml`, `.yaml` or `deploy/`. The only real fsync is workspace file durability (`agent-runtime/src/executor/mod.rs:437`). **[WAS: "201 implies fsynced WAL", doc-cited — that claim is documentation with no implementation behind it]** |
 | Terminal publication | n/a | fenced in store, off the exec path `[S]` | fenced exactly-once `[S]` — `controller-store/src/lib.rs:5091`, predicate `fence AND restore_epoch AND lease_owner` `:5116`; identical replay commits, divergent rolls back `:5130` |
-| Crash / replay | resume | `script {}` re-runs whole block `[S]` — `FG-171` | lease expiry → requeue, **fence PRESERVED not incremented** `[S]` — `scheduler.rs:563`, `:724` omits `fence` from the SET list |
+| Crash / replay | resume | `script {}` is one durability unit: crash mid-block REFUSES resume by name, no child duplicates `[S]` — FG-171's lane scenario (the row's earlier re-run claim was falsified by measurement) | lease expiry → requeue, **fence PRESERVED not incremented** `[S]` — `scheduler.rs:563`, `:724` omits `fence` from the SET list |
 | Effect ledger | n/a | absent `[S]` — `FG-026` P0 | outbox + object store `[S]` |
 | Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory, **plaintext impossible** `[S]` — `bins/controller/src/main.rs:1216` builds `ServerTlsConfig` unconditionally; per-RPC rejection `:1377`; no optional-TLS branch |
 | Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation `[S]` — `bins/agent/src/lib.rs:848` binds boot-id + `/proc/<pid>/stat` start-ticks; mismatch → `RetireStale` `:748`, so a recycled PGID is never `killpg`-ed |
@@ -190,7 +190,7 @@ triggers, caching, dependency resolution, release provenance, a CLI, a UI and a 
 not a spine waiting for a front end. It is a platform with a deliberately tiny front end.
 
 **Fogell's remaining advantage is one thing, and it is real: the breadth of Groovy it executes
-at runtime.** 163 receipted cases, declarative and scripted, `admitted=169` of 228 parsing,
+at runtime.** 181 receipted cases, declarative and scripted, `admitted=168` of 228 parsing,
 14 modelled steps, parallel and conditionals — against McLoving's one-job compiler and
 one-step catalogue. Nothing in McLoving's source suggests that breadth is close to being
 matched, and its compiler explicitly never evaluates Groovy.
@@ -211,8 +211,11 @@ Either is worth more than any further row here.
 
 ## 9. Verification
 
-- Fogell corpus figures quoted from the generated scorecard; tokens `tier1=0`, `tier3=59`,
-  `admitted=169` re-derive via `scripts/audit-board-numbers.bb`.
+- Fogell corpus figures quoted from the generated scorecard; tokens `tier1=1`, `tier3=59`,
+  `admitted=168` match the ledger BY HAND — `scripts/audit-board-numbers.bb` reads only
+  `EXECUTION_BOARD.md`, so this file's copies are outside its reach and drift silently
+  (they did: three `admitted=169` cells survived the token's move, caught by the
+  FG-201-cycle verifier).
 - Fogell steps from `src/Fogell.Differential/WalkerRules.fs`; gaps are open board rows by id.
 - McLoving cells cite a path under `~/projects/mcloving-rel-001`; full survey and its stated
   coverage limits in [MCLOVING-SOURCE-SURVEY.md](MCLOVING-SOURCE-SURVEY.md).

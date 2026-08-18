@@ -87,6 +87,12 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 ./scripts/audit-board-numbers.bb || { echo "BOARD-NUMBER AUDIT FAILED"; exit 1; }
 ./scripts/prove-board-numbers.sh || { echo "BOARD-NUMBER PROOF FAILED"; exit 1; }
 
+# FG-198. Queue rows checked against the line-208 rule's deny-list — a FLOOR the
+# audit itself states, not the rule. Nineteen manual-sweep failures across two
+# shapes argued for a script; the proof runs first, same as every checker here.
+./scripts/prove-queue-rows.sh || { echo "QUEUE-ROW PROOF FAILED"; exit 1; }
+./scripts/audit-queue-rows.py || { echo "QUEUE-ROW AUDIT FAILED"; exit 1; }
+
 # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
 # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
 # re-derived the hash that claim rests on — a receipt edited with that line left intact

@@ -182,6 +182,79 @@ let crashResume =
               Expect.equal (File.ReadAllLines marker).Length firstCount "nothing re-executed"
           } ]
 
+/// FG-135. The attempt dimension: a retry marker SUPERSEDES the stage's step
+/// records so far, so the plan's dispositions always describe the latest attempt.
+let retryAttempts =
+    testList
+        "FG-135 retry attempt segmentation"
+        [ test "a marker drops the superseded attempt's finished-failure" {
+              // the defect shape: without the marker, attempt 1's failure read as
+              // durably finished and the resume skipped the step attempt 2 needed
+              let plan =
+                  Resume.plan
+                      [ StepStarted("Flaky", 0, "sh")
+                        StepFinished("Flaky", 0, BuildStatus.Failure)
+                        RetryAttemptStarted("Flaky", 2)
+                        StepStarted("Flaky", 0, "sh") ]
+
+              Expect.equal (Resume.dispositionOf plan "Flaky" 0) Interrupted "the LIVE attempt's state, not the superseded one's"
+              Expect.equal plan.NeedsReconciliation [ "Flaky", 0 ] "the interrupted attempt-2 step reconciles"
+              Expect.equal (Map.tryFind "Flaky" plan.RetryAttempts) (Some 2) "the journal shows attempt 2 started"
+          }
+
+          test "no marker means attempt 1 — every pre-FG-135 journal reads unchanged" {
+              let plan =
+                  Resume.plan
+                      [ StepStarted("Flaky", 0, "sh")
+                        StepFinished("Flaky", 0, BuildStatus.Failure) ]
+
+              Expect.equal (Resume.dispositionOf plan "Flaky" 0) (AlreadyFinished BuildStatus.Failure) "unsegmented"
+              Expect.isTrue (Map.isEmpty plan.RetryAttempts) "no attempt dimension recorded"
+          }
+
+          test "a complete later attempt reads as finished with ITS status" {
+              let plan =
+                  Resume.plan
+                      [ StepStarted("Flaky", 0, "sh")
+                        StepFinished("Flaky", 0, BuildStatus.Failure)
+                        RetryAttemptStarted("Flaky", 2)
+                        StepStarted("Flaky", 0, "sh")
+                        StepFinished("Flaky", 0, BuildStatus.Success) ]
+
+              Expect.equal (Resume.dispositionOf plan "Flaky" 0) (AlreadyFinished BuildStatus.Success) "attempt 2's outcome"
+              Expect.isEmpty plan.NeedsReconciliation "nothing interrupted"
+          }
+
+          test "a marker touches ONLY its own stage" {
+              let plan =
+                  Resume.plan
+                      [ StepFinished("Other", 0, BuildStatus.Success)
+                        RetryAttemptStarted("Flaky", 2) ]
+
+              Expect.equal (Resume.dispositionOf plan "Other" 0) (AlreadyFinished BuildStatus.Success) "unrelated stage untouched"
+          }
+
+          test "the marker round-trips and refuses nonsense" {
+              let r = RetryAttemptStarted("Flaky", 2)
+              Expect.equal (Record.decode (Record.encode r)) (Some r) "round-trip"
+              // attempt 1 never writes a marker; one on disk is corrupt
+              Expect.isNone (Record.decode "retry-attempt\tFlaky\t1") "attempt 1 marker refused"
+              Expect.isNone (Record.decode "retry-attempt\tFlaky\tx") "non-numeric refused"
+          }
+
+          test "later markers win — the resume continues from the LAST attempt started" {
+              let plan =
+                  Resume.plan
+                      [ RetryAttemptStarted("Flaky", 2)
+                        StepStarted("Flaky", 0, "sh")
+                        StepFinished("Flaky", 0, BuildStatus.Failure)
+                        RetryAttemptStarted("Flaky", 3)
+                        StepStarted("Flaky", 0, "sh") ]
+
+              Expect.equal (Map.tryFind "Flaky" plan.RetryAttempts) (Some 3) "last marker"
+              Expect.equal (Resume.dispositionOf plan "Flaky" 0) Interrupted "attempt 3's live state"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Journal" [ roundTrip; resumePlanning; crashResume ]))
+    runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Journal" [ roundTrip; resumePlanning; retryAttempts; crashResume ]))

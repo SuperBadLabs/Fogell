@@ -117,6 +117,13 @@ type Record =
     /// can re-judge eligibility itself — FG-046c, which starts with a
     /// measurement.
     | InputPromptCancellable of stage: string * stepIndex: int * occurrence: int
+    /// FG-135. Retry attempt N of a JOURNALED retried stage is starting. The
+    /// records BEFORE this marker for that stage belong to superseded attempts:
+    /// a failed attempt's `step-finished failure` must not read as durably
+    /// finished to the resume, or the resumed build skips the very step the
+    /// next attempt exists to re-run. Attempt 1 writes no marker — its absence
+    /// IS attempt 1, which keeps every pre-FG-135 journal readable unchanged.
+    | RetryAttemptStarted of stage: string * attempt: int
     | InputAnswerProvisional of
         stage: string *
         stepIndex: int *
@@ -156,6 +163,7 @@ module Record =
             $"input-decision\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
         | InputDecisionVoided(stage, i, occurrence) -> $"input-decision-voided\t{oneLine stage}\t{i}\t{occurrence}"
         | InputPromptCancellable(stage, i, occurrence) -> $"input-prompt-cancellable\t{oneLine stage}\t{i}\t{occurrence}"
+        | RetryAttemptStarted(stage, attempt) -> $"retry-attempt\t{oneLine stage}\t{attempt}"
         | InputAnswerProvisional(stage, i, occurrence, approved, who) ->
             let verdict = if approved then "approved" else "rejected"
             $"input-answer-provisional\t{oneLine stage}\t{i}\t{occurrence}\t{verdict}\t{oneLine who}"
@@ -178,6 +186,13 @@ module Record =
         | [| "input-decision-voided"; stage; i; occurrence |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with
             | (true, idx), (true, occ) -> Some(InputDecisionVoided(stage, idx, occ))
+            | _ -> None
+        | [| "retry-attempt"; stage; attempt |] ->
+            match System.Int32.TryParse attempt with
+            | true, n when n >= 2 -> Some(RetryAttemptStarted(stage, n))
+            // attempt 1 never writes a marker, so one on disk is a corrupt or
+            // hand-mangled line; refusing to decode stops the read where the
+            // damage starts, per the journal's own contract
             | _ -> None
         | [| "input-prompt-cancellable"; stage; i; occurrence |] ->
             match System.Int32.TryParse i, System.Int32.TryParse occurrence with

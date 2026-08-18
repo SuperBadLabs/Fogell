@@ -11,7 +11,11 @@ type Value =
     | VInt of int64
     | VStr of string
     | VList of Value list
-    | VMap of Map<string, Value>
+    /// FG-193. A Groovy map is a REFERENCE object: aliases see each other's
+    /// mutations. The ref is the identity, exactly as ref cells are for locals —
+    /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
+    /// and alias:null here while the write vanished into a dropped match arm.
+    | VMap of Map<string, Value> ref
     | VClosure of Closure * Env
     | VFunc of name: string * parameters: string list * body: Stmt list
 
@@ -41,25 +45,111 @@ and Env =
     /// below it — a comment disagreeing with itself about a ticket it does not own. The
     /// finding history lives on the board, which is written to be edited.
     ///
-    /// `Funcs` stays a plain map: a function binding is never reassigned.
+    /// FG-195. `Funcs` maps a name to its CANDIDATES, because Groovy resolves a call by
+    /// SIGNATURE and a name may carry several: `def pick()` beside `def pick(v)` is an
+    /// ordinary overload pair, and folding them into one slot by name made `pick()` run
+    /// the one-arg body — a call landing on something the language would not pick.
+    /// Candidates stay in declaration order; resolution is by arity at the call.
     { Vars: Map<string, Value ref>
-      Funcs: Map<string, string list * Stmt list> }
+      Funcs: Map<string, (string list * Stmt list) list> }
 
 module Value =
 
-    let rec toDisplay =
-        function
+    /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
+    /// discovery of a reference cycle that structural recursion would chase
+    /// forever. MEASURED (receipt `script-cyclic-map-eq`): two self-referential maps compared with `==` was a
+    /// STACK OVERFLOW that killed the process, not a fault — the worst outcome
+    /// this engine can produce, because nothing can catch it and no receipt can
+    /// see it. The caller decides what a cycle means in its context; this type
+    /// is what stops the answer being decided by the runtime dying first.
+    type Compared =
+        | Answer of bool
+        | CycleDetected
+
+    let rec toDisplay v = displayWith [] v
+
+    /// FG-191. Display tracks the maps on its own PATH by reference, and a map
+    /// that reaches itself renders as Groovy renders it — `(this Map)`, from
+    /// AbstractMap.toString — instead of recursing to a StackOverflow that kills
+    /// the process. MEASURED (receipt `script-cyclic-map-display`): a
+    /// self-referential map's display died with exit 134 where Jenkins prints
+    /// and succeeds. Lists cannot cycle (they are
+    /// immutable) but they can CONTAIN a cyclic map, so the path threads through
+    /// them too.
+    and private displayWith (seen: obj list) v =
+        match v with
         | VNull -> "null"
         | VBool b -> if b then "true" else "false"
         | VInt i -> string i
         | VStr s -> s
-        | VList xs -> "[" + (xs |> List.map toDisplay |> String.concat ", ") + "]"
+        | VList xs -> "[" + (xs |> List.map (displayWith seen) |> String.concat ", ") + "]"
         | VMap m ->
-            "["
-            + (m |> Map.toList |> List.map (fun (k, v) -> $"{k}:{toDisplay v}") |> String.concat ", ")
-            + "]"
+            if seen |> List.exists (fun s -> System.Object.ReferenceEquals(s, m)) then
+                "(this Map)"
+            else
+                let inner = box m :: seen
+
+                "["
+                + (m.Value
+                   |> Map.toList
+                   |> List.map (fun (k, v) -> $"{k}:{displayWith inner v}")
+                   |> String.concat ", ")
+                + "]"
         | VClosure _ -> "<closure>"
         | VFunc(n, _, _) -> $"<function {n}>"
+
+    /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
+    ///
+    ///   - CLOSURES compare by IDENTITY — Groovy closures are reference-equal or
+    ///     not equal. Identity here is the pair (AST node, captured Env record)
+    ///     by reference: an aliased closure shares both; two evaluations of one
+    ///     literal differ in the env record; two literals differ in the AST.
+    ///     MEASURED before this existed (receipt `script-same-ast-closure-eq`): two SAME-AST closures from two calls
+    ///     compared structurally walked their captured cells into the cycle and
+    ///     the process died.
+    ///   - MAPS compare pairwise through their refs; the same ref is equal
+    ///     outright, and a DISTINCT pair met twice on one path is a cycle —
+    ///     reported, not chased, because Groovy's own AbstractMap.equals chases
+    ///     it into a JVM StackOverflowError there.
+    ///   - everything else keeps structural equality, which cannot recurse into
+    ///     a cycle: only a map ref is mutable enough to close one.
+    let tryEq (a: Value) (b: Value) : Compared =
+        let mutable cycle = false
+
+        let rec go (seen: (obj * obj) list) a b =
+            match a, b with
+            | VMap ma, VMap mb ->
+                if System.Object.ReferenceEquals(ma, mb) then
+                    true
+                elif
+                    seen
+                    |> List.exists (fun (x, y) ->
+                        System.Object.ReferenceEquals(x, ma) && System.Object.ReferenceEquals(y, mb))
+                then
+                    cycle <- true
+                    false
+                else
+                    let inner = (box ma, box mb) :: seen
+
+                    ma.Value.Count = mb.Value.Count
+                    && ma.Value
+                       |> Map.forall (fun k v ->
+                           match Map.tryFind k mb.Value with
+                           | Some w -> go inner v w
+                           | None -> false)
+            | VClosure(c1, e1), VClosure(c2, e2) ->
+                System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
+            | VList xs, VList ys -> xs.Length = ys.Length && List.forall2 (go seen) xs ys
+            | VClosure _, _
+            | _, VClosure _
+            | VMap _, _
+            | _, VMap _
+            | VList _, _
+            | _, VList _ -> false
+            | _ -> a = b
+
+        let answer = go [] a b
+        if cycle then CycleDetected else Answer answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =
@@ -69,7 +159,7 @@ module Value =
         | VInt i -> i <> 0L
         | VStr s -> s <> ""
         | VList xs -> not (List.isEmpty xs)
-        | VMap m -> not (Map.isEmpty m)
+        | VMap m -> not (Map.isEmpty m.Value)
         | VClosure _
         | VFunc _ -> true
 
@@ -116,5 +206,22 @@ module Env =
         { Vars = vars |> Map.map (fun _ value -> ref value)
           Funcs = Map.empty }
 
+    /// FG-195. APPENDS a candidate rather than replacing the slot — overloads are real.
+    /// A structurally identical candidate is skipped, NOT appended: function hoisting
+    /// folds every top-level `def f()` into the env before execution and the execution
+    /// pass then visits the same statement again, and under append-always that made
+    /// every helper its own same-arity duplicate — ambiguous at its first call.
+    ///
+    /// THE SKIP HAS A COST, stated: an IN-SCRIPT byte-identical duplicate declaration
+    /// collapses to one candidate and its call RUNS, where Groovy compile-rejects any
+    /// duplicate signature. Narrow — any in-script `def f()` is already in a
+    /// Jenkins-rejected class, and the preamble path refuses all same-arity
+    /// duplicates upstream on the raw list — but it is a fact about this function,
+    /// not hygiene.
     let withFunc name ps body env =
-        { env with Funcs = Map.add name (ps, body) env.Funcs }
+        let existing = defaultArg (Map.tryFind name env.Funcs) []
+
+        if existing |> List.exists (fun c -> c = (ps, body)) then
+            env
+        else
+            { env with Funcs = Map.add name (existing @ [ ps, body ]) env.Funcs }
