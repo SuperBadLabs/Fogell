@@ -989,6 +989,24 @@ let fg180Grammar =
               | other -> failtestf "wrong AST: %A" other
           }
 
+          test "a multi-assignment's source is evaluated ONCE" {
+              // The lowering copied the source into one binding per target, so
+              // an effectful RHS ran once per name — step effects duplicated,
+              // names possibly bound from different results (Codex P1, PR #98;
+              // the copy predates the command form and bit paren calls too).
+              let o = run "def (a, b) = sh 'once'\n"
+              Expect.equal (stepNames o) [ "sh" ] "one call, not one per target"
+          }
+
+          test "a multi-assignment still binds by index" {
+              let o = run "def (a, b) = ['first', 'second']\necho a\necho b\n"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "first" ]; "echo", [ "second" ] ]
+                  "each name reads its own index of the one evaluation"
+          }
+
           test "a typed declaration cannot merge two lines" {
               // `echo msg` then `(x) { … }` is two statements; reading them as
               // a declaration of `msg` drops the echo — FG-187's class.

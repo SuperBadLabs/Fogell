@@ -475,23 +475,32 @@ let private typedFunc: P<Stmt> =
         .>>? notAfterLineBreak // `echo msg` then `(x) { … }` on the next line
                                // is two statements, never a declaration —
                                // the FG-187 defect class one level up
-        .>>.? funcParams
+        .>>. funcParams
         .>>. block
         |>> fun ((n, ps), b) -> SFunc(n, ps, b))
 
 let private multiAssign: P<Stmt> =
-    // `def (a, b) = expr` — bind the first name; the tuple shape is recorded by
-    // binding each name to an indexed read of the source.
+    // `def (a, b) = expr` — the source is evaluated ONCE into a hidden binding,
+    // then each name reads an index of it. The first lowering COPIED the source
+    // expression into every binding, so an effectful RHS — `def (a, b) =
+    // f('x')`, or since FG-180 the command form — ran once PER TARGET, its
+    // step effects duplicated and the two names possibly bound from different
+    // results (Codex P1, PR #98; the copy predates the command form). The
+    // temp's name starts with SOH, which no identifier can contain, so author
+    // code can neither read, shadow, nor collide with it.
     attempt (
         keyword "def"
         >>. between (symbol "(") (symbol ")") (sepBy1 plainIdent (symbol ","))
         .>> symbol "="
         .>>. exprOrCommand
         |>> fun (names, src) ->
-                let binds =
-                    names |> List.mapi (fun i n -> SDef(n, Some(EIndex(src, EInt(int64 i)))))
+                let tmp = "\u0001destructure"
 
-                SIf(EBool true, binds, []))
+                let binds =
+                    names
+                    |> List.mapi (fun i n -> SDef(n, Some(EIndex(EVar tmp, EInt(int64 i)))))
+
+                SIf(EBool true, SDef(tmp, Some src) :: binds, []))
 
 let private defVar: P<Stmt> =
     attempt (keyword "def" >>. plainIdent .>>. opt (attempt (symbol "=" >>. exprOrCommand)) |>> SDef)
