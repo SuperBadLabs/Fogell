@@ -193,7 +193,13 @@ module GString =
                                 // changed or new key here is a real binding update
                                 if k = "env" then acc
                                 elif (match Map.tryFind k bindings with
-                                      | Some old -> old <> v
+                                      // FG-191: cycle-aware — a cyclic value
+                                      // reads as CHANGED (re-render is the safe
+                                      // side), never as a process-killing walk
+                                      | Some old ->
+                                          match Value.tryEq old v with
+                                          | Value.Answer same -> not same
+                                          | Value.CycleDetected -> true
                                       | None -> true) then
                                     Map.add k v acc
                                 else

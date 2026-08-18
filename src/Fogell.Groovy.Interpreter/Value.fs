@@ -55,19 +55,101 @@ and Env =
 
 module Value =
 
-    let rec toDisplay =
-        function
+    /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
+    /// discovery of a reference cycle that structural recursion would chase
+    /// forever. MEASURED (receipt `script-cyclic-map-eq`): two self-referential maps compared with `==` was a
+    /// STACK OVERFLOW that killed the process, not a fault — the worst outcome
+    /// this engine can produce, because nothing can catch it and no receipt can
+    /// see it. The caller decides what a cycle means in its context; this type
+    /// is what stops the answer being decided by the runtime dying first.
+    type Compared =
+        | Answer of bool
+        | CycleDetected
+
+    let rec toDisplay v = displayWith [] v
+
+    /// FG-191. Display tracks the maps on its own PATH by reference, and a map
+    /// that reaches itself renders as Groovy renders it — `(this Map)`, from
+    /// AbstractMap.toString — instead of recursing to a StackOverflow that kills
+    /// the process. MEASURED (receipt `script-cyclic-map-display`): a
+    /// self-referential map's display died with exit 134 where Jenkins prints
+    /// and succeeds. Lists cannot cycle (they are
+    /// immutable) but they can CONTAIN a cyclic map, so the path threads through
+    /// them too.
+    and private displayWith (seen: obj list) v =
+        match v with
         | VNull -> "null"
         | VBool b -> if b then "true" else "false"
         | VInt i -> string i
         | VStr s -> s
-        | VList xs -> "[" + (xs |> List.map toDisplay |> String.concat ", ") + "]"
+        | VList xs -> "[" + (xs |> List.map (displayWith seen) |> String.concat ", ") + "]"
         | VMap m ->
-            "["
-            + (m.Value |> Map.toList |> List.map (fun (k, v) -> $"{k}:{toDisplay v}") |> String.concat ", ")
-            + "]"
+            if seen |> List.exists (fun s -> System.Object.ReferenceEquals(s, m)) then
+                "(this Map)"
+            else
+                let inner = box m :: seen
+
+                "["
+                + (m.Value
+                   |> Map.toList
+                   |> List.map (fun (k, v) -> $"{k}:{displayWith inner v}")
+                   |> String.concat ", ")
+                + "]"
         | VClosure _ -> "<closure>"
         | VFunc(n, _, _) -> $"<function {n}>"
+
+    /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
+    ///
+    ///   - CLOSURES compare by IDENTITY — Groovy closures are reference-equal or
+    ///     not equal. Identity here is the pair (AST node, captured Env record)
+    ///     by reference: an aliased closure shares both; two evaluations of one
+    ///     literal differ in the env record; two literals differ in the AST.
+    ///     MEASURED before this existed (receipt `script-same-ast-closure-eq`): two SAME-AST closures from two calls
+    ///     compared structurally walked their captured cells into the cycle and
+    ///     the process died.
+    ///   - MAPS compare pairwise through their refs; the same ref is equal
+    ///     outright, and a DISTINCT pair met twice on one path is a cycle —
+    ///     reported, not chased, because Groovy's own AbstractMap.equals chases
+    ///     it into a JVM StackOverflowError there.
+    ///   - everything else keeps structural equality, which cannot recurse into
+    ///     a cycle: only a map ref is mutable enough to close one.
+    let tryEq (a: Value) (b: Value) : Compared =
+        let mutable cycle = false
+
+        let rec go (seen: (obj * obj) list) a b =
+            match a, b with
+            | VMap ma, VMap mb ->
+                if System.Object.ReferenceEquals(ma, mb) then
+                    true
+                elif
+                    seen
+                    |> List.exists (fun (x, y) ->
+                        System.Object.ReferenceEquals(x, ma) && System.Object.ReferenceEquals(y, mb))
+                then
+                    cycle <- true
+                    false
+                else
+                    let inner = (box ma, box mb) :: seen
+
+                    ma.Value.Count = mb.Value.Count
+                    && ma.Value
+                       |> Map.forall (fun k v ->
+                           match Map.tryFind k mb.Value with
+                           | Some w -> go inner v w
+                           | None -> false)
+            | VClosure(c1, e1), VClosure(c2, e2) ->
+                System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
+            | VList xs, VList ys -> xs.Length = ys.Length && List.forall2 (go seen) xs ys
+            | VClosure _, _
+            | _, VClosure _
+            | VMap _, _
+            | _, VMap _
+            | VList _, _
+            | _, VList _ -> false
+            | _ -> a = b
+
+        let answer = go [] a b
+        if cycle then CycleDetected else Answer answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =

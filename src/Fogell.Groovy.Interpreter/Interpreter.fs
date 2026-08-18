@@ -295,7 +295,16 @@ module Interpreter =
         | EElvis(a, b) ->
             let v = evalExpr st env a
             if Value.isTruthy v then v else evalExpr st env b
-        | EClosure c -> VClosure(c, env)
+        | EClosure c ->
+            // FG-191. EVERY EVALUATION MINTS A DISTINCT CLOSURE, as Groovy's does:
+            // equality compares the captured env RECORD by reference, and a loop
+            // body whose iterations assign through cells never changes the record
+            // — so without this fresh allocation, two closures minted by one
+            // literal in a `while` compared EQUAL where Groovy says false
+            // (measured, loopEq:true, a false equality this same branch would
+            // otherwise have shipped). The copy shares the cells, so capture
+            // stays by reference; only the record's identity is new.
+            VClosure(c, { env with Vars = env.Vars })
         | ECall(target, args, trailing) -> evalCall st env target args trailing
 
     and private evalProp (st: State) (recv: Value) (name: string) : Value =
@@ -348,8 +357,21 @@ module Interpreter =
         | "%", VInt x, VInt y -> VInt(x % y)
         | "<<", VList x, _ -> VList(x @ [ b ])
         | "<<", VStr x, _ -> VStr(x + Value.toDisplay b)
-        | "==", _, _ -> VBool(a = b)
-        | "!=", _, _ -> VBool(a <> b)
+        // FG-191. THROUGH the cycle-aware equality, never bare structural `=`:
+        // two self-referential maps compared here KILLED THE PROCESS (measured,
+        // exit 134), which no catch, receipt or budget can see. A detected cycle
+        // raises what Groovy's own chase produces — the JVM dies of
+        // StackOverflowError and the build fails — as a fault this runtime
+        // survives. (Groovy's Error is not caught by `catch (Exception)`; this
+        // Thrown is — a named residual on the FG-191 row, not a silent one.)
+        | "==", _, _ ->
+            match Value.tryEq a b with
+            | Value.Answer r -> VBool r
+            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+        | "!=", _, _ ->
+            match Value.tryEq a b with
+            | Value.Answer r -> VBool(not r)
+            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -396,7 +418,9 @@ module Interpreter =
         (if List.isEmpty named then [] else [ VMap(ref (Map.ofList named)) ])
         @ positional
         @ (match trailing with
-           | Some c -> [ VClosure(c, env) ]
+           // fresh record per evaluation, same as EClosure — a trailing block is
+           // one more closure minting site (FG-191)
+           | Some c -> [ VClosure(c, { env with Vars = env.Vars }) ]
            | None -> [])
 
     /// FG-189, folded into FG-195: a closure VALUE is callable. A bare closure has
@@ -973,7 +997,16 @@ module Interpreter =
         | "startsWith", VStr s, [ VStr p ] -> VBool(s.StartsWith p)
         | "endsWith", VStr s, [ VStr p ] -> VBool(s.EndsWith p)
         | "contains", VStr s, [ VStr p ] -> VBool(s.Contains p)
-        | "contains", VList xs, [ v ] -> VBool(List.contains v xs)
+        | "contains", VList xs, [ v ] ->
+            // FG-191: through the cycle-aware equality, like `==` — a cyclic
+            // element reports rather than recurses
+            VBool(
+                xs
+                |> List.exists (fun x ->
+                    match Value.tryEq v x with
+                    | Value.Answer r -> r
+                    | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison"))))
+            )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
             VList(s.Split(d) |> Array.toList |> List.map VStr)
@@ -1244,11 +1277,16 @@ module Interpreter =
                 arms
                 |> List.tryFindIndex (fun (k, _) ->
                     match k with
-                    // The SAME equality `==` uses (line 340), not a second opinion: a
+                    // The SAME equality `==` uses, not a second opinion: a
                     // switch that matched by a different rule than the operator would be
                     // its own defect, and the lowered form got this right by construction
-                    // because it literally built an `EBinary("==", …)`.
-                    | Some case -> v = evalExpr st env case
+                    // because it literally built an `EBinary("==", …)`. FG-191: the same
+                    // cycle-aware walk too, for the same process-death reason.
+                    | Some case ->
+                        match Value.tryEq v (evalExpr st env case) with
+                        | Value.Answer r -> r
+                        | Value.CycleDetected ->
+                            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 

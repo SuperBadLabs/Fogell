@@ -831,6 +831,62 @@ let mapIdentity =
               Expect.equal (List.ofSeq sets) [ "FOO", "bar" ] "the aliased write reached the host"
           } ]
 
+/// FG-191: equality and display survive cyclic values. Three shapes killed the
+/// PROCESS before this — no fault, no receipt, walker dead — and each is pinned
+/// here where CI can see it, beside the identity semantics that replaced the
+/// structural walk for closures.
+let cyclicValues =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-191 cyclic values and closure identity"
+        [ test "displaying a self-referential map renders (this Map), as Groovy does" {
+              let o = runS "def m = [:]\nm.self = m\nreturn \"${m}\""
+              Expect.isNone o.Fault "survives"
+              Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
+          }
+
+          test "same-AST closures from two calls are NOT equal — identity, not structure" {
+              // this exact comparison was a process-killing stack overflow
+              let o = runS "def make() {\n    def r\n    r = { r }\n    return r\n}\ndef a = make()\ndef b = make()\nreturn a == b"
+              Expect.isNone o.Fault "survives"
+              Expect.equal o.Returned (Some(VBool false)) "distinct invocations, distinct closures"
+          }
+
+          test "an aliased closure IS equal; a distinct literal is not" {
+              let o = runS "def a = { 1 }\ndef b = { 1 }\ndef c = a\nreturn [a == b, a == c]"
+              Expect.equal o.Returned (Some(VList [ VBool false; VBool true ])) "reference semantics"
+          }
+
+          test "comparing two distinct cyclic maps FAULTS instead of dying" {
+              // Groovy's own chase is a JVM StackOverflowError and a failed build;
+              // the fault below is this runtime's survivable spelling of the same
+              let o = runS "def m = [:]\nm.self = m\ndef n = [:]\nn.self = n\nreturn m == n"
+
+              match o.Fault with
+              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "the matching fault"
+              | other -> failtestf "expected the cycle fault, got %A" other
+          }
+
+          test "closures minted by ONE literal in a loop are DISTINCT" {
+              // the identity model's first spelling compared the captured env
+              // RECORD, and a while body assigning through cells never changes
+              // it — this returned true, a false equality this branch's own
+              // probe caught before it shipped; every evaluation mints a fresh
+              // record now (receipt script-loop-closure-eq)
+              let o =
+                  Interpreter.runStrictVars Budget.defaults steps Env.empty
+                      (parseOk "def xs = []\ndef i = 0\nwhile (i < 2) {\n    xs = xs + [{ 9 }]\n    i = i + 1\n}\nreturn xs[0] == xs[1]")
+
+              Expect.equal o.Returned (Some(VBool false)) "per evaluation, not per source location"
+          }
+
+          test "a map compared WITH ITSELF is simply equal — identity short-circuits" {
+              let o = runS "def m = [:]\nm.self = m\nreturn m == m"
+              Expect.equal o.Returned (Some(VBool true)) "same ref, no walk"
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
