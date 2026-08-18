@@ -109,6 +109,6 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (4 lines):
     | + echo ${HOME}
-    | + echo ${HOME}
     | /home/srikanth
+    | + echo ${HOME}
     | /home/srikanth

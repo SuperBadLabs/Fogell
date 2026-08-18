@@ -130,11 +130,18 @@ let private tripleSingle: P<Expr> =
 
 /// Slashy string `/regex/`. Only reachable where a primary expression is
 /// expected, so `a / b` division is unaffected.
+///
+/// FG-141. `lexeme`-wrapped like every other literal: without the trailing
+/// trivia skip, ANY operator after a slashy failed to chain — `/Deploy; / +
+/// env.TARGET` stopped at the `+` with the slashy consumed and the rest
+/// unreachable. It hid because the existing receipts put `)` directly against
+/// the closing delimiter; the approval lane's Z2 rewrite met the space first.
 let private slashy: P<Expr> =
-    attempt (
-        between (skipString "/") (skipString "/") (
-            manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
-        |>> EStr)
+    lexeme (
+        attempt (
+            between (skipString "/") (skipString "/") (
+                manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
+            |>> EStr))
 
 let private exprRef, private exprImpl = createParserForwardedToRef<Expr, unit> ()
 let private stmtRef, private stmtImpl = createParserForwardedToRef<Stmt, unit> ()

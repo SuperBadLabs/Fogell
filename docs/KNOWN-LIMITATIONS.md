@@ -8,8 +8,8 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Of 228 corpus files: **1** proven, **182** admitted (parsed — NOT a
-parity claim), **45** rejected. This page covers the rejected set.
+Of 228 corpus files: **1** proven, **183** admitted (parsed — NOT a
+parity claim), **44** rejected. This page covers the rejected set.
 
 ## opaque section
 
@@ -54,12 +54,6 @@ Files: **1**
 Files: **1**
 
 - `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
-
-## script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '['
-
-Files: **1**
-
-- `varunpalekar_php-ci-cd.Jenkinsfile`
 
 ## 'switch', 'throw', 'true', 'try', 'while' or '{'
 

@@ -981,6 +981,14 @@ let fg180Grammar =
               | other -> failtestf "wrong AST: %A" other
           }
 
+          test "an operator chains after a slashy literal across a space" {
+              // The slashy was the one literal not lexeme-wrapped; `/a/ + x`
+              // consumed the slashy and stopped dead at the operator.
+              match ast "def m = /Deploy; / + env.TARGET" with
+              | [ SDef("m", Some(EBinary("+", EStr "Deploy; ", EProp(EVar "env", "TARGET")))) ] -> ()
+              | other -> failtestf "wrong AST: %A" other
+          }
+
           test "a typed declaration cannot merge two lines" {
               // `echo msg` then `(x) { … }` is two statements; reading them as
               // a declaration of `msg` drops the echo — FG-187's class.

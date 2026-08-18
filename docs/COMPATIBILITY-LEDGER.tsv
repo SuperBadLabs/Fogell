@@ -223,7 +223,7 @@ sixeyed_jenkins-pipeline-demos.Jenkinsfile	admitted	-	parsed; execution NOT atte
 stakater_GitWebhookProxy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tknerr_jenkins-pipes-helloworld.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tomasbjerre_bitbucket-server-jenkins-release-tags.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-varunpalekar_php-ci-cd.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 6:21: Expecting: no line break before '[' @22:17
+varunpalekar_php-ci-cd.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vineet68sharma_CI-CD-Docker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vinsguru_docker-selenium-jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vskurikhin_DayBook3.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
