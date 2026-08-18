@@ -2153,8 +2153,11 @@ module WalkerOrchestration =
                     // argument and parse refusals below are unchanged. Raised in review
                     // on PR #53.
                     let atCtx = fst hostAt.Value
-                    // FG-114: the refusal's reason, captured for the durable record
-                    atCtx.LastDiagnostic.Value <- Some why
+                    // FG-114: the refusal's reason, captured for the durable record.
+                    // MASKED (Codex P1, PR #97): `why` embeds author-supplied text
+                    // (fault displays, script fragments) and the journal outlives
+                    // the run; `emit` masks only the console copy.
+                    atCtx.LastDiagnostic.Value <- Some(runCtx.MaskSecrets why)
                     emit $"ERROR: {why}"
                     atCtx.Failed.Value <- true
                     atCtx.Sink BuildStatus.Failure
