@@ -258,6 +258,156 @@ let structure =
               Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
           }
 
+          test "FG-014 command-form tools preserve kind, value and source order" {
+              let src =
+                  "pipeline {\n  agent any\n  tools {\n    maven 'm3'; jdk \"j8\"\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
+
+              Expect.equal
+                  (ok src).Tools
+                  [ "maven", "m3"; "jdk", "j8" ]
+                  "the parser keeps each tool kind paired with its configured installation"
+          }
+
+          test "FG-014 duplicate tools sections are rejected at pipeline and stage scope" {
+              // DIRECTLY PROBED on Jenkins 2.568.1: both scopes report "Multiple
+              // occurrences of the tools section". An empty first section does not
+              // make the second legal, and two non-empty sections fail identically.
+              let topEmptyFirst =
+                  "pipeline {\n  agent any\n  tools { }\n  tools { jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let topTwoNonempty =
+                  "pipeline {\n  agent any\n  tools { maven 'm3' }\n  tools { jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let stageEmptyFirst =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { }\n      tools { jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let stageTwoNonempty =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3' }\n      tools { jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              for label, source in
+                  [ "pipeline empty then non-empty", topEmptyFirst
+                    "pipeline two non-empty", topTwoNonempty
+                    "stage empty then non-empty", stageEmptyFirst
+                    "stage two non-empty", stageTwoNonempty ] do
+                  let e = err source
+                  Expect.equal e.Code MalformedSyntax $"{label}: duplicate section is an admission refusal"
+          }
+
+          test "FG-014 tools require a Jenkins-measured newline or semicolon between entries" {
+              let newline =
+                  "pipeline {\n  agent any\n  tools {\n    maven 'm3'\n    jdk 'j8'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let adjacent =
+                  "pipeline {\n  agent any\n  tools { maven 'm3' jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              Expect.equal (ok newline).Tools [ "maven", "m3"; "jdk", "j8" ] "newline separates entries"
+
+              let e = err adjacent
+              Expect.equal e.Code MalformedSyntax "space-only adjacency is not two declarations on Jenkins"
+          }
+
+          test "FG-014 tools keep the previously accepted assignment spelling" {
+              let quoted =
+                  "pipeline { agent any tools { maven = 'm3' } stages { stage('a') { steps { echo 'x' } } } }"
+
+              let unquoted =
+                  "pipeline {\n  agent any\n  tools {\n    maven = m3\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              Expect.equal (ok quoted).Tools [ "maven", "m3" ] "quoted assignment remains accepted"
+              Expect.equal
+                  (ok unquoted).Tools
+                  [ "maven", "m3" ]
+                  "the command-form slice does not silently narrow the old unquoted assignment surface"
+          }
+
+          test "FG-014 adjacent quoted assignments retain the exact legacy body at both scopes" {
+              let top =
+                  "pipeline { agent any tools { maven = 'm3' jdk = 'j8' } stages { stage('a') { steps { echo 'x' } } } }"
+
+              let stageSource =
+                  "pipeline { agent any stages { stage('a') { tools { maven = 'm3' jdk = 'j8' } steps { echo 'x' } } } }"
+
+              Expect.equal
+                  (ok top).Tools
+                  [ "maven", "m3"; "jdk", "j8" ]
+                  "the explicit legacy lane preserves adjacent quoted assignments"
+
+              let stage = (ok stageSource).Stages.[0]
+              Expect.equal stage.Name "a" "stage assignment body survives"
+              Expect.equal
+                  stage.Tools
+                  [ "maven", "m3"; "jdk", "j8" ]
+                  "stage tools survive as typed IR rather than an opaque section"
+              Expect.equal stage.Steps.Length 1 "the following stage steps survive"
+              Expect.equal stage.Steps.[0].Name "echo" "complete-pipeline parsing reaches the step"
+          }
+
+          test "FG-014 stage tools use the same command and assignment grammar end-to-end" {
+              let command =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3'; jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let quotedAssignment =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven = 'm3' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let unquotedAssignment =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools {\n        maven = m3\n      }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              for label, source, expected in
+                  [ "command", command, [ "maven", "m3"; "jdk", "j8" ]
+                    "quoted assignment", quotedAssignment, [ "maven", "m3" ]
+                    "newline-terminated unquoted assignment", unquotedAssignment, [ "maven", "m3" ] ] do
+                  let stage = (ok source).Stages.[0]
+                  Expect.equal stage.Name "a" $"{label}: stage survives"
+                  Expect.equal stage.Tools expected $"{label}: selections survive in typed stage IR"
+                  Expect.equal stage.Steps.Length 1 $"{label}: steps survive"
+                  Expect.equal stage.Steps.[0].Name "echo" $"{label}: parsed through the complete pipeline"
+          }
+
+          test "FG-014 stage tools refuse space-only adjacent entries" {
+              let adjacent =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3' jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let e = err adjacent
+              Expect.equal e.Code MalformedSyntax "stage scope must not invent two tools Jenkins did not model"
+          }
+
+          test "FG-014 command kind and value must share a line at both scopes" {
+              let topSplit =
+                  "pipeline {\n  agent any\n  tools {\n    maven\n    'm3'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let stageSplit =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools {\n        maven\n        'm3'\n      }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let tabbed =
+                  "pipeline {\n  agent any\n  tools { maven\t'm3' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              Expect.equal (err topSplit).Code MalformedSyntax "pipeline command newline is refused"
+              Expect.equal (err stageSplit).Code MalformedSyntax "stage command newline is refused"
+              Expect.equal (ok tabbed).Tools [ "maven", "m3" ] "a horizontal tab is a valid command gap"
+          }
+
+          test "FG-014 mixed command and assignment entries require a statement boundary" {
+              let newline =
+                  "pipeline {\n  agent any\n  tools {\n    maven = 'm3'\n    jdk 'j8'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let semicolon =
+                  "pipeline {\n  agent any\n  tools { maven 'm3'; jdk = 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let adjacent =
+                  "pipeline {\n  agent any\n  tools { maven = 'm3' jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let stageNewline =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools {\n        maven = 'm3'\n        jdk 'j8'\n      }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              Expect.equal (ok newline).Tools [ "maven", "m3"; "jdk", "j8" ] "newline separates mixed entries"
+              Expect.equal (ok semicolon).Tools [ "maven", "m3"; "jdk", "j8" ] "semicolon separates mixed entries"
+              Expect.equal (err adjacent).Code MalformedSyntax "space-only mixed adjacency is refused"
+
+              let stage = (ok stageNewline).Stages.[0]
+              Expect.equal stage.Tools [ "maven", "m3"; "jdk", "j8" ] "stage mixed forms retain both selections"
+              Expect.equal stage.Steps.Length 1 "stage mixed newline form parses through its steps"
+          }
+
           test "named step arguments are separated from positional" {
               let p = ok (mk "    stage('a') { steps { archiveArtifacts artifacts: '*.jar', fingerprint: true } }")
               let step = p.Stages.[0].Steps.[0]

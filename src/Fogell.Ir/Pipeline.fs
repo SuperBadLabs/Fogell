@@ -125,6 +125,7 @@ type Stage =
       /// entered this set. The prose claimed a behaviour the code did not have —
       /// the same shape of drift FG-122 spent two rounds on.
       EnvironmentLiteralNames: Set<string>
+      Tools: (string * string) list
       Steps: Step list
       /// FG-045. Stage-level `options { }`. Previously discarded outright, so a
       /// `timeout` declared here bounded nothing and the stage ran unbounded.

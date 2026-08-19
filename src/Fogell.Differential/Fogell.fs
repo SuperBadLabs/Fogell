@@ -84,6 +84,37 @@ module FogellSide =
 
                 Map.ofList entries
 
+    /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
+    /// parsed construct must not become an executable no-op. Jenkins resolves every
+    /// Declarative tools selection against the agent, installs/translates it, and wraps
+    /// the relevant body in the tool's environment. Fogell does none of those things yet.
+    ///
+    /// This preflight is public because the persisted host prepares its workspace before
+    /// calling [runPersisted]. The host calls this same function before that preparation;
+    /// every actual execution entry (run, runScm, runMany, runPersisted) then converges on
+    /// [runWith], which calls it again before WalkerCtx creation or workspace mutation.
+    /// One rule therefore guards both the outer durable host and the deepest shared walker.
+    let preflightExecution (script: string) : Result<Pipeline, string> =
+        match Fogell.Pipeline.Parser.Parser.parse script with
+        | Result.Error e ->
+            Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+        | Result.Ok pipeline ->
+            let scopes =
+                [ if not (List.isEmpty pipeline.Tools) then
+                      "pipeline"
+                  for stage in Pipeline.flattenStages pipeline.Stages do
+                      if not (List.isEmpty stage.Tools) then
+                          $"stage '{stage.Name}'" ]
+
+            if List.isEmpty scopes then
+                Result.Ok pipeline
+            else
+                Result.Error(
+                    "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
+                    + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
+                    + String.concat ", " scopes
+                )
+
     let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
@@ -95,8 +126,8 @@ module FogellSide =
         (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
-        match Fogell.Pipeline.Parser.Parser.parse script with
-        | Result.Error e -> Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+        match preflightExecution script with
+        | Result.Error why -> Result.Error why
         | Result.Ok pipeline ->
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
@@ -795,6 +826,7 @@ module FogellSide =
                       Agent = None
                       Environment = []
                       EnvironmentLiteralNames = Set.empty
+                      Tools = []
                       Steps = []
                       Options = []
                       When = None

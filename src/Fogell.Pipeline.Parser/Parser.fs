@@ -191,6 +191,15 @@ let private firstDuplicateName (names: string list) : string option =
     |> List.countBy id
     |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
 
+/// Jenkins rejects repeated Declarative sections before starting the build. Keep the
+/// check on the collected section nodes so an empty first section cannot hide a later
+/// non-empty one from a first-match projection.
+let private rejectingDuplicateSections sectionName isSection sections : P<'a list> =
+    if sections |> List.filter isSection |> List.length > 1 then
+        fail $"multiple occurrences of the `{sectionName}` section: Jenkins rejects duplicate sections before running anything"
+    else
+        preturn sections
+
 /// Refuses the list if any key repeats, naming the key.
 let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a list> =
     match firstDuplicateName (items |> List.map keyOf) with
@@ -496,8 +505,66 @@ let private keyValueBody: P<(string * string) list> =
 let private environmentSection: P<(string * string * bool) list> =
     keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
 
+/// Declarative `tools` entries use command form, not environment assignment form:
+///
+///     tools { maven 'm3'; jdk 'j8' }
+///
+/// FG-014. The original parser reused `keyValueBody`, so at pipeline scope it accepted only
+/// `maven = 'm3'` and rejected the valid Jenkins spelling in six pinned corpus
+/// files; stage scope kept that old parser after the first slice. Keep the old
+/// assignment spelling, including its newline-terminated unquoted-value fallback,
+/// as an explicit all-assignment compatibility lane — this slice must not silently
+/// narrow the old parser surface. The strict command/mixed lane is shared at both
+/// scopes and cannot weaken that legacy lane's adjacency behavior.
+///
+/// DIRECTLY PROBED on Jenkins 2.568.1 after a confounded compact-pipeline probe was
+/// discarded: semicolon and newline forms each reach Declarative validation as
+/// TWO entries at pipeline and stage scope. Space-only `maven 'm3' jdk 'j8'`
+/// reaches validation as only the SECOND entry — Groovy associates it differently;
+/// it is not two adjacent tool declarations. Fogell refuses that ambiguous shape
+/// rather than inventing two tools Jenkins did not model. A command kind and value
+/// split across a newline is refused by Jenkins at both scopes (`Expected to find
+/// someTool someVersion`; `No tools specified`); only horizontal space or a tab may
+/// join the two tokens here.
+let private toolCommandGap: P<unit> = skipMany1 (anyOf " \t")
+
+let private toolEntry: P<string * string> =
+    attempt (identifierBare .>> toolCommandGap .>>. stringLiteralBare)
+    <|> attempt ((
+            identifier
+            .>> symbol "="
+            .>>. (stringLiteralBare <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))))
+
+/// Trivia after one entry is a boundary only when it contains a newline or is
+/// followed by a semicolon. `ws` normally erases that distinction; capture its
+/// exact skipped source before deciding. Leading/trailing separators remain legal,
+/// matching the existing Groovy-body parsers.
+let private toolSeparator: P<unit> =
+    withSkippedString (fun skipped () -> skipped) ws
+    >>= fun skipped ->
+        if skipped.Contains '\n' || skipped.Contains '\r' then
+            skipMany (skipChar ';' >>. ws)
+        else
+            skipMany1 (skipChar ';' >>. ws)
+
+let private toolEntryEnd: P<unit> =
+    attempt toolSeparator
+    <|> (ws >>. lookAhead (skipChar '}'))
+
+let private strictToolsBody: P<(string * string) list> =
+    ws
+    >>. skipMany (skipChar ';' >>. ws)
+    >>. many (attempt (toolEntry .>> toolEntryEnd))
+
 let private toolsSection: P<(string * string) list> =
-    keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
+    keyword "tools"
+    >>. (attempt (between (symbol "{") (symbol "}") keyValueBody)
+         <|> between (symbol "{") (symbol "}") strictToolsBody)
+
+// The legacy arm is intentionally WHOLE-BODY: if any command-form entry appears,
+// its closing brace cannot match and `attempt` returns to the strict mixed lane.
+// That preserves adjacent quoted assignments exactly, while a mixed assignment +
+// command still needs the newline/semicolon boundary enforced by [toolEntryEnd].
 
 let private agentSpec: P<AgentSpec> =
     let inner =
@@ -802,6 +869,7 @@ let private failFastDirective: P<bool> =
 type private StageSection =
     | SecAgent of AgentSpec
     | SecEnv of (string * string * bool) list
+    | SecTools of (string * string) list
     | SecSteps of Step list
     | SecWhen of WhenCondition
     | SecPost of (PostCondition * Step list) list
@@ -831,7 +899,7 @@ stageRef.Value <-
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
-                      attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
+                      attempt (toolsSection |>> SecTools)
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
                       // THE OPAQUE FALLBACK MUST NOT CLAIM `steps`. This is the ROOT of
@@ -869,7 +937,8 @@ stageRef.Value <-
                                    $"a `{n}` section that does not parse is refused, never consumed opaquely"
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
-                               |>> fun _ -> SecOther n)) ])))
+                               |>> fun _ -> SecOther n)) ]))
+        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false))
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name
@@ -882,6 +951,7 @@ stageRef.Value <-
                         | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
                         | _ -> None))
                     Set.empty
+              Tools = defaultArg (pick (function SecTools t -> Some t | _ -> None)) []
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
             // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
             // second `options { }` block was invisible: `options { buildDiscarder(...) }`
@@ -981,7 +1051,11 @@ let private pipelineParser: P<Pipeline> =
     // agreement with this one.
     withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
     .>>. (keyword "pipeline"
-          >>. between (symbol "{") (symbol "}") (ws >>. many (attempt topSection))
+          >>. between
+                  (symbol "{")
+                  (symbol "}")
+                  (ws >>. many (attempt topSection)
+                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false))
           .>> ws)
     |>> fun (capturedPreamble, sections) ->
             let pick f = sections |> List.tryPick f

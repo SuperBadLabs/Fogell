@@ -1300,6 +1300,102 @@ let hostedSignatures =
               Expect.isNone ((s "timeout").Check [ Fogell.Groovy.Interpreter.VStr "weird" ] []) "timeout's argument types are deliberately unchecked"
           } ]
 
+/// FG-014. Admission may retain tools syntax for the parse-only corpus metric, but
+/// execution must refuse before it can inherit an unrelated host toolchain and report a
+/// false success. These are real run entry points, so the sentinel proves the fresh-run
+/// wipe and Executor dispatch were not reached.
+let unsupportedDeclarativeTools =
+    let top =
+        "pipeline { agent any tools { maven 'm3' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+
+    let stage =
+        "pipeline { agent any stages { stage('a') { tools { jdk 'j8' } steps { sh 'echo ran > ran.txt' } } } }"
+
+    let nestedParallel =
+        "pipeline { agent any stages { stage('parent') { parallel { stage('branch') { tools { maven 'm3' } steps { sh 'echo ran > ran.txt' } } } } } }"
+
+    let duplicateTop =
+        "pipeline { agent any tools { } tools { maven 'm3' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+
+    let duplicateStage =
+        "pipeline { agent any stages { stage('a') { tools { } tools { jdk 'j8' } steps { sh 'echo ran > ran.txt' } } } }"
+
+    let duplicateNestedParallel =
+        "pipeline { agent any stages { stage('parent') { parallel { stage('branch') { tools { } tools { maven 'm3' } steps { sh 'echo ran > ran.txt' } } } } } }"
+
+    let empty =
+        "pipeline { agent any tools { } stages { stage('a') { tools { } steps { sh 'echo ran > ran.txt' } } } }"
+
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-tools-preflight-" + Guid.NewGuid().ToString("N"))
+        let job = "job"
+        let workspace = IO.Path.Combine(root, job)
+        IO.Directory.CreateDirectory(workspace) |> ignore
+        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
+        IO.File.WriteAllText(sentinel, "keep")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-014 unsupported Declarative tools fail closed at execution"
+        [ test "pipeline, stage and nested parallel selections refuse before effects or workspace preparation" {
+              for label, source, scope in
+                  [ "pipeline", top, "pipeline"
+                    "stage", stage, "stage 'a'"
+                    "nested parallel stage", nestedParallel, "stage 'branch'" ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringStarts why "unsupported_tools:" $"{label}: stable named reason"
+                          Expect.stringContains why scope $"{label}: offending scope named"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "duplicate tools sections refuse before effects or workspace preparation" {
+              // The first section is deliberately empty: the former tryPick path
+              // retained it and hid the later selection from the execution preflight.
+              for label, source in
+                  [ "pipeline", duplicateTop
+                    "stage", duplicateStage
+                    "nested parallel stage", duplicateNestedParallel ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s duplicate tools unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "empty tools sections are not refused" {
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" empty with
+                  | Error why -> failtestf "empty tools changed execution: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "ordinary execution remains available"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                      "the control reached its shell effect")
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -1309,6 +1405,7 @@ let main argv =
         (testList
             "Fogell.Differential"
             [ hostedSignatures
+              unsupportedDeclarativeTools
               userOutputSurvives
               stringModel
               sealBindsCaseSource
