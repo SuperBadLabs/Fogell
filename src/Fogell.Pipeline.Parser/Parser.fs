@@ -860,6 +860,7 @@ let private failFastDirective: P<bool> =
 type private StageSection =
     | SecAgent of AgentSpec
     | SecEnv of (string * string * bool) list
+    | SecTools of (string * string) list
     | SecSteps of Step list
     | SecWhen of WhenCondition
     | SecPost of (PostCondition * Step list) list
@@ -889,7 +890,7 @@ stageRef.Value <-
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
-                      attempt (toolsSection |>> fun _ -> SecOther "tools")
+                      attempt (toolsSection |>> SecTools)
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
                       // THE OPAQUE FALLBACK MUST NOT CLAIM `steps`. This is the ROOT of
@@ -940,6 +941,7 @@ stageRef.Value <-
                         | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
                         | _ -> None))
                     Set.empty
+              Tools = defaultArg (pick (function SecTools t -> Some t | _ -> None)) []
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
             // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
             // second `options { }` block was invisible: `options { buildDiscarder(...) }`

@@ -309,6 +309,10 @@ let structure =
 
               let stage = (ok stageSource).Stages.[0]
               Expect.equal stage.Name "a" "stage assignment body survives"
+              Expect.equal
+                  stage.Tools
+                  [ "maven", "m3"; "jdk", "j8" ]
+                  "stage tools survive as typed IR rather than an opaque section"
               Expect.equal stage.Steps.Length 1 "the following stage steps survive"
               Expect.equal stage.Steps.[0].Name "echo" "complete-pipeline parsing reaches the step"
           }
@@ -323,12 +327,13 @@ let structure =
               let unquotedAssignment =
                   "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools {\n        maven = m3\n      }\n      steps { echo 'x' }\n    }\n  }\n}"
 
-              for label, source in
-                  [ "command", command
-                    "quoted assignment", quotedAssignment
-                    "newline-terminated unquoted assignment", unquotedAssignment ] do
+              for label, source, expected in
+                  [ "command", command, [ "maven", "m3"; "jdk", "j8" ]
+                    "quoted assignment", quotedAssignment, [ "maven", "m3" ]
+                    "newline-terminated unquoted assignment", unquotedAssignment, [ "maven", "m3" ] ] do
                   let stage = (ok source).Stages.[0]
                   Expect.equal stage.Name "a" $"{label}: stage survives"
+                  Expect.equal stage.Tools expected $"{label}: selections survive in typed stage IR"
                   Expect.equal stage.Steps.Length 1 $"{label}: steps survive"
                   Expect.equal stage.Steps.[0].Name "echo" $"{label}: parsed through the complete pipeline"
           }
@@ -374,6 +379,7 @@ let structure =
               Expect.equal (err adjacent).Code MalformedSyntax "space-only mixed adjacency is refused"
 
               let stage = (ok stageNewline).Stages.[0]
+              Expect.equal stage.Tools [ "maven", "m3"; "jdk", "j8" ] "stage mixed forms retain both selections"
               Expect.equal stage.Steps.Length 1 "stage mixed newline form parses through its steps"
           }
 

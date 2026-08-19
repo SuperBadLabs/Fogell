@@ -550,6 +550,16 @@ let main argv =
 
         let script = File.ReadAllText jenkinsfile
 
+        // The durable host owns fresh-workspace preparation, so runWith's shared
+        // preflight would otherwise be too late to preserve the old tree. Use the same
+        // preflight here before a build identity, journal record, answer adoption or
+        // workspace wipe. Every execution path is still guarded again in runWith.
+        match FogellSide.preflightExecution script with
+        | Error why ->
+            eprintfn $"{why}"
+            exit 2
+        | Ok _ -> ()
+
         let digest =
             use h = Security.Cryptography.SHA256.Create()
 

@@ -24,6 +24,14 @@ installation name. Admission therefore moves 183 -> 189 and tier 3 moves
 and reach a later rejection; they do not move verdict class. No other corpus
 verdict changes.
 
+This movement remains exactly what the ledger calls it: parse-only admission.
+Selections are retained at pipeline and stage scope, but execution currently refuses
+any non-empty `tools` section before workspace preparation or effects. Fogell does not
+yet resolve configured installation names, provision tools on an agent, merge scope,
+or inject tool-specific `PATH`, `JAVA_HOME` or Maven home variables. That runtime work
+is a separate follow-on dependency; silently inheriting similarly named host binaries
+would be a false success, not partial tool support.
+
 The ten historical rows still open after this slice are HariSekhon, jjasghar,
 maajor, maxyermayank, metersphere, mjah, MrRameshRajendran, rosineygp, SumitKr88
 and yashpimple. Each needs its own
