@@ -10,6 +10,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 evidence_root='evidence/20260818-fg-177-measurement'
 action=${1:-}
 metadata_dir=${2:-$evidence_root}
+snapshot_destination=${3:-}
 
 fail() {
   printf 'ERROR: Jenkins oracle verification refused: %s\n' "$*" >&2
@@ -34,6 +35,9 @@ case "$action" in
     exit 2
     ;;
 esac
+if [[ "$action" == capture && -n "$snapshot_destination" ]]; then
+  fail 'capture does not accept a verification snapshot destination'
+fi
 
 curl_options=(
   --disable
@@ -51,7 +55,14 @@ if [[ -n ${FOGELL_JENKINS_NETRC_FILE:-} ]]; then
 fi
 
 oracle_tmp=$(mktemp -d)
-trap 'rm -rf "$oracle_tmp"' EXIT
+snapshot_stage=''
+cleanup() {
+  rm -rf "$oracle_tmp"
+  if [[ -n "$snapshot_stage" && -e "$snapshot_stage" ]]; then
+    rm -rf "$snapshot_stage"
+  fi
+}
+trap cleanup EXIT
 
 read_core_header() {
   local headers=$1
@@ -216,8 +227,34 @@ if ! cmp -s "$pinned_image_file" "$live_image"; then
 fi
 
 IFS='|' read -r pinned_image_name pinned_image_id pinned_image_digest < "$pinned_image_file"
-printf 'Jenkins oracle verified: core %s sha256=%s, plugins %s sha256=%s, image name=%s id=%s digest=%s sha256=%s\n' \
-  "$pinned_core" "$(sha256_file "$pinned_core_file")" \
-  "$(wc -l < "$pinned_plugin_file")" "$(sha256_file "$pinned_plugin_file")" \
-  "$pinned_image_name" "$pinned_image_id" "$pinned_image_digest" \
-  "$(sha256_file "$pinned_image_file")"
+if [[ ! "$pinned_image_name" =~ ^[[:graph:]]+$ ]]; then
+  fail 'pinned image name is not canonical printable text'
+fi
+
+if [[ -n "$snapshot_destination" ]]; then
+  snapshot_parent=$(dirname "$snapshot_destination")
+  snapshot_name=$(basename "$snapshot_destination")
+  [[ "$snapshot_name" != . && "$snapshot_name" != .. ]] ||
+    fail 'verification snapshot destination has an unsafe basename'
+  [[ -d "$snapshot_parent" && ! -L "$snapshot_parent" ]] ||
+    fail "verification snapshot parent must be a real directory: $snapshot_parent"
+  [[ ! -e "$snapshot_destination" && ! -L "$snapshot_destination" ]] ||
+    fail "verification snapshot destination already exists: $snapshot_destination"
+  snapshot_stage=$(mktemp -d "$snapshot_parent/.${snapshot_name}-stage.XXXXXX")
+  cp -- "$pinned_core_file" "$snapshot_stage/jenkins-core.txt"
+  cp -- "$pinned_plugin_file" "$snapshot_stage/jenkins-plugins.tsv"
+  cp -- "$pinned_image_file" "$snapshot_stage/jenkins-controller-image.txt"
+  chmod 0444 "$snapshot_stage"/*
+  mv -- "$snapshot_stage" "$snapshot_destination"
+  snapshot_stage=''
+fi
+
+printf 'format\tfogell-jenkins-oracle-v1\n'
+printf 'jenkins-core\t%s\n' "$pinned_core"
+printf 'core-metadata-sha256\t%s\n' "$(sha256_file "$pinned_core_file")"
+printf 'plugin-count\t%s\n' "$(wc -l < "$pinned_plugin_file")"
+printf 'plugin-manifest-sha256\t%s\n' "$(sha256_file "$pinned_plugin_file")"
+printf 'controller-image-name\t%s\n' "$pinned_image_name"
+printf 'controller-image-id\t%s\n' "$pinned_image_id"
+printf 'controller-image-digest\t%s\n' "$pinned_image_digest"
+printf 'image-metadata-sha256\t%s\n' "$(sha256_file "$pinned_image_file")"

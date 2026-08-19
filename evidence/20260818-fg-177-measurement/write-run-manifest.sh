@@ -71,12 +71,52 @@ for provenance_file in "$core_file" "$plugins_file" "$image_file"; do
   require_regular_nonempty 'oracle provenance' "$provenance_file"
 done
 
-mapfile -t core_lines < "$core_file"
+expected_metadata=(
+  jenkins-controller-image.txt
+  jenkins-core.txt
+  jenkins-plugins.tsv
+)
+mapfile -d '' -t observed_metadata < <(
+  find "$metadata" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | sort -z
+)
+if [[ ${#observed_metadata[@]} -ne ${#expected_metadata[@]} ]]; then
+  fail "oracle snapshot does not contain the exact three-file set"
+fi
+for index in "${!expected_metadata[@]}"; do
+  [[ "${observed_metadata[$index]}" == "${expected_metadata[$index]}" ]] ||
+    fail "oracle snapshot has unexpected entry: ${observed_metadata[$index]}"
+done
+
+manifest_dir=$(dirname "$manifest")
+[[ -d "$manifest_dir" && ! -L "$manifest_dir" ]] ||
+  fail "manifest directory is missing, symlinked, or not a directory: $manifest_dir"
+[[ "$metadata" == "$manifest_dir/oracle-metadata" ]] ||
+  fail 'oracle snapshot must be the manifest sibling named oracle-metadata'
+metadata_copy=$(mktemp -d "$manifest_dir/.oracle-metadata-copy.XXXXXX")
+manifest_tmp=$(mktemp "$manifest.tmp.XXXXXX")
+cleanup() {
+  rm -rf "$metadata_copy"
+  rm -f "$manifest_tmp"
+}
+trap cleanup EXIT
+cp -- "$core_file" "$metadata_copy/jenkins-core.txt"
+cp -- "$plugins_file" "$metadata_copy/jenkins-plugins.tsv"
+cp -- "$image_file" "$metadata_copy/jenkins-controller-image.txt"
+copied_core_file="$metadata_copy/jenkins-core.txt"
+copied_plugins_file="$metadata_copy/jenkins-plugins.tsv"
+copied_image_file="$metadata_copy/jenkins-controller-image.txt"
+for provenance_file in \
+  "$copied_core_file" "$copied_plugins_file" "$copied_image_file"
+do
+  require_regular_nonempty 'copied oracle provenance' "$provenance_file"
+done
+
+mapfile -t core_lines < "$copied_core_file"
 [[ ${#core_lines[@]} -eq 1 ]] || fail 'core metadata is not one line'
 core=${core_lines[0]}
 [[ "$core" == "$requested_core" ]] ||
   fail "requested Jenkins $requested_core differs from manifest metadata $core"
-mapfile -t image_lines < "$image_file"
+mapfile -t image_lines < "$copied_image_file"
 [[ ${#image_lines[@]} -eq 1 ]] || fail 'image metadata is not one line'
 IFS='|' read -r image_name image_id image_digest extra <<< "${image_lines[0]}"
 [[ -n "$image_name" && "$image_id" =~ ^[0-9a-f]{64}$ &&
@@ -87,11 +127,49 @@ digest() {
   sha256sum "$1" | awk '{ print $1 }'
 }
 
-manifest_dir=$(dirname "$manifest")
-[[ -d "$manifest_dir" && ! -L "$manifest_dir" ]] ||
-  fail "manifest directory is missing, symlinked, or not a directory: $manifest_dir"
-manifest_tmp=$(mktemp "$manifest.tmp.XXXXXX")
-trap 'rm -f "$manifest_tmp"' EXIT
+receipt_keys=(
+  format
+  jenkins-core
+  core-metadata-sha256
+  plugin-count
+  plugin-manifest-sha256
+  controller-image-name
+  controller-image-id
+  controller-image-digest
+  image-metadata-sha256
+)
+mapfile -t receipt_lines < "$verification_before"
+[[ ${#receipt_lines[@]} -eq ${#receipt_keys[@]} ]] ||
+  fail 'oracle verification receipt has the wrong line count'
+declare -A receipt_values=()
+for index in "${!receipt_keys[@]}"; do
+  IFS=$'\t' read -r key value extra <<< "${receipt_lines[$index]}"
+  [[ "$key" == "${receipt_keys[$index]}" && -n "$value" && -z "$extra" ]] ||
+    fail "oracle verification receipt is noncanonical at line $((index + 1))"
+  receipt_values[$key]=$value
+done
+
+core_metadata_digest=$(digest "$copied_core_file")
+plugin_manifest_digest=$(digest "$copied_plugins_file")
+plugin_count=$(wc -l < "$copied_plugins_file")
+image_metadata_digest=$(digest "$copied_image_file")
+[[ "${receipt_values[format]}" == fogell-jenkins-oracle-v1 ]] ||
+  fail 'oracle verification receipt format is unsupported'
+[[ "${receipt_values[jenkins-core]}" == "$core" ]] ||
+  fail 'oracle receipt core differs from the staged snapshot'
+[[ "${receipt_values[core-metadata-sha256]}" == "$core_metadata_digest" ]] ||
+  fail 'oracle receipt core digest differs from the staged snapshot'
+[[ "${receipt_values[plugin-count]}" == "$plugin_count" ]] ||
+  fail 'oracle receipt plugin count differs from the staged snapshot'
+[[ "${receipt_values[plugin-manifest-sha256]}" == "$plugin_manifest_digest" ]] ||
+  fail 'oracle receipt plugin digest differs from the staged snapshot'
+[[ "${receipt_values[controller-image-name]}" == "$image_name" &&
+   "${receipt_values[controller-image-id]}" == "$image_id" &&
+   "${receipt_values[controller-image-digest]}" == "$image_digest" ]] ||
+  fail 'oracle receipt image identity differs from the staged snapshot'
+[[ "${receipt_values[image-metadata-sha256]}" == "$image_metadata_digest" ]] ||
+  fail 'oracle receipt image digest differs from the staged snapshot'
+
 receipt_dir="$manifest_dir/raw-receipts"
 
 expected_receipts=()
@@ -128,8 +206,24 @@ for receipt_name in "${expected_receipts[@]}"; do
     fail "receipt is missing, empty, or not a regular file: $receipt"
 done
 
+verification_before_digest=$(digest "$verification_before")
+verification_after_digest=$(digest "$verification_after")
+[[ "$verification_before_digest" == "$verification_after_digest" ]] ||
+  fail 'pre/post oracle verification identities changed before hashing'
+log_digest=$(digest "$log")
+exit_digest=$(digest "$exit_file")
+case_digests=()
+receipt_digests=()
+for index in "${!cases[@]}"; do
+  case_file=${cases[$index]}
+  case_name=$(basename "$case_file")
+  receipt_name=${case_name%.Jenkinsfile}.receipt.txt
+  case_digests+=("$(digest "$case_file")")
+  receipt_digests+=("$(digest "$receipt_dir/$receipt_name")")
+done
+
 {
-  printf 'format\tfogell-evidence-run-v2\n'
+  printf 'format\tfogell-evidence-run-v3\n'
   printf 'run\t%s\n' "$run_name"
   printf 'started-at-utc\t%s\n' "$started_at"
   printf 'oracle-verified-before-at-utc\t%s\n' "$verified_before_at"
@@ -137,19 +231,20 @@ done
   printf 'finished-at-utc\t%s\n' "$finished_at"
   printf 'cli-exit\t%s\n' "$cli_rc"
   printf 'jenkins-core\t%s\n' "$requested_core"
-  printf 'core-metadata-sha256\t%s\n' "$(digest "$core_file")"
-  printf 'plugin-manifest-sha256\t%s\n' "$(digest "$plugins_file")"
-  printf 'plugin-count\t%s\n' "$(wc -l < "$plugins_file")"
+  printf 'oracle-metadata-directory\toracle-metadata\n'
+  printf 'core-metadata-sha256\t%s\n' "$core_metadata_digest"
+  printf 'plugin-manifest-sha256\t%s\n' "$plugin_manifest_digest"
+  printf 'plugin-count\t%s\n' "$plugin_count"
   printf 'controller-image-name\t%s\n' "$image_name"
   printf 'controller-image-id\t%s\n' "$image_id"
   printf 'controller-image-digest\t%s\n' "$image_digest"
-  printf 'image-metadata-sha256\t%s\n' "$(digest "$image_file")"
+  printf 'image-metadata-sha256\t%s\n' "$image_metadata_digest"
   printf 'oracle-before-verification\t%s\t%s\n' \
-    "$(basename "$verification_before")" "$(digest "$verification_before")"
+    "$(basename "$verification_before")" "$verification_before_digest"
   printf 'oracle-after-verification\t%s\t%s\n' \
-    "$(basename "$verification_after")" "$(digest "$verification_after")"
-  printf 'run-log\t%s\t%s\n' "$(basename "$log")" "$(digest "$log")"
-  printf 'exit-marker\t%s\t%s\n' "$(basename "$exit_file")" "$(digest "$exit_file")"
+    "$(basename "$verification_after")" "$verification_after_digest"
+  printf 'run-log\t%s\t%s\n' "$(basename "$log")" "$log_digest"
+  printf 'exit-marker\t%s\t%s\n' "$(basename "$exit_file")" "$exit_digest"
   printf 'case-count\t%s\n' "${#cases[@]}"
   ordinal=0
   for case_file in "${cases[@]}"; do
@@ -159,12 +254,58 @@ done
     require_regular_nonempty 'receipt' "$receipt"
     ordinal=$((ordinal + 1))
     printf 'case\t%02d\t%s\t%s\t%s\t%s\n' \
-      "$ordinal" "$case_name" "$(digest "$case_file")" \
-      "$receipt_name" "$(digest "$receipt")"
+      "$ordinal" "$case_name" "${case_digests[$((ordinal - 1))]}" \
+      "$receipt_name" "${receipt_digests[$((ordinal - 1))]}"
   done
 } > "$manifest_tmp"
 
+# The staged snapshot is private to the runner, but compare it once more after
+# all hashing so a planted or accidental in-writer swap cannot seal different
+# bytes than the verifier accepted.
+mapfile -d '' -t final_metadata < <(
+  find "$metadata" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | sort -z
+)
+[[ ${#final_metadata[@]} -eq ${#expected_metadata[@]} ]] ||
+  fail 'oracle snapshot changed while the manifest was written'
+for index in "${!expected_metadata[@]}"; do
+  [[ "${final_metadata[$index]}" == "${expected_metadata[$index]}" ]] ||
+    fail 'oracle snapshot entries changed while the manifest was written'
+done
+cmp -s "$core_file" "$copied_core_file" &&
+  cmp -s "$plugins_file" "$copied_plugins_file" &&
+  cmp -s "$image_file" "$copied_image_file" ||
+  fail 'oracle snapshot bytes changed while the manifest was written'
+require_regular_nonempty 'run log' "$log"
+require_regular_nonempty 'exit marker' "$exit_file"
+require_regular_nonempty 'oracle verification receipt' "$verification_before"
+require_regular_nonempty 'oracle verification receipt' "$verification_after"
+[[ "$(digest "$verification_before")" == "$verification_before_digest" &&
+   "$(digest "$verification_after")" == "$verification_after_digest" &&
+   "$(digest "$log")" == "$log_digest" &&
+   "$(digest "$exit_file")" == "$exit_digest" ]] ||
+  fail 'a receipt, log, or exit marker changed while the manifest was written'
+mapfile -d '' -t final_receipts < <(
+  find "$receipt_dir" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | sort -z
+)
+[[ ${#final_receipts[@]} -eq ${#sorted_expected_receipts[@]} ]] ||
+  fail 'receipt set changed while the manifest was written'
+for index in "${!final_receipts[@]}"; do
+  [[ "${final_receipts[$index]}" == "${sorted_expected_receipts[$index]}" ]] ||
+    fail 'receipt entries changed while the manifest was written'
+done
+for index in "${!cases[@]}"; do
+  case_file=${cases[$index]}
+  case_name=$(basename "$case_file")
+  receipt="$receipt_dir/${case_name%.Jenkinsfile}.receipt.txt"
+  require_regular_nonempty 'rendered case' "$case_file"
+  require_regular_nonempty 'receipt' "$receipt"
+  [[ "$(digest "$case_file")" == "${case_digests[$index]}" &&
+     "$(digest "$receipt")" == "${receipt_digests[$index]}" ]] ||
+    fail 'a case or receipt changed while the manifest was written'
+done
+
 mv "$manifest_tmp" "$manifest"
+rm -rf "$metadata_copy"
 trap - EXIT
 printf 'run manifest %s bound %s ordered case(s) to Jenkins %s\n' \
   "$manifest" "${#cases[@]}" "$core"

@@ -108,6 +108,25 @@ case "$1" in
 esac
 EOF
 chmod +x "$stub"
+cat > "$test_tmp/bin/sha256sum" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/sha256sum "$@"
+if [[ -n ${FOGELL_STUB_MANIFEST_MUTATION:-} &&
+      ${1:-} == */.oracle-metadata-copy.*/jenkins-plugins.tsv &&
+      ! -e ${FOGELL_STUB_MANIFEST_MUTATION_MARKER:-/nonexistent} ]]; then
+  printf 'mutated\n' > "$FOGELL_STUB_MANIFEST_MUTATION_MARKER"
+  if [[ $FOGELL_STUB_MANIFEST_MUTATION == source ]]; then
+    target="$FOGELL_JENKINS_ORACLE_DIR/jenkins-plugins.tsv"
+  else
+    manifest_stage=$(dirname "$(dirname "$1")")
+    target="$manifest_stage/oracle-metadata/jenkins-plugins.tsv"
+  fi
+  chmod u+w "$target"
+  sed 's/beta\t3.4/beta\t9.9/' "$target" > "$target.next"
+  mv "$target.next" "$target"
+fi
+EOF
+chmod +x "$test_tmp/bin/sha256sum"
 
 out="$test_tmp/fresh-evidence-output"
 calls="$test_tmp/dotnet-calls"
@@ -160,7 +179,13 @@ grep -Fx 'archive schema CLI complete' "$published/archive-schema-run.log"
 grep -Fx 'archive-schema-cli-exit=1' "$published/archive-schema-exit.txt"
 grep -Fx $'cli-exit\t1' "$published/archive-schema-run-manifest.tsv"
 grep -Fx $'jenkins-core\t2.568.1' "$published/archive-schema-run-manifest.tsv"
-grep -Fx $'format\tfogell-evidence-run-v2' "$published/archive-schema-run-manifest.tsv"
+grep -Fx $'format\tfogell-evidence-run-v3' "$published/archive-schema-run-manifest.tsv"
+grep -Fx $'oracle-metadata-directory\toracle-metadata' \
+  "$published/archive-schema-run-manifest.tsv"
+for name in jenkins-core.txt jenkins-plugins.tsv jenkins-controller-image.txt; do
+  cmp "$oracle_metadata/$name" "$published/oracle-metadata/$name"
+  [[ ! -L "$published/oracle-metadata/$name" ]]
+done
 grep -F $'oracle-before-verification\toracle-before-verification.txt\t' \
   "$published/archive-schema-run-manifest.tsv"
 grep -F $'oracle-after-verification\toracle-after-verification.txt\t' \
@@ -187,6 +212,54 @@ bundle_hash() {
 }
 published_hash=$(bundle_hash "$published")
 
+rm -f "$oracle_state" "$test_tmp/source-mutation-fired"
+set +e
+PATH="$test_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_STUB_CALLS="$test_tmp/source-mutation-calls" \
+FOGELL_STUB_ORDER="$test_tmp/source-mutation-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_MANIFEST_MUTATION=source \
+FOGELL_STUB_MANIFEST_MUTATION_MARKER="$test_tmp/source-mutation-fired" \
+  bash "$evidence/run-archive-schema.sh" > "$test_tmp/source-mutation.log" 2>&1
+source_mutation_rc=$?
+set -e
+if [[ $source_mutation_rc -ne 1 || ! -s "$test_tmp/source-mutation-fired" ]]; then
+  echo 'ERROR: archive post-verify mutable source mutation did not publish safely' >&2
+  exit 1
+fi
+grep -Fq $'beta\t9.9' "$oracle_metadata/jenkins-plugins.tsv"
+grep -Fq $'beta\t3.4' "$published/oracle-metadata/jenkins-plugins.tsv"
+python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
+published_hash=$(bundle_hash "$published")
+
+set +e
+PATH="$test_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_STUB_CALLS="$test_tmp/stage-mutation-calls" \
+FOGELL_STUB_ORDER="$test_tmp/stage-mutation-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_MANIFEST_MUTATION=stage \
+FOGELL_STUB_MANIFEST_MUTATION_MARKER="$test_tmp/stage-mutation-fired" \
+  bash "$evidence/run-archive-schema.sh" > "$test_tmp/stage-mutation.log" 2>&1
+stage_mutation_rc=$?
+set -e
+if [[ $stage_mutation_rc -eq 0 || ! -s "$test_tmp/stage-mutation-fired" ||
+      $(bundle_hash "$published") != "$published_hash" ]] ||
+   ! grep -Fq 'oracle snapshot bytes changed while the manifest was written' \
+     "$test_tmp/stage-mutation.log"; then
+  echo 'ERROR: archive in-writer snapshot mutation was not refused atomically' >&2
+  exit 1
+fi
+
 for drift in core plugin image transport plugin-recapture; do
   python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
   rm -f "$oracle_state"
@@ -210,9 +283,9 @@ for drift in core plugin image transport plugin-recapture; do
     exit 1
   fi
   if [[ $drift == plugin-recapture ]] &&
-     ! grep -Fq 'Jenkins oracle identity changed during archive CLI' \
+     ! grep -Fq 'live plugin manifest differs from' \
        "$test_tmp/drift-$drift.log"; then
-    echo 'ERROR: same-count plugin metadata recapture missed receipt comparison' >&2
+    echo 'ERROR: archive immutable snapshot missed same-count live plugin drift' >&2
     exit 1
   fi
 done

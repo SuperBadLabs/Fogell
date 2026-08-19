@@ -1,11 +1,12 @@
-format	fogell-evidence-run-v2
+format	fogell-evidence-run-v3
 run	archive-schema
-started-at-utc	2026-08-19T12:08:04Z
-oracle-verified-before-at-utc	2026-08-19T12:08:05Z
-oracle-verified-after-at-utc	2026-08-19T12:08:18Z
-finished-at-utc	2026-08-19T12:08:18Z
+started-at-utc	2026-08-19T12:30:27Z
+oracle-verified-before-at-utc	2026-08-19T12:30:27Z
+oracle-verified-after-at-utc	2026-08-19T12:30:41Z
+finished-at-utc	2026-08-19T12:30:41Z
 cli-exit	1
 jenkins-core	2.568.1
+oracle-metadata-directory	oracle-metadata
 core-metadata-sha256	5c527167c41f888bbbe66d3d520592654a496c74f4847e5db4c0a3c4f5246577
 plugin-manifest-sha256	6af6817f555a6fbbbcb5b41d48e7be58b00517efc913b21cfb825d0614630b3a
 plugin-count	154
@@ -13,8 +14,8 @@ controller-image-name	localhost/jenkins-rich:local
 controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
 controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332
 image-metadata-sha256	2a2612da07718c48b9da3b79a3665bba9e14ba99a450f09789a2d9e9dce3230c
-oracle-before-verification	oracle-before-verification.txt	fa3e7914a6b1414e53a1f1e05121c7488bfb60e68833de0eaf57e3baed102122
-oracle-after-verification	oracle-after-verification.txt	fa3e7914a6b1414e53a1f1e05121c7488bfb60e68833de0eaf57e3baed102122
+oracle-before-verification	oracle-before-verification.txt	3fee2f05d7307826d3fb255a79070fe23411462765291a9df84f6b62ff95e2df
+oracle-after-verification	oracle-after-verification.txt	3fee2f05d7307826d3fb255a79070fe23411462765291a9df84f6b62ff95e2df
 run-log	archive-schema-run.log	63de708839fc588bd273b4f2ac0054adff4782ceb5d961af9c65f3a794f77750
 exit-marker	archive-schema-exit.txt	9dd3c5490189b6f4c68f0d1a87a4ccbd7181db0efa4339c4e21da177650d897a
 case-count	1

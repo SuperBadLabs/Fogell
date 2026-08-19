@@ -73,6 +73,7 @@ def invoke(
     url: str,
     bin_dir: pathlib.Path,
     extra_env: dict[str, str] | None = None,
+    snapshot: pathlib.Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(
@@ -87,8 +88,11 @@ def invoke(
     )
     if extra_env:
         env.update(extra_env)
+    command = ["bash", str(ORACLE), action, str(metadata)]
+    if snapshot is not None:
+        command.append(str(snapshot))
     return subprocess.run(
-        ["bash", str(ORACLE), action, str(metadata)],
+        command,
         cwd=ROOT,
         env=env,
         text=True,
@@ -146,15 +150,49 @@ exit 99
         core_digest = hashlib.sha256(f"{CORE}\n".encode()).hexdigest()
         plugin_digest = hashlib.sha256(PLUGIN_TEXT.encode()).hexdigest()
         image_digest = hashlib.sha256(f"{IMAGE}\n".encode()).hexdigest()
-        expected_receipt = (
-            f"Jenkins oracle verified: core {CORE} sha256={core_digest}, "
-            f"plugins 2 sha256={plugin_digest}, image name=fixture/jenkins:2.568.1 "
-            f"id={'1' * 64} digest=sha256:{'2' * 64} sha256={image_digest}\n"
+        expected_receipt = "\n".join(
+            (
+                "format\tfogell-jenkins-oracle-v1",
+                f"jenkins-core\t{CORE}",
+                f"core-metadata-sha256\t{core_digest}",
+                "plugin-count\t2",
+                f"plugin-manifest-sha256\t{plugin_digest}",
+                "controller-image-name\tfixture/jenkins:2.568.1",
+                f"controller-image-id\t{'1' * 64}",
+                f"controller-image-digest\tsha256:{'2' * 64}",
+                f"image-metadata-sha256\t{image_digest}",
+                "",
+            )
         )
         if result.stdout != expected_receipt:
             raise AssertionError(
                 f"verify receipt did not bind the full canonical identity:\n{result.stdout}"
             )
+
+        snapshot = temp / "verified-snapshot"
+        result = invoke("verify", metadata, url, bin_dir, snapshot=snapshot)
+        if result.returncode != 0 or result.stdout != expected_receipt:
+            raise AssertionError(f"snapshot verification failed: {result.stdout}")
+        if {path.name for path in snapshot.iterdir()} != {
+            "jenkins-core.txt",
+            "jenkins-plugins.tsv",
+            "jenkins-controller-image.txt",
+        }:
+            raise AssertionError("verified snapshot does not have the exact file set")
+        for name in (
+            "jenkins-core.txt",
+            "jenkins-plugins.tsv",
+            "jenkins-controller-image.txt",
+        ):
+            if (snapshot / name).read_bytes() != (metadata / name).read_bytes():
+                raise AssertionError(f"verified snapshot differs for {name}")
+            if (snapshot / name).is_symlink():
+                raise AssertionError(f"verified snapshot is symlinked for {name}")
+
+        require_refusal(
+            invoke("verify", metadata, url, bin_dir, snapshot=snapshot),
+            "existing snapshot destination",
+        )
 
         root_bad = [
             ("wrong core", {"headers": [("X-Jenkins", "2.999")]}),

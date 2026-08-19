@@ -6,8 +6,8 @@ evidence='evidence/20260818-fg-177-measurement'
 PYTHONDONTWRITEBYTECODE=1 python3 "$evidence/test-publish-run-bundle.py"
 proof_tmp=$(mktemp -d)
 trap 'rm -rf "$proof_tmp"' EXIT
-metadata="$proof_tmp/metadata"
 out="$proof_tmp/out"
+metadata="$out/oracle-metadata"
 mkdir -p "$metadata" "$out/raw-receipts"
 
 printf '2.568.1\n' > "$metadata/jenkins-core.txt"
@@ -16,7 +16,20 @@ printf 'fixture/jenkins:2.568.1|%064d|sha256:%064d\n' 1 2 \
   > "$metadata/jenkins-controller-image.txt"
 printf 'runner output\n' > "$out/probe-run.log"
 printf 'probe-cli-exit=1\n' > "$out/probe-exit.txt"
-printf 'Jenkins oracle verified: fixture identity\n' > "$out/oracle-before-verification.txt"
+core_digest=$(sha256sum "$metadata/jenkins-core.txt" | awk '{print $1}')
+plugin_digest=$(sha256sum "$metadata/jenkins-plugins.tsv" | awk '{print $1}')
+image_digest=$(sha256sum "$metadata/jenkins-controller-image.txt" | awk '{print $1}')
+{
+  printf 'format\tfogell-jenkins-oracle-v1\n'
+  printf 'jenkins-core\t2.568.1\n'
+  printf 'core-metadata-sha256\t%s\n' "$core_digest"
+  printf 'plugin-count\t1\n'
+  printf 'plugin-manifest-sha256\t%s\n' "$plugin_digest"
+  printf 'controller-image-name\tfixture/jenkins:2.568.1\n'
+  printf 'controller-image-id\t%064d\n' 1
+  printf 'controller-image-digest\tsha256:%064d\n' 2
+  printf 'image-metadata-sha256\t%s\n' "$image_digest"
+} > "$out/oracle-before-verification.txt"
 cp "$out/oracle-before-verification.txt" "$out/oracle-after-verification.txt"
 printf 'echo(message: "one")\n' > "$out/one.Jenkinsfile"
 printf 'echo(message: "two")\n' > "$out/two.Jenkinsfile"
@@ -36,7 +49,8 @@ grep -Fx $'started-at-utc\t2026-08-19T10:00:00Z' "$manifest"
 grep -Fx $'oracle-verified-before-at-utc\t2026-08-19T10:00:01Z' "$manifest"
 grep -Fx $'oracle-verified-after-at-utc\t2026-08-19T10:00:02Z' "$manifest"
 grep -Fx $'finished-at-utc\t2026-08-19T10:00:03Z' "$manifest"
-grep -Fx $'format\tfogell-evidence-run-v2' "$manifest"
+grep -Fx $'format\tfogell-evidence-run-v3' "$manifest"
+grep -Fx $'oracle-metadata-directory\toracle-metadata' "$manifest"
 grep -Fx $'jenkins-core\t2.568.1' "$manifest"
 grep -Fx $'plugin-manifest-sha256\t'"$(sha256sum "$metadata/jenkins-plugins.tsv" | awk '{print $1}')" "$manifest"
 grep -Fx $'controller-image-id\t'"$(printf '%064d' 1)" "$manifest"
@@ -82,6 +96,31 @@ valid_before="$out/oracle-before-verification.txt"
 valid_after="$out/oracle-after-verification.txt"
 valid_case_one="$out/one.Jenkinsfile"
 valid_case_two="$out/two.Jenkinsfile"
+
+# Mutate the staged plugin bytes only after the writer has copied and hashed
+# them. The final stability comparison must refuse and preserve the old seal.
+mutation_bin="$proof_tmp/mutation-bin"
+mkdir "$mutation_bin"
+cat > "$mutation_bin/sha256sum" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/sha256sum "$@"
+if [[ -n ${FOGELL_MUTATE_METADATA:-} &&
+      ${1:-} == */.oracle-metadata-copy.*/jenkins-plugins.tsv &&
+      ! -e ${FOGELL_MUTATION_MARKER:-/nonexistent} ]]; then
+  printf 'mutated\n' > "$FOGELL_MUTATION_MARKER"
+  printf 'alpha\t9.9\ttrue\ttrue\n' > "$FOGELL_MUTATE_METADATA"
+fi
+EOF
+chmod +x "$mutation_bin/sha256sum"
+cp "$metadata/jenkins-plugins.tsv" "$proof_tmp/plugins.stable"
+PATH="$mutation_bin:$PATH" \
+FOGELL_MUTATE_METADATA="$metadata/jenkins-plugins.tsv" \
+FOGELL_MUTATION_MARKER="$proof_tmp/mutation-fired" \
+  require_input_refusal writer-metadata-swap "$valid_log" "$valid_exit" \
+    "$metadata" "$valid_before" "$valid_after" \
+    "$valid_case_one" "$valid_case_two"
+[[ -s "$proof_tmp/mutation-fired" ]]
+cp "$proof_tmp/plugins.stable" "$metadata/jenkins-plugins.tsv"
 
 empty_log="$proof_tmp/empty-run.log"
 : > "$empty_log"
@@ -167,6 +206,9 @@ directory_metadata="$proof_tmp/directory-metadata"
 cp -a "$metadata" "$directory_metadata"
 rm "$directory_metadata/jenkins-plugins.tsv"
 mkdir "$directory_metadata/jenkins-plugins.tsv"
+unexpected_metadata="$proof_tmp/unexpected-metadata"
+cp -a "$metadata" "$unexpected_metadata"
+printf 'extra\n' > "$unexpected_metadata/unexpected.txt"
 require_input_refusal missing-provenance "$valid_log" "$valid_exit" \
   "$missing_metadata" "$valid_before" "$valid_after" \
   "$valid_case_one" "$valid_case_two"
@@ -182,6 +224,54 @@ require_input_refusal symlink-metadata-dir "$valid_log" "$valid_exit" \
 require_input_refusal nonregular-provenance "$valid_log" "$valid_exit" \
   "$directory_metadata" "$valid_before" "$valid_after" \
   "$valid_case_one" "$valid_case_two"
+require_input_refusal unexpected-provenance "$valid_log" "$valid_exit" \
+  "$unexpected_metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+
+# Same-count plugin and same-name image drift are both rejected against the
+# embedded receipt digests even though their headline fields still look alike.
+printf 'alpha\t9.9\ttrue\ttrue\n' > "$metadata/jenkins-plugins.tsv"
+require_input_refusal same-count-plugin-drift "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+cp "$proof_tmp/plugins.stable" "$metadata/jenkins-plugins.tsv"
+cp "$metadata/jenkins-controller-image.txt" "$proof_tmp/image.stable"
+printf 'fixture/jenkins:2.568.1|%064d|sha256:%064d\n' 3 4 \
+  > "$metadata/jenkins-controller-image.txt"
+require_input_refusal same-name-image-drift "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+cp "$proof_tmp/image.stable" "$metadata/jenkins-controller-image.txt"
+
+# Repeat the structural arms at the canonical in-bundle path so their refusal
+# cannot be attributed merely to an external metadata-directory spelling.
+mv "$metadata" "$proof_tmp/canonical-metadata-stable"
+ln -s "$proof_tmp/canonical-metadata-stable" "$metadata"
+require_input_refusal canonical-symlink-snapshot "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+rm "$metadata"
+cp -a "$proof_tmp/canonical-metadata-stable" "$metadata"
+rm "$metadata/jenkins-plugins.tsv"
+require_input_refusal canonical-partial-snapshot "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+rm -rf "$metadata"
+cp -a "$proof_tmp/canonical-metadata-stable" "$metadata"
+rm "$metadata/jenkins-plugins.tsv"
+ln -s "$proof_tmp/canonical-metadata-stable/jenkins-plugins.tsv" \
+  "$metadata/jenkins-plugins.tsv"
+require_input_refusal canonical-symlink-file "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+rm -rf "$metadata"
+cp -a "$proof_tmp/canonical-metadata-stable" "$metadata"
+printf 'extra\n' > "$metadata/unexpected.txt"
+require_input_refusal canonical-extra-snapshot "$valid_log" "$valid_exit" \
+  "$metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+rm -rf "$metadata"
+mv "$proof_tmp/canonical-metadata-stable" "$metadata"
 
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \

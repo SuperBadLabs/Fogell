@@ -27,12 +27,37 @@ evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
 : "${FOGELL_JENKINS_ORACLE_DIR:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
+stage=''
+oracle_snapshot_parent=''
+# Invoked indirectly by EXIT/signal traps.
+# shellcheck disable=SC2317
+cleanup() {
+  if [[ -n "$stage" && -e "$stage" ]]; then
+    case "$stage" in
+      "$publication_parent"/.archive-schema-stage.*) rm -rf -- "$stage" ;;
+      *) printf 'ERROR: refusing unsafe stage cleanup: %s\n' "$stage" >&2 ;;
+    esac
+  fi
+  if [[ -n "$oracle_snapshot_parent" && -e "$oracle_snapshot_parent" ]]; then
+    case "$oracle_snapshot_parent" in
+      /tmp/tmp.*) rm -rf -- "$oracle_snapshot_parent" ;;
+      *) printf 'ERROR: refusing unsafe oracle snapshot cleanup: %s\n' \
+           "$oracle_snapshot_parent" >&2 ;;
+    esac
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 run_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+oracle_snapshot_parent=$(mktemp -d)
+oracle_snapshot="$oracle_snapshot_parent/oracle-metadata"
 oracle_verification_before=$(
   bash "$evidence_root/verify-run-oracle.sh" \
     "$requested_jenkins_url" "$requested_jenkins_core" \
     "$requested_jenkins_host" "$requested_jenkins_container" \
-    "$FOGELL_JENKINS_ORACLE_DIR"
+    "$FOGELL_JENKINS_ORACLE_DIR" "$oracle_snapshot"
 )
 oracle_verified_before_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 printf '%s\n' "$oracle_verification_before"
@@ -44,22 +69,10 @@ if ! flock -n "$publication_lock_fd"; then
   echo "ERROR: another archive-schema evidence run owns $publication_target" >&2
   exit 1
 fi
-stage=''
-# Invoked indirectly by EXIT/signal traps.
-# shellcheck disable=SC2317
-cleanup() {
-  if [[ -n "$stage" && -e "$stage" ]]; then
-    case "$stage" in
-      "$publication_parent"/.archive-schema-stage.*) rm -rf -- "$stage" ;;
-      *) printf 'ERROR: refusing unsafe stage cleanup: %s\n' "$stage" >&2 ;;
-    esac
-  fi
-}
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
 stage=$(mktemp -d "$publication_parent/.archive-schema-stage.XXXXXX")
+mv -- "$oracle_snapshot" "$stage/oracle-metadata"
+rmdir "$oracle_snapshot_parent"
+oracle_snapshot_parent=''
 printf '%s\n' "$oracle_verification_before" > "$stage/oracle-before-verification.txt"
 mkdir -p "$stage/raw-receipts"
 
@@ -89,7 +102,7 @@ oracle_verification_after=$(
   bash "$evidence_root/verify-run-oracle.sh" \
     "$requested_jenkins_url" "$requested_jenkins_core" \
     "$requested_jenkins_host" "$requested_jenkins_container" \
-    "$FOGELL_JENKINS_ORACLE_DIR"
+    "$stage/oracle-metadata"
 )
 oracle_verified_after_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 printf '%s\n' "$oracle_verification_after"
@@ -108,7 +121,7 @@ bash "$evidence_root/write-run-manifest.sh" \
   "$oracle_verified_after_at" "$run_finished_at" \
   "$rc" archive-schema-cli-exit \
   "$stage/archive-schema-run.log" "$stage/archive-schema-exit.txt" \
-  "$requested_jenkins_core" "$FOGELL_JENKINS_ORACLE_DIR" \
+  "$requested_jenkins_core" "$stage/oracle-metadata" \
   "$stage/oracle-before-verification.txt" \
   "$stage/oracle-after-verification.txt" "$case_file"
 python3 "$evidence_root/publish-run-bundle.py" "$stage" "$publication_target"

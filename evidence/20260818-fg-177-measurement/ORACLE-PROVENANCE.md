@@ -46,12 +46,17 @@ Verification requires HTTP 200 without
 redirects from both the controller root and plugin API, exactly one
 case-insensitive `X-Jenkins` header with the pinned value on each response, an
 exact complete plugin-manifest match, and an exact live container-image match.
+The first verification atomically emits the exact three canonical metadata
+files it actually compared. The runner moves that private snapshot into
+`oracle-metadata/` in its run stage. The post-CLI verifier and manifest writer
+read only this staged snapshot; the mutable capture directory is never read
+again during the run.
 Each verification receipt names the core value, plugin row count, image name,
 immutable image ID and digest, and binds the canonical core, complete plugin
 manifest, and image metadata bytes with SHA-256. Therefore a same-count plugin
 version, active-state, or enabled-state change alters the receipt and cannot
-pass the runners' pre/post identity comparison, even if the pinned metadata is
-recaptured to match the changed controller while the CLI is running.
+pass the runners' pre/post identity comparison. Recapturing or replacing the
+source pin after initial verification cannot affect the staged identity.
 Initial refusal creates no output directory, builds no CLI, synchronizes no
 fixture, and writes no receipt or exit marker. Post-CLI refusal may leave an
 ignored temporary stage, which the bounded trap removes; it cannot mutate the
@@ -71,7 +76,7 @@ workspace collectors, preventing verifier/collector coordinate drift.
 ## Verified receipt recapture
 
 From the repository root on HeMan, the retained evidence was recaptured exactly
-once for the digest-bearing verification-receipt migration, in this order:
+once for the immutable-snapshot `v3` migration, in this order:
 
 ```sh
 bash evidence/20260818-fg-177-measurement/run-probes.sh
@@ -81,7 +86,7 @@ bash evidence/20260818-fg-177-measurement/run-archive-schema.sh
 Both commands returned `1`, the expected differential status for the retained
 divergences. They were run exactly once each and sequentially: probes first,
 then archive-schema. The retained 2026-08-19 bundles now use
-`fogell-evidence-run-v2`. Each records its start time, pre-CLI verification
+`fogell-evidence-run-v3`. Each records its start time, pre-CLI verification
 time, post-CLI verification time, and finish time, and atomically publishes
 both identical verification receipts with the adjacent manifest:
 
@@ -90,21 +95,26 @@ both identical verification receipts with the adjacent manifest:
 - `runs/archive-schema/archive-schema-run-manifest.tsv` binds the
   archive-schema case and receipt.
 
-Each v2 runner publishes a self-contained bundle:
+Each v3 runner publishes a self-contained bundle:
 
 - `runs/probes/` contains the probe manifest, log, exit marker, rendered cases,
-  and its exact four-file `raw-receipts/` set;
+  exact four-file `raw-receipts/` set, and verified three-file
+  `oracle-metadata/` snapshot;
 - `runs/archive-schema/` contains the archive manifest, log, exit marker, case,
-  and its exact one-file `raw-receipts/` set.
+  exact one-file `raw-receipts/` set, and the same form of verified snapshot.
 
-Each v2 manifest records the Jenkins core, the hashes of the core, plugin and
+Each v3 manifest records the Jenkins core, the hashes of the core, plugin and
 image metadata, the complete plugin-manifest hash and row count, the controller
 image name, immutable ID and digest, the run log and exit-marker hashes, the
 ordered rendered case hashes, and the resulting receipt hashes. It also binds
 the pre/post verification timestamps and exact receipt hashes, and refuses if
 those verified identity summaries differ. The manifest
 is not published if any input is missing, the timestamps are out of order, or
-the exit marker disagrees with the captured CLI status. Git commits the
+the exit marker disagrees with the captured CLI status. It parses the canonical
+verification receipt and checks every embedded identity field and digest
+against the staged snapshot. It then rechecks the snapshot, receipts, cases,
+log, exit marker, and verification receipts after hashing so an in-writer swap
+cannot seal different bytes. Git commits the
 manifest and every bound file together, making the recapture independently
 auditable without relying on filesystem modification times.
 
