@@ -1,8 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = []
-# ///
+#!/usr/bin/env python3
 """FG-199. Does the commit that was MERGED carry a review from every expected reviewer?
 
 WHY THIS EXISTS RATHER THAN A HABIT OF CHECKING. Eight verifier rounds on the

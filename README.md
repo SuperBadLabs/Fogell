@@ -19,6 +19,28 @@ it. See `docs/adr/0002-interpret-not-lower.md`.
 - No scalar compatibility percentage is ever published.
 - Durability is per-step and exactly-once, or it is stated as neither.
 
+## Engineering bastion
+
+**HeMan is Fogell's engineering bastion.** The canonical working checkout is
+`/home/srikanth/projects/fogell`. Investigation, editing, local model-assisted
+review, build and test work happen there. HeMan owns the mounted corpus and
+reaches the pinned Jenkins oracle on Luigi, so it is the only environment that
+can run the whole pre-publication proof.
+
+**GitHub is the publication boundary.** It holds protected history, final review,
+required checks and merge state. It is not the normal edit-test loop, and a green
+GitHub check is not a substitute for the HeMan gate: the hosted runner has neither
+the corpus nor the pinned Jenkins oracle.
+
+The working loop is therefore:
+
+1. branch, inspect and edit on HeMan;
+2. use HeMan's local Qwen agent as an additional review input where useful;
+3. build, test and generate corpus/differential evidence from HeMan;
+4. run the full local gate and inspect the final diff on HeMan;
+5. publish the already-proven commit to GitHub; and
+6. use GitHub only for final review, required checks and merge.
+
 ## Layout
 
     docs/adr/           numbered decisions, each citing measured evidence

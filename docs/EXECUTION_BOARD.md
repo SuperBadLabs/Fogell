@@ -19,7 +19,14 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
 
 ## Operating contract
 
-- Repository: private, HeMan `~/projects/fogell`.
+- **HeMan is the engineering bastion**, with the canonical checkout at
+  `/home/srikanth/projects/fogell`. Investigation, edits, builds, tests, local
+  Qwen-assisted inspection, corpus work and orchestration of the pinned Jenkins
+  oracle happen from HeMan.
+- **GitHub is the publication, final-review, gating and merge boundary.** It is
+  not the normal edit-test loop and it is not an oracle substitute. Its hosted
+  gate cannot see the mounted corpus or the pinned Jenkins controller, so a green
+  GitHub check never replaces the full pre-publication run on HeMan.
 - One coherent commit per ticket. No work on a dirty checkout.
 - Every ticket states a falsifiable acceptance criterion. "Done" means the
   criterion was measured, not that code was written.
@@ -99,6 +106,38 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
   to a snapshot that was never merged: FG-101's first seal recorded the pre-review
   implementation, and FG-104's omitted its own deliverable. The checksum makes a stale
   bundle look more trustworthy than no bundle at all.
+
+### Execution cycle and definition of done
+
+The daily work loop starts and ends on HeMan:
+
+1. Sync `main`, confirm a clean checkout, and create the ticket branch on HeMan.
+2. Inspect and edit there. Use the local Qwen agent as another pair of eyes when
+   useful, while treating its output as review input rather than evidence.
+3. Run the narrow tests while iterating, then the ticket's acceptance measurement.
+   Differential work is launched from HeMan against Luigi's pinned `jenkins-lab`;
+   corpus work uses HeMan's mounted, hash-pinned corpus.
+4. Inspect the complete diff and evidence, then run `scripts/build-and-test.sh` on
+   HeMan. A run that skips the corpus-dependent scorecard check is not the full
+   local gate and does not license publication.
+5. Run the FG-199 review-coverage guard locally when the change is at a review or
+   merge boundary. Only then push the already-proven commit to GitHub.
+6. Use GitHub for final reviewers, required status checks and merge. A finding
+   returns the work to HeMan; the correction is proved there before publication.
+
+A ticket is done only when all of the following are true:
+
+- its falsifiable acceptance criterion was measured in the environment it names;
+- the relevant unit, integration, restart, approval, differential and/or corpus
+  checks passed on HeMan, including every corpus-dependent check in the full gate;
+- every compatibility claim is backed by a sealed receipt from the pinned oracle,
+  or is explicitly labelled unproven;
+- the final diff was reviewed as one coherent ticket change and the checkout is
+  clean after its commit; and
+- GitHub's final review and required gate apply to the exact commit being merged.
+
+GitHub proves the published commit passed the checks available there. HeMan proves
+the commit was ready to publish. Neither statement is a substitute for the other.
 
 ### Batch composition (measured, not assumed)
 
@@ -374,6 +413,14 @@ does not rank the tracks against each other row by row, because nobody has measu
 first corpus receipt costs; **FG-200 exists to find that out, and until it reports, the
 claim that Track 2 is binding is an argument from denominators and not a measurement.**
 
+**HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is a local pre-publication
+guardrail, not an implementation ticket and not work to perform in GitHub. Its
+checker and known-bad proof run on HeMan; querying GitHub review metadata does not
+move execution there. The guard is applied whenever a commit reaches the review or
+merge boundary. In the implementation queue, the first active ticket is FG-177;
+its branch, edit-test loop and evidence stay on HeMan until its commit is ready to
+publish.
+
 ### Track 1 — Correctness
 
 | # | class | id | status | why it is next |
@@ -411,7 +458,7 @@ claim that Track 2 is binding is an argument from denominators and not a measure
 
 | # | id | status | why it is next |
 |---|---|---|---|
-| 1 | FG-199 | TODO | Measured 2026-08-15: 45 of 60 merged PRs landed a commit no expected reviewer saw. What ranks it is that its failure is silent: an absent reviewer and a clean review return the same empty answer, so it does not announce itself the way a red gate does. [→ detail](tickets/FG-199.md) |
+| 1 | FG-199 | TODO | Local pre-publication guard on HeMan. Measured 2026-08-15: 45 of 60 merged PRs landed a commit no expected reviewer saw. What ranks it is that its failure is silent: an absent reviewer and a clean review return the same empty answer, so it does not announce itself the way a red gate does. [→ detail](tickets/FG-199.md) |
 | — | FG-198 | **DONE** | Landed 2026-08-17: the rule's deny-list floor runs blocking in the gate with its proof beside it, so enforcement no longer depends on who is looking. It had failed nineteen times across two shapes, most of them on a single docs-only branch |
 | — | — | **DONE** | `main` branch-protected with `gate` required, 2026-08-15, and proven to block a red gate on PR #61 |
 
