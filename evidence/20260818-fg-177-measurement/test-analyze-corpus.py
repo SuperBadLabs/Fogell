@@ -45,6 +45,66 @@ def dollar = $/unstash(name: 'fake') ${echo(message: 'real', fogellProbeUnknown:
             ],
         )
 
+    def test_slashy_starts_follow_lexical_expression_prefixes(self) -> None:
+        source = r'''
+def assigned = /echo(message: 'assignment fake')/
+def returned() { return /unstash(name: 'return fake')/ }
+assert /junit(testResults: 'assert fake')/
+consume(/checkout(scm: 'paren fake')/, /git(url: 'comma fake')/)
+def ternary = ready ? /archiveArtifacts(artifacts: 'yes fake')/ : /stash(name: 'no fake')/
+def equality = ready == /unstable(message: 'equality fake')/
+def inequality = ready != /sh(script: 'inequality fake')/
+echo(message: 'real', fogellProbeUnknown: true)
+'''
+        self.assertEqual(
+            compact(source),
+            [("echo", ("message", "fogellProbeUnknown"))],
+        )
+
+    def test_slashy_after_prefix_keyword_keeps_only_interpolation_code(self) -> None:
+        source = r'''
+def rendered() {
+    return /literal unstash(name: 'fake')
+${echo(message: 'interpolated', fogellProbeUnknown: true)}/
+}
+sh(script: 'after', returnStatus: true)
+'''
+        observed = MODULE.calls(source)
+        self.assertEqual(
+            [(step, tuple(key for key, _ in keys)) for step, keys, _ in observed],
+            [
+                ("echo", ("message", "fogellProbeUnknown")),
+                ("sh", ("script", "returnStatus")),
+            ],
+        )
+        self.assertEqual(
+            [MODULE.line_number(source, offset) for _, _, offset in observed],
+            [4, 6],
+        )
+
+    def test_division_after_expression_end_tokens_remains_code(self) -> None:
+        source = r'''
+def byIdentifier = value / sh(script: 'identifier divisor', returnStatus: true)
+def byNumber = 10 / echo(message: 'number divisor')
+def byParen = (value) / junit(testResults: 'paren divisor')
+def byBracket = values[0] / checkout(scm: 'bracket divisor')
+def byBrace = { value } / git(url: 'brace divisor')
+def bySlashy = /left/ / stash(name: 'slashy divisor')
+def byPostIncrement = counter++ / unstable(message: 'post-increment divisor')
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message",)),
+                ("junit", ("testResults",)),
+                ("checkout", ("scm",)),
+                ("git", ("url",)),
+                ("stash", ("name",)),
+                ("unstable", ("message",)),
+            ],
+        )
+
     def test_multiline_slashy_blanks_text_but_keeps_interpolation_and_offsets(self) -> None:
         source = r'''
 def quotient = 42 / 6

@@ -15,10 +15,12 @@ CASES = (
     "fg177-probe-requiredness.Jenkinsfile",
     "fg177-probe-return-semantics.Jenkinsfile",
     "fg177-probe-checkout-scm.Jenkinsfile",
+    "fg177-plan-git-history.Jenkinsfile",
 )
-TEMPLATED = {
-    "fg177-probe-unknown-policy.Jenkinsfile",
-    "fg177-probe-return-semantics.Jenkinsfile",
+TOKEN_COUNTS = {
+    "fg177-probe-unknown-policy.Jenkinsfile": 1,
+    "fg177-probe-return-semantics.Jenkinsfile": 1,
+    "fg177-plan-git-history.Jenkinsfile": 2,
 }
 
 
@@ -54,7 +56,7 @@ def main() -> int:
     for name in CASES:
         source_path = cases / name
         source = source_path.read_text(encoding="utf-8")
-        expected_tokens = 1 if name in TEMPLATED else 0
+        expected_tokens = TOKEN_COUNTS.get(name, 0)
         actual_tokens = source.count(TOKEN)
         if actual_tokens != expected_tokens:
             print(

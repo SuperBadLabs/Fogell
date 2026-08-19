@@ -35,10 +35,15 @@ git ls-remote --exit-code "$scm_url" refs/heads/main >/dev/null
 
 for name in \
   fg177-probe-unknown-policy.Jenkinsfile \
-  fg177-probe-return-semantics.Jenkinsfile
+  fg177-probe-return-semantics.Jenkinsfile \
+  fg177-plan-git-history.Jenkinsfile
 do
-  if [[ $(grep -Foc "$scm_url" "$rendered/$name") -ne 1 ]]; then
-    echo "ERROR: rendered $name does not contain exactly one configured URL" >&2
+  expected_urls=1
+  if [[ "$name" == fg177-plan-git-history.Jenkinsfile ]]; then
+    expected_urls=2
+  fi
+  if [[ $(grep -Foc "$scm_url" "$rendered/$name") -ne $expected_urls ]]; then
+    echo "ERROR: rendered $name does not contain exactly $expected_urls configured URLs" >&2
     exit 1
   fi
   if grep -Fq '@@FOGELL_SCM_URL@@' "$rendered/$name"; then
@@ -57,6 +62,11 @@ for name in \
 do
   cmp "$evidence/cases/$name" "$rendered/$name"
 done
+
+if [[ $(grep -Fxc '//// NEXT BUILD ////' "$rendered/fg177-plan-git-history.Jenkinsfile") -ne 1 ]]; then
+  echo "ERROR: retained-history plan is not exactly two builds" >&2
+  exit 1
+fi
 
 # Exercise the actual runner from a fresh fixture. A fake CLI proves that all
 # paths handed to it are exact rendered files and that its status is preserved.

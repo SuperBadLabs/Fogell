@@ -34,14 +34,15 @@ STEPS = (
 )
 
 
-EXPRESSION_ENDERS = set("_)]}'\"")
+EXPRESSION_PREFIX_KEYWORDS = {"assert", "case", "in", "return", "throw", "yield"}
 
 
 def blank_non_code(source: str) -> str:
     """Blank literal text/comments while retaining executable GString expressions.
 
-    Offsets and newlines never move. Slashy-versus-division uses Fogell's proven
-    one-character rule: after an expression ender ``/`` divides; otherwise a
+    Offsets and newlines never move. Slashy-versus-division uses the preceding
+    lexical token: identifiers, numbers and closing delimiters end expressions,
+    while prefix keywords and operator/delimiter positions introduce one. Then a
     later unescaped ``/`` closes a slashy GString, including across newlines.
     Dollar-slashy strings may also span lines. In every interpolating form only
     balanced, unescaped ``${...}`` code remains visible to the call scanner. Its
@@ -56,14 +57,29 @@ def blank_non_code(source: str) -> str:
             if out[k] != "\n":
                 out[k] = " "
 
-    def previous_significant(i: int) -> str:
+    def previous_token(i: int) -> str | None:
+        """Return the previous visible lexical token, after prior blanking."""
         i -= 1
-        while i >= 0 and source[i].isspace():
+        while i >= 0 and out[i].isspace():
             i -= 1
-        return source[i] if i >= 0 else " "
+        if i < 0:
+            return None
+        if out[i].isalnum() or out[i] in "_$":
+            end = i + 1
+            while i >= 0 and (out[i].isalnum() or out[i] in "_$"):
+                i -= 1
+            return "".join(out[i + 1 : end])
+        if i > 0 and "".join(out[i - 1 : i + 1]) in {"++", "--"}:
+            return "".join(out[i - 1 : i + 1])
+        return out[i]
 
-    def ends_expression(c: str) -> bool:
-        return c.isalnum() or c in EXPRESSION_ENDERS
+    def starts_slashy(i: int) -> bool:
+        token = previous_token(i)
+        if token is None or token in EXPRESSION_PREFIX_KEYWORDS:
+            return True
+        if token in {"++", "--", ")", "]", "}", "'", '\"', "$"}:
+            return False
+        return not (token[0].isalnum() or token[0] in "_$")
 
     def scan_comment(i: int) -> int:
         if source.startswith("//", i):
@@ -135,7 +151,7 @@ def blank_non_code(source: str) -> str:
                 else:
                     out[:] = snapshot
                     i += 1
-            elif source[i] == "/" and not ends_expression(previous_significant(i)):
+            elif source[i] == "/" and starts_slashy(i):
                 snapshot = out.copy()
                 after, closed = scan_slashy(i)
                 if closed:
@@ -201,6 +217,11 @@ def blank_non_code(source: str) -> str:
                     blank(j, j + 2)
                     j += 2
             elif source[j] == "/":
+                # Mark a proven slashy close as an expression-ending quote in
+                # the already-synthetic scanner view. A later slash is then
+                # division, while a failed speculative scan restores this byte
+                # from its snapshot. Offsets and the source remain unchanged.
+                out[j] = "'"
                 return j + 1, True
             else:
                 blank(j, j + 1)
@@ -276,7 +297,7 @@ def blank_non_code(source: str) -> str:
             else:
                 out[:] = snapshot
                 i += 1
-        elif source[i] == "/" and not ends_expression(previous_significant(i)):
+        elif source[i] == "/" and starts_slashy(i):
             snapshot = out.copy()
             after, closed = scan_slashy(i)
             if closed:
@@ -290,7 +311,6 @@ def blank_non_code(source: str) -> str:
 
 
 def matching_paren(code: str, opening: int) -> int | None:
-    depth = 0
     pairs = {"(": ")", "[": "]", "{": "}"}
     stack: list[str] = []
     for i in range(opening, len(code)):
