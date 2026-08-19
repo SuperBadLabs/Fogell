@@ -69,6 +69,39 @@ manifest_tmp=$(mktemp "$manifest.tmp.XXXXXX")
 trap 'rm -f "$manifest_tmp"' EXIT
 receipt_dir="$manifest_dir/raw-receipts"
 
+expected_receipts=()
+for case_file in "${cases[@]}"; do
+  case_name=$(basename "$case_file")
+  expected_receipts+=("${case_name%.Jenkinsfile}.receipt.txt")
+done
+[[ -d "$receipt_dir" && ! -L "$receipt_dir" ]] ||
+  fail "receipt directory is missing or is a symlink: $receipt_dir"
+mapfile -d '' -t observed_receipts < <(
+  find "$receipt_dir" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | sort -z
+)
+mapfile -d '' -t sorted_expected_receipts < <(
+  printf '%s\0' "${expected_receipts[@]}" | sort -z
+)
+receipt_set_matches=true
+if [[ ${#observed_receipts[@]} -ne ${#sorted_expected_receipts[@]} ]]; then
+  receipt_set_matches=false
+else
+  for index in "${!observed_receipts[@]}"; do
+    if [[ "${observed_receipts[$index]}" != "${sorted_expected_receipts[$index]}" ]]; then
+      receipt_set_matches=false
+      break
+    fi
+  done
+fi
+if [[ "$receipt_set_matches" != true ]]; then
+  fail "receipt set mismatch: expected [${sorted_expected_receipts[*]}], observed [${observed_receipts[*]}]"
+fi
+for receipt_name in "${expected_receipts[@]}"; do
+  receipt="$receipt_dir/$receipt_name"
+  [[ -f "$receipt" && ! -L "$receipt" && -s "$receipt" ]] ||
+    fail "receipt is missing, empty, or not a regular file: $receipt"
+done
+
 {
   printf 'format\tfogell-evidence-run-v1\n'
   printf 'run\t%s\n' "$run_name"

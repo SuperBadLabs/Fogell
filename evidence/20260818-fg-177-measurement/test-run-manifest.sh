@@ -64,4 +64,45 @@ if find "$out" -maxdepth 1 -name 'probe-run-manifest.tsv.tmp.*' | grep -q .; the
   exit 1
 fi
 
-printf 'RUN MANIFEST PROOF: timestamps ordered, provenance and case order bound, refusal atomic\n'
+# Exact-set validation also rejects empty and symlinked expected receipts and
+# any unexpected non-regular entry. Each refusal preserves the prior manifest.
+mv "$proof_tmp/two.receipt.txt" "$out/raw-receipts/two.receipt.txt"
+: > "$out/raw-receipts/two.receipt.txt"
+if bash "$evidence/write-run-manifest.sh" \
+  "$manifest" probes \
+  2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/empty.log" 2>&1; then
+  echo 'ERROR: empty receipt unexpectedly produced a manifest' >&2
+  exit 1
+fi
+[[ $(sha256sum "$manifest" | awk '{ print $1 }') == "$manifest_hash" ]]
+printf 'receipt two\n' > "$out/raw-receipts/two.receipt.txt"
+
+mv "$out/raw-receipts/one.receipt.txt" "$proof_tmp/one.receipt.txt"
+ln -s "$proof_tmp/one.receipt.txt" "$out/raw-receipts/one.receipt.txt"
+if bash "$evidence/write-run-manifest.sh" \
+  "$manifest" probes \
+  2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/symlink.log" 2>&1; then
+  echo 'ERROR: symlinked receipt unexpectedly produced a manifest' >&2
+  exit 1
+fi
+[[ $(sha256sum "$manifest" | awk '{ print $1 }') == "$manifest_hash" ]]
+rm "$out/raw-receipts/one.receipt.txt"
+mv "$proof_tmp/one.receipt.txt" "$out/raw-receipts/one.receipt.txt"
+
+mkdir "$out/raw-receipts/unexpected.receipt.txt"
+if bash "$evidence/write-run-manifest.sh" \
+  "$manifest" probes \
+  2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/nonregular.log" 2>&1; then
+  echo 'ERROR: unexpected non-regular receipt entry produced a manifest' >&2
+  exit 1
+fi
+[[ $(sha256sum "$manifest" | awk '{ print $1 }') == "$manifest_hash" ]]
+rmdir "$out/raw-receipts/unexpected.receipt.txt"
+
+printf 'RUN MANIFEST PROOF: timestamps/order/provenance bound; missing/empty/symlink/extra refused atomically\n'

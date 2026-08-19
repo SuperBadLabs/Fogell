@@ -177,13 +177,41 @@ case "$1" in
     receipt_dir=$1
     shift
     mkdir -p "$receipt_dir"
+    mode=${FOGELL_STUB_MODE:-success}
+    generation=${FOGELL_STUB_GENERATION:-one}
+    case "$mode" in
+      zero)
+        printf 'completed without receipts\n'
+        exit 1
+        ;;
+      partial|interrupt)
+        case_file=$1
+        receipt_name=$(basename "${case_file%.Jenkinsfile}.receipt.txt")
+        printf 'fixture receipt %s for %s\n' "$generation" "$(basename "$case_file")" \
+          > "$receipt_dir/$receipt_name"
+        if [[ "$mode" == interrupt ]]; then
+          printf '%s\n' "$$" > "$FOGELL_STUB_READY"
+          trap 'exit 143' TERM
+          while :; do sleep 0.02; done
+        fi
+        printf 'partial probe CLI failure\n'
+        exit 44
+        ;;
+    esac
     for case_file in "$@"; do
       receipt_name=$(basename "${case_file%.Jenkinsfile}.receipt.txt")
-      printf 'fixture receipt for %s\n' "$(basename "$case_file")" \
+      printf 'fixture receipt %s for %s\n' "$generation" "$(basename "$case_file")" \
         > "$receipt_dir/$receipt_name"
     done
-    printf 'intentional probe CLI failure\n'
-    exit 29
+    if [[ "$mode" == extra ]]; then
+      printf 'unexpected\n' > "$receipt_dir/unexpected.receipt.txt"
+    fi
+    if [[ "$mode" == failure ]]; then
+      printf 'probe CLI infrastructure failure\n'
+      exit 45
+    fi
+    printf 'probe CLI complete\n'
+    exit 1
     ;;
   *)
     printf 'ERROR: unexpected dotnet command: %s\n' "$1" >&2
@@ -196,6 +224,11 @@ runner_out="$fixture_tmp/runner-output"
 args="$fixture_tmp/dotnet-args"
 calls="$fixture_tmp/dotnet-calls"
 order="$fixture_tmp/runner-order"
+sentinel_target="$runner_out/runs/probes"
+mkdir -p "$sentinel_target/raw-receipts"
+printf 'preexisting sentinel receipt\n' \
+  > "$sentinel_target/raw-receipts/sentinel.receipt.txt"
+printf 'preexisting sentinel manifest\n' > "$sentinel_target/sentinel.manifest"
 set +e
 PATH="$fixture_tmp/bin:$PATH" \
 FOGELL_EVIDENCE_OUT="$runner_out" \
@@ -210,10 +243,11 @@ FOGELL_STUB_ORDER="$order" \
   bash "$evidence/run-probes.sh"
 rc=$?
 set -e
-if [[ $rc -ne 29 ]]; then
-  echo "ERROR: expected probe runner rc 29, got $rc" >&2
+if [[ $rc -ne 1 ]]; then
+  echo "ERROR: expected completed probe runner rc 1, got $rc" >&2
   exit 1
 fi
+published="$runner_out/runs/probes"
 expected_build='build tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release --nologo'
 expected_run_prefix='run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release --no-build -- '
 if [[ $(sed -n '1p' "$calls") != "$expected_build" ]]; then
@@ -235,31 +269,145 @@ if [[ $(<"$order") != $'oracle image inspect\ndotnet build\ndotnet run' ]]; then
     "$(tr '\n' '|' < "$order")" >&2
   exit 1
 fi
-grep -Fx 'intentional probe CLI failure' "$runner_out/probe-run.log"
-grep -Fx 'probe-cli-exit=29' "$runner_out/probe-exit.txt"
-grep -Fx "$runner_out/raw-receipts" "$args"
+grep -Fx 'probe CLI complete' "$published/probe-run.log"
+grep -Fx 'probe-cli-exit=1' "$published/probe-exit.txt"
+grep -E "^$runner_out/runs/\\.probes-stage\\.[^/]+/raw-receipts$" "$args"
 for name in \
   fg177-probe-unknown-policy.Jenkinsfile \
   fg177-probe-requiredness.Jenkinsfile \
   fg177-probe-return-semantics.Jenkinsfile \
   fg177-probe-checkout-scm.Jenkinsfile
 do
-  path="$runner_out/rendered-cases/$name"
-  grep -Fx "$path" "$args"
+  grep -E "^$runner_out/runs/\\.probes-stage\\.[^/]+/rendered-cases/$name$" "$args"
 done
 for name in \
   fg177-probe-unknown-policy.Jenkinsfile \
   fg177-probe-return-semantics.Jenkinsfile
 do
   require_fixed_count -Foc 1 "$scm_url" \
-    "$runner_out/rendered-cases/$name" \
+    "$published/rendered-cases/$name" \
     "runner-rendered $name does not contain exactly one configured URL"
 done
 cmp "$evidence/cases/fg177-probe-checkout-scm.Jenkinsfile" \
-  "$runner_out/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"
-grep -Fx $'cli-exit\t29' "$runner_out/probe-run-manifest.tsv"
-grep -Fx $'jenkins-core\t2.568.1' "$runner_out/probe-run-manifest.tsv"
-grep -Fx $'case-count\t4' "$runner_out/probe-run-manifest.tsv"
+  "$published/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"
+grep -Fx $'cli-exit\t1' "$published/probe-run-manifest.tsv"
+grep -Fx $'jenkins-core\t2.568.1' "$published/probe-run-manifest.tsv"
+grep -Fx $'case-count\t4' "$published/probe-run-manifest.tsv"
+if find "$published/raw-receipts" -mindepth 1 -maxdepth 1 -type f \
+    -printf '%f\n' | sort | diff -u - <(printf '%s\n' \
+      fg177-probe-checkout-scm.receipt.txt \
+      fg177-probe-requiredness.receipt.txt \
+      fg177-probe-return-semantics.receipt.txt \
+      fg177-probe-unknown-policy.receipt.txt); then
+  :
+else
+  echo 'ERROR: successful probe publication has the wrong receipt set' >&2
+  exit 1
+fi
+if find "$published" -name '*sentinel*' | grep -q .; then
+  echo 'ERROR: successful probe publication retained sentinel evidence' >&2
+  exit 1
+fi
+
+bundle_hash() {
+  (
+    cd "$1"
+    find . -type f -print0 | sort -z | xargs -0 sha256sum
+  ) | sha256sum | awk '{ print $1 }'
+}
+
+published_hash=$(bundle_hash "$published")
+for mode in partial zero extra failure; do
+  mode_calls="$fixture_tmp/$mode-calls"
+  mode_order="$fixture_tmp/$mode-order"
+  set +e
+  PATH="$fixture_tmp/bin:$PATH" \
+  FOGELL_EVIDENCE_OUT="$runner_out" \
+  FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+  FOGELL_JENKINS_URL="$jenkins_url" \
+  FOGELL_JENKINS_HOST=fixture-host \
+  FOGELL_JENKINS_CONTAINER=fixture-controller \
+  FOGELL_SCM_URL="$scm_url" \
+  FOGELL_STUB_ARGS="$fixture_tmp/$mode-args" \
+  FOGELL_STUB_CALLS="$mode_calls" \
+  FOGELL_STUB_ORDER="$mode_order" \
+  FOGELL_STUB_MODE="$mode" \
+    bash "$evidence/run-probes.sh" > "$fixture_tmp/$mode.log" 2>&1
+  mode_rc=$?
+  set -e
+  if [[ "$mode" == partial && $mode_rc -ne 44 ]] ||
+     [[ "$mode" == failure && $mode_rc -ne 45 ]] ||
+     [[ "$mode" =~ ^(zero|extra)$ && $mode_rc -ne 1 ]]; then
+    printf 'ERROR: probe mode %s returned unexpected rc %s\n' "$mode" "$mode_rc" >&2
+    exit 1
+  fi
+  if [[ $(bundle_hash "$published") != "$published_hash" ]]; then
+    printf 'ERROR: probe mode %s mutated prior publication\n' "$mode" >&2
+    exit 1
+  fi
+done
+
+# An interruption after a partial receipt is staged must not expose it.
+interrupt_ready="$fixture_tmp/interrupt-ready"
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/interrupt-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/interrupt-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/interrupt-order" \
+FOGELL_STUB_MODE=interrupt \
+FOGELL_STUB_READY="$interrupt_ready" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/interrupt.log" 2>&1 &
+interrupt_pid=$!
+for _ in {1..500}; do
+  [[ -e "$interrupt_ready" ]] && break
+  sleep 0.01
+done
+[[ -e "$interrupt_ready" ]] || {
+  echo 'ERROR: interrupt probe did not reach staged partial output' >&2
+  exit 1
+}
+kill -TERM "$(<"$interrupt_ready")"
+set +e
+wait "$interrupt_pid"
+interrupt_rc=$?
+set -e
+if [[ $interrupt_rc -ne 143 || $(bundle_hash "$published") != "$published_hash" ]]; then
+  printf 'ERROR: interrupted probe rc=%s or prior publication changed\n' "$interrupt_rc" >&2
+  exit 1
+fi
+
+# A second complete run replaces the exact bundle rather than mixing receipts.
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/replacement-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/replacement-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/replacement-order" \
+FOGELL_STUB_GENERATION=two \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/replacement.log" 2>&1
+replacement_rc=$?
+set -e
+if [[ $replacement_rc -ne 1 || $(bundle_hash "$published") == "$published_hash" ]]; then
+  echo 'ERROR: complete replacement did not publish a new exact probe bundle' >&2
+  exit 1
+fi
+for receipt in "$published"/raw-receipts/*.receipt.txt; do
+  if ! grep -Fq 'fixture receipt two for ' "$receipt"; then
+    printf 'ERROR: replacement probe receipt is not from generation two: %s\n' \
+      "$receipt" >&2
+    exit 1
+  fi
+done
 
 # A fresh-checkout build failure must propagate before the CLI is attempted.
 build_failure_out="$fixture_tmp/build-failure-output"
@@ -289,9 +437,10 @@ if [[ $(sed -n '1p' "$build_failure_calls") != "$expected_build" || \
     "$(tr '\n' '|' < "$build_failure_calls")" >&2
   exit 1
 fi
-if [[ -e "$build_failure_out/probe-exit.txt" ]]; then
-  echo 'ERROR: failed probe build wrote a misleading CLI exit marker' >&2
+if [[ -e "$build_failure_out/runs/probes" ]]; then
+  echo 'ERROR: failed probe build published an evidence bundle' >&2
   exit 1
 fi
 
+printf 'probe transaction proof: partial/zero/extra/failure/interruption retain prior bundle; success atomically replaces exact set\n'
 printf 'rendered probe cases verified with fresh local fixture %s\n' "$scm_url"

@@ -24,28 +24,61 @@ oracle_verification=$(
 )
 oracle_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 printf '%s\n' "$oracle_verification"
-mkdir -p "$out/raw-receipts"
+publication_parent="$out/runs"
+publication_target="$publication_parent/archive-schema"
+mkdir -p "$publication_parent"
+exec {publication_lock_fd}> "$publication_parent/archive-schema.lock"
+if ! flock -n "$publication_lock_fd"; then
+  echo "ERROR: another archive-schema evidence run owns $publication_target" >&2
+  exit 1
+fi
+stage=''
+# Invoked indirectly by EXIT/signal traps.
+# shellcheck disable=SC2317
+cleanup() {
+  if [[ -n "$stage" && -e "$stage" ]]; then
+    case "$stage" in
+      "$publication_parent"/.archive-schema-stage.*) rm -rf -- "$stage" ;;
+      *) printf 'ERROR: refusing unsafe stage cleanup: %s\n' "$stage" >&2 ;;
+    esac
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+stage=$(mktemp -d "$publication_parent/.archive-schema-stage.XXXXXX")
+mkdir -p "$stage/raw-receipts"
 
 cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'
 dotnet build "$cli_project" -c Release --nologo
-case_file="$evidence_root/cases/fg177-probe-archive-schema.Jenkinsfile"
+mkdir -p "$stage/cases"
+cp "$evidence_root/cases/fg177-probe-archive-schema.Jenkinsfile" "$stage/cases/"
+case_file="$stage/cases/fg177-probe-archive-schema.Jenkinsfile"
 
 set +e
 dotnet run --project "$cli_project" -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
-  "$out/raw-receipts" \
+  "$stage/raw-receipts" \
   "$case_file" \
-  2>&1 | tee "$out/archive-schema-run.log"
+  2>&1 | tee "$stage/archive-schema-run.log"
 rc=${PIPESTATUS[0]}
 set -e
 
-printf 'archive-schema-cli-exit=%s\n' "$rc" | tee "$out/archive-schema-exit.txt"
+if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+  printf 'ERROR: archive-schema CLI did not complete its comparison contract (rc=%s); prior evidence retained\n' \
+    "$rc" >&2
+  exit "$rc"
+fi
+
+printf 'archive-schema-cli-exit=%s\n' "$rc" | tee "$stage/archive-schema-exit.txt"
 run_finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 bash "$evidence_root/write-run-manifest.sh" \
-  "$out/archive-schema-run-manifest.tsv" archive-schema \
+  "$stage/archive-schema-run-manifest.tsv" archive-schema \
   "$run_started_at" "$oracle_verified_at" "$run_finished_at" \
   "$rc" archive-schema-cli-exit \
-  "$out/archive-schema-run.log" "$out/archive-schema-exit.txt" \
+  "$stage/archive-schema-run.log" "$stage/archive-schema-exit.txt" \
   "$FOGELL_JENKINS_ORACLE_DIR" "$case_file"
+python3 "$evidence_root/publish-run-bundle.py" "$stage" "$publication_target"
 exit "$rc"

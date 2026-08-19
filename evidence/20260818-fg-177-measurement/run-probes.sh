@@ -18,14 +18,38 @@ evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
 : "${FOGELL_JENKINS_ORACLE_DIR:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
-rendered="$out/rendered-cases"
 run_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 oracle_verification=$(
   bash "$evidence_root/jenkins-oracle.sh" verify "$FOGELL_JENKINS_ORACLE_DIR"
 )
 oracle_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 printf '%s\n' "$oracle_verification"
-mkdir -p "$out/raw-receipts"
+publication_parent="$out/runs"
+publication_target="$publication_parent/probes"
+mkdir -p "$publication_parent"
+exec {publication_lock_fd}> "$publication_parent/probes.lock"
+if ! flock -n "$publication_lock_fd"; then
+  echo "ERROR: another probe evidence run owns $publication_target" >&2
+  exit 1
+fi
+stage=''
+# Invoked indirectly by EXIT/signal traps.
+# shellcheck disable=SC2317
+cleanup() {
+  if [[ -n "$stage" && -e "$stage" ]]; then
+    case "$stage" in
+      "$publication_parent"/.probes-stage.*) rm -rf -- "$stage" ;;
+      *) printf 'ERROR: refusing unsafe stage cleanup: %s\n' "$stage" >&2 ;;
+    esac
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+stage=$(mktemp -d "$publication_parent/.probes-stage.XXXXXX")
+rendered="$stage/rendered-cases"
+mkdir -p "$stage/raw-receipts"
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence_root/render-probe-cases.py"
 bash "$evidence_root/sync-checkout-scm-fixture.sh"
@@ -44,17 +68,24 @@ set +e
 dotnet run --project "$cli_project" -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
-  "$out/raw-receipts" \
+  "$stage/raw-receipts" \
   "${cases[@]}" \
-  2>&1 | tee "$out/probe-run.log"
+  2>&1 | tee "$stage/probe-run.log"
 rc=${PIPESTATUS[0]}
 set -e
 
-printf 'probe-cli-exit=%s\n' "$rc" | tee "$out/probe-exit.txt"
+if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+  printf 'ERROR: probe CLI did not complete its comparison contract (rc=%s); prior evidence retained\n' \
+    "$rc" >&2
+  exit "$rc"
+fi
+
+printf 'probe-cli-exit=%s\n' "$rc" | tee "$stage/probe-exit.txt"
 run_finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 bash "$evidence_root/write-run-manifest.sh" \
-  "$out/probe-run-manifest.tsv" probes \
+  "$stage/probe-run-manifest.tsv" probes \
   "$run_started_at" "$oracle_verified_at" "$run_finished_at" \
-  "$rc" probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" \
+  "$rc" probe-cli-exit "$stage/probe-run.log" "$stage/probe-exit.txt" \
   "$FOGELL_JENKINS_ORACLE_DIR" "${cases[@]}"
+python3 "$evidence_root/publish-run-bundle.py" "$stage" "$publication_target"
 exit "$rc"

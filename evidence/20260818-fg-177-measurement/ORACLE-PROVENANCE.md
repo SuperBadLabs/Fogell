@@ -62,8 +62,17 @@ divergences. Each runner records its start time before verification, its
 verification-complete time before the CLI build, and its finish time after the
 CLI and exit marker. It then atomically publishes an adjacent manifest:
 
-- `probe-run-manifest.tsv` binds the four ordered probe cases and receipts;
-- `archive-schema-run-manifest.tsv` binds the archive-schema case and receipt.
+- `runs/probes/probe-run-manifest.tsv` binds the four ordered probe cases and
+  receipts;
+- `runs/archive-schema/archive-schema-run-manifest.tsv` binds the
+  archive-schema case and receipt.
+
+Each runner publishes a self-contained bundle:
+
+- `runs/probes/` contains the probe manifest, log, exit marker, rendered cases,
+  and its exact four-file `raw-receipts/` set;
+- `runs/archive-schema/` contains the archive manifest, log, exit marker, case,
+  and its exact one-file `raw-receipts/` set.
 
 Each manifest records the Jenkins core, the hashes of the core, plugin and
 image metadata, the complete plugin-manifest hash and row count, the controller
@@ -73,3 +82,24 @@ is not published if any input is missing, the timestamps are out of order, or
 the exit marker disagrees with the captured CLI status. Git commits the
 manifest and every bound file together, making the recapture independently
 auditable without relying on filesystem modification times.
+
+## Transactional publication
+
+The CLI never writes into a previously published receipt directory. After
+oracle verification, the runner takes a per-run lock and creates an empty,
+same-filesystem sibling stage under `runs/`. Only CLI statuses `0` (proved) and
+`1` (completed divergence) are publication-eligible. Before writing the
+manifest, the runner requires the receipt directory to contain exactly the
+expected regular filenames, with no symlinks, extras, missing files, or empty
+files. Because that directory began empty, every accepted receipt is from the
+current invocation; the manifest records its fresh content hash.
+
+`publish-run-bundle.py` then uses Linux `renameat2(RENAME_EXCHANGE)` to replace
+an existing bundle in one filesystem operation, or an ordinary same-filesystem
+rename for the first publication. It deliberately has no copy/delete fallback.
+If the platform cannot exchange directories atomically, publication refuses.
+An interruption before the exchange leaves the prior bundle visible; an
+interruption after it leaves the new complete bundle visible. The displaced
+bundle or incomplete stage is only an ignored hidden sibling cleaned by the
+runner's bounded exit trap. Thus receipts, log, exit marker and manifest cannot
+be published as a stale/new mixture.

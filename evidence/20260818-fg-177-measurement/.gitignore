@@ -1,1 +1,3 @@
 /rendered-cases/
+/runs/.*-stage.*/
+/runs/*.lock
