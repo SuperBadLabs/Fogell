@@ -31,7 +31,8 @@ let keyword (s: string) : P<unit> =
 let isIdentStart c = isLetter c || c = '_'
 let isIdentCont c = isLetter c || isDigit c || c = '_'
 
-let identifier: P<string> = lexeme (many1Satisfy2 isIdentStart isIdentCont)
+let identifierBare: P<string> = many1Satisfy2 isIdentStart isIdentCont
+let identifier: P<string> = lexeme identifierBare
 
 let position: P<Position> =
     getPosition |>> fun p -> { Line = p.Line; Column = p.Column }

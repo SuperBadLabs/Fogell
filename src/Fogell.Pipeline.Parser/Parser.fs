@@ -504,17 +504,23 @@ let private environmentSection: P<(string * string * bool) list> =
 /// `maven = 'm3'` and rejected the valid Jenkins spelling in six pinned corpus
 /// files; stage scope kept that old parser after the first slice. Keep the old
 /// assignment spelling, including its newline-terminated unquoted-value fallback,
-/// as accepted compatibility forms — this slice must not silently narrow the old
-/// parser surface — but use this one grammar at both scopes.
+/// as an explicit all-assignment compatibility lane — this slice must not silently
+/// narrow the old parser surface. The strict command/mixed lane is shared at both
+/// scopes and cannot weaken that legacy lane's adjacency behavior.
 ///
 /// DIRECTLY PROBED on Jenkins 2.568.1 after a confounded compact-pipeline probe was
 /// discarded: semicolon and newline forms each reach Declarative validation as
 /// TWO entries at pipeline and stage scope. Space-only `maven 'm3' jdk 'j8'`
 /// reaches validation as only the SECOND entry — Groovy associates it differently;
 /// it is not two adjacent tool declarations. Fogell refuses that ambiguous shape
-/// rather than inventing two tools Jenkins did not model.
+/// rather than inventing two tools Jenkins did not model. A command kind and value
+/// split across a newline is refused by Jenkins at both scopes (`Expected to find
+/// someTool someVersion`; `No tools specified`); only horizontal space or a tab may
+/// join the two tokens here.
+let private toolCommandGap: P<unit> = skipMany1 (anyOf " \t")
+
 let private toolEntry: P<string * string> =
-    attempt (identifier .>>. stringLiteralBare)
+    attempt (identifierBare .>> toolCommandGap .>>. stringLiteralBare)
     <|> attempt ((
             identifier
             .>> symbol "="
@@ -536,13 +542,20 @@ let private toolEntryEnd: P<unit> =
     attempt toolSeparator
     <|> (ws >>. lookAhead (skipChar '}'))
 
-let private toolsBody: P<(string * string) list> =
+let private strictToolsBody: P<(string * string) list> =
     ws
     >>. skipMany (skipChar ';' >>. ws)
     >>. many (attempt (toolEntry .>> toolEntryEnd))
 
 let private toolsSection: P<(string * string) list> =
-    keyword "tools" >>. between (symbol "{") (symbol "}") toolsBody
+    keyword "tools"
+    >>. (attempt (between (symbol "{") (symbol "}") keyValueBody)
+         <|> between (symbol "{") (symbol "}") strictToolsBody)
+
+// The legacy arm is intentionally WHOLE-BODY: if any command-form entry appears,
+// its closing brace cannot match and `attempt` returns to the strict mixed lane.
+// That preserves adjacent quoted assignments exactly, while a mixed assignment +
+// command still needs the newline/semicolon boundary enforced by [toolEntryEnd].
 
 let private agentSpec: P<AgentSpec> =
     let inner =
