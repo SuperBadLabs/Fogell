@@ -469,6 +469,75 @@ def invokeWrapper() {
             ],
         )
 
+    def test_static_quoted_named_keys_are_counted_with_duplicates(self) -> None:
+        source = r'''
+sh(
+    'script': 'make',
+    "returnStatus": true,
+    'script': 'again')
+stash(['name': 'x', "includes": '**'])
+echo 'message': 'hello'
+this.archiveArtifacts(['artifacts': '*.jar', "fingerprint": true])
+steps.git("url": 'https://example.invalid/repo.git', 'branch': 'main')
+'''
+        observed = MODULE.calls(source)
+        self.assertEqual(
+            [(step, tuple(key for key, _ in keys)) for step, keys, _ in observed],
+            [
+                ("sh", ("script", "returnStatus", "script")),
+                ("stash", ("name", "includes")),
+                ("echo", ("message",)),
+                ("archiveArtifacts", ("artifacts", "fingerprint")),
+                ("git", ("url", "branch")),
+            ],
+        )
+        self.assertEqual(
+            [MODULE.line_number(source, offset) for _, offset in observed[0][1]],
+            [3, 4, 5],
+        )
+
+    def test_quoted_keys_respect_top_level_and_sole_map_boundaries(self) -> None:
+        source = r'''
+sh('script': helper(['returnStatus': false]), "returnStatus": true,
+   nested: ['script': 'not top level'])
+stash((['name': 'wrapped', 'includes': helper(['name': 'nested'])]))
+checkout(['scm': config, 'poll': false])
+checkout((['scm': config, 'poll': false]))
+checkout('scm': config)
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus", "nested")),
+                ("stash", ("name", "includes")),
+                ("checkout", ()),
+                ("checkout", ()),
+                ("checkout", ("scm",)),
+            ],
+        )
+
+    def test_dynamic_and_non_key_literals_remain_excluded(self) -> None:
+        source = r'''
+sh(
+    "prefix${echo(message: 'key interpolation')}suffix": 'dynamic key',
+    "prefix$branch": 'unbraced dynamic key',
+    'script': "value ${unstash(name: 'value interpolation')}",
+    'na\'me': 'escaped static key',
+    "other\u002dkey": true,
+    "\$static": 'escaped dollar is static',
+    'literal': "fake retry(count: 2) and 'notAKey': true")
+echo('ordinary positional value', 'message': 'later named value')
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "na'me", "other-key", "$static", "literal")),
+                ("echo", ("message",)),
+                ("unstash", ("name",)),
+                ("echo", ("message",)),
+            ],
+        )
+
     def test_hosted_step_named_closure_parameters_are_not_calls(self) -> None:
         source = r'''
 def one = { echo -> helper(echo) }

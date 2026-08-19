@@ -413,7 +413,101 @@ def command_end(code: str, start: int) -> int:
     return i
 
 
-def top_level_keys(code: str, start: int, end: int) -> list[tuple[str, int]]:
+def quoted_literal_end(code: str, source: str, start: int, end: int) -> int | None:
+    """Find a retained quote's close without confusing nested interpolation code."""
+    delimiter = source[start]
+    if source.startswith(delimiter * 3, start):
+        delimiter *= 3
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack: list[str] = []
+    i = start + len(delimiter)
+    while i < end:
+        if not stack and code.startswith(delimiter, i):
+            return i + len(delimiter)
+        char = code[i]
+        if char in pairs:
+            stack.append(pairs[char])
+        elif char in ")]}":
+            if stack and char == stack[-1]:
+                stack.pop()
+        i += 1
+    return None
+
+
+def static_quoted_key(source: str, start: int, end: int) -> str | None:
+    """Decode a static single/double quoted Groovy map key, or refuse it."""
+    quote = source[start]
+    if source.startswith(quote * 3, start):
+        return None
+    escapes = {
+        "b": "\b",
+        "t": "\t",
+        "n": "\n",
+        "f": "\f",
+        "r": "\r",
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+        "$": "$",
+        "/": "/",
+    }
+    value: list[str] = []
+    i = start + 1
+    content_end = end - 1
+    while i < content_end:
+        char = source[i]
+        if char in "\r\n":
+            return None
+        if char == "\\":
+            i += 1
+            if i >= content_end:
+                return None
+            escaped = source[i]
+            if escaped == "u":
+                while i < content_end and source[i] == "u":
+                    i += 1
+                digits = source[i : i + 4]
+                if len(digits) != 4 or any(c not in "0123456789abcdefABCDEF" for c in digits):
+                    return None
+                decoded = chr(int(digits, 16))
+                i += 4
+                if (
+                    quote == '"'
+                    and decoded == "$"
+                    and i < content_end
+                    and (source[i] == "{" or source[i].isalpha() or source[i] == "_")
+                ):
+                    return None
+                value.append(decoded)
+                continue
+            decoded = escapes.get(escaped)
+            if decoded is None:
+                return None
+            value.append(decoded)
+            i += 1
+            continue
+        if (
+            quote == '"'
+            and char == "$"
+            and i + 1 < content_end
+            and (
+                source[i + 1] == "{"
+                or source[i + 1].isalpha()
+                or source[i + 1] == "_"
+            )
+        ):
+            return None
+        value.append(char)
+        i += 1
+    decoded_key = "".join(value)
+    if not decoded_key or not all(char.isprintable() for char in decoded_key):
+        return None
+    return decoded_key
+
+
+def top_level_keys(
+    code: str, source: str, start: int, end: int
+) -> list[tuple[str, int]]:
     keys: list[tuple[str, int]] = []
     stack: list[str] = []
     pairs = {"(": ")", "[": "]", "{": "}"}
@@ -427,6 +521,19 @@ def top_level_keys(code: str, start: int, end: int) -> list[tuple[str, int]]:
             if stack and c == stack[-1]:
                 stack.pop()
             i += 1
+        elif not stack and c in "'\"":
+            literal_end = quoted_literal_end(code, source, i, end)
+            if literal_end is None:
+                i += 1
+                continue
+            k = literal_end
+            while k < end and code[k].isspace():
+                k += 1
+            if k < end and code[k] == ":":
+                key = static_quoted_key(source, i, literal_end)
+                if key is not None:
+                    keys.append((key, i))
+            i = literal_end
         elif not stack and (c.isalpha() or c in "_$"):
             j = i + 1
             while j < end and (code[j].isalnum() or code[j] in "_$"):
@@ -590,7 +697,7 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
             arg_start, arg_end = cursor + 1, end
         else:
             arg_start, arg_end = cursor, command_end(code, cursor)
-        named = top_level_keys(code, arg_start, arg_end)
+        named = top_level_keys(code, source, arg_start, arg_end)
         # Jenkins' DSL treats a sole Groovy map argument as the named-argument
         # map (`sh([script: 'x', returnStatus: true])`).  `checkout([$class:
         # 'GitSCM', ...])` is the important exception here: that map is the
@@ -602,10 +709,21 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
         stripped_end = arg_end
         while stripped_end > stripped_start and code[stripped_end - 1].isspace():
             stripped_end -= 1
-        if step != "checkout" and stripped_start < stripped_end and code[stripped_start] == "[":
-            close = matching_paren(code, stripped_start)
-            if close == stripped_end - 1:
-                named = top_level_keys(code, stripped_start + 1, close)
+        map_start, map_end = stripped_start, stripped_end
+        while map_start < map_end and code[map_start] == "(":
+            close = matching_paren(code, map_start)
+            if close != map_end - 1:
+                break
+            map_start += 1
+            map_end -= 1
+            while map_start < map_end and code[map_start].isspace():
+                map_start += 1
+            while map_end > map_start and code[map_end - 1].isspace():
+                map_end -= 1
+        if step != "checkout" and map_start < map_end and code[map_start] == "[":
+            close = matching_paren(code, map_start)
+            if close == map_end - 1:
+                named = top_level_keys(code, source, map_start + 1, close)
         found.append((step, named, step_start))
     return found
 
