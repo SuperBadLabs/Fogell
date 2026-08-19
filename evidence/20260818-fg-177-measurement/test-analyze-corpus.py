@@ -359,6 +359,63 @@ echo(message: 'after', fogellProbeUnknown: true)
                     MODULE.blank_non_code(source).count("\n"), source.count("\n")
                 )
 
+    def test_known_jenkins_dsl_receivers_are_counted_once(self) -> None:
+        source = r'''
+this.sh(script: 'parenthesized', returnStatus: true)
+this.sh script: 'command', returnStdout: true
+steps.echo(message: 'parenthesized')
+steps.echo message: 'command'
+steps . echo (message: 'whitespace')
+this?.retry(count: 2) { helper() }
+steps?.unstash name: 'safe-command'
+def rendered = "value ${steps.echo(message: 'gstring')}"
+def trimmed = this.sh(script: 'chained call', returnStdout: true).trim()
+echo(message: 'unqualified')
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script", "returnStdout")),
+                ("echo", ("message",)),
+                ("echo", ("message",)),
+                ("echo", ("message",)),
+                ("retry", ("count",)),
+                ("unstash", ("name",)),
+                ("echo", ("message",)),
+                ("sh", ("script", "returnStdout")),
+                ("echo", ("message",)),
+            ],
+        )
+
+    def test_unproven_receivers_and_method_references_are_not_steps(self) -> None:
+        source = r'''
+helper.echo(message: 'helper')
+service.retry(count: 2) { helper() }
+helper?.sh(script: 'safe helper')
+this.helper.echo(message: 'nested helper')
+steps.helper.sh(script: 'nested steps helper')
+owner.this.sh(script: 'nested this helper')
+script.echo message: 'user-selected alias'
+def methodPointerOne = this.&sh
+def methodPointerTwo = steps.&echo
+def barePropertyOne = this.sh
+def barePropertyTwo = steps.echo
+def chainedPropertyOne = this.sh.&call
+def chainedPropertyTwo = steps.echo?.call
+def methodReference = this::sh
+def invokedPointer = (this.&sh)(script: 'method value, not direct step syntax')
+def invokedReference = this::sh(script: 'reference, not direct step syntax')
+def spacedPointer = this.sh  .&call
+def spacedSafeChain = steps.echo 	 ?.call
+def spacedSpread = this.sh  *.call
+def spacedReference = steps.echo  ::call
+def newlineChain = this.sh
+    .&call
+echo message: 'unqualified still counted'
+'''
+        self.assertEqual(compact(source), [("echo", ("message",))])
+
 
 if __name__ == "__main__":
     unittest.main()

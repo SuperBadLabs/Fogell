@@ -25,6 +25,11 @@ PINNED_CORPUS_FILES = 228
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 CONTROL_HEADER_KEYWORDS = {"for", "if", "while"}
 CONTROL_BODY_PREFIX_KEYWORDS = {"do", "else"}
+# These two spellings still dispatch Jenkins' native DSL: `this` is the
+# explicit script receiver, and `steps` is its step namespace. Receiver names
+# such as `script` are deliberately absent: in shared-library code they are
+# user-selected aliases, which a lexical corpus scan cannot prove are Jenkins.
+JENKINS_DSL_RECEIVERS = ("steps", "this")
 
 
 class CorpusVerificationError(ValueError):
@@ -424,11 +429,21 @@ def top_level_keys(code: str, start: int, end: int) -> list[tuple[str, int]]:
 
 def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
     code = blank_non_code(source)
-    pattern = re.compile(r"(?<![.$\w])(" + "|".join(map(re.escape, STEPS)) + r")\b")
+    receivers = "|".join(map(re.escape, JENKINS_DSL_RECEIVERS))
+    steps = "|".join(map(re.escape, STEPS))
+    pattern = re.compile(
+        rf"(?<![.$\w])(?:(?P<receiver>{receivers})\s*(?:\?\.|\.)\s*)?"
+        rf"(?P<step>{steps})\b"
+    )
     found: list[tuple[str, list[tuple[str, int]], int]] = []
     for match in pattern.finditer(code):
-        step = match.group(1)
-        cursor = match.end()
+        step = match.group("step")
+        step_start = match.start("step")
+        cursor = match.end("step")
+        # `this.&sh` and `this::sh` name a method; the step token is not itself
+        # an invocation even when the resulting method value is later called.
+        if code[max(0, step_start - 2) : step_start] in {".&", "::"}:
+            continue
         # A command call's argument starts on its statement line.  Skipping all
         # whitespace here let a blanked multiline string consume its own closing
         # line and attach the next step to this one.  Parenthesised calls may put
@@ -443,6 +458,11 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
         # A vocabulary word used as a named key in some *other* call/map is not
         # itself a step call (e.g. buildPlugin(timeout: 90, ...)).
         if cursor >= len(code) or code[cursor] in "\n};=:":
+            continue
+        # Property/method-pointer use of a vocabulary word is not an invocation.
+        # A real call followed by chaining reaches this check at its opening
+        # parenthesis or command argument, so `this.sh(...).trim()` still counts.
+        if code[cursor] in ".?&" or code.startswith(("*.", "::"), cursor):
             continue
         if code[cursor] == "(":
             end = matching_paren(code, cursor)
@@ -467,7 +487,7 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
             close = matching_paren(code, stripped_start)
             if close == stripped_end - 1:
                 named = top_level_keys(code, stripped_start + 1, close)
-        found.append((step, named, match.start()))
+        found.append((step, named, step_start))
     return found
 
 

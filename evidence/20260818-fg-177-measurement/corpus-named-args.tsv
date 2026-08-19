@@ -6,7 +6,7 @@ archiveArtifacts	58	34
 junit	36	31
 checkout	66	54
 deleteDir	26	18
-git	33	29
+git	26	26
 stash	12	7
 unstable	21	11
 unstash	10	6
