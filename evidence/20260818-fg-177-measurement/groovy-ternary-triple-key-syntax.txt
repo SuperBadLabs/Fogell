@@ -1,0 +1,8 @@
+Groovy Version: 2.4.21 JVM: 25.0.3 Vendor: Eclipse Adoptium OS: Linux
+call java.lang.String:script=a|java.lang.String:returnStatus=false
+nested-ternary java.lang.String:script=b|java.lang.String:label=ok
+call java.lang.String:script=make|java.lang.String:returnStatus=true
+call java.lang.String:message=hello
+triple-dynamic org.codehaus.groovy.runtime.GStringImpl:returnStatus=true
+triple-multiline java.lang.String:line\nkey=1|java.lang.String:tab\tkey=2|java.lang.String:na'me=3
+triple-escaped-delimiter java.lang.String:before'''after=4

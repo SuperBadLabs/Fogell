@@ -435,10 +435,9 @@ def quoted_literal_end(code: str, source: str, start: int, end: int) -> int | No
 
 
 def static_quoted_key(source: str, start: int, end: int) -> str | None:
-    """Decode a static single/double quoted Groovy map key, or refuse it."""
+    """Decode a static single/double Groovy map key, including triple forms."""
     quote = source[start]
-    if source.startswith(quote * 3, start):
-        return None
+    delimiter = quote * 3 if source.startswith(quote * 3, start) else quote
     escapes = {
         "b": "\b",
         "t": "\t",
@@ -452,11 +451,11 @@ def static_quoted_key(source: str, start: int, end: int) -> str | None:
         "/": "/",
     }
     value: list[str] = []
-    i = start + 1
-    content_end = end - 1
+    i = start + len(delimiter)
+    content_end = end - len(delimiter)
     while i < content_end:
         char = source[i]
-        if char in "\r\n":
+        if len(delimiter) == 1 and char in "\r\n":
             return None
         if char == "\\":
             i += 1
@@ -499,10 +498,32 @@ def static_quoted_key(source: str, start: int, end: int) -> str | None:
             return None
         value.append(char)
         i += 1
-    decoded_key = "".join(value)
-    if not decoded_key or not all(char.isprintable() for char in decoded_key):
-        return None
-    return decoded_key
+    return "".join(value)
+
+
+def tsv_key(key: str) -> str:
+    """Losslessly keep control-bearing static keys inside one TSV field."""
+    escaped: list[str] = []
+    for char in key:
+        if char == "\\":
+            escaped.append("\\\\")
+        elif char == "\n":
+            escaped.append("\\n")
+        elif char == "\r":
+            escaped.append("\\r")
+        elif char == "\t":
+            escaped.append("\\t")
+        elif char.isprintable():
+            escaped.append(char)
+        else:
+            codepoint = ord(char)
+            if codepoint <= 0xFF:
+                escaped.append(f"\\x{codepoint:02x}")
+            elif codepoint <= 0xFFFF:
+                escaped.append(f"\\u{codepoint:04x}")
+            else:
+                escaped.append(f"\\U{codepoint:08x}")
+    return "".join(escaped)
 
 
 def top_level_keys(
@@ -510,6 +531,11 @@ def top_level_keys(
 ) -> list[tuple[str, int]]:
     keys: list[tuple[str, int]] = []
     stack: list[str] = []
+    # A colon closes the nearest top-level ternary before it can be a map-key
+    # separator. Nested delimiters have their own expression context and are
+    # skipped wholesale; Elvis and safe-navigation question marks are not
+    # ternary openers.
+    pending_ternaries = 0
     pairs = {"(": ")", "[": "]", "{": "}"}
     i = start
     while i < end:
@@ -530,10 +556,15 @@ def top_level_keys(
             while k < end and code[k].isspace():
                 k += 1
             if k < end and code[k] == ":":
-                key = static_quoted_key(source, i, literal_end)
-                if key is not None:
-                    keys.append((key, i))
-            i = literal_end
+                if pending_ternaries:
+                    pending_ternaries -= 1
+                else:
+                    key = static_quoted_key(source, i, literal_end)
+                    if key is not None:
+                        keys.append((key, i))
+                i = k + 1
+            else:
+                i = literal_end
         elif not stack and (c.isalpha() or c in "_$"):
             j = i + 1
             while j < end and (code[j].isalnum() or code[j] in "_$"):
@@ -542,8 +573,27 @@ def top_level_keys(
             while k < end and code[k].isspace():
                 k += 1
             if k < end and code[k] == ":":
-                keys.append((code[i:j], i))
-            i = j
+                if pending_ternaries:
+                    pending_ternaries -= 1
+                else:
+                    keys.append((code[i:j], i))
+                i = k + 1
+            else:
+                i = j
+        elif not stack and c == "?":
+            next_nonspace = i + 1
+            while next_nonspace < end and code[next_nonspace].isspace():
+                next_nonspace += 1
+            if i + 1 < end and code[i + 1] in ".[":
+                i += 2
+            elif next_nonspace < end and code[next_nonspace] == ":":
+                i = next_nonspace + 1
+            else:
+                pending_ternaries += 1
+                i += 1
+        elif not stack and c == ":" and pending_ternaries:
+            pending_ternaries -= 1
+            i += 1
         else:
             i += 1
     return keys
@@ -860,7 +910,7 @@ def main() -> int:
     for step in STEPS:
         for pair in sorted((p for p in counts if p[0] == step), key=lambda p: (-counts[p], p[1])):
             print(
-                f"{pair[0]}\t{pair[1]}\t{counts[pair]}\t{len(files[pair])}\t"
+                f"{pair[0]}\t{tsv_key(pair[1])}\t{counts[pair]}\t{len(files[pair])}\t"
                 + ",".join(samples[pair])
             )
     return 0

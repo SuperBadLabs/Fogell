@@ -538,6 +538,92 @@ echo('ordinary positional value', 'message': 'later named value')
             ],
         )
 
+    def test_ternary_colons_are_not_named_argument_colons(self) -> None:
+        source = r'''
+sh(script: flag ? 'a' : 'b', returnStatus: true)
+sh(flag ? returnStatus : false, script: 'after positional ternary')
+sh(script: outer ? inner ? 'x' : 'y' : other ? 'z' : 'w', label: 'nested')
+sh(script: maybe ?: 'fallback', label: 'elvis')
+sh(script: service?.value, label: 'safe navigation')
+sh(script: service?[index], label: 'safe index')
+sh(script: (flag ? 'parenthesized a' : 'parenthesized b'), label: 'paren')
+sh(script: helper(flag ? [returnStatus: true] : [label: 'nested map']),
+   returnStatus: true)
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script",)),
+                ("sh", ("script", "label")),
+                ("sh", ("script", "label")),
+                ("sh", ("script", "label")),
+                ("sh", ("script", "label")),
+                ("sh", ("script", "label")),
+                ("sh", ("script", "returnStatus")),
+            ],
+        )
+
+    def test_question_and_colon_text_does_not_change_ternary_pairing(self) -> None:
+        source = r'''
+sh(script: "literal ? 'fake': false", returnStatus: true)
+sh(script: "value ${flag ? echo(message: 'yes') : echo(message: 'no')}",
+   label: 'after interpolated ternary')
+sh(script: /literal ? 'fake': false/, label: 'after slashy text')
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script", "label")),
+                ("echo", ("message",)),
+                ("echo", ("message",)),
+                ("sh", ("script", "label")),
+            ],
+        )
+
+    def test_static_triple_quoted_keys_are_decoded(self) -> None:
+        source = (
+            "sh('''script''': 'make', \"\"\"returnStatus\"\"\": true)\n"
+            "stash(([ '''name''': 'x', \"\"\"includes\"\"\": '**' ]))\n"
+            "echo '''message''': 'hello'\n"
+            "sh('''line\nkey''': 1, '''tab\\tkey''': 2, '''na\\'me''': 3,\n"
+            "   '''before\\'''after''': 4,\n"
+            "   \"\"\"other\\u002dkey\"\"\": 4)\n"
+        )
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("stash", ("name", "includes")),
+                ("echo", ("message",)),
+                (
+                    "sh",
+                    ("line\nkey", "tab\tkey", "na'me", "before'''after", "other-key"),
+                ),
+            ],
+        )
+        self.assertEqual(MODULE.tsv_key("line\nkey"), r"line\nkey")
+        self.assertEqual(MODULE.tsv_key("tab\tkey"), r"tab\tkey")
+        self.assertEqual(MODULE.tsv_key(r"literal\nkey"), r"literal\\nkey")
+
+    def test_dynamic_triple_gstring_keys_and_triple_values_are_excluded(self) -> None:
+        source = (
+            "sh(\"\"\"prefix${echo(message: 'dynamic triple key')}suffix\"\"\": 'dynamic',\n"
+            "   \"\"\"prefix$branch\"\"\": 'dynamic unbraced',\n"
+            "   '''script''': \"\"\"literal returnStatus: false and retry(count: 2)\n"
+            "still a value\"\"\",\n"
+            "   \"\"\"label\"\"\": \"\"\"value ${unstash(name: 'inside triple value')}\"\"\")\n"
+        )
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "label")),
+                ("echo", ("message",)),
+                ("unstash", ("name",)),
+            ],
+        )
+
     def test_hosted_step_named_closure_parameters_are_not_calls(self) -> None:
         source = r'''
 def one = { echo -> helper(echo) }
