@@ -14,19 +14,24 @@ export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL
 export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
 export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
-out='evidence/20260818-fg-177-measurement'
+evidence_root='evidence/20260818-fg-177-measurement'
+: "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
+out="$FOGELL_EVIDENCE_OUT"
+rendered="$out/rendered-cases"
 mkdir -p "$out/raw-receipts"
-bash "$out/sync-checkout-scm-fixture.sh"
+FOGELL_RENDERED_CASES_DIR="$rendered" \
+  python3 "$evidence_root/render-probe-cases.py"
+bash "$evidence_root/sync-checkout-scm-fixture.sh"
 
 set +e
 dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
   "$out/raw-receipts" \
-  "$out/cases/fg177-probe-unknown-policy.Jenkinsfile" \
-  "$out/cases/fg177-probe-requiredness.Jenkinsfile" \
-  "$out/cases/fg177-probe-return-semantics.Jenkinsfile" \
-  "$out/cases/fg177-probe-checkout-scm.Jenkinsfile" \
+  "$rendered/fg177-probe-unknown-policy.Jenkinsfile" \
+  "$rendered/fg177-probe-requiredness.Jenkinsfile" \
+  "$rendered/fg177-probe-return-semantics.Jenkinsfile" \
+  "$rendered/fg177-probe-checkout-scm.Jenkinsfile" \
   2>&1 | tee "$out/probe-run.log"
 rc=${PIPESTATUS[0]}
 set -e

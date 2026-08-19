@@ -75,39 +75,66 @@ def blank_non_code(source: str) -> str:
         blank(i, end)
         return end
 
-    def scan_literal(i: int, delimiter: str) -> int:
+    def scan_literal(i: int, delimiter: str) -> tuple[int, bool]:
         """Blank a non-interpolating single-quoted form, retaining delimiters."""
         j = i + len(delimiter)
         while j < n:
             if source.startswith(delimiter, j):
-                return j + len(delimiter)
+                return j + len(delimiter), True
             if source[j] == "\\" and j + 1 < n:
                 blank(j, j + 2)
                 j += 2
             else:
                 blank(j, j + 1)
                 j += 1
-        return n
+        return n, False
 
-    def scan_interpolation(i: int) -> int:
+    def scan_interpolation(i: int) -> tuple[int, bool]:
         """Scan code after ``${`` through its balanced closing brace."""
         depth = 1
         while i < n:
             if source.startswith("//", i) or source.startswith("/*", i):
                 i = scan_comment(i)
             elif source.startswith("'''", i):
-                i = scan_literal(i, "'''")
+                snapshot = out.copy()
+                after, closed = scan_literal(i, "'''")
+                if closed:
+                    i = after
+                else:
+                    out[:] = snapshot
+                    i += 3
             elif source.startswith('\"\"\"', i):
-                i = scan_gstring(i, '\"\"\"')
+                snapshot = out.copy()
+                after, closed = scan_gstring(i, '\"\"\"')
+                if closed:
+                    i = after
+                else:
+                    out[:] = snapshot
+                    i += 3
             elif source.startswith("$/", i):
                 snapshot = out.copy()
-                i, closed = scan_dollar_slashy(i)
-                if not closed:
+                after, closed = scan_dollar_slashy(i)
+                if closed:
+                    i = after
+                else:
                     out[:] = snapshot
+                    i += 2
             elif source[i] == "'":
-                i = scan_literal(i, "'")
+                snapshot = out.copy()
+                after, closed = scan_literal(i, "'")
+                if closed:
+                    i = after
+                else:
+                    out[:] = snapshot
+                    i += 1
             elif source[i] == '\"':
-                i = scan_gstring(i, '\"')
+                snapshot = out.copy()
+                after, closed = scan_gstring(i, '\"')
+                if closed:
+                    i = after
+                else:
+                    out[:] = snapshot
+                    i += 1
             elif source[i] == "/" and not ends_expression(previous_significant(i)):
                 snapshot = out.copy()
                 after, closed = scan_slashy(i)
@@ -125,28 +152,35 @@ def blank_non_code(source: str) -> str:
                     out[i] = ")"
                 i += 1
                 if depth == 0:
-                    return i
+                    return i, True
             else:
                 i += 1
-        return i
+        return i, False
 
-    def scan_gstring(i: int, delimiter: str) -> int:
+    def scan_gstring(i: int, delimiter: str) -> tuple[int, bool]:
         """Blank GString text, recursively retaining executable placeholders."""
         j = i + len(delimiter)
         while j < n:
             if source.startswith(delimiter, j):
-                return j + len(delimiter)
+                return j + len(delimiter), True
             if source[j] == "\\" and j + 1 < n:
                 blank(j, j + 2)
                 j += 2
             elif source.startswith("${", j):
+                snapshot = out.copy()
                 blank(j, j + 2)
                 out[j + 1] = "("
-                j = scan_interpolation(j + 2)
+                after, closed = scan_interpolation(j + 2)
+                if closed:
+                    j = after
+                else:
+                    out[:] = snapshot
+                    blank(j, j + 2)
+                    j += 2
             else:
                 blank(j, j + 1)
                 j += 1
-        return n
+        return n, False
 
     def scan_slashy(i: int) -> tuple[int, bool]:
         """Blank a possibly multiline slashy GString through its unescaped close."""
@@ -156,9 +190,16 @@ def blank_non_code(source: str) -> str:
                 blank(j, j + 2)
                 j += 2
             elif source.startswith("${", j):
+                snapshot = out.copy()
                 blank(j, j + 2)
                 out[j + 1] = "("
-                j = scan_interpolation(j + 2)
+                after, closed = scan_interpolation(j + 2)
+                if closed:
+                    j = after
+                else:
+                    out[:] = snapshot
+                    blank(j, j + 2)
+                    j += 2
             elif source[j] == "/":
                 return j + 1, True
             else:
@@ -173,9 +214,16 @@ def blank_non_code(source: str) -> str:
             if source.startswith("/$", j):
                 return j + 2, True
             if source.startswith("${", j):
+                snapshot = out.copy()
                 blank(j, j + 2)
                 out[j + 1] = "("
-                j = scan_interpolation(j + 2)
+                after, closed = scan_interpolation(j + 2)
+                if closed:
+                    j = after
+                else:
+                    out[:] = snapshot
+                    blank(j, j + 2)
+                    j += 2
             elif source[j] == "$" and j + 1 < n and source[j + 1] in "$/":
                 blank(j, j + 2)
                 j += 2
@@ -189,9 +237,21 @@ def blank_non_code(source: str) -> str:
         if source.startswith("//", i) or source.startswith("/*", i):
             i = scan_comment(i)
         elif source.startswith("'''", i):
-            i = scan_literal(i, "'''")
+            snapshot = out.copy()
+            after, closed = scan_literal(i, "'''")
+            if closed:
+                i = after
+            else:
+                out[:] = snapshot
+                i += 3
         elif source.startswith('\"\"\"', i):
-            i = scan_gstring(i, '\"\"\"')
+            snapshot = out.copy()
+            after, closed = scan_gstring(i, '\"\"\"')
+            if closed:
+                i = after
+            else:
+                out[:] = snapshot
+                i += 3
         elif source.startswith("$/", i):
             snapshot = out.copy()
             after, closed = scan_dollar_slashy(i)
@@ -201,9 +261,21 @@ def blank_non_code(source: str) -> str:
                 out[:] = snapshot
                 i += 2
         elif source[i] == "'":
-            i = scan_literal(i, "'")
+            snapshot = out.copy()
+            after, closed = scan_literal(i, "'")
+            if closed:
+                i = after
+            else:
+                out[:] = snapshot
+                i += 1
         elif source[i] == '\"':
-            i = scan_gstring(i, '\"')
+            snapshot = out.copy()
+            after, closed = scan_gstring(i, '\"')
+            if closed:
+                i = after
+            else:
+                out[:] = snapshot
+                i += 1
         elif source[i] == "/" and not ends_expression(previous_significant(i)):
             snapshot = out.copy()
             after, closed = scan_slashy(i)

@@ -14,14 +14,17 @@ export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL
 export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
 export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
-out='evidence/20260818-fg-177-measurement'
+evidence_root='evidence/20260818-fg-177-measurement'
+: "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
+out="$FOGELL_EVIDENCE_OUT"
+mkdir -p "$out/raw-receipts"
 
 set +e
 dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
   "$out/raw-receipts" \
-  "$out/cases/fg177-probe-archive-schema.Jenkinsfile" \
+  "$evidence_root/cases/fg177-probe-archive-schema.Jenkinsfile" \
   2>&1 | tee "$out/archive-schema-run.log"
 rc=${PIPESTATUS[0]}
 set -e

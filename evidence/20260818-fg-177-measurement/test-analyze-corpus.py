@@ -146,6 +146,40 @@ def rendered = """escaped \${unstable(message: 'fake')}; ${
             ],
         )
 
+    def test_unclosed_literal_candidates_inside_interpolation_recover(self) -> None:
+        candidates = {
+            "dollar-slashy": "$/ never closes",
+            "slashy": "/ never closes",
+            "triple-quote": '\"\"\" never closes',
+        }
+        for label, candidate in candidates.items():
+            with self.subTest(label=label):
+                source = f'''\
+def rendered = "outer ${{
+    def broken = {candidate}
+    echo(message: '{label}-recovered', fogellProbeUnknown: true)
+}}"
+echo(message: 'after', fogellProbeUnknown: true)
+'''
+                observed = MODULE.calls(source)
+                self.assertEqual(
+                    [
+                        (step, tuple(key for key, _ in keys))
+                        for step, keys, _ in observed
+                    ],
+                    [
+                        ("echo", ("message", "fogellProbeUnknown")),
+                        ("echo", ("message", "fogellProbeUnknown")),
+                    ],
+                )
+                self.assertEqual(
+                    [MODULE.line_number(source, offset) for _, _, offset in observed],
+                    [3, 5],
+                )
+                self.assertEqual(
+                    MODULE.blank_non_code(source).count("\n"), source.count("\n")
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

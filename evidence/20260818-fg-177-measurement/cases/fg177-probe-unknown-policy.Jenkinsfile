@@ -54,7 +54,7 @@ pipeline {
 
                     try {
                         dir('fg177-unknown-git') {
-                            git(url: 'git://100.105.179.51/repo.git', branch: 'main', fogellProbeUnknown: true)
+                            git(url: @@FOGELL_SCM_URL@@, branch: 'main', fogellProbeUnknown: true)
                             sh 'printf after > ../fg177-unknown-git-after.txt'
                         }
                         echo 'FG177 UNKNOWN git CONTINUED'
