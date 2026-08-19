@@ -676,6 +676,82 @@ steps.timeout time: 1, unit: 'SECONDS'
             ],
         )
 
+    def test_bare_step_identifiers_in_expressions_are_not_command_calls(self) -> None:
+        source = r'''
+if (timeout > limit) helper()
+def binary = sh + echo - retry * junit / checkout
+def unary = -echo + +retry + (~junit)
+def negated = !unstable
+stash = value
+unstash += value
+timeout++
+--retry
+def chosen = flag ? sh : echo
+def range = sh..echo
+def property = stash.value
+def safeProperty = unstash?.value
+def index = archiveArtifacts[0]
+def cast = sh as String
+def membership = junit in values
+def typeCheck = checkout instanceof Closure
+def pointer = this.&sh
+def reference = this::echo
+def qualifiedBinary = this.sh + steps.echo
+def newlineBare = sh
++ 1
+echo
+'later statement'
+echo
+variable
+
+echo 'literal'
+echo variable
+sh script: 'make', returnStatus: true
+sh([script: 'make', returnStdout: true])
+retry { helper() }
+echo "value ${variable}"
+echo(/parenthesized slashy/)
+this.sh script: 'qualified', returnStatus: true
+steps.echo message: 'receiver'
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("echo", ()),
+                ("echo", ()),
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script", "returnStdout")),
+                ("retry", ()),
+                ("echo", ()),
+                ("echo", ()),
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message",)),
+            ],
+        )
+
+    def test_static_spread_map_keys_are_visible_but_dynamic_spreads_are_opaque(self) -> None:
+        source = r'''
+sh(*:[script: 'make', returnStatus: true])
+sh(*:['script': 'make', "returnStdout": true])
+sh(*:[script: 'make'], *:[label: 'build'])
+sh(*:dynamicOptions)
+sh(*:dynamicOptions, returnStatus: true)
+sh(*:[*:[script: 'make'], returnStatus: true])
+sh(*:[script: helper(*:[returnStatus: true])], label: 'outer')
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script", "returnStdout")),
+                ("sh", ("script", "label")),
+                ("sh", ()),
+                ("sh", ("returnStatus",)),
+                ("sh", ("script", "returnStatus")),
+                ("sh", ("script", "label")),
+            ],
+        )
+
     def test_known_jenkins_dsl_receivers_are_counted_once(self) -> None:
         source = r'''
 this.sh(script: 'parenthesized', returnStatus: true)

@@ -28,15 +28,14 @@ evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_JENKINS_ORACLE_DIR:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
 run_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-oracle_verification=$(
-  FOGELL_JENKINS_URL="$requested_jenkins_url" \
-  FOGELL_JENKINS_CORE="$requested_jenkins_core" \
-  FOGELL_JENKINS_HOST="$requested_jenkins_host" \
-  FOGELL_JENKINS_CONTAINER="$requested_jenkins_container" \
-    bash "$evidence_root/jenkins-oracle.sh" verify "$FOGELL_JENKINS_ORACLE_DIR"
+oracle_verification_before=$(
+  bash "$evidence_root/verify-run-oracle.sh" \
+    "$requested_jenkins_url" "$requested_jenkins_core" \
+    "$requested_jenkins_host" "$requested_jenkins_container" \
+    "$FOGELL_JENKINS_ORACLE_DIR"
 )
-oracle_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-printf '%s\n' "$oracle_verification"
+oracle_verified_before_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+printf '%s\n' "$oracle_verification_before"
 publication_parent="$out/runs"
 publication_target="$publication_parent/probes"
 mkdir -p "$publication_parent"
@@ -61,6 +60,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 stage=$(mktemp -d "$publication_parent/.probes-stage.XXXXXX")
+printf '%s\n' "$oracle_verification_before" > "$stage/oracle-before-verification.txt"
 rendered="$stage/rendered-cases"
 mkdir -p "$stage/raw-receipts"
 FOGELL_RENDERED_CASES_DIR="$rendered" \
@@ -93,12 +93,30 @@ if [[ $rc -ne 0 && $rc -ne 1 ]]; then
   exit "$rc"
 fi
 
+oracle_verification_after=$(
+  bash "$evidence_root/verify-run-oracle.sh" \
+    "$requested_jenkins_url" "$requested_jenkins_core" \
+    "$requested_jenkins_host" "$requested_jenkins_container" \
+    "$FOGELL_JENKINS_ORACLE_DIR"
+)
+oracle_verified_after_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+printf '%s\n' "$oracle_verification_after"
+printf '%s\n' "$oracle_verification_after" > "$stage/oracle-after-verification.txt"
+if ! cmp -s "$stage/oracle-before-verification.txt" \
+    "$stage/oracle-after-verification.txt"; then
+  echo 'ERROR: Jenkins oracle identity changed during probe CLI; prior evidence retained' >&2
+  exit 1
+fi
+
 printf 'probe-cli-exit=%s\n' "$rc" | tee "$stage/probe-exit.txt"
 run_finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 bash "$evidence_root/write-run-manifest.sh" \
   "$stage/probe-run-manifest.tsv" probes \
-  "$run_started_at" "$oracle_verified_at" "$run_finished_at" \
+  "$run_started_at" "$oracle_verified_before_at" \
+  "$oracle_verified_after_at" "$run_finished_at" \
   "$rc" probe-cli-exit "$stage/probe-run.log" "$stage/probe-exit.txt" \
-  "$requested_jenkins_core" "$FOGELL_JENKINS_ORACLE_DIR" "${cases[@]}"
+  "$requested_jenkins_core" "$FOGELL_JENKINS_ORACLE_DIR" \
+  "$stage/oracle-before-verification.txt" \
+  "$stage/oracle-after-verification.txt" "${cases[@]}"
 python3 "$evidence_root/publish-run-bundle.py" "$stage" "$publication_target"
 exit "$rc"

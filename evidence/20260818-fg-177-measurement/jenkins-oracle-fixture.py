@@ -25,21 +25,39 @@ PLUGINS = [
     {"shortName": "alpha", "version": "1.2", "active": True, "enabled": True},
     {"shortName": "beta", "version": "3.4", "active": False, "enabled": True},
 ]
+STATE_FILE = os.environ.get("FOGELL_FIXTURE_STATE_FILE")
+
+
+def drift_mode() -> str:
+    if STATE_FILE is None:
+        return ""
+    try:
+        return pathlib.Path(STATE_FILE).read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        return ""
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        mode = drift_mode()
+        if mode == "transport":
+            self.send_response(503)
+            self.end_headers()
+            return
         path = urllib.parse.urlparse(self.path).path
         if path == "/":
             body = b"fixture"
         elif path == "/pluginManager/api/json":
-            body = json.dumps({"plugins": PLUGINS}).encode()
+            plugins = PLUGINS
+            if mode == "plugin":
+                plugins = [dict(PLUGINS[0]), {**PLUGINS[1], "version": "9.9"}]
+            body = json.dumps({"plugins": plugins}).encode()
         else:
             self.send_response(404)
             self.end_headers()
             return
         self.send_response(200)
-        self.send_header("x-jEnKiNs", CORE)
+        self.send_header("x-jEnKiNs", "2.568.2" if mode == "core" else CORE)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(body)

@@ -1,0 +1,38 @@
+Groovy Version: 2.4.21 JVM: 21.0.11 Vendor: Eclipse Adoptium OS: Linux
+if-comparison	OK	java.lang.Integer	2
+binary-plus	OK	java.lang.Integer	5
+binary-minus	OK	java.lang.Integer	3
+binary-multiply	OK	java.lang.Integer	8
+binary-division	OK	java.math.BigDecimal	2
+unary-minus	OK	java.lang.Integer	-4
+unary-plus	OK	java.lang.Integer	4
+unary-not	OK	java.lang.Boolean	true
+unary-bitwise	OK	java.lang.Integer	-5
+simple-assignment	OK	java.lang.Integer	3
+compound-assignment	OK	java.lang.Integer	4
+post-increment	OK	java.lang.Integer	1
+pre-decrement	OK	java.lang.Integer	1
+ternary-values	OK	java.lang.Integer	1
+range-values	OK	java.util.ArrayList	[1, 2, 3]
+property	OK	java.lang.Integer	7
+index	OK	java.lang.Integer	8
+cast	OK	java.lang.String	4
+method-pointer	OK	org.codehaus.groovy.runtime.MethodClosure	org.codehaus.groovy.runtime.MethodClosure@781f10f2
+bare-identifier	OK	java.util.ArrayList	[[], Script1$_run_closure1]
+newline-then-operator	OK	java.util.ArrayList	[[], Script1$_run_closure1]
+command-literal	OK	java.lang.String	literal
+command-variable	OK	java.lang.String	variable
+command-map	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+command-list-map	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+command-closure	OK	java.lang.Integer	42
+command-gstring	OK	org.codehaus.groovy.runtime.GStringImpl	gstring
+head-newline-before-literal	OK	java.util.ArrayList	[]
+head-newline-before-variable	OK	java.util.ArrayList	[]
+parenthesized-slashy	OK	java.lang.String	slashy
+spread-static	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+spread-static-quoted	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+spread-multiple-static	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+spread-dynamic	OK	java.util.LinkedHashMap	[script:make]
+spread-dynamic-visible	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+spread-nested-static	OK	java.util.LinkedHashMap	[script:make, returnStatus:true]
+spread-nested-value	OK	java.util.LinkedHashMap	[script:[returnStatus:true], label:outer]

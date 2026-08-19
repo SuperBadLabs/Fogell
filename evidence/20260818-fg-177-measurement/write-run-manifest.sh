@@ -3,23 +3,26 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-if [[ $# -lt 12 ]]; then
-  echo "usage: $0 MANIFEST RUN STARTED VERIFIED FINISHED RC EXIT_KEY LOG EXIT_FILE REQUESTED_CORE METADATA CASE..." >&2
+if [[ $# -lt 15 ]]; then
+  echo "usage: $0 MANIFEST RUN STARTED VERIFIED_BEFORE VERIFIED_AFTER FINISHED RC EXIT_KEY LOG EXIT_FILE REQUESTED_CORE METADATA BEFORE_RECEIPT AFTER_RECEIPT CASE..." >&2
   exit 2
 fi
 
 manifest=$1
 run_name=$2
 started_at=$3
-verified_at=$4
-finished_at=$5
-cli_rc=$6
-exit_key=$7
-log=$8
-exit_file=$9
-requested_core=${10}
-metadata=${11}
-shift 11
+verified_before_at=$4
+verified_after_at=$5
+finished_at=$6
+cli_rc=$7
+exit_key=$8
+log=$9
+exit_file=${10}
+requested_core=${11}
+metadata=${12}
+verification_before=${13}
+verification_after=${14}
+shift 14
 cases=("$@")
 
 fail() {
@@ -28,13 +31,15 @@ fail() {
 }
 
 timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-for timestamp in "$started_at" "$verified_at" "$finished_at"; do
+for timestamp in "$started_at" "$verified_before_at" "$verified_after_at" "$finished_at"; do
   [[ "$timestamp" =~ $timestamp_pattern ]] || fail "non-canonical UTC timestamp: $timestamp"
 done
-[[ "$started_at" < "$verified_at" || "$started_at" == "$verified_at" ]] ||
+[[ "$started_at" < "$verified_before_at" || "$started_at" == "$verified_before_at" ]] ||
   fail 'verification timestamp precedes run start'
-[[ "$verified_at" < "$finished_at" || "$verified_at" == "$finished_at" ]] ||
-  fail 'finish timestamp precedes oracle verification'
+[[ "$verified_before_at" < "$verified_after_at" || "$verified_before_at" == "$verified_after_at" ]] ||
+  fail 'post-CLI verification timestamp precedes pre-CLI verification'
+[[ "$verified_after_at" < "$finished_at" || "$verified_after_at" == "$finished_at" ]] ||
+  fail 'finish timestamp precedes post-CLI oracle verification'
 [[ "$cli_rc" =~ ^[0-9]+$ && "$cli_rc" -le 255 ]] || fail "invalid CLI status: $cli_rc"
 [[ "$run_name" =~ ^[a-z0-9-]+$ ]] || fail "invalid run name: $run_name"
 [[ "$exit_key" =~ ^[a-z0-9-]+$ ]] || fail "invalid exit key: $exit_key"
@@ -44,6 +49,12 @@ done
 [[ -f "$log" ]] || fail "missing run log: $log"
 [[ -f "$exit_file" ]] || fail "missing exit marker: $exit_file"
 [[ $(<"$exit_file") == "$exit_key=$cli_rc" ]] || fail 'exit marker does not match CLI status'
+for verification in "$verification_before" "$verification_after"; do
+  [[ -f "$verification" && ! -L "$verification" && -s "$verification" ]] ||
+    fail "oracle verification receipt is missing, empty, or not regular: $verification"
+done
+cmp -s "$verification_before" "$verification_after" ||
+  fail 'pre/post oracle verification identities differ'
 
 core_file="$metadata/jenkins-core.txt"
 plugins_file="$metadata/jenkins-plugins.tsv"
@@ -108,10 +119,11 @@ for receipt_name in "${expected_receipts[@]}"; do
 done
 
 {
-  printf 'format\tfogell-evidence-run-v1\n'
+  printf 'format\tfogell-evidence-run-v2\n'
   printf 'run\t%s\n' "$run_name"
   printf 'started-at-utc\t%s\n' "$started_at"
-  printf 'oracle-verified-at-utc\t%s\n' "$verified_at"
+  printf 'oracle-verified-before-at-utc\t%s\n' "$verified_before_at"
+  printf 'oracle-verified-after-at-utc\t%s\n' "$verified_after_at"
   printf 'finished-at-utc\t%s\n' "$finished_at"
   printf 'cli-exit\t%s\n' "$cli_rc"
   printf 'jenkins-core\t%s\n' "$requested_core"
@@ -122,6 +134,10 @@ done
   printf 'controller-image-id\t%s\n' "$image_id"
   printf 'controller-image-digest\t%s\n' "$image_digest"
   printf 'image-metadata-sha256\t%s\n' "$(digest "$image_file")"
+  printf 'oracle-before-verification\t%s\t%s\n' \
+    "$(basename "$verification_before")" "$(digest "$verification_before")"
+  printf 'oracle-after-verification\t%s\t%s\n' \
+    "$(basename "$verification_after")" "$(digest "$verification_after")"
   printf 'run-log\t%s\t%s\n' "$(basename "$log")" "$(digest "$log")"
   printf 'exit-marker\t%s\t%s\n' "$(basename "$exit_file")" "$(digest "$exit_file")"
   printf 'case-count\t%s\n' "${#cases[@]}"

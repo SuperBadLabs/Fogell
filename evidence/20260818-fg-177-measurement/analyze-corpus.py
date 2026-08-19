@@ -413,6 +413,32 @@ def command_end(code: str, start: int) -> int:
     return i
 
 
+def is_command_argument_start(code: str, cursor: int) -> bool:
+    """Recognise the first token of a same-line Groovy command argument.
+
+    A Jenkins vocabulary identifier is also legal ordinary expression syntax.
+    Operators, property/index access, casts and a following statement line use
+    the identifier as a value; they do not invoke it.  Parenthesised calls are
+    handled separately by ``calls`` before this command-expression check.
+    """
+    if cursor >= len(code) or code[cursor] == "\n":
+        return False
+    if code.startswith(("?.", "*.", ".&", "::", "++", "--", ".."), cursor):
+        return False
+    if code[cursor] in ".?&|^~!+-*/%<>=,)]};:[":
+        return False
+    if code[cursor] == "{":
+        return True
+    if code[cursor] in "'\"" or code[cursor].isdigit():
+        return True
+    if code[cursor].isalpha() or code[cursor] in "_$":
+        end = cursor + 1
+        while end < len(code) and (code[end].isalnum() or code[end] in "_$"):
+            end += 1
+        return code[cursor:end] not in {"as", "in", "instanceof"}
+    return False
+
+
 def quoted_literal_end(code: str, source: str, start: int, end: int) -> int | None:
     """Find a retained quote's close without confusing nested interpolation code."""
     delimiter = source[start]
@@ -540,7 +566,24 @@ def top_level_keys(
     i = start
     while i < end:
         c = code[i]
-        if c in pairs:
+        if not stack and c == "*":
+            colon = i + 1
+            while colon < end and code[colon].isspace():
+                colon += 1
+            if colon < end and code[colon] == ":":
+                value = colon + 1
+                while value < end and code[value].isspace():
+                    value += 1
+                # Only a literal map makes its keys statically knowable.  A
+                # dynamic spread (`*: opts`) is valid Groovy but remains opaque.
+                if value < end and code[value] == "[":
+                    close = matching_paren(code, value)
+                    if close is not None and close < end:
+                        keys.extend(top_level_keys(code, source, value + 1, close))
+                        i = close + 1
+                        continue
+            i += 1
+        elif c in pairs:
             stack.append(pairs[c])
             i += 1
         elif c in ")]}":
@@ -746,6 +789,8 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
                 continue
             arg_start, arg_end = cursor + 1, end
         else:
+            if not is_command_argument_start(code, cursor):
+                continue
             arg_start, arg_end = cursor, command_end(code, cursor)
         named = top_level_keys(code, source, arg_start, arg_end)
         # Jenkins' DSL treats a sole Groovy map argument as the named-argument

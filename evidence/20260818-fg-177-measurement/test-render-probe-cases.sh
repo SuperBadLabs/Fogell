@@ -21,9 +21,11 @@ seed="$fixture_tmp/seed"
 rendered="$fixture_tmp/rendered"
 oracle_metadata="$fixture_tmp/oracle-metadata"
 oracle_ready="$fixture_tmp/oracle-url"
+oracle_state="$fixture_tmp/oracle-state"
 mkdir -p "$fixture_tmp/bin"
 python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
-python3 "$evidence/jenkins-oracle-fixture.py" serve "$oracle_ready" &
+FOGELL_FIXTURE_STATE_FILE="$oracle_state" \
+  python3 "$evidence/jenkins-oracle-fixture.py" serve "$oracle_ready" &
 server_pid=$!
 for _ in {1..100}; do
   [[ -s "$oracle_ready" ]] && break
@@ -38,6 +40,11 @@ cat > "$fixture_tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
 printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
+if [[ -n ${FOGELL_STUB_ORACLE_STATE:-} && -f "$FOGELL_STUB_ORACLE_STATE" &&
+      $(<"$FOGELL_STUB_ORACLE_STATE") == image ]]; then
+  printf '%s\n' 'fixture/jenkins:2.568.1|3333333333333333333333333333333333333333333333333333333333333333|sha256:4444444444444444444444444444444444444444444444444444444444444444'
+  exit 0
+fi
 printf '%s\n' 'fixture/jenkins:2.568.1|1111111111111111111111111111111111111111111111111111111111111111|sha256:2222222222222222222222222222222222222222222222222222222222222222'
 EOF
 chmod +x "$fixture_tmp/bin/ssh"
@@ -215,6 +222,9 @@ case "$1" in
       exit 45
     fi
     printf 'probe CLI complete\n'
+    if [[ -n ${FOGELL_STUB_ORACLE_DRIFT:-} ]]; then
+      printf '%s\n' "$FOGELL_STUB_ORACLE_DRIFT" > "$FOGELL_STUB_ORACLE_STATE"
+    fi
     exit 1
     ;;
   *)
@@ -244,6 +254,7 @@ FOGELL_SCM_URL="$scm_url" \
 FOGELL_STUB_ARGS="$args" \
 FOGELL_STUB_CALLS="$calls" \
 FOGELL_STUB_ORDER="$order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
   bash "$evidence/run-probes.sh"
 rc=$?
 set -e
@@ -268,8 +279,8 @@ if [[ $(wc -l < "$calls") -ne 2 ]]; then
     "$(tr '\n' '|' < "$calls")" >&2
   exit 1
 fi
-if [[ $(<"$order") != $'oracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run' ]]; then
-  printf 'ERROR: verifier did not finish before build/run; order=%s\n' \
+if [[ $(<"$order") != $'oracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run\noracle core 2.568.1\noracle image inspect' ]]; then
+  printf 'ERROR: verifier did not bracket build/run; order=%s\n' \
     "$(tr '\n' '|' < "$order")" >&2
   exit 1
 fi
@@ -297,6 +308,13 @@ cmp "$evidence/cases/fg177-probe-checkout-scm.Jenkinsfile" \
   "$published/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"
 grep -Fx $'cli-exit\t1' "$published/probe-run-manifest.tsv"
 grep -Fx $'jenkins-core\t2.568.1' "$published/probe-run-manifest.tsv"
+grep -Fx $'format\tfogell-evidence-run-v2' "$published/probe-run-manifest.tsv"
+grep -F $'oracle-before-verification\toracle-before-verification.txt\t' \
+  "$published/probe-run-manifest.tsv"
+grep -F $'oracle-after-verification\toracle-after-verification.txt\t' \
+  "$published/probe-run-manifest.tsv"
+cmp "$published/oracle-before-verification.txt" \
+  "$published/oracle-after-verification.txt"
 grep -Fx $'case-count\t4' "$published/probe-run-manifest.tsv"
 if find "$published/raw-receipts" -mindepth 1 -maxdepth 1 -type f \
     -printf '%f\n' | sort | diff -u - <(printf '%s\n' \
@@ -322,6 +340,31 @@ bundle_hash() {
 }
 
 published_hash=$(bundle_hash "$published")
+for drift in core plugin image transport; do
+  rm -f "$oracle_state"
+  set +e
+  PATH="$fixture_tmp/bin:$PATH" \
+  FOGELL_EVIDENCE_OUT="$runner_out" \
+  FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+  FOGELL_JENKINS_URL="$jenkins_url" \
+  FOGELL_JENKINS_HOST=fixture-host \
+  FOGELL_JENKINS_CONTAINER=fixture-controller \
+  FOGELL_SCM_URL="$scm_url" \
+  FOGELL_STUB_ARGS="$fixture_tmp/drift-$drift-args" \
+  FOGELL_STUB_CALLS="$fixture_tmp/drift-$drift-calls" \
+  FOGELL_STUB_ORDER="$fixture_tmp/drift-$drift-order" \
+  FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+  FOGELL_STUB_ORACLE_DRIFT="$drift" \
+    bash "$evidence/run-probes.sh" > "$fixture_tmp/drift-$drift.log" 2>&1
+  drift_rc=$?
+  set -e
+  if [[ $drift_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]]; then
+    printf 'ERROR: probe post-CLI %s drift rc=%s or prior bundle changed\n' \
+      "$drift" "$drift_rc" >&2
+    exit 1
+  fi
+done
+rm -f "$oracle_state"
 for mode in partial zero extra failure; do
   mode_calls="$fixture_tmp/$mode-calls"
   mode_order="$fixture_tmp/$mode-order"
