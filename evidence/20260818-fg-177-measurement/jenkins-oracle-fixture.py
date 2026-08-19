@@ -46,19 +46,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlparse(self.path).path
         if path == "/":
-            body = b"fixture"
+            body = b"fixture\n"
+            content_type = "text/plain; charset=utf-8"
         elif path == "/pluginManager/api/json":
             plugins = PLUGINS
             if mode == "plugin":
                 plugins = [dict(PLUGINS[0]), {**PLUGINS[1], "version": "9.9"}]
             body = json.dumps({"plugins": plugins}).encode()
+            content_type = "application/json"
         else:
             self.send_response(404)
             self.end_headers()
             return
         self.send_response(200)
         self.send_header("x-jEnKiNs", "2.568.2" if mode == "core" else CORE)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.end_headers()
         self.wfile.write(body)
 

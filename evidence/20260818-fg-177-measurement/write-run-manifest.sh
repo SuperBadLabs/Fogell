@@ -206,6 +206,98 @@ for receipt_name in "${expected_receipts[@]}"; do
     fail "receipt is missing, empty, or not a regular file: $receipt"
 done
 
+scm_pin_digest=''
+scm_execution_digest=''
+if [[ "$run_name" == probes ]]; then
+  scm_pin="$manifest_dir/scm-pin.tsv"
+  scm_execution="$manifest_dir/scm-execution.tsv"
+  require_regular_nonempty 'SCM pin' "$scm_pin"
+  require_regular_nonempty 'SCM execution' "$scm_execution"
+  pin_keys=(
+    format source-branch source-revision scm-pinned-branch
+    scm-pinned-revision scm-tree jenkinsfile-blob jenkinsfile-sha256
+    git-pinned-branch git-pinned-revision git-tree
+  )
+  mapfile -t pin_lines < "$scm_pin"
+  [[ ${#pin_lines[@]} -eq ${#pin_keys[@]} ]] || fail 'SCM pin has the wrong line count'
+  declare -A pin_values=()
+  for index in "${!pin_keys[@]}"; do
+    IFS=$'\t' read -r key value extra <<< "${pin_lines[$index]}"
+    [[ "$key" == "${pin_keys[$index]}" && -n "$value" && -z "$extra" ]] ||
+      fail "SCM pin is noncanonical at line $((index + 1))"
+    pin_values[$key]=$value
+  done
+  [[ "${pin_values[format]}" == fogell-scm-pin-v1 ]] || fail 'unsupported SCM pin format'
+  [[ "${pin_values[source-branch]}" == case/fg177-probe-checkout-scm ]] ||
+    fail 'SCM pin source branch is not the reserved evidence branch'
+  sha1_pattern='^[0-9a-f]{40}$'
+  sha256_pattern='^[0-9a-f]{64}$'
+  for key in source-revision scm-pinned-revision scm-tree jenkinsfile-blob git-pinned-revision git-tree; do
+    [[ "${pin_values[$key]}" =~ $sha1_pattern ]] || fail "SCM pin $key is malformed"
+  done
+  [[ "${pin_values[jenkinsfile-sha256]}" =~ $sha256_pattern ]] ||
+    fail 'SCM pin Jenkinsfile SHA-256 is malformed'
+  [[ "${pin_values[source-revision]}" == "${pin_values[scm-pinned-revision]}" &&
+     "${pin_values[scm-pinned-branch]}" == "fogell-pins/${pin_values[scm-pinned-revision]}" &&
+     "${pin_values[git-pinned-branch]}" == "fogell-pins/${pin_values[git-pinned-revision]}" ]] ||
+    fail 'SCM pin branches are not content-addressed'
+  scm_expected="${pin_values[scm-pinned-revision]}:${pin_values[scm-tree]}:${pin_values[jenkinsfile-blob]}"
+  git_expected="${pin_values[git-pinned-revision]}:${pin_values[git-tree]}"
+  checkout_receipt="$receipt_dir/fg177-probe-checkout-scm.receipt.txt"
+  unknown_receipt="$receipt_dir/fg177-probe-unknown-policy.receipt.txt"
+  return_receipt="$receipt_dir/fg177-probe-return-semantics.receipt.txt"
+  checkout_case=''
+  for case_file in "${cases[@]}"; do
+    if [[ $(basename "$case_file") == fg177-probe-checkout-scm.Jenkinsfile ]]; then
+      checkout_case=$case_file
+      break
+    fi
+  done
+  [[ -n "$checkout_case" && $(sed -n '1p' "$checkout_case") == '//// SCM JOB ////' ]] ||
+    fail 'probe run lacks the canonical SCM-marker case'
+  checkout_body_sha256=$(tail -n +2 "$checkout_case" | sha256sum | awk '{ print $1 }')
+  checkout_body_blob=$(tail -n +2 "$checkout_case" | git hash-object --stdin)
+  [[ "$checkout_body_sha256" == "${pin_values[jenkinsfile-sha256]}" &&
+     "$checkout_body_blob" == "${pin_values[jenkinsfile-blob]}" ]] ||
+    fail 'SCM pin Jenkinsfile identity differs from the rendered checkout case body'
+  mapfile -t execution_lines < "$scm_execution"
+  [[ ${#execution_lines[@]} -eq 10 &&
+     "${execution_lines[0]}" == $'format\tfogell-scm-execution-v2' ]] ||
+    fail 'SCM execution report is noncanonical'
+  expected_execution_lines=(
+    $'format\tfogell-scm-execution-v2'
+    "case"$'\t'"checkout"$'\t'"scm"$'\t'"$scm_expected"$'\t'"$(digest "$checkout_receipt")"
+    "attested"$'\t'"checkout"$'\t'"jenkins"$'\t'"executed"$'\t'"$scm_expected"
+    "attested"$'\t'"checkout"$'\t'"fogell"$'\t'"preflight"$'\t'"$scm_expected"
+    "case"$'\t'"unknown-policy-git"$'\t'"git"$'\t'"$git_expected"$'\t'"$(digest "$unknown_receipt")"
+    "attested"$'\t'"unknown-policy-git"$'\t'"jenkins"$'\t'"executed"$'\t'"$git_expected"
+    ""
+    "case"$'\t'"return-semantics-git"$'\t'"git"$'\t'"$git_expected"$'\t'"$(digest "$return_receipt")"
+    "attested"$'\t'"return-semantics-git"$'\t'"jenkins"$'\t'"executed"$'\t'"$git_expected"
+    ""
+  )
+  for index in "${!expected_execution_lines[@]}"; do
+    if [[ -n "${expected_execution_lines[$index]}" ]]; then
+      [[ "${execution_lines[$index]}" == "${expected_execution_lines[$index]}" ]] ||
+        fail "SCM execution report differs at line $((index + 1))"
+    else
+      IFS=$'\t' read -r kind case_name engine state identity extra <<< "${execution_lines[$index]}"
+      expected_case=unknown-policy-git
+      [[ "$index" -ne 9 ]] || expected_case=return-semantics-git
+      [[ "$kind" == attested && "$engine" == fogell &&
+         "$case_name" == "$expected_case" &&
+         ( "$state" == executed || "$state" == not-executed ) &&
+         "$identity" == "$git_expected" && -z "$extra" ]] ||
+        fail "SCM execution report differs at line $((index + 1))"
+    fi
+  done
+  scm_pin_digest=$(digest "$scm_pin")
+  scm_execution_digest=$(digest "$scm_execution")
+elif [[ -e "$manifest_dir/scm-pin.tsv" || -L "$manifest_dir/scm-pin.tsv" ||
+        -e "$manifest_dir/scm-execution.tsv" || -L "$manifest_dir/scm-execution.tsv" ]]; then
+  fail 'non-probe run contains unexpected SCM binding files'
+fi
+
 verification_before_digest=$(digest "$verification_before")
 verification_after_digest=$(digest "$verification_after")
 [[ "$verification_before_digest" == "$verification_after_digest" ]] ||
@@ -246,6 +338,15 @@ done
   printf 'run-log\t%s\t%s\n' "$(basename "$log")" "$log_digest"
   printf 'exit-marker\t%s\t%s\n' "$(basename "$exit_file")" "$exit_digest"
   printf 'case-count\t%s\n' "${#cases[@]}"
+  if [[ "$run_name" == probes ]]; then
+    printf 'scm-pin\tscm-pin.tsv\t%s\n' "$scm_pin_digest"
+    printf 'scm-execution\tscm-execution.tsv\t%s\n' "$scm_execution_digest"
+    printf 'scm-pinned-revision\t%s\n' "${pin_values[scm-pinned-revision]}"
+    printf 'scm-tree\t%s\n' "${pin_values[scm-tree]}"
+    printf 'jenkinsfile-blob\t%s\n' "${pin_values[jenkinsfile-blob]}"
+    printf 'git-pinned-revision\t%s\n' "${pin_values[git-pinned-revision]}"
+    printf 'git-tree\t%s\n' "${pin_values[git-tree]}"
+  fi
   ordinal=0
   for case_file in "${cases[@]}"; do
     case_name=$(basename "$case_file")
@@ -284,6 +385,13 @@ require_regular_nonempty 'oracle verification receipt' "$verification_after"
    "$(digest "$log")" == "$log_digest" &&
    "$(digest "$exit_file")" == "$exit_digest" ]] ||
   fail 'a receipt, log, or exit marker changed while the manifest was written'
+if [[ "$run_name" == probes ]]; then
+  require_regular_nonempty 'SCM pin' "$scm_pin"
+  require_regular_nonempty 'SCM execution' "$scm_execution"
+  [[ "$(digest "$scm_pin")" == "$scm_pin_digest" &&
+     "$(digest "$scm_execution")" == "$scm_execution_digest" ]] ||
+    fail 'SCM pin or execution report changed while the manifest was written'
+fi
 mapfile -d '' -t final_receipts < <(
   find "$receipt_dir" -mindepth 1 -maxdepth 1 -printf '%f\0' 2>/dev/null | sort -z
 )

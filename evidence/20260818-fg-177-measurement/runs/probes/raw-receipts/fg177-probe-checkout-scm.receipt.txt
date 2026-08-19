@@ -1,7 +1,7 @@
 # Differential receipt — fg177-probe-checkout-scm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         cab38b4487ae0ff330fc4ba591f3c6076c4e1fbf765f407ce1a311d1939157c9
+seal:         277ae6512e40351941e6cc6b2e7916f428f863dbe9a567a4eaeb7d064277ec04
 case-digest:  31bd34928f05f06f3524bf33fc5e3b61b5ad2cacd34eb9925da19415fee128c4
 sealed-output: sequence
 
@@ -101,10 +101,10 @@ VERDICT: DIVERGED (3)
     | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
     | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
     | Avoid second fetch
-    | > git rev-parse refs/remotes/origin/case/fg177-probe-checkout-scm^{commit} # timeout=10
-    | Checking out Revision 5fc83ade2c3c42fe8eaf68de8d08d360006d3c22 (refs/remotes/origin/case/fg177-probe-checkout-scm)
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
     | > git config core.sparsecheckout # timeout=10
-    | > git checkout -f 5fc83ade2c3c42fe8eaf68de8d08d360006d3c22 # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
     | Commit message: "sync: fg177-probe-checkout-scm"
     | First time build. Skipping changelog.
     | + printf after
@@ -119,15 +119,15 @@ VERDICT: DIVERGED (3)
     | > git --version # timeout=10
     | > git --version # 'git version 2.47.3'
     | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
-    | > git rev-parse refs/remotes/origin/case/fg177-probe-checkout-scm^{commit} # timeout=10
-    | Checking out Revision 5fc83ade2c3c42fe8eaf68de8d08d360006d3c22 (refs/remotes/origin/case/fg177-probe-checkout-scm)
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
     | > git config core.sparsecheckout # timeout=10
-    | > git checkout -f 5fc83ade2c3c42fe8eaf68de8d08d360006d3c22 # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
     | Commit message: "sync: fg177-probe-checkout-scm"
-    | FG177 RETURN checkout CLASS=java.util.TreeMap VALUE=[GIT_BRANCH:origin/case/fg177-probe-checkout-scm, GIT_COMMIT:5fc83ade2c3c42fe8eaf68de8d08d360006d3c22, GIT_URL:git://100.105.179.51/repo.git]
+    | FG177 RETURN checkout CLASS=java.util.TreeMap VALUE=[GIT_BRANCH:origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40, GIT_COMMIT:a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40, GIT_URL:git://100.105.179.51/repo.git]
     | FG177 RETURN checkout KEYS=GIT_BRANCH,GIT_COMMIT,GIT_URL
-    | FG177 RETURN checkout ENTRY GIT_BRANCH CLASS=java.lang.String VALUE=origin/case/fg177-probe-checkout-scm
-    | FG177 RETURN checkout ENTRY GIT_COMMIT CLASS=java.lang.String VALUE=5fc83ade2c3c42fe8eaf68de8d08d360006d3c22
+    | FG177 RETURN checkout ENTRY GIT_BRANCH CLASS=java.lang.String VALUE=origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    | FG177 RETURN checkout ENTRY GIT_COMMIT CLASS=java.lang.String VALUE=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
     | FG177 RETURN checkout ENTRY GIT_URL CLASS=java.lang.String VALUE=git://100.105.179.51/repo.git
     | + printf done
   workspace:
@@ -137,9 +137,13 @@ VERDICT: DIVERGED (3)
     f39592393ef0  fg177-unknown-checkout-after.txt
     b6a98d9ce9a2  src/a.txt
     f2c82decdd71  src/b.txt
+  engine notes (not compared):
+    ! git-build-data revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
 
 ## Fogell
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (1 lines):
     | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+  engine notes (not compared):
+    ! scm-preflight branch=fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 tree=65de82b3efbbb46642e173418abb3b0adf50f90f jenkinsfile-blob=c02e3343f32b4223bfb68c3b70075d5400be07fb

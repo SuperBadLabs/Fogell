@@ -37,6 +37,25 @@ done
   exit 1
 }
 jenkins_url=$(<"$oracle_ready")
+root_headers="$fixture_tmp/root-headers"
+root_body="$fixture_tmp/root-body"
+plugin_headers="$fixture_tmp/plugin-headers"
+plugin_body="$fixture_tmp/plugin-body"
+curl -fsS -D "$root_headers" -o "$root_body" "$jenkins_url/"
+curl -fsS -D "$plugin_headers" -o "$plugin_body" \
+  "$jenkins_url/pluginManager/api/json?depth=1"
+tr -d '\r' < "$root_headers" | grep -Eiq '^Content-Type: text/plain; charset=utf-8$'
+cmp -s "$root_body" <(printf 'fixture\n')
+tr -d '\r' < "$plugin_headers" | grep -Eiq '^Content-Type: application/json$'
+python3 - "$plugin_body" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if [plugin["shortName"] for plugin in payload["plugins"]] != ["alpha", "beta"]:
+    raise SystemExit("fixture plugin endpoint returned unexpected JSON")
+PY
 cat > "$fixture_tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
@@ -89,7 +108,9 @@ git -C "$seed" push -q origin main
 git --git-dir="$remote" symbolic-ref HEAD refs/heads/main
 
 scm_url="file://$remote"
+main_head=$(git --git-dir="$remote" rev-parse refs/heads/main)
 FOGELL_SCM_URL="$scm_url" \
+FOGELL_GIT_PINNED_BRANCH="fogell-pins/$main_head" \
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence/render-probe-cases.py"
 
@@ -151,6 +172,14 @@ do
     echo "ERROR: rendered $name retains its SCM token" >&2
     exit 1
   fi
+  if grep -Fq '@@FOGELL_GIT_PINNED_BRANCH@@' "$rendered/$name"; then
+    echo "ERROR: rendered $name retains its git pin token" >&2
+    exit 1
+  fi
+  expected_pins=1
+  [[ "$name" != fg177-plan-git-history.Jenkinsfile ]] || expected_pins=2
+  require_fixed_count -Foc "$expected_pins" "fogell-pins/$main_head" "$rendered/$name" \
+    "rendered $name does not contain exactly $expected_pins configured git pin(s)"
   if grep -Fq 'git://100.105.179.51/repo.git' "$rendered/$name"; then
     echo "ERROR: rendered $name retains the default fixture URL" >&2
     exit 1
@@ -182,6 +211,10 @@ case "$1" in
     ;;
   run)
     printf 'dotnet run\n' >> "$FOGELL_STUB_ORDER"
+    if [[ ${FOGELL_SCM_ATTESTATION:-} != fg177-probes-v1 ]]; then
+      echo 'ERROR: runner did not enable harness-owned SCM attestation' >&2
+      exit 96
+    fi
     printf '%s\n' "$@" > "$FOGELL_STUB_ARGS"
     while [[ $# -gt 0 && $1 != -- ]]; do shift; done
     shift
@@ -191,6 +224,39 @@ case "$1" in
     mkdir -p "$receipt_dir"
     mode=${FOGELL_STUB_MODE:-success}
     generation=${FOGELL_STUB_GENERATION:-one}
+    pin_file=$(dirname "$receipt_dir")/scm-pin.tsv
+    pin_value() { awk -F '\t' -v key="$1" '$1 == key { print $2 }' "$pin_file"; }
+    scm_revision=$(pin_value scm-pinned-revision)
+    scm_tree=$(pin_value scm-tree)
+    scm_blob=$(pin_value jenkinsfile-blob)
+    git_revision=$(pin_value git-pinned-revision)
+    git_tree=$(pin_value git-tree)
+    if [[ -n ${FOGELL_STUB_BRANCH_MOVE:-} ]]; then
+      "$FOGELL_REAL_GIT" --git-dir="$FOGELL_STUB_REMOTE" update-ref \
+        refs/heads/case/fg177-probe-checkout-scm "$FOGELL_STUB_BRANCH_MOVE"
+    fi
+    write_receipt() {
+      local case_file=$1 receipt=$2 jenkins_revision
+      jenkins_revision=$git_revision
+      case $(basename "$case_file") in
+        fg177-probe-checkout-scm.Jenkinsfile)
+          jenkins_revision=$scm_revision
+          ;;
+      esac
+      if [[ -n ${FOGELL_STUB_EXECUTION_MISMATCH:-} ]]; then
+        jenkins_revision=0000000000000000000000000000000000000000
+      fi
+      {
+        printf 'fixture receipt %s for %s\n\n## Jenkins\n  engine notes (not compared):\n' \
+          "$generation" "$(basename "$case_file")"
+        printf '    ! git-build-data revision=%s\n\n## Fogell\n  result: failure\n  engine notes (not compared):\n' \
+          "$jenkins_revision"
+        if [[ $(basename "$case_file") == fg177-probe-checkout-scm.Jenkinsfile ]]; then
+          printf '    ! scm-preflight branch=fogell-pins/%s revision=%s tree=%s jenkinsfile-blob=%s\n' \
+            "$scm_revision" "$scm_revision" "$scm_tree" "$scm_blob"
+        fi
+      } > "$receipt"
+    }
     case "$mode" in
       zero)
         printf 'completed without receipts\n'
@@ -199,8 +265,7 @@ case "$1" in
       partial|interrupt)
         case_file=$1
         receipt_name=$(basename "${case_file%.Jenkinsfile}.receipt.txt")
-        printf 'fixture receipt %s for %s\n' "$generation" "$(basename "$case_file")" \
-          > "$receipt_dir/$receipt_name"
+        write_receipt "$case_file" "$receipt_dir/$receipt_name"
         if [[ "$mode" == interrupt ]]; then
           printf '%s\n' "$$" > "$FOGELL_STUB_READY"
           trap 'exit 143' TERM
@@ -212,8 +277,7 @@ case "$1" in
     esac
     for case_file in "$@"; do
       receipt_name=$(basename "${case_file%.Jenkinsfile}.receipt.txt")
-      printf 'fixture receipt %s for %s\n' "$generation" "$(basename "$case_file")" \
-        > "$receipt_dir/$receipt_name"
+      write_receipt "$case_file" "$receipt_dir/$receipt_name"
     done
     if [[ "$mode" == extra ]]; then
       printf 'unexpected\n' > "$receipt_dir/unexpected.receipt.txt"
@@ -351,6 +415,15 @@ grep -F $'oracle-after-verification\toracle-after-verification.txt\t' \
 cmp "$published/oracle-before-verification.txt" \
   "$published/oracle-after-verification.txt"
 grep -Fx $'case-count\t4' "$published/probe-run-manifest.tsv"
+grep -F $'scm-pin\tscm-pin.tsv\t' "$published/probe-run-manifest.tsv"
+grep -F $'scm-execution\tscm-execution.tsv\t' "$published/probe-run-manifest.tsv"
+scm_bound=$(awk -F '\t' '$1 == "scm-pinned-revision" { print $2 }' \
+  "$published/probe-run-manifest.tsv")
+git_bound=$(awk -F '\t' '$1 == "git-pinned-revision" { print $2 }' \
+  "$published/probe-run-manifest.tsv")
+[[ "$scm_bound" =~ ^[0-9a-f]{40}$ && "$git_bound" == "$main_head" ]]
+[[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$scm_bound")" == "$scm_bound" ]]
+[[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$git_bound")" == "$git_bound" ]]
 if find "$published/raw-receipts" -mindepth 1 -maxdepth 1 -type f \
     -printf '%f\n' | sort | diff -u - <(printf '%s\n' \
       fg177-probe-checkout-scm.receipt.txt \
@@ -375,6 +448,113 @@ bundle_hash() {
 }
 
 published_hash=$(bundle_hash "$published")
+
+# A mutable case-branch move after synchronization but before receipt capture
+# cannot change execution: the CLI uses the advertised content-addressed pin.
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/branch-move-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/branch-move-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/branch-move-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_BRANCH_MOVE="$main_head" \
+FOGELL_STUB_REMOTE="$remote" \
+FOGELL_REAL_GIT="$(command -v git)" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/branch-move.log" 2>&1
+branch_move_rc=$?
+set -e
+if [[ $branch_move_rc -ne 1 ||
+      $(git --git-dir="$remote" rev-parse "refs/heads/case/fg177-probe-checkout-scm") != "$main_head" ]]; then
+  echo 'ERROR: mutable branch move was not isolated by the execution pin' >&2
+  exit 1
+fi
+scm_bound=$(awk -F '\t' '$1 == "scm-pinned-revision" { print $2 }' \
+  "$published/probe-run-manifest.tsv")
+[[ "$scm_bound" != "$main_head" ]]
+[[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$scm_bound")" == "$scm_bound" ]]
+published_hash=$(bundle_hash "$published")
+
+# If either engine reports a different revision during the CLI, publication is
+# refused and the previously coherent bundle remains byte-identical.
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/execution-race-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/execution-race-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/execution-race-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_BRANCH_MOVE="$main_head" \
+FOGELL_STUB_REMOTE="$remote" \
+FOGELL_REAL_GIT="$(command -v git)" \
+FOGELL_STUB_EXECUTION_MISMATCH=1 \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/execution-race.log" 2>&1
+execution_race_rc=$?
+set -e
+if [[ $execution_race_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]] ||
+   ! grep -Fq 'Jenkins BuildData does not exclusively attest' \
+     "$fixture_tmp/execution-race.log"; then
+  cat "$fixture_tmp/execution-race.log" >&2
+  echo 'ERROR: executed-revision race was not refused atomically' >&2
+  exit 1
+fi
+
+# Separate evidence roots synchronize and execute concurrently without sharing
+# a publication lock; both must independently bind the same immutable refs.
+concurrent_a="$fixture_tmp/concurrent-output-a"
+concurrent_b="$fixture_tmp/concurrent-output-b"
+set +e
+PATH="$fixture_tmp/bin:$PATH" FOGELL_EVIDENCE_OUT="$concurrent_a" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" FOGELL_STUB_ARGS="$fixture_tmp/concurrent-a-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/concurrent-a-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/concurrent-a-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/concurrent-a.log" 2>&1 &
+concurrent_a_pid=$!
+PATH="$fixture_tmp/bin:$PATH" FOGELL_EVIDENCE_OUT="$concurrent_b" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" FOGELL_STUB_ARGS="$fixture_tmp/concurrent-b-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/concurrent-b-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/concurrent-b-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/concurrent-b.log" 2>&1 &
+concurrent_b_pid=$!
+wait "$concurrent_a_pid"
+concurrent_a_rc=$?
+wait "$concurrent_b_pid"
+concurrent_b_rc=$?
+set -e
+if [[ $concurrent_a_rc -ne 1 || $concurrent_b_rc -ne 1 ]]; then
+  printf 'ERROR: concurrent evidence roots returned %s/%s\n' \
+    "$concurrent_a_rc" "$concurrent_b_rc" >&2
+  exit 1
+fi
+if [[ ! -f "$concurrent_a/runs/probes/scm-pin.tsv" ||
+      ! -f "$concurrent_b/runs/probes/scm-pin.tsv" ]]; then
+  printf 'ERROR: concurrent runner A log:\n' >&2
+  cat "$fixture_tmp/concurrent-a.log" >&2
+  printf 'ERROR: concurrent runner B log:\n' >&2
+  cat "$fixture_tmp/concurrent-b.log" >&2
+  exit 1
+fi
+cmp "$concurrent_a/runs/probes/scm-pin.tsv" "$concurrent_b/runs/probes/scm-pin.tsv"
+grep -F $'scm-execution\tscm-execution.tsv\t' \
+  "$concurrent_a/runs/probes/probe-run-manifest.tsv"
+grep -F $'scm-execution\tscm-execution.tsv\t' \
+  "$concurrent_b/runs/probes/probe-run-manifest.tsv"
 
 # A mutable source-pin change triggered inside the manifest writer is after
 # post verification. It cannot affect the staged verified snapshot or seal.

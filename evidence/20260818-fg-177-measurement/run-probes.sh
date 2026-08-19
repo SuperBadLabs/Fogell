@@ -76,9 +76,22 @@ oracle_snapshot_parent=''
 printf '%s\n' "$oracle_verification_before" > "$stage/oracle-before-verification.txt"
 rendered="$stage/rendered-cases"
 mkdir -p "$stage/raw-receipts"
+FOGELL_SCM_PIN_OUTPUT="$stage/scm-pin.tsv" \
+  bash "$evidence_root/sync-checkout-scm-fixture.sh"
+scm_pinned_branch=$(awk -F '\t' '$1 == "scm-pinned-branch" {print $2}' "$stage/scm-pin.tsv")
+scm_pinned_revision=$(awk -F '\t' '$1 == "scm-pinned-revision" {print $2}' "$stage/scm-pin.tsv")
+git_pinned_branch=$(awk -F '\t' '$1 == "git-pinned-branch" {print $2}' "$stage/scm-pin.tsv")
+if [[ ! "$scm_pinned_revision" =~ ^[0-9a-f]{40}$ ||
+      "$scm_pinned_branch" != "fogell-pins/$scm_pinned_revision" ||
+      ! "$git_pinned_branch" =~ ^fogell-pins/[0-9a-f]{40}$ ]]; then
+  echo 'ERROR: SCM helper emitted a malformed content-addressed pin' >&2
+  exit 1
+fi
+export FOGELL_SCM_PINNED_BRANCH="$scm_pinned_branch"
+export FOGELL_SCM_PINNED_REVISION="$scm_pinned_revision"
+export FOGELL_GIT_PINNED_BRANCH="$git_pinned_branch"
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence_root/render-probe-cases.py"
-bash "$evidence_root/sync-checkout-scm-fixture.sh"
 
 cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'
 dotnet build "$cli_project" -c Release --nologo
@@ -91,6 +104,7 @@ cases=(
 )
 
 set +e
+FOGELL_SCM_ATTESTATION=fg177-probes-v1 \
 dotnet run --project "$cli_project" -c Release --no-build -- \
   "$requested_jenkins_url" \
   "$requested_jenkins_core" \
@@ -105,6 +119,9 @@ if [[ $rc -ne 0 && $rc -ne 1 ]]; then
     "$rc" >&2
   exit "$rc"
 fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 "$evidence_root/validate-scm-execution.py" \
+  "$stage/scm-pin.tsv" "$stage/raw-receipts" "$stage/scm-execution.tsv"
 
 oracle_verification_after=$(
   bash "$evidence_root/verify-run-oracle.sh" \

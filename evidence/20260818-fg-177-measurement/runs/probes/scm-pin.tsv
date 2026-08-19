@@ -1,0 +1,11 @@
+format	fogell-scm-pin-v1
+source-branch	case/fg177-probe-checkout-scm
+source-revision	a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+scm-pinned-branch	fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+scm-pinned-revision	a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+scm-tree	65de82b3efbbb46642e173418abb3b0adf50f90f
+jenkinsfile-blob	c02e3343f32b4223bfb68c3b70075d5400be07fb
+jenkinsfile-sha256	23eb5de94601e59befe4d51db501c05b3c03a4a520857ed322a8b82449a3d2a0
+git-pinned-branch	fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+git-pinned-revision	5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+git-tree	95b911657c001cbd735bfbc0a283a1b32c854b06

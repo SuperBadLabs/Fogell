@@ -32,6 +32,15 @@ open Fogell.Domain
 /// folded two-sidedly to ${GITVERSION} by the harness, never suppressed.
 module WalkerGit =
 
+    /// Identity of the exact commit used to load an SCM-defined Jenkinsfile.
+    /// Captured in the same private fetch as the bytes, so early evaluation
+    /// failure cannot erase which remote object Fogell actually inspected.
+    type RemoteJenkinsfile =
+        { Script: string
+          Revision: string
+          Tree: string
+          JenkinsfileBlob: string }
+
     /// One bounded git subprocess: async reads on BOTH pipes (fetch writes its
     /// progress to stderr — synchronous ReadToEnd deadlocked once the pipe
     /// buffer filled), a 10-minute wait matching the `# timeout=10` the
@@ -420,14 +429,22 @@ module WalkerGit =
                 ctx.Failed.Value <- true
                 ctx.Sink BuildStatus.Failure
 
-        if failure.IsNone && not cancelled then checkedOutSha else None
+        let completed =
+            if failure.IsNone && not cancelled then checkedOutSha else None
+
+        match completed, Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" with
+        | Some revision, "fg177-probes-v1" ->
+            runCtx.NoteEngine $"git-checkout branch={branch} revision={revision} url={url}"
+        | _ -> ()
+
+        completed
 
     /// FG-052. Read the Jenkinsfile an SCM branch currently serves — the bytes
     /// Jenkins executes. Used by the harness's fail-closed drift check, which
     /// must hold for EVERY SCM case (including skipDefaultCheckout, where no
     /// workspace checkout exists to compare against). Shallow fetch into a
     /// throwaway dir; any failure is an Error the caller refuses on.
-    let readRemoteJenkinsfile (url: string) (branch: string) : Result<string, string> =
+    let readRemoteJenkinsfile (url: string) (branch: string) : Result<RemoteJenkinsfile, string> =
         let tmp = Path.Combine(Path.GetTempPath(), "fogell-scm-verify-" + Guid.NewGuid().ToString "N")
 
         try
@@ -442,7 +459,19 @@ module WalkerGit =
 
                 run "git init" [ "init"; tmp ]
                 |> Result.bind (fun _ -> run "git fetch" [ "fetch"; "--depth"; "1"; "--"; url; branch ])
-                |> Result.bind (fun _ -> run "git show" [ "show"; "FETCH_HEAD:Jenkinsfile" ])
+                |> Result.bind (fun _ ->
+                    run "git rev-parse commit" [ "rev-parse"; "FETCH_HEAD^{commit}" ]
+                    |> Result.bind (fun revision ->
+                        run "git rev-parse tree" [ "rev-parse"; "FETCH_HEAD^{tree}" ]
+                        |> Result.bind (fun tree ->
+                            run "git rev-parse Jenkinsfile" [ "rev-parse"; "FETCH_HEAD:Jenkinsfile" ]
+                            |> Result.bind (fun blob ->
+                                run "git show Jenkinsfile" [ "show"; "FETCH_HEAD:Jenkinsfile" ]
+                                |> Result.map (fun script ->
+                                    { Script = script
+                                      Revision = revision
+                                      Tree = tree
+                                      JenkinsfileBlob = blob })))))
             with ex ->
                 Result.Error ex.Message
         finally

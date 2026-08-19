@@ -1,9 +1,9 @@
 format	fogell-evidence-run-v3
 run	probes
-started-at-utc	2026-08-19T12:29:16Z
-oracle-verified-before-at-utc	2026-08-19T12:29:17Z
-oracle-verified-after-at-utc	2026-08-19T12:30:27Z
-finished-at-utc	2026-08-19T12:30:27Z
+started-at-utc	2026-08-19T13:27:47Z
+oracle-verified-before-at-utc	2026-08-19T13:27:48Z
+oracle-verified-after-at-utc	2026-08-19T13:28:51Z
+finished-at-utc	2026-08-19T13:28:51Z
 cli-exit	1
 jenkins-core	2.568.1
 oracle-metadata-directory	oracle-metadata
@@ -16,10 +16,17 @@ controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b909
 image-metadata-sha256	2a2612da07718c48b9da3b79a3665bba9e14ba99a450f09789a2d9e9dce3230c
 oracle-before-verification	oracle-before-verification.txt	3fee2f05d7307826d3fb255a79070fe23411462765291a9df84f6b62ff95e2df
 oracle-after-verification	oracle-after-verification.txt	3fee2f05d7307826d3fb255a79070fe23411462765291a9df84f6b62ff95e2df
-run-log	probe-run.log	cba3a1f1e6fdc4650bdda9515e90155713726eb4548e1f47f0af55fb4ff35ff0
+run-log	probe-run.log	67c6da2878bd97b088b81b47cd5cdf680dc51fb12257e24f74b0074416f41717
 exit-marker	probe-exit.txt	b2310ff1bafd7de13027d9a17c494895c6c917ef8f4ad9cb099320da82e24ef6
 case-count	4
-case	01	fg177-probe-unknown-policy.Jenkinsfile	98be410f3432ebaee1c7e54c7e0ef71699896fb9314764ec7bc03048056af6a4	fg177-probe-unknown-policy.receipt.txt	b33d0fb471de56b3fb8fd5b96695b2cea210ea0da8d6c2bef9e0d3ccbd23863d
+scm-pin	scm-pin.tsv	dc57badbfcbce1e9944641b73b641f82bb6431da5a7a818197b34f908ff6ccea
+scm-execution	scm-execution.tsv	02b4752d9268515b385a278a14a47c88e6439fcc9c020855b14261d9eb07b2a0
+scm-pinned-revision	a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+scm-tree	65de82b3efbbb46642e173418abb3b0adf50f90f
+jenkinsfile-blob	c02e3343f32b4223bfb68c3b70075d5400be07fb
+git-pinned-revision	5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+git-tree	95b911657c001cbd735bfbc0a283a1b32c854b06
+case	01	fg177-probe-unknown-policy.Jenkinsfile	c07982ccd4397312d706ff2860718aa2375096c50950db08551f03581352c268	fg177-probe-unknown-policy.receipt.txt	3ddcde1bf401e7cc37f1a238a6e22c9d9b6152e0d3ac731d239aefca84f56157
 case	02	fg177-probe-requiredness.Jenkinsfile	52c98a6db9b773ebcac895bdbd083943985791be0d8237d1d41d00f9891d833e	fg177-probe-requiredness.receipt.txt	4993b87ce1d4044e853f9968e24da4cc9014b97da385483b0329eb16c36dc5af
-case	03	fg177-probe-return-semantics.Jenkinsfile	c8084d3aac4cb1918b62152faeebd4e0e3d2eee34ebd6d4ac5e32dc16e0155ff	fg177-probe-return-semantics.receipt.txt	f9d9f09a25b3609a664f3c3a5b03df8c360625301afbb745fc946861d6918c54
-case	04	fg177-probe-checkout-scm.Jenkinsfile	31bd34928f05f06f3524bf33fc5e3b61b5ad2cacd34eb9925da19415fee128c4	fg177-probe-checkout-scm.receipt.txt	3f956f2a501d96ba27a386c08abf8217325f05a66d215704df43b3c9870179e7
+case	03	fg177-probe-return-semantics.Jenkinsfile	e1b655984b696738b1604b797c4d5f44071e87bccf4dfc66cb90cfc53abf7aeb	fg177-probe-return-semantics.receipt.txt	7417394791eaf9eb17f3a7391d30fc9440471a798df7bfca583666ccf77762cd
+case	04	fg177-probe-checkout-scm.Jenkinsfile	31bd34928f05f06f3524bf33fc5e3b61b5ad2cacd34eb9925da19415fee128c4	fg177-probe-checkout-scm.receipt.txt	9bff71e0298f1b8c4b3084c050be1e0c2a80736861b8eb67a46c017af95f35b7

@@ -1,14 +1,14 @@
 # Differential receipt — fg177-probe-unknown-policy.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         cdcf022844a028a7f20ceac81751c24d0e1d8cb95174ccfa1a9989e1071ec689
-case-digest:  98be410f3432ebaee1c7e54c7e0ef71699896fb9314764ec7bc03048056af6a4
+seal:         aa2ddc4f8090f8356b2c1501ac884d80e13a21b3f1252278c5a66873ca4287e8
+case-digest:  c07982ccd4397312d706ff2860718aa2375096c50950db08551f03581352c268
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
   - terminal result: jenkins=unstable fogell=failure
   - output line 4: jenkins=WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep': fogellProbeUnknown fogell=+ printf sh-ran
-  - workspace hash: jenkins=ed313f2da07f fogell=c472557f9ff9
+  - workspace hash: jenkins=09bc2f18bab9 fogell=c472557f9ff9
 
 ## Comparison contract
   compared: terminal result
@@ -81,7 +81,7 @@ VERDICT: DIVERGED (3)
 
 ## Jenkins
   result:         unstable
-  workspace-hash: ed313f2da07f776b054bc9f2859a307402a9c9d017d07827a2fd6e7253aa9a95
+  workspace-hash: 09bc2f18bab9e5fe98cd03896f5b3737d48c0197e06f629dc719e958ff80d169
   output (62 lines):
     | + rm -rf fg177-unknown-*
     | + printf seed
@@ -118,12 +118,12 @@ VERDICT: DIVERGED (3)
     | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
     | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
     | Avoid second fetch
-    | > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
-    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/main)
+    | > git rev-parse refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5^{commit} # timeout=10
+    | Checking out Revision 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 (refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5)
     | > git config core.sparsecheckout # timeout=10
     | > git checkout -f 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
     | > git branch -a -v --no-abbrev # timeout=10
-    | > git checkout -b main 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
+    | > git checkout -b fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5 # timeout=10
     | Commit message: "seed: second commit for changelog"
     | First time build. Skipping changelog.
     | + printf after
@@ -150,8 +150,8 @@ VERDICT: DIVERGED (3)
     f39592393ef0  fg177-unknown-archive-after.txt
     f39592393ef0  fg177-unknown-delete-after.txt
     f39592393ef0  fg177-unknown-git-after.txt
-    cd26a36440a4  fg177-unknown-git/.git/FETCH_HEAD
-    28d25bf82af4  fg177-unknown-git/.git/HEAD
+    0376e0e9da7f  fg177-unknown-git/.git/FETCH_HEAD
+    6316282ba69e  fg177-unknown-git/.git/HEAD
     392157c90985  fg177-unknown-git/.git/config
     85ab6c163d43  fg177-unknown-git/.git/description
     0223497a0b8b  fg177-unknown-git/.git/hooks/applypatch-msg.sample
@@ -168,23 +168,28 @@ VERDICT: DIVERGED (3)
     a53d0741798b  fg177-unknown-git/.git/hooks/push-to-checkout.sample
     44ebfc923dc5  fg177-unknown-git/.git/hooks/sendemail-validate.sample
     8d5f2fa83e10  fg177-unknown-git/.git/hooks/update.sample
-    14a88f031a2b  fg177-unknown-git/.git/index
+    aecf836fe1d9  fg177-unknown-git/.git/index
     6671fe83b7a0  fg177-unknown-git/.git/info/exclude
-    4c37ff1cb099  fg177-unknown-git/.git/logs/HEAD
-    9d9ba9ffce08  fg177-unknown-git/.git/logs/refs/heads/main
-    d89866be19b3  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
-    48f6a6b8024a  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
-    2072cb1d0be1  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
-    7d65219f0864  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
-    ad01db6325fa  fg177-unknown-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
-    544396b69bbc  fg177-unknown-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
-    071b1f13d66d  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-checkout
-    d11db0f800f1  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-scm2
-    72b7f11e6d07  fg177-unknown-git/.git/logs/refs/remotes/origin/main
-    72b7f11e6d07  fg177-unknown-git/.git/logs/refs/remotes/origin/master
+    bb419ba22ac2  fg177-unknown-git/.git/logs/HEAD
+    84329a862fc2  fg177-unknown-git/.git/logs/refs/heads/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+    8b91e0c25286  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
+    1b5f355519d0  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
+    8b22af5b6c96  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
+    5ad1def77dde  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
+    307291ce8a78  fg177-unknown-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
+    5b85a041a3cd  fg177-unknown-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
+    87388b8633e5  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-checkout
+    d1c41a4ccffd  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-scm2
+    e7d88611b76e  fg177-unknown-git/.git/logs/refs/remotes/origin/fogell-pins/1b57a845aa237fb780ef5621ed37d59040d43fa0
+    c640893cec39  fg177-unknown-git/.git/logs/refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+    307291ce8a78  fg177-unknown-git/.git/logs/refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    16d3c7326bdf  fg177-unknown-git/.git/logs/refs/remotes/origin/fogell-pins/f58182f2a15ba66580520437ad4f42ca5bf979c7
+    c640893cec39  fg177-unknown-git/.git/logs/refs/remotes/origin/main
+    c640893cec39  fg177-unknown-git/.git/logs/refs/remotes/origin/master
     2ad5b70e543c  fg177-unknown-git/.git/objects/04/ba1504e096bf139af61beb00f4da6750223d0c
     27869fc5c1ec  fg177-unknown-git/.git/objects/0b/26cf2eb64e78e892048a8b481ba7df4cf4466b
     beeb14451711  fg177-unknown-git/.git/objects/14/f3e4036d4b2e6dd6711642f96a865dcd67180d
+    35f1b2c9e8b6  fg177-unknown-git/.git/objects/1b/57a845aa237fb780ef5621ed37d59040d43fa0
     d9197e98d460  fg177-unknown-git/.git/objects/22/5f6201b09cb16d377dc50ccef288dbb7707f0b
     5a3ff87de918  fg177-unknown-git/.git/objects/22/dce1e87566792b739ed63a817281a86865110d
     0453dba651fc  fg177-unknown-git/.git/objects/23/b36fddcbe704aebd28eb57f5a770e62d284b90
@@ -194,16 +199,20 @@ VERDICT: DIVERGED (3)
     ac9db56dfc24  fg177-unknown-git/.git/objects/42/d4c5245460645340a0b5b189f055b93cca0f7e
     d3384866b16c  fg177-unknown-git/.git/objects/4a/58007052a65fbc2fc3f910f2855f45a4058e74
     32e3d8b060b7  fg177-unknown-git/.git/objects/5d/ba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
-    531a26018fdb  fg177-unknown-git/.git/objects/5f/c83ade2c3c42fe8eaf68de8d08d360006d3c22
     d5760e0d3806  fg177-unknown-git/.git/objects/65/b2df87f7df3aeedef04be96703e55ac19c2cfb
     474045d37b15  fg177-unknown-git/.git/objects/65/de82b3efbbb46642e173418abb3b0adf50f90f
     e135a781c5e1  fg177-unknown-git/.git/objects/68/ba7e4f796cbce5ed86bad3e9df986fb138d99f
+    5d9de70f9910  fg177-unknown-git/.git/objects/69/6d3f982ea7cecb5ba4bb16db7a0447e8efd9cc
+    b06ecec32689  fg177-unknown-git/.git/objects/76/89cd11a6e73e4036d185cbff7231ebda5483bc
     4f7a332df70f  fg177-unknown-git/.git/objects/7d/8055970fdf96d0fe2fa52c6f6268873897d955
     309c9a12a900  fg177-unknown-git/.git/objects/82/8d21a85c72ad0b7b452f55a4d6612122c3130a
     ff5e27ee2a4a  fg177-unknown-git/.git/objects/95/b911657c001cbd735bfbc0a283a1b32c854b06
     c73f3f0857b7  fg177-unknown-git/.git/objects/9a/460c17822e42d8d115092ee34dda0e40ef18c9
     604337d3e826  fg177-unknown-git/.git/objects/9b/c1cef223b583e03c6b556be49bf41962ada47b
+    aaecb0f8c606  fg177-unknown-git/.git/objects/a0/cc1278ee2e10f47150bbd7eef2d0f22fae5f40
     e448dc4fd02c  fg177-unknown-git/.git/objects/a2/b38d1e55ad89ccf66c26d2cff6eea24dfa8ed1
+    1131ae2ca8d0  fg177-unknown-git/.git/objects/a5/1b7d9292658b6f23b243eba17ab87f72668980
+    95addb502ba6  fg177-unknown-git/.git/objects/a8/cfce67622e8a4d8905e391388300e455d22a40
     e8adee500d64  fg177-unknown-git/.git/objects/aa/7030ee3b1af4890d5734d3894d599e14efad6d
     e16a37b0436a  fg177-unknown-git/.git/objects/b9/872aedfb7ec1eed54c4f969476aafb7756918a
     49278b13fe70  fg177-unknown-git/.git/objects/c0/2e3343f32b4223bfb68c3b70075d5400be07fb
@@ -213,17 +222,22 @@ VERDICT: DIVERGED (3)
     2f8bcd55f91f  fg177-unknown-git/.git/objects/e8/806b6fb1bb073b85583c21d40e3a8907e81d01
     ad1b35ee40c1  fg177-unknown-git/.git/objects/eb/5a069840c6d02d99860fac953af65279a49374
     9b74bceb7fa8  fg177-unknown-git/.git/objects/f0/0f7b52f8527a3539eddecabd33c1036835cd8f
+    13ec8b79c8f9  fg177-unknown-git/.git/objects/f5/8182f2a15ba66580520437ad4f42ca5bf979c7
     3d451e8938af  fg177-unknown-git/.git/objects/f6/9a6f8dc6fb48be19c6b4f4fe24770966c33f42
     a1eae6212b3f  fg177-unknown-git/.git/objects/ff/347af4473ac869fc4a170d970e137f0560f00c
-    22dd2f613268  fg177-unknown-git/.git/refs/heads/main
+    22dd2f613268  fg177-unknown-git/.git/refs/heads/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
     7bab435a4177  fg177-unknown-git/.git/refs/remotes/origin/case/checkout-scm-basic
     eb627ae25373  fg177-unknown-git/.git/refs/remotes/origin/case/checkout-scm-env-layering
     ee070bf9d81f  fg177-unknown-git/.git/refs/remotes/origin/case/checkout-scm-skip-default
     7033ca310353  fg177-unknown-git/.git/refs/remotes/origin/case/checkout-scm-timeout-env
-    6f0b046860f4  fg177-unknown-git/.git/refs/remotes/origin/case/fg177-probe-checkout-scm
+    5a19c88aa791  fg177-unknown-git/.git/refs/remotes/origin/case/fg177-probe-checkout-scm
     3bbbd0e1006c  fg177-unknown-git/.git/refs/remotes/origin/case/options-timestamps-scm
     c601591c75f9  fg177-unknown-git/.git/refs/remotes/origin/case/probe-checkout
     383eba343fe0  fg177-unknown-git/.git/refs/remotes/origin/case/probe-scm2
+    7d69a8631e1c  fg177-unknown-git/.git/refs/remotes/origin/fogell-pins/1b57a845aa237fb780ef5621ed37d59040d43fa0
+    22dd2f613268  fg177-unknown-git/.git/refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+    5a19c88aa791  fg177-unknown-git/.git/refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    7d39e128036f  fg177-unknown-git/.git/refs/remotes/origin/fogell-pins/f58182f2a15ba66580520437ad4f42ca5bf979c7
     22dd2f613268  fg177-unknown-git/.git/refs/remotes/origin/main
     22dd2f613268  fg177-unknown-git/.git/refs/remotes/origin/master
     959ee89d1972  fg177-unknown-git/README.md
@@ -238,6 +252,8 @@ VERDICT: DIVERGED (3)
     f39592393ef0  fg177-unknown-timeout-after.txt
     230d8358dc8e  fg177-unknown-timeout-body.txt
     e72925bfef47  reports/fg177.xml
+  engine notes (not compared):
+    ! git-build-data revision=5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
 
 ## Fogell
   result:         failure

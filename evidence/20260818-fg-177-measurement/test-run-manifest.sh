@@ -38,7 +38,7 @@ printf 'receipt two\n' > "$out/raw-receipts/two.receipt.txt"
 
 manifest="$out/probe-run-manifest.tsv"
 bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -71,7 +71,7 @@ require_input_refusal() {
   local case_one=$7
   local case_two=$8
   if bash "$evidence/write-run-manifest.sh" \
-    "$manifest" probes \
+    "$manifest" fixture \
     2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
     2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
     1 probe-cli-exit "$log_arg" "$exit_arg" 2.568.1 "$metadata_arg" \
@@ -274,7 +274,7 @@ rm -rf "$metadata"
 mv "$proof_tmp/canonical-metadata-stable" "$metadata"
 
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.999 "$metadata" \
@@ -287,7 +287,7 @@ fi
 
 printf 'Jenkins oracle verified: drifted identity\n' > "$out/oracle-after-verification.txt"
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -300,7 +300,7 @@ fi
 cp "$out/oracle-before-verification.txt" "$out/oracle-after-verification.txt"
 
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:02Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -313,7 +313,7 @@ fi
 
 mv "$out/raw-receipts/two.receipt.txt" "$proof_tmp/two.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -333,7 +333,7 @@ fi
 mv "$proof_tmp/two.receipt.txt" "$out/raw-receipts/two.receipt.txt"
 : > "$out/raw-receipts/two.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -348,7 +348,7 @@ printf 'receipt two\n' > "$out/raw-receipts/two.receipt.txt"
 mv "$out/raw-receipts/one.receipt.txt" "$proof_tmp/one.receipt.txt"
 ln -s "$proof_tmp/one.receipt.txt" "$out/raw-receipts/one.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
@@ -363,7 +363,7 @@ mv "$proof_tmp/one.receipt.txt" "$out/raw-receipts/one.receipt.txt"
 
 mkdir "$out/raw-receipts/unexpected.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
-  "$manifest" probes \
+  "$manifest" fixture \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
   2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
   1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \

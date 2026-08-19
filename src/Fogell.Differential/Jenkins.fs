@@ -3,6 +3,7 @@ namespace Fogell.Differential
 open System
 open System.Net.Http
 open System.Text
+open System.Text.Json
 open System.Text.RegularExpressions
 
 /// The Jenkins side of the differential. Drives a PINNED Jenkins over its REST
@@ -48,6 +49,44 @@ type JobDefinition =
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
+
+    /// Parse controller-owned git-plugin BuildData. Build output is script-
+    /// writable and therefore cannot attest a checkout; this API action is the
+    /// authoritative harness boundary.
+    let parseBuildDataRevisions (body: string) : Result<string list, string> =
+        try
+            use document = JsonDocument.Parse body
+            let mutable actions = Unchecked.defaultof<JsonElement>
+
+            if
+                not (document.RootElement.TryGetProperty("actions", &actions))
+                || actions.ValueKind <> JsonValueKind.Array
+            then
+                Error "Jenkins build API has no actions array"
+            else
+                actions.EnumerateArray()
+                |> Seq.choose (fun action ->
+                    let mutable revision = Unchecked.defaultof<JsonElement>
+                    let mutable sha = Unchecked.defaultof<JsonElement>
+
+                    if
+                        action.ValueKind = JsonValueKind.Object
+                        && action.TryGetProperty("lastBuiltRevision", &revision)
+                        && revision.ValueKind = JsonValueKind.Object
+                        && revision.TryGetProperty("SHA1", &sha)
+                        && sha.ValueKind = JsonValueKind.String
+                    then
+                        match sha.GetString() with
+                        | value when not (isNull value) && Regex.IsMatch(value, "^[0-9a-f]{40}$") -> Some value
+                        | _ -> None
+                    else
+                        None)
+                |> Seq.distinct
+                |> Seq.sort
+                |> List.ofSeq
+                |> Ok
+        with ex ->
+            Error $"invalid Jenkins BuildData JSON ({ex.Message})"
 
     let private crumb (cfg: JenkinsConfig) =
         task {
@@ -180,6 +219,20 @@ module Jenkins =
                     let console =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
 
+                    let scmEngineNotes =
+                        if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
+                            let tree = Uri.EscapeDataString "actions[lastBuiltRevision[SHA1]]"
+                            let buildData =
+                                client.GetStringAsync(
+                                    $"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json?tree={tree}"
+                                ).Result
+
+                            match parseBuildDataRevisions buildData with
+                            | Ok revisions -> revisions |> List.map (fun revision -> $"git-build-data revision={revision}")
+                            | Error e -> failwith $"SCM attestation unavailable ({e})"
+                        else
+                            []
+
                     let workspaceHash, files =
                         match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
                         | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
@@ -203,7 +256,7 @@ module Jenkins =
 
                     let trace =
                         { Result = terminal
-                          EngineNotes = []
+                          EngineNotes = scmEngineNotes
                           // the workspace root is READ from the run's own banner —
                           // `Running on <node> in <path>` — so a non-default
                           // JENKINS_HOME or a remote agent canonicalises correctly;

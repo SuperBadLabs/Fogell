@@ -87,14 +87,54 @@ expected_head=$(
 
 # Fresh identical main plus a missing branch still requires a distinct direct
 # child. --allow-empty makes that topology deterministic without changing tree.
-FOGELL_SCM_URL="file://$remote" bash "$sync_script"
+pin_one="$test_tmp/pin-one.tsv"
+FOGELL_SCM_URL="file://$remote" FOGELL_SCM_PIN_OUTPUT="$pin_one" \
+  bash "$sync_script"
 identical_head=$(git --git-dir="$remote" rev-parse "refs/heads/$branch")
 [[ "$identical_head" != "$main_head" ]]
 assert_exact_branch "$expected_head"
 
+assert_pin_report() {
+  local report=$1
+  local desired_blob desired_sha scm_tree
+  desired_blob=$(git --git-dir="$remote" rev-parse "$identical_head:Jenkinsfile")
+  desired_sha=$(sha256sum "$desired" | awk '{ print $1 }')
+  scm_tree=$(git --git-dir="$remote" rev-parse "$identical_head^{tree}")
+  diff -u <(printf '%s\n' \
+    $'format\tfogell-scm-pin-v1' \
+    $'source-branch\tcase/fg177-probe-checkout-scm' \
+    "source-revision"$'\t'"$identical_head" \
+    "scm-pinned-branch"$'\t'"fogell-pins/$identical_head" \
+    "scm-pinned-revision"$'\t'"$identical_head" \
+    "scm-tree"$'\t'"$scm_tree" \
+    "jenkinsfile-blob"$'\t'"$desired_blob" \
+    "jenkinsfile-sha256"$'\t'"$desired_sha" \
+    "git-pinned-branch"$'\t'"fogell-pins/$main_head" \
+    "git-pinned-revision"$'\t'"$main_head" \
+    "git-tree"$'\t'"$main_tree") "$report"
+  [[ ! -L "$report" && -f "$report" ]]
+  [[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$identical_head")" == "$identical_head" ]]
+  [[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$main_head")" == "$main_head" ]]
+}
+assert_pin_report "$pin_one"
+
 # Exact state is a no-op.
 FOGELL_SCM_URL="file://$remote" bash "$sync_script"
 assert_exact_branch "$identical_head"
+
+# Two evidence output directories may synchronize concurrently. Both must bind
+# the same immutable advertised refs and emit byte-identical canonical reports.
+FOGELL_SCM_URL="file://$remote" FOGELL_SCM_PIN_OUTPUT="$test_tmp/pin-concurrent-a.tsv" \
+  bash "$sync_script" > "$test_tmp/concurrent-a.log" 2>&1 &
+sync_a=$!
+FOGELL_SCM_URL="file://$remote" FOGELL_SCM_PIN_OUTPUT="$test_tmp/pin-concurrent-b.tsv" \
+  bash "$sync_script" > "$test_tmp/concurrent-b.log" 2>&1 &
+sync_b=$!
+wait "$sync_a"
+wait "$sync_b"
+assert_pin_report "$test_tmp/pin-concurrent-a.tsv"
+assert_pin_report "$test_tmp/pin-concurrent-b.tsv"
+cmp "$test_tmp/pin-concurrent-a.tsv" "$test_tmp/pin-concurrent-b.tsv"
 
 # Deleting the branch and resynchronizing reconstructs the same commit SHA.
 git -C "$seed" push -qd origin "$branch"
@@ -151,5 +191,26 @@ git -C "$seed" push -qf origin "$drift_head:refs/heads/$branch"
 FOGELL_SCM_URL="file://$remote" bash "$sync_script"
 assert_exact_branch "$identical_head"
 
-printf 'SCM FIXTURE SYNC PROOF: identical-main/missing, root/no-parent and ordinary drift repaired; push rc 47 propagated; exact bytes/tree/main parent and deterministic SHA %s verified\n' \
+# Moving the mutable source branch after synchronization cannot move either
+# content-addressed execution ref or alter the already published pin report.
+pin_before=$(sha256sum "$pin_one" | awk '{ print $1 }')
+git -C "$seed" push -qf origin "$drift_head:refs/heads/$branch"
+[[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$identical_head")" == "$identical_head" ]]
+[[ "$(git --git-dir="$remote" rev-parse "refs/heads/fogell-pins/$main_head")" == "$main_head" ]]
+[[ "$(sha256sum "$pin_one" | awk '{ print $1 }')" == "$pin_before" ]]
+
+# A pre-existing content-addressed name that points elsewhere is corruption,
+# never something the synchronizer may force-repair.
+git -C "$seed" push -qf origin \
+  "$drift_head:refs/heads/fogell-pins/$identical_head"
+set +e
+FOGELL_SCM_URL="file://$remote" FOGELL_SCM_PIN_OUTPUT="$test_tmp/pin-corrupt.tsv" \
+  bash "$sync_script" > "$test_tmp/pin-corrupt.log" 2>&1
+corrupt_rc=$?
+set -e
+[[ "$corrupt_rc" -ne 0 && ! -e "$test_tmp/pin-corrupt.tsv" ]]
+grep -F "immutable pin fogell-pins/$identical_head resolves to $drift_head" \
+  "$test_tmp/pin-corrupt.log"
+
+printf 'SCM FIXTURE SYNC PROOF: deterministic topology plus immutable SCM/git pins, concurrent outputs, mutable-branch race isolation and corrupt-pin refusal verified at %s\n' \
   "$identical_head"

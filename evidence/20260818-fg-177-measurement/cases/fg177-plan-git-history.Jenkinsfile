@@ -9,7 +9,7 @@ pipeline {
             steps {
                 script {
                     dir('fg177-history-git') {
-                        def value = git(url: @@FOGELL_SCM_URL@@, branch: 'main')
+                        def value = git(url: @@FOGELL_SCM_URL@@, branch: @@FOGELL_GIT_PINNED_BRANCH@@)
                         echo "FG177 HISTORY git BUILD=1 CLASS=${value == null ? 'null' : value.getClass().getName()} VALUE=${value}"
                         if (value instanceof Map) {
                             echo "FG177 HISTORY git BUILD=1 KEYS=${value.keySet().sort().join(',')}"
@@ -29,7 +29,7 @@ pipeline {
             steps {
                 script {
                     dir('fg177-history-git') {
-                        def value = git(url: @@FOGELL_SCM_URL@@, branch: 'main')
+                        def value = git(url: @@FOGELL_SCM_URL@@, branch: @@FOGELL_GIT_PINNED_BRANCH@@)
                         echo "FG177 HISTORY git BUILD=2 CLASS=${value == null ? 'null' : value.getClass().getName()} VALUE=${value}"
                         if (value instanceof Map) {
                             echo "FG177 HISTORY git BUILD=2 KEYS=${value.keySet().sort().join(',')}"

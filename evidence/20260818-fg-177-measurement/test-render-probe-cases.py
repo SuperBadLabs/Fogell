@@ -21,6 +21,7 @@ def invoke(output: pathlib.Path, scm: str = "file:///fixture/repo.git") -> subpr
         {
             "FOGELL_RENDERED_CASES_DIR": str(output),
             "FOGELL_SCM_URL": scm,
+            "FOGELL_GIT_PINNED_BRANCH": "fogell-pins/" + "a" * 40,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )

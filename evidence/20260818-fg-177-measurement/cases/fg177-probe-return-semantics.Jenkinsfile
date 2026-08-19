@@ -27,7 +27,7 @@ pipeline {
                     }
 
                     dir('fg177-return-git') {
-                        def gitValue = git(url: @@FOGELL_SCM_URL@@, branch: 'main')
+                        def gitValue = git(url: @@FOGELL_SCM_URL@@, branch: @@FOGELL_GIT_PINNED_BRANCH@@)
                         echo "FG177 RETURN git CLASS=${gitValue == null ? 'null' : gitValue.getClass().getName()} VALUE=${gitValue}"
                         if (gitValue instanceof Map) {
                             echo "FG177 RETURN git KEYS=${gitValue.keySet().sort().join(',')}"

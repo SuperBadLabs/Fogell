@@ -13,7 +13,8 @@ import sys
 import tempfile
 
 
-TOKEN = "@@FOGELL_SCM_URL@@"
+SCM_TOKEN = "@@FOGELL_SCM_URL@@"
+GIT_BRANCH_TOKEN = "@@FOGELL_GIT_PINNED_BRANCH@@"
 CASES = (
     "fg177-probe-unknown-policy.Jenkinsfile",
     "fg177-probe-requiredness.Jenkinsfile",
@@ -22,9 +23,9 @@ CASES = (
     "fg177-plan-git-history.Jenkinsfile",
 )
 TOKEN_COUNTS = {
-    "fg177-probe-unknown-policy.Jenkinsfile": 1,
-    "fg177-probe-return-semantics.Jenkinsfile": 1,
-    "fg177-plan-git-history.Jenkinsfile": 2,
+    "fg177-probe-unknown-policy.Jenkinsfile": (1, 1),
+    "fg177-probe-return-semantics.Jenkinsfile": (1, 1),
+    "fg177-plan-git-history.Jenkinsfile": (2, 2),
 }
 
 
@@ -79,9 +80,20 @@ def main() -> int:
         os.environ.get("FOGELL_RENDERED_CASES_DIR", evidence / "rendered-cases")
     )
     scm_url = os.environ.get("FOGELL_SCM_URL", "git://100.105.179.51/repo.git")
+    pinned_git_branch = os.environ.get("FOGELL_GIT_PINNED_BRANCH", "")
 
     try:
         replacement = groovy_single_quoted(scm_url)
+        if not pinned_git_branch.startswith("fogell-pins/") or len(pinned_git_branch) != 52:
+            raise ValueError(
+                "FOGELL_GIT_PINNED_BRANCH must be fogell-pins/<40 lowercase hex>"
+            )
+        revision = pinned_git_branch.removeprefix("fogell-pins/")
+        if any(char not in "0123456789abcdef" for char in revision):
+            raise ValueError(
+                "FOGELL_GIT_PINNED_BRANCH must be fogell-pins/<40 lowercase hex>"
+            )
+        branch_replacement = groovy_single_quoted(pinned_git_branch)
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
@@ -102,17 +114,24 @@ def main() -> int:
         for name in CASES:
             source_path = cases / name
             source = source_path.read_text(encoding="utf-8")
-            expected_tokens = TOKEN_COUNTS.get(name, 0)
-            actual_tokens = source.count(TOKEN)
-            if actual_tokens != expected_tokens:
+            expected_scm_tokens, expected_branch_tokens = TOKEN_COUNTS.get(name, (0, 0))
+            actual_scm_tokens = source.count(SCM_TOKEN)
+            actual_branch_tokens = source.count(GIT_BRANCH_TOKEN)
+            if (actual_scm_tokens, actual_branch_tokens) != (
+                expected_scm_tokens,
+                expected_branch_tokens,
+            ):
                 raise ValueError(
-                    f"{source_path} has {actual_tokens} SCM tokens; "
-                    f"expected {expected_tokens}"
+                    f"{source_path} has SCM/branch tokens "
+                    f"{actual_scm_tokens}/{actual_branch_tokens}; expected "
+                    f"{expected_scm_tokens}/{expected_branch_tokens}"
                 )
 
-            rendered = source.replace(TOKEN, replacement)
-            if TOKEN in rendered:
-                raise ValueError(f"unresolved SCM token in {source_path}")
+            rendered = source.replace(SCM_TOKEN, replacement).replace(
+                GIT_BRANCH_TOKEN, branch_replacement
+            )
+            if SCM_TOKEN in rendered or GIT_BRANCH_TOKEN in rendered:
+                raise ValueError(f"unresolved SCM pin token in {source_path}")
             rendered_path = stage / name
             rendered_path.write_text(rendered, encoding="utf-8")
             digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()

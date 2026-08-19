@@ -1396,6 +1396,30 @@ let unsupportedDeclarativeTools =
                       "the control reached its shell effect")
           } ]
 
+let jenkinsBuildDataAttestation =
+    testList
+        "FG-177 Jenkins BuildData attestation"
+        [ test "controller actions yield canonical distinct revisions only" {
+              let a = String.replicate 40 "a"
+              let b = String.replicate 40 "b"
+              let body =
+                  $"""{{"actions":[{{}},{{"lastBuiltRevision":{{"SHA1":"{b}"}}}},{{"lastBuiltRevision":{{"SHA1":"{a}"}}}},{{"lastBuiltRevision":{{"SHA1":"{b}"}}}},{{"lastBuiltRevision":{{"SHA1":"NOT-A-SHA"}}}}],"scriptText":"lastBuiltRevision SHA1 {String.replicate 40 "c"}"}}"""
+
+              match Jenkins.parseBuildDataRevisions body with
+              | Error why -> failtest why
+              | Ok revisions -> Expect.equal revisions [ a; b ] "only structural controller actions attest"
+          }
+
+          test "missing or malformed API structure fails closed" {
+              match Jenkins.parseBuildDataRevisions "not-json" with
+              | Ok value -> failtestf "malformed JSON unexpectedly parsed: %A" value
+              | Error why -> Expect.stringContains why "invalid Jenkins BuildData JSON" "parse error named"
+
+              match Jenkins.parseBuildDataRevisions "{\"queueItem\":{}}" with
+              | Ok value -> failtestf "missing actions unexpectedly parsed: %A" value
+              | Error why -> Expect.stringContains why "no actions array" "missing structure named"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -1405,6 +1429,7 @@ let main argv =
         (testList
             "Fogell.Differential"
             [ hostedSignatures
+              jenkinsBuildDataAttestation
               unsupportedDeclarativeTools
               userOutputSurvives
               stringModel
