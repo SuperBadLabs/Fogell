@@ -20,7 +20,7 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
 ## Operating contract
 
 - **HeMan is the engineering bastion**, with the canonical checkout at
-  `/home/srikanth/projects/fogell`. Investigation, edits, builds, tests, local
+  `$HOME/projects/fogell`. Investigation, edits, builds, tests, local
   Qwen-assisted inspection, corpus work and orchestration of the pinned Jenkins
   oracle happen from HeMan.
 - **GitHub is the publication, final-review, gating and merge boundary.** It is

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.12
 """FG-199. Does the commit that was MERGED carry a review from every expected reviewer?
 
 WHY THIS EXISTS RATHER THAN A HABIT OF CHECKING. Eight verifier rounds on the

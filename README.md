@@ -22,7 +22,7 @@ it. See `docs/adr/0002-interpret-not-lower.md`.
 ## Engineering bastion
 
 **HeMan is Fogell's engineering bastion.** The canonical working checkout is
-`/home/srikanth/projects/fogell`. Investigation, editing, local model-assisted
+`$HOME/projects/fogell`. Investigation, editing, local model-assisted
 review, build and test work happen there. HeMan owns the mounted corpus and
 reaches the pinned Jenkins oracle on Luigi, so it is the only environment that
 can run the whole pre-publication proof.
