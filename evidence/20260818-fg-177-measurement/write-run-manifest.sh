@@ -30,6 +30,13 @@ fail() {
   exit 1
 }
 
+require_regular_nonempty() {
+  local label=$1
+  local path=$2
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label is missing, empty, symlinked, or not a regular file: $path"
+}
+
 timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 for timestamp in "$started_at" "$verified_before_at" "$verified_after_at" "$finished_at"; do
   [[ "$timestamp" =~ $timestamp_pattern ]] || fail "non-canonical UTC timestamp: $timestamp"
@@ -46,12 +53,11 @@ done
 [[ "$requested_core" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ||
   fail "requested Jenkins core is not canonical: $requested_core"
 [[ ${#cases[@]} -gt 0 ]] || fail 'run has no ordered cases'
-[[ -f "$log" ]] || fail "missing run log: $log"
-[[ -f "$exit_file" ]] || fail "missing exit marker: $exit_file"
+require_regular_nonempty 'run log' "$log"
+require_regular_nonempty 'exit marker' "$exit_file"
 [[ $(<"$exit_file") == "$exit_key=$cli_rc" ]] || fail 'exit marker does not match CLI status'
 for verification in "$verification_before" "$verification_after"; do
-  [[ -f "$verification" && ! -L "$verification" && -s "$verification" ]] ||
-    fail "oracle verification receipt is missing, empty, or not regular: $verification"
+  require_regular_nonempty 'oracle verification receipt' "$verification"
 done
 cmp -s "$verification_before" "$verification_after" ||
   fail 'pre/post oracle verification identities differ'
@@ -59,8 +65,10 @@ cmp -s "$verification_before" "$verification_after" ||
 core_file="$metadata/jenkins-core.txt"
 plugins_file="$metadata/jenkins-plugins.tsv"
 image_file="$metadata/jenkins-controller-image.txt"
+[[ -d "$metadata" && ! -L "$metadata" ]] ||
+  fail "oracle metadata directory is missing, symlinked, or not a directory: $metadata"
 for provenance_file in "$core_file" "$plugins_file" "$image_file"; do
-  [[ -f "$provenance_file" ]] || fail "missing oracle provenance: $provenance_file"
+  require_regular_nonempty 'oracle provenance' "$provenance_file"
 done
 
 mapfile -t core_lines < "$core_file"
@@ -80,13 +88,15 @@ digest() {
 }
 
 manifest_dir=$(dirname "$manifest")
-[[ -d "$manifest_dir" ]] || fail "manifest directory does not exist: $manifest_dir"
+[[ -d "$manifest_dir" && ! -L "$manifest_dir" ]] ||
+  fail "manifest directory is missing, symlinked, or not a directory: $manifest_dir"
 manifest_tmp=$(mktemp "$manifest.tmp.XXXXXX")
 trap 'rm -f "$manifest_tmp"' EXIT
 receipt_dir="$manifest_dir/raw-receipts"
 
 expected_receipts=()
 for case_file in "${cases[@]}"; do
+  require_regular_nonempty 'rendered case' "$case_file"
   case_name=$(basename "$case_file")
   expected_receipts+=("${case_name%.Jenkinsfile}.receipt.txt")
 done
@@ -143,11 +153,10 @@ done
   printf 'case-count\t%s\n' "${#cases[@]}"
   ordinal=0
   for case_file in "${cases[@]}"; do
-    [[ -f "$case_file" ]] || fail "missing rendered case: $case_file"
     case_name=$(basename "$case_file")
     receipt_name=${case_name%.Jenkinsfile}.receipt.txt
     receipt="$receipt_dir/$receipt_name"
-    [[ -f "$receipt" ]] || fail "missing receipt: $receipt"
+    require_regular_nonempty 'receipt' "$receipt"
     ordinal=$((ordinal + 1))
     printf 'case\t%02d\t%s\t%s\t%s\t%s\n' \
       "$ordinal" "$case_name" "$(digest "$case_file")" \

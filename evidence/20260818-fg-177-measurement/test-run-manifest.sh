@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 evidence='evidence/20260818-fg-177-measurement'
+PYTHONDONTWRITEBYTECODE=1 python3 "$evidence/test-publish-run-bundle.py"
 proof_tmp=$(mktemp -d)
 trap 'rm -rf "$proof_tmp"' EXIT
 metadata="$proof_tmp/metadata"
@@ -45,6 +46,143 @@ grep -Fx $'controller-image-digest\tsha256:'"$(printf '%064d' 2)" "$manifest"
 # A reversed timestamp and a missing receipt both refuse. Failure is atomic:
 # the last complete manifest remains byte-identical and no temp is published.
 manifest_hash=$(sha256sum "$manifest" | awk '{ print $1 }')
+
+require_input_refusal() {
+  local label=$1
+  local log_arg=$2
+  local exit_arg=$3
+  local metadata_arg=$4
+  local before_arg=$5
+  local after_arg=$6
+  local case_one=$7
+  local case_two=$8
+  if bash "$evidence/write-run-manifest.sh" \
+    "$manifest" probes \
+    2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \
+    2026-08-19T10:00:02Z 2026-08-19T10:00:03Z \
+    1 probe-cli-exit "$log_arg" "$exit_arg" 2.568.1 "$metadata_arg" \
+    "$before_arg" "$after_arg" "$case_one" "$case_two" \
+      > "$proof_tmp/$label.log" 2>&1; then
+    printf 'ERROR: %s manifest input unexpectedly passed\n' "$label" >&2
+    exit 1
+  fi
+  if [[ $(sha256sum "$manifest" | awk '{ print $1 }') != "$manifest_hash" ]]; then
+    printf 'ERROR: %s refusal changed the prior complete manifest\n' "$label" >&2
+    exit 1
+  fi
+  if find "$out" -maxdepth 1 -name 'probe-run-manifest.tsv.tmp.*' | grep -q .; then
+    printf 'ERROR: %s refusal left a partial manifest temp\n' "$label" >&2
+    exit 1
+  fi
+}
+
+valid_log="$out/probe-run.log"
+valid_exit="$out/probe-exit.txt"
+valid_before="$out/oracle-before-verification.txt"
+valid_after="$out/oracle-after-verification.txt"
+valid_case_one="$out/one.Jenkinsfile"
+valid_case_two="$out/two.Jenkinsfile"
+
+empty_log="$proof_tmp/empty-run.log"
+: > "$empty_log"
+symlink_log="$proof_tmp/symlink-run.log"
+ln -s "$valid_log" "$symlink_log"
+directory_log="$proof_tmp/directory-run.log"
+mkdir "$directory_log"
+for label_path in \
+  "missing-log:$proof_tmp/missing-run.log" \
+  "empty-log:$empty_log" \
+  "symlink-log:$symlink_log" \
+  "nonregular-log:$directory_log"
+do
+  label=${label_path%%:*}
+  planted=${label_path#*:}
+  require_input_refusal "$label" "$planted" "$valid_exit" "$metadata" \
+    "$valid_before" "$valid_after" "$valid_case_one" "$valid_case_two"
+done
+
+empty_exit="$proof_tmp/empty-exit.txt"
+: > "$empty_exit"
+symlink_exit="$proof_tmp/symlink-exit.txt"
+ln -s "$valid_exit" "$symlink_exit"
+directory_exit="$proof_tmp/directory-exit.txt"
+mkdir "$directory_exit"
+for label_path in \
+  "missing-exit:$proof_tmp/missing-exit.txt" \
+  "empty-exit:$empty_exit" \
+  "symlink-exit:$symlink_exit" \
+  "nonregular-exit:$directory_exit"
+do
+  label=${label_path%%:*}
+  planted=${label_path#*:}
+  require_input_refusal "$label" "$valid_log" "$planted" "$metadata" \
+    "$valid_before" "$valid_after" "$valid_case_one" "$valid_case_two"
+done
+
+# The same immutable-input contract applies to every hashed manifest input.
+empty_oracle="$proof_tmp/empty-oracle.txt"
+: > "$empty_oracle"
+symlink_oracle="$proof_tmp/symlink-oracle.txt"
+ln -s "$valid_before" "$symlink_oracle"
+directory_oracle="$proof_tmp/directory-oracle.txt"
+mkdir "$directory_oracle"
+require_input_refusal missing-oracle "$valid_log" "$valid_exit" "$metadata" \
+  "$proof_tmp/missing-oracle.txt" "$valid_after" "$valid_case_one" "$valid_case_two"
+require_input_refusal empty-oracle "$valid_log" "$valid_exit" "$metadata" \
+  "$empty_oracle" "$valid_after" "$valid_case_one" "$valid_case_two"
+require_input_refusal symlink-oracle "$valid_log" "$valid_exit" "$metadata" \
+  "$symlink_oracle" "$valid_after" "$valid_case_one" "$valid_case_two"
+require_input_refusal nonregular-oracle "$valid_log" "$valid_exit" "$metadata" \
+  "$directory_oracle" "$valid_after" "$valid_case_one" "$valid_case_two"
+
+empty_case="$proof_tmp/empty-case.Jenkinsfile"
+: > "$empty_case"
+symlink_case="$proof_tmp/symlink-case.Jenkinsfile"
+ln -s "$valid_case_one" "$symlink_case"
+directory_case="$proof_tmp/directory-case.Jenkinsfile"
+mkdir "$directory_case"
+require_input_refusal missing-case "$valid_log" "$valid_exit" "$metadata" \
+  "$valid_before" "$valid_after" "$proof_tmp/missing-case.Jenkinsfile" "$valid_case_two"
+require_input_refusal empty-case "$valid_log" "$valid_exit" "$metadata" \
+  "$valid_before" "$valid_after" "$empty_case" "$valid_case_two"
+require_input_refusal symlink-case "$valid_log" "$valid_exit" "$metadata" \
+  "$valid_before" "$valid_after" "$symlink_case" "$valid_case_two"
+require_input_refusal nonregular-case "$valid_log" "$valid_exit" "$metadata" \
+  "$valid_before" "$valid_after" "$directory_case" "$valid_case_two"
+
+empty_metadata="$proof_tmp/empty-metadata"
+cp -a "$metadata" "$empty_metadata"
+: > "$empty_metadata/jenkins-plugins.tsv"
+symlink_metadata_file="$proof_tmp/symlink-metadata-file"
+cp -a "$metadata" "$symlink_metadata_file"
+rm "$symlink_metadata_file/jenkins-plugins.tsv"
+ln -s "$metadata/jenkins-plugins.tsv" \
+  "$symlink_metadata_file/jenkins-plugins.tsv"
+symlink_metadata_dir="$proof_tmp/symlink-metadata-dir"
+ln -s "$metadata" "$symlink_metadata_dir"
+missing_metadata="$proof_tmp/missing-metadata"
+cp -a "$metadata" "$missing_metadata"
+rm "$missing_metadata/jenkins-plugins.tsv"
+directory_metadata="$proof_tmp/directory-metadata"
+cp -a "$metadata" "$directory_metadata"
+rm "$directory_metadata/jenkins-plugins.tsv"
+mkdir "$directory_metadata/jenkins-plugins.tsv"
+require_input_refusal missing-provenance "$valid_log" "$valid_exit" \
+  "$missing_metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+require_input_refusal empty-provenance "$valid_log" "$valid_exit" \
+  "$empty_metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+require_input_refusal symlink-provenance "$valid_log" "$valid_exit" \
+  "$symlink_metadata_file" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+require_input_refusal symlink-metadata-dir "$valid_log" "$valid_exit" \
+  "$symlink_metadata_dir" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+require_input_refusal nonregular-provenance "$valid_log" "$valid_exit" \
+  "$directory_metadata" "$valid_before" "$valid_after" \
+  "$valid_case_one" "$valid_case_two"
+
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z \

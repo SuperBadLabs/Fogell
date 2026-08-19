@@ -9,13 +9,14 @@ import errno
 import os
 import pathlib
 import sys
+from typing import NoReturn
 
 
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
 
 
-def fail(message: str) -> "NoReturn":
+def fail(message: str) -> NoReturn:
     raise RuntimeError(message)
 
 
