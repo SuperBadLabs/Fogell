@@ -120,12 +120,15 @@ The daily work loop starts and ends on HeMan:
 4. Inspect the complete diff and evidence, then run `scripts/build-and-test.sh` on
    HeMan. A run that skips the corpus-dependent scorecard check is not the full
    local gate and does not license publication.
-5. Before publication, run the local guards that exist for the ticket. FG-199 is
-   not one of them yet: its repository-wide audit cannot decide an open PR, and
-   the `--pr N` guard and its known-bad proof must land before this cycle requires
-   them.
-6. Use GitHub for final reviewers, required status checks and merge. A finding
-   returns the work to HeMan; the correction is proved there before publication.
+5. Publish the already-proven commit to GitHub and obtain final review of that
+   exact head. A finding returns the work to HeMan; prove the correction there,
+   push it, and request a fresh review (`@codex review` for Codex). A review of an
+   earlier SHA does not carry forward.
+6. Once FG-199's `--pr N` mode and known-bad proof land, run the guard from HeMan
+   after the review record exists and before merge. Its current repository-wide
+   audit cannot decide an open PR and is not a publication guard.
+7. Use GitHub for required status checks and merge only the exact head that the
+   HeMan gate and final review covered.
 
 A ticket is done only when all of the following are true:
 
@@ -416,11 +419,12 @@ first corpus receipt costs; **FG-200 exists to find that out, and until it repor
 claim that Track 2 is binding is an argument from denominators and not a measurement.**
 
 **HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is intended to become a local
-pre-publication guardrail, not an implementation ticket and not work to perform in
-GitHub. Its current repository-wide audit runs on HeMan, but the `--pr N` checker
-and known-bad proof remain TODO and will run there too; querying GitHub review
-metadata does not move execution there. Until that mode lands, the historical
-audit is not a required review or merge guard. In the implementation queue, the
+post-publication, pre-merge guardrail, not an implementation ticket and not work
+to perform in GitHub. Its current repository-wide audit runs on HeMan, but the
+`--pr N` checker and known-bad proof remain TODO and will run there too; querying
+GitHub review metadata does not move execution there. The candidate must be
+published before its head and review record can exist. Until that mode lands, the
+historical audit is not a required merge guard. In the implementation queue, the
 first active ticket is FG-177; its branch, edit-test loop and evidence stay on
 HeMan until its commit is ready to publish.
 
@@ -461,7 +465,7 @@ HeMan until its commit is ready to publish.
 
 | # | id | status | why it is next |
 |---|---|---|---|
-| 1 | FG-199 | TODO | Local pre-publication guard on HeMan. Measured 2026-08-15: 45 of 60 merged PRs landed a commit no expected reviewer saw. What ranks it is that its failure is silent: an absent reviewer and a clean review return the same empty answer, so it does not announce itself the way a red gate does. [→ detail](tickets/FG-199.md) |
+| 1 | FG-199 | TODO | HeMan-local post-publication, pre-merge guard. Measured 2026-08-15: 45 of 60 merged PRs landed a commit no expected reviewer saw. What ranks it is that its failure is silent: an absent reviewer and a clean review return the same empty answer, so it does not announce itself the way a red gate does. [→ detail](tickets/FG-199.md) |
 | — | FG-198 | **DONE** | Landed 2026-08-17: the rule's deny-list floor runs blocking in the gate with its proof beside it, so enforcement no longer depends on who is looking. It had failed nineteen times across two shapes, most of them on a single docs-only branch |
 | — | — | **DONE** | `main` branch-protected with `gate` required, 2026-08-15, and proven to block a red gate on PR #61 |
 
