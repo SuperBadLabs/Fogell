@@ -45,6 +45,58 @@ def dollar = $/unstash(name: 'fake') ${echo(message: 'real', fogellProbeUnknown:
             ],
         )
 
+    def test_multiline_slashy_blanks_text_but_keeps_interpolation_and_offsets(self) -> None:
+        source = r'''
+def quotient = 42 / 6
+def slashy = /literal echo(message: 'fake', fogellProbeUnknown: true)
+escaped \/ delimiter is still literal
+${sh(script: 'real', returnStatus: true)}
+literal unstash(name: 'fake')/
+echo(message: 'after', fogellProbeUnknown: true)
+'''
+        observed = MODULE.calls(source)
+        self.assertEqual(
+            [(step, tuple(key for key, _ in keys)) for step, keys, _ in observed],
+            [
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message", "fogellProbeUnknown")),
+            ],
+        )
+        self.assertEqual(
+            [MODULE.line_number(source, offset) for _, _, offset in observed],
+            [5, 7],
+        )
+        blanked = MODULE.blank_non_code(source)
+        self.assertEqual(blanked.count("\n"), source.count("\n"))
+        self.assertIn("42 / 6", blanked)
+
+    def test_multiline_dollar_slashy_has_the_same_executable_boundary(self) -> None:
+        source = r'''
+def dollar = $/
+literal archiveArtifacts(artifacts: 'fake')
+escaped $/ slash and $$ dollar stay literal
+${echo(message: 'real', fogellProbeUnknown: true)}
+literal unstable(message: 'fake')
+/$
+sh(script: 'after', returnStdout: true)
+'''
+        observed = MODULE.calls(source)
+        self.assertEqual(
+            [(step, tuple(key for key, _ in keys)) for step, keys, _ in observed],
+            [
+                ("echo", ("message", "fogellProbeUnknown")),
+                ("sh", ("script", "returnStdout")),
+            ],
+        )
+        self.assertEqual(
+            [MODULE.line_number(source, offset) for _, _, offset in observed],
+            [5, 8],
+        )
+        self.assertEqual(
+            MODULE.blank_non_code(source).count("\n"),
+            source.count("\n"),
+        )
+
     def test_nested_gstrings_keep_calls_and_top_level_keys(self) -> None:
         source = r'''
 def rendered = "literal junit(testResults: 'fake') ${

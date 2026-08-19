@@ -16,6 +16,7 @@ export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGEL
 
 out='evidence/20260818-fg-177-measurement'
 mkdir -p "$out/raw-receipts"
+bash "$out/sync-checkout-scm-fixture.sh"
 
 set +e
 dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \

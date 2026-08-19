@@ -42,10 +42,10 @@ def blank_non_code(source: str) -> str:
 
     Offsets and newlines never move. Slashy-versus-division uses Fogell's proven
     one-character rule: after an expression ender ``/`` divides; otherwise a
-    same-line closed ``/…/`` is a slashy GString. Dollar-slashy strings may span
-    lines. In every interpolating form only balanced, unescaped ``${...}`` code
-    remains visible to the call scanner. Its delimiters become offset-preserving
-    parentheses so nested keys cannot leak into the surrounding command call,
+    later unescaped ``/`` closes a slashy GString, including across newlines.
+    Dollar-slashy strings may also span lines. In every interpolating form only
+    balanced, unescaped ``${...}`` code remains visible to the call scanner. Its
+    delimiters become offset-preserving parentheses so nested keys cannot leak,
     while an executable nested step remains independently discoverable.
     """
     out = list(source)
@@ -149,9 +149,9 @@ def blank_non_code(source: str) -> str:
         return n
 
     def scan_slashy(i: int) -> tuple[int, bool]:
-        """Blank one same-line slashy GString; an unclosed candidate is not one."""
+        """Blank a possibly multiline slashy GString through its unescaped close."""
         j = i + 1
-        while j < n and source[j] != "\n":
+        while j < n:
             if source[j] == "\\" and j + 1 < n:
                 blank(j, j + 2)
                 j += 2
