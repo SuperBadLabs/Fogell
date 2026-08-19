@@ -276,6 +276,77 @@ sh(script: 'after', returnStdout: true)
             source.count("\n"),
         )
 
+    def test_slashy_close_uses_immediately_preceding_backslash(self) -> None:
+        for count in range(6):
+            with self.subTest(backslashes=count):
+                run = "\\" * count
+                if count == 0:
+                    source = """\
+def value = /literal/;
+echo(message: 'visible-after-close')
+sh(script: 'after', returnStatus: true)
+"""
+                    expected = [
+                        ("echo", ("message",)),
+                        ("sh", ("script", "returnStatus")),
+                    ]
+                else:
+                    source = f"""\
+def value = /literal{run}/
+echo(message: 'fake-inside-literal-{count}')
+${{sh(script: 'interpolated', returnStatus: true)}}
+tail/
+echo(message: 'visible-after-literal')
+"""
+                    expected = [
+                        ("sh", ("script", "returnStatus")),
+                        ("echo", ("message",)),
+                    ]
+                self.assertEqual(compact(source), expected)
+                self.assertEqual(
+                    MODULE.blank_non_code(source).count("\n"), source.count("\n")
+                )
+
+    def test_dollar_slashy_close_uses_dollar_parity_not_backslashes(self) -> None:
+        for count in range(6):
+            with self.subTest(dollars=count):
+                run = "$" * count
+                if count % 2 == 0:
+                    source = f"""\
+def value = $/literal{run}/$;
+echo(message: 'visible-after-close')
+sh(script: 'after', returnStatus: true)
+"""
+                    expected = [
+                        ("echo", ("message",)),
+                        ("sh", ("script", "returnStatus")),
+                    ]
+                else:
+                    source = f"""\
+def value = $/literal{run}/$
+echo(message: 'fake-inside-literal-{count}')
+${{sh(script: 'interpolated', returnStatus: true)}}
+tail/$
+echo(message: 'visible-after-literal')
+"""
+                    expected = [
+                        ("sh", ("script", "returnStatus")),
+                        ("echo", ("message",)),
+                    ]
+                self.assertEqual(compact(source), expected)
+                self.assertEqual(
+                    MODULE.blank_non_code(source).count("\n"), source.count("\n")
+                )
+
+        for count in range(6):
+            with self.subTest(dollar_slashy_backslashes=count):
+                run = "\\" * count
+                source = f"""\
+def value = $/literal{run}/$;
+echo(message: 'visible-after-close')
+"""
+                self.assertEqual(compact(source), [("echo", ("message",))])
+
     def test_nested_gstrings_keep_calls_and_top_level_keys(self) -> None:
         source = r'''
 def rendered = "literal junit(testResults: 'fake') ${

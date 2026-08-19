@@ -9,6 +9,31 @@ remote="$fixture_tmp/fixture.git"
 seed="$fixture_tmp/seed"
 rendered="$fixture_tmp/rendered"
 
+require_fixed_count() {
+  local mode=$1
+  local expected=$2
+  local needle=$3
+  local file=$4
+  local diagnostic=$5
+  local count rc
+
+  if count=$(grep "$mode" -- "$needle" "$file"); then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [[ $rc -gt 1 ]]; then
+    printf 'ERROR: %s (grep rc=%s)\n' "$diagnostic" "$rc" >&2
+    return "$rc"
+  fi
+  [[ $rc -eq 1 ]] && count=0
+  if [[ $count -ne $expected ]]; then
+    printf 'ERROR: %s (found %s, expected %s)\n' \
+      "$diagnostic" "$count" "$expected" >&2
+    return 1
+  fi
+}
+
 git init -q --bare "$remote"
 git init -q "$seed"
 printf 'fixture\n' > "$seed/README"
@@ -27,6 +52,43 @@ FOGELL_SCM_URL="$scm_url" \
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence/render-probe-cases.py"
 
+# Known-bad proof: grep returns 1 for zero matches, but that status must reach
+# our count assertion and its diagnostic rather than aborting under `set -e`.
+planted_missing="$fixture_tmp/planted-missing-url"
+printf 'no configured URL here\n' > "$planted_missing"
+planted_diagnostic='planted rendered case lacks its configured URL'
+if planted_output=$(
+  require_fixed_count -Foc 1 "$scm_url" "$planted_missing" "$planted_diagnostic" 2>&1
+); then
+  echo 'ERROR: planted zero-match count unexpectedly passed' >&2
+  exit 1
+else
+  planted_rc=$?
+fi
+expected_planted="ERROR: $planted_diagnostic (found 0, expected 1)"
+if [[ $planted_rc -ne 1 || "$planted_output" != "$expected_planted" ]]; then
+  printf 'ERROR: planted zero-match proof missed custom diagnostic; rc=%s output=%s\n' \
+    "$planted_rc" "$planted_output" >&2
+  exit 1
+fi
+
+missing_file="$fixture_tmp/does-not-exist"
+missing_diagnostic='planted grep read failure propagates'
+if missing_output=$(
+  require_fixed_count -Foc 1 "$scm_url" "$missing_file" "$missing_diagnostic" 2>&1
+); then
+  echo 'ERROR: planted grep read failure unexpectedly passed' >&2
+  exit 1
+else
+  missing_rc=$?
+fi
+expected_missing="ERROR: $missing_diagnostic (grep rc=2)"
+if [[ $missing_rc -ne 2 || "$missing_output" != *"$expected_missing"* ]]; then
+  printf 'ERROR: planted grep read failure lost rc/diagnostic; rc=%s output=%s\n' \
+    "$missing_rc" "$missing_output" >&2
+  exit 1
+fi
+
 git ls-remote --exit-code "$scm_url" refs/heads/main >/dev/null
 (
   cd "$rendered"
@@ -42,10 +104,8 @@ do
   if [[ "$name" == fg177-plan-git-history.Jenkinsfile ]]; then
     expected_urls=2
   fi
-  if [[ $(grep -Foc "$scm_url" "$rendered/$name") -ne $expected_urls ]]; then
-    echo "ERROR: rendered $name does not contain exactly $expected_urls configured URLs" >&2
-    exit 1
-  fi
+  require_fixed_count -Foc "$expected_urls" "$scm_url" "$rendered/$name" \
+    "rendered $name does not contain exactly $expected_urls configured URLs"
   if grep -Fq '@@FOGELL_SCM_URL@@' "$rendered/$name"; then
     echo "ERROR: rendered $name retains its SCM token" >&2
     exit 1
@@ -63,10 +123,9 @@ do
   cmp "$evidence/cases/$name" "$rendered/$name"
 done
 
-if [[ $(grep -Fxc '//// NEXT BUILD ////' "$rendered/fg177-plan-git-history.Jenkinsfile") -ne 1 ]]; then
-  echo "ERROR: retained-history plan is not exactly two builds" >&2
-  exit 1
-fi
+require_fixed_count -Fxc 1 '//// NEXT BUILD ////' \
+  "$rendered/fg177-plan-git-history.Jenkinsfile" \
+  'retained-history plan is not exactly two builds'
 
 # Exercise the actual runner from a fresh fixture. A fake CLI proves that all
 # paths handed to it are exact rendered files and that its status is preserved.
@@ -109,7 +168,9 @@ for name in \
   fg177-probe-unknown-policy.Jenkinsfile \
   fg177-probe-return-semantics.Jenkinsfile
 do
-  [[ $(grep -Foc "$scm_url" "$runner_out/rendered-cases/$name") -eq 1 ]]
+  require_fixed_count -Foc 1 "$scm_url" \
+    "$runner_out/rendered-cases/$name" \
+    "runner-rendered $name does not contain exactly one configured URL"
 done
 cmp "$evidence/cases/fg177-probe-checkout-scm.Jenkinsfile" \
   "$runner_out/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"

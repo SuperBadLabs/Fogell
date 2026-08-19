@@ -247,10 +247,7 @@ def blank_non_code(source: str) -> str:
         """Blank a possibly multiline slashy GString through its unescaped close."""
         j = i + 1
         while j < n:
-            if source[j] == "\\" and j + 1 < n:
-                blank(j, j + 2)
-                j += 2
-            elif source.startswith("${", j):
+            if source.startswith("${", j):
                 snapshot = out.copy()
                 blank(j, j + 2)
                 out[j + 1] = "("
@@ -261,7 +258,11 @@ def blank_non_code(source: str) -> str:
                     out[:] = snapshot
                     blank(j, j + 2)
                     j += 2
-            elif source[j] == "/":
+            elif source[j] == "/" and source[j - 1] != "\\":
+                # Groovy slashy strings do not use conventional backslash-run
+                # parity. Any immediately preceding backslash protects `/`;
+                # `\\/` is escaped just as `\/` is. Backslashes otherwise stay
+                # ordinary literal text.
                 # Mark a proven slashy close as an expression-ending quote in
                 # the already-synthetic scanner view. A later slash is then
                 # division, while a failed speculative scan restores this byte
