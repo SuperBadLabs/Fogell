@@ -264,20 +264,94 @@ module WalkerRules =
               "retry", "count"
               "withEnv", "overrides" ]
 
-    /// FG-174. The hosted wrappers whose CALL SHAPE is validated before dispatch.
+    /// FG-177. A hosted step's CALL SHAPE as DATA — the StepDescriptor move.
     ///
-    /// THIS EXISTS TO BE COMPARED WITH THE SET ABOVE, and the comparison is a test.
-    /// `hostedSignatureError` ends in a `| _ -> None` catch-all, so a wrapper admitted
-    /// without a case is validated by NOTHING and silently accepts any shape. That is not
-    /// hypothetical: `timeout` sat in the hosted set with no case, and
-    /// `script { timeout(1, 2) { … } }` ran its body and reported SUCCESS while Jenkins
-    /// raised `IllegalArgumentException: Expected named arguments but got [1, 2]` — the
-    /// ninth finding of a class whose own comment already said "every newly admitted
-    /// hosted step would have got its own signature bypass, one per arm, found one review
-    /// round at a time". It was, and it was.
+    /// Thirteen findings across FG-172/FG-174 said hand-written per-step arms do
+    /// not converge: each arm encoded what its author thought of on the day, was
+    /// too permissive AND too strict across the set, and nothing said what was
+    /// missing. This table is the replacement: one row per step, read in one
+    /// place, checked by ONE validator — and a HOSTED WRAPPER with no row here
+    /// fails a TEST, not a review round (schema-less vocabulary steps keep the
+    /// default-deny arity rule; their named arguments remain the stated gap).
     ///
-    /// Keeping the two sets equal turns that from a review finding into a failing test.
-    let hostedWrappersWithSignatureCase = set [ "dir"; "timeout"; "retry"; "withEnv" ]
+    /// Each row states, faithfully to the arms it replaces (slice 1 is a
+    /// refactor-to-data; every behaviour change needs its own measurement):
+    ///   - `Arity`: positionals accepted AFTER normalisation (the mixed-args
+    ///     rule and sole-parameter promotion have already run);
+    ///   - `NamedKeys`: `Some names` = only these named keys, each other key
+    ///     refused BY NAME; `None` = named arguments pass through unchecked
+    ///     (`timeout`'s time/unit read downstream, and the default steps — the
+    ///     unknown-named gap the FG-177 row states is NOT closed by slice 1);
+    ///   - `ShapeText`: the refusal's wording, preserved from the arm;
+    ///   - `Check`: the step's VALUE rule, if it has one — kept in the row so a
+    ///     step's whole shape reads in one place.
+    type HostedSignature =
+        { Arity: int
+          NamedKeys: string list option
+          ShapeText: string
+          Check: (Fogell.Groovy.Interpreter.Value list -> (string * Fogell.Groovy.Interpreter.Value) list -> string option) }
+
+    let private noCheck = fun (_: Fogell.Groovy.Interpreter.Value list) (_: (string * Fogell.Groovy.Interpreter.Value) list) -> None
+
+    let hostedSignatures: Map<string, HostedSignature> =
+        let open' = Fogell.Groovy.Interpreter.Value.toDisplay
+
+        Map.ofList
+            [ "withEnv",
+              { Arity = 1
+                NamedKeys = Some []
+                ShapeText = "takes exactly one list argument of NAME=VALUE strings"
+                Check =
+                  fun positional _ ->
+                      match positional with
+                      | [ Fogell.Groovy.Interpreter.VList items ] ->
+                          items
+                          |> List.map open'
+                          |> List.tryFind (fun e -> e.IndexOf '=' <= 0)
+                          |> Option.map (fun bad ->
+                              $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
+                      | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings" }
+              "dir",
+              { Arity = 1
+                NamedKeys = Some []
+                ShapeText = "takes exactly one path argument"
+                Check =
+                  fun positional _ ->
+                      match positional with
+                      | [ _ ] -> None
+                      | _ -> Some "`dir` takes exactly one path argument" }
+              "retry",
+              { Arity = 1
+                NamedKeys = Some [ "count" ]
+                ShapeText = "takes one attempt count, either positionally or as `count:`"
+                Check =
+                  fun positional named ->
+                      // MEASURED (receipt `script-retry-zero`): retry(0) RUNS (clamped),
+                      // named count: is valid Jenkins, conditions: refused by name.
+                      let countArg =
+                          match positional, named |> List.tryFind (fun (k, _) -> k = "count") with
+                          | [ v ], None -> Some v
+                          | [], Some(_, v) -> Some v
+                          | _ -> None
+
+                      match countArg with
+                      | None -> Some "`retry` takes one attempt count, either positionally or as `count:`"
+                      | Some(Fogell.Groovy.Interpreter.VInt _) -> None
+                      | Some other -> Some $"`retry` needs an integer attempt count, not `{open' other}`" }
+              "timeout",
+              { Arity = 1
+                NamedKeys = None
+                ShapeText = "takes one positional argument or named ones"
+                Check = noCheck } ]
+
+    // FG-177 RETIRED the signature-case mirror set here: it was a hand-written
+    // mirror of the signature ARMS, kept equal to the hosted set by a test, and the
+    // arms are gone — the same guarantee now comes from `hostedSignatures` itself,
+    // whose row-coverage test fails for any hosted wrapper without a row. Two
+    // hand-maintained literals comparing equal guaranteed nothing the table's own
+    // key set does not (the verifier's finding on this diff). The history it
+    // guarded — `timeout` sitting in the hosted set with NO case while
+    // `timeout(1, 2)` ran its body — lives on the FG-174/FG-177 board rows.
 
     /// FG-174. Whether a return flag is set — and, when it is written in a form Fogell
     /// will not guess at, a reason to refuse BEFORE the step runs.
