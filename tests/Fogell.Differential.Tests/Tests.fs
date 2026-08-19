@@ -1418,6 +1418,65 @@ let jenkinsBuildDataAttestation =
               match Jenkins.parseBuildDataRevisions "{\"queueItem\":{}}" with
               | Ok value -> failtestf "missing actions unexpectedly parsed: %A" value
               | Error why -> Expect.stringContains why "no actions array" "missing structure named"
+          }
+
+          test "SCM evidence jobs use a full definition checkout" {
+              let spec = { Url = "file:///fixture.git"; Branch = "fogell-pins/" + String.replicate 40 "a" }
+              Expect.stringContains
+                  (Jenkins.scmJobXml true spec)
+                  "<lightweight>false</lightweight>"
+                  "the attestation lane records the definition checkout before Pipeline code"
+              Expect.stringContains
+                  (Jenkins.scmJobXml false spec)
+                  "<lightweight>true</lightweight>"
+                  "ordinary differential runs retain lightweight retrieval"
+          }
+
+          test "definition revision comes only from the pre-Pipeline checkout" {
+              let definitionRevision = String.replicate 40 "a"
+              let laterCheckout = String.replicate 40 "b"
+              let console =
+                  $"""Started by user harness
+Checking out Revision {definitionRevision} (refs/remotes/origin/pin)
+[Pipeline] Start of Pipeline
+Checking out Revision {laterCheckout} (refs/remotes/origin/pin)
+script says Checking out Revision {laterCheckout} (spoof)
+"""
+
+              match Jenkins.parseScmDefinitionRevision console with
+              | Error why -> failtest why
+              | Ok revision ->
+                  Expect.equal revision definitionRevision "later checkout and script text cannot replace the definition identity"
+          }
+
+          test "missing or conflicting pre-Pipeline definition revisions fail closed" {
+              let a = String.replicate 40 "a"
+              let b = String.replicate 40 "b"
+              match Jenkins.parseScmDefinitionRevision "[Pipeline] Start of Pipeline\n" with
+              | Ok revision -> failtestf "missing definition revision unexpectedly parsed: %s" revision
+              | Error why -> Expect.stringContains why "no pre-Pipeline" "missing checkout named"
+
+              match
+                  Jenkins.parseScmDefinitionRevision(
+                      $"Checking out Revision {a} (a)\nChecking out Revision {b} (b)\n[Pipeline] Start of Pipeline\n"
+                  )
+              with
+              | Ok revision -> failtestf "conflicting definitions unexpectedly parsed: %s" revision
+              | Error why -> Expect.stringContains why "multiple pre-Pipeline" "ambiguous checkout named"
+          }
+
+          test "SCM attestation URLs encode spaces and remove credentials" {
+              let spaced = WalkerGit.attestationUrl "file:///tmp/fixture repo.git"
+              Expect.equal spaced "file:///tmp/fixture%20repo.git" "spaces use a single URI encoding"
+
+              let credentialed = WalkerGit.attestationUrl "https://user:super-secret@example.test/repo.git"
+              Expect.equal credentialed "https://example.test/repo.git" "userinfo is removed, not merely masked"
+              Expect.isFalse (credentialed.Contains "user") "username is absent"
+              Expect.isFalse (credentialed.Contains "super-secret") "password is absent"
+
+              let opaque = WalkerGit.attestationUrl "git@example.test:repo.git"
+              Expect.stringStarts opaque "sha256:" "non-URI remotes are represented opaquely"
+              Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
 [<EntryPoint>]

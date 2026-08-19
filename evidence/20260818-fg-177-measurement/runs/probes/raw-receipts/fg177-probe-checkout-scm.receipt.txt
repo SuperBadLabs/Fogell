@@ -1,13 +1,13 @@
 # Differential receipt — fg177-probe-checkout-scm.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         277ae6512e40351941e6cc6b2e7916f428f863dbe9a567a4eaeb7d064277ec04
+seal:         1bdbe1b459bb03c453bcad289e77b8acb263cbe5d3b5718f9a9ff8c9e998455b
 case-digest:  31bd34928f05f06f3524bf33fc5e3b61b5ad2cacd34eb9925da19415fee128c4
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
   - terminal result: jenkins=success fogell=failure
-  - output line 1: jenkins=FG177 MISSING checkout THREW java.lang.NullPointerException: Cannot invoke "hudson.scm.SCM.checkout(hudson.model.Run, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener, java.io.File, hudson.scm.SCMRevisionState)" because "scm" is null fogell=<absent>
+  - output line 0: jenkins=Checking out git git://100.105.179.51/repo.git into ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 to read Jenkinsfile fogell=Obtained Jenkinsfile from git git://100.105.179.51/repo.git
   - workspace hash: jenkins=37dac3b30c58 fogell=e3b0c44298fc
 
 ## Comparison contract
@@ -82,8 +82,24 @@ VERDICT: DIVERGED (3)
 ## Jenkins
   result:         success
   workspace-hash: 37dac3b30c5873be4bbc0d882eac60d19e9a70b3f2412a9d64b82dcfac8f59f1
-  output (47 lines):
-    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+  output (62 lines):
+    | Checking out git git://100.105.179.51/repo.git into ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 to read Jenkinsfile
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | > git rev-parse --resolve-git-dir ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9/.git # timeout=10
+    | Fetching changes from the remote Git repository
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
+    | Commit message: "sync: fg177-probe-checkout-scm"
+    | First time build. Skipping changelog.
     | FG177 MISSING checkout THREW java.lang.NullPointerException: Cannot invoke "hudson.scm.SCM.checkout(hudson.model.Run, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener, java.io.File, hudson.scm.SCMRevisionState)" because "scm" is null
     | WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep': fogellProbeUnknown
     | FG177 UNKNOWN-ONLY checkout THREW java.lang.NullPointerException: Cannot invoke "hudson.scm.SCM.checkout(hudson.model.Run, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener, java.io.File, hudson.scm.SCMRevisionState)" because "scm" is null
@@ -106,7 +122,6 @@ VERDICT: DIVERGED (3)
     | > git config core.sparsecheckout # timeout=10
     | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
     | Commit message: "sync: fg177-probe-checkout-scm"
-    | First time build. Skipping changelog.
     | + printf after
     | FG177 UNKNOWN checkout CONTINUED
     | Selected Git installation does not exist. Using Default
@@ -138,6 +153,7 @@ VERDICT: DIVERGED (3)
     b6a98d9ce9a2  src/a.txt
     f2c82decdd71  src/b.txt
   engine notes (not compared):
+    ! scm-definition revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
     ! git-build-data revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
 
 ## Fogell

@@ -9,6 +9,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import urllib.parse
 
 PIN_KEYS = (
     "format", "source-branch", "source-revision", "scm-pinned-branch",
@@ -17,6 +18,8 @@ PIN_KEYS = (
 )
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+ATTESTATION_TOKENS = ("scm-definition", "git-build-data", "scm-preflight", "git-checkout")
+JENKINS_DEFINITION = re.compile(r"^    ! scm-definition revision=([0-9a-f]{40})$")
 JENKINS_NOTE = re.compile(r"^    ! git-build-data revision=([0-9a-f]{40})$")
 FOGELL_PREFLIGHT = re.compile(
     r"^    ! scm-preflight branch=(fogell-pins/[0-9a-f]{40}) "
@@ -25,7 +28,7 @@ FOGELL_PREFLIGHT = re.compile(
 )
 FOGELL_CHECKOUT = re.compile(
     r"^    ! git-checkout branch=(fogell-pins/[0-9a-f]{40}) "
-    r"revision=([0-9a-f]{40}) url=(\S+)$"
+    r"revision=([0-9a-f]{40}) url=(.+)$"
 )
 
 
@@ -76,7 +79,6 @@ def receipt_sections(path: pathlib.Path) -> dict[str, list[str]]:
     regular_nonempty(path, "receipt")
     sections: dict[str, list[str]] = {"Jenkins": [], "Fogell": []}
     current = ""
-    tokens = ("git-build-data", "scm-preflight", "git-checkout")
     for line in path.read_text(encoding="utf-8").splitlines():
         if line == "## Jenkins":
             current = "Jenkins"
@@ -84,32 +86,57 @@ def receipt_sections(path: pathlib.Path) -> dict[str, list[str]]:
             current = "Fogell"
         elif line.startswith("## "):
             current = ""
-        if any(token in line for token in tokens):
+        if any(token in line for token in ATTESTATION_TOKENS):
             if current not in sections or not line.startswith("    ! "):
                 fail(f"out-of-section or spoofed SCM attestation in {path}: {line}")
             sections[current].append(line)
     return sections
 
 
-def exact_matches(lines: list[str], pattern: re.Pattern[str], label: str) -> list[tuple[str, ...]]:
+def exact_matches(
+    lines: list[str], pattern: re.Pattern[str], token: str, label: str
+) -> list[tuple[str, ...]]:
     matched: list[tuple[str, ...]] = []
-    tokens = ("git-build-data", "scm-preflight", "git-checkout")
     for line in lines:
         match = pattern.fullmatch(line)
         if match is not None:
             matched.append(match.groups())
-        elif any(token in line for token in tokens):
-            fail(f"malformed or wrong-kind {label} attestation: {line}")
+        elif token in line:
+            fail(f"malformed or wrong-kind {label} attestation")
     return matched
+
+
+def validate_attested_url(value: str) -> None:
+    """Accept encoded or raw-spaced local URLs, but never credential-bearing notes."""
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        fail("Fogell git checkout URL contains a control character")
+    if value.startswith("sha256:"):
+        if HEX64.fullmatch(value.removeprefix("sha256:")) is None:
+            fail("Fogell git checkout URL digest is malformed")
+        return
+    parsed = urllib.parse.urlsplit(value)
+    if not parsed.scheme:
+        fail("Fogell git checkout URL is not absolute or opaque")
+    if parsed.username is not None or parsed.password is not None:
+        fail("Fogell git checkout URL contains forbidden userinfo credentials")
 
 
 def validate_checkout(path: pathlib.Path, pin: dict[str, str]) -> tuple[str, str]:
     sections = receipt_sections(path)
     revision = pin["scm-pinned-revision"]
-    jenkins = exact_matches(sections["Jenkins"], JENKINS_NOTE, "Jenkins BuildData")
+    definition = exact_matches(
+        sections["Jenkins"], JENKINS_DEFINITION, "scm-definition", "Jenkins SCM definition"
+    )
+    if definition != [(revision,)]:
+        fail(f"{path} Jenkins SCM definition differs from pinned revision: {definition}")
+    jenkins = exact_matches(
+        sections["Jenkins"], JENKINS_NOTE, "git-build-data", "Jenkins BuildData"
+    )
     if not jenkins or any(value != (revision,) for value in jenkins):
         fail(f"{path} Jenkins BuildData does not exclusively attest {revision}: {jenkins}")
-    preflight = exact_matches(sections["Fogell"], FOGELL_PREFLIGHT, "Fogell SCM preflight")
+    preflight = exact_matches(
+        sections["Fogell"], FOGELL_PREFLIGHT, "scm-preflight", "Fogell SCM preflight"
+    )
     expected = (pin["scm-pinned-branch"], revision, pin["scm-tree"], pin["jenkinsfile-blob"])
     if preflight != [expected]:
         fail(f"{path} Fogell preflight differs from pinned SCM identity: {preflight}")
@@ -119,13 +146,24 @@ def validate_checkout(path: pathlib.Path, pin: dict[str, str]) -> tuple[str, str
 def validate_git(path: pathlib.Path, pin: dict[str, str]) -> tuple[str, str]:
     sections = receipt_sections(path)
     revision = pin["git-pinned-revision"]
-    jenkins = exact_matches(sections["Jenkins"], JENKINS_NOTE, "Jenkins BuildData")
+    definition = exact_matches(
+        sections["Jenkins"], JENKINS_DEFINITION, "scm-definition", "Jenkins SCM definition"
+    )
+    if definition:
+        fail(f"{path} inline git case unexpectedly contains an SCM definition attestation")
+    jenkins = exact_matches(
+        sections["Jenkins"], JENKINS_NOTE, "git-build-data", "Jenkins BuildData"
+    )
     if not jenkins or any(value != (revision,) for value in jenkins):
         fail(f"{path} Jenkins BuildData does not exclusively attest {revision}: {jenkins}")
-    fogell = exact_matches(sections["Fogell"], FOGELL_CHECKOUT, "Fogell git checkout")
+    fogell = exact_matches(
+        sections["Fogell"], FOGELL_CHECKOUT, "git-checkout", "Fogell git checkout"
+    )
+    for _, _, url in fogell:
+        validate_attested_url(url)
     expected = (pin["git-pinned-branch"], revision)
     if any(value[:2] != expected for value in fogell):
-        fail(f"{path} Fogell checkout differs from pinned git identity: {fogell}")
+        fail(f"{path} Fogell checkout differs from pinned git identity")
     if len(fogell) > 1:
         fail(f"{path} has duplicate Fogell git checkout attestations")
     return "executed", "executed" if fogell else "not-executed"

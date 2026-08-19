@@ -236,24 +236,35 @@ case "$1" in
         refs/heads/case/fg177-probe-checkout-scm "$FOGELL_STUB_BRANCH_MOVE"
     fi
     write_receipt() {
-      local case_file=$1 receipt=$2 jenkins_revision
+      local case_file=$1 receipt=$2 jenkins_revision definition_revision
       jenkins_revision=$git_revision
+      definition_revision=''
       case $(basename "$case_file") in
         fg177-probe-checkout-scm.Jenkinsfile)
           jenkins_revision=$scm_revision
+          definition_revision=$scm_revision
           ;;
       esac
       if [[ -n ${FOGELL_STUB_EXECUTION_MISMATCH:-} ]]; then
         jenkins_revision=0000000000000000000000000000000000000000
       fi
+      if [[ -n ${FOGELL_STUB_DEFINITION_MISMATCH:-} && -n $definition_revision ]]; then
+        definition_revision=9999999999999999999999999999999999999999
+      fi
       {
         printf 'fixture receipt %s for %s\n\n## Jenkins\n  engine notes (not compared):\n' \
           "$generation" "$(basename "$case_file")"
+        if [[ -n $definition_revision ]]; then
+          printf '    ! scm-definition revision=%s\n' "$definition_revision"
+        fi
         printf '    ! git-build-data revision=%s\n\n## Fogell\n  result: failure\n  engine notes (not compared):\n' \
           "$jenkins_revision"
         if [[ $(basename "$case_file") == fg177-probe-checkout-scm.Jenkinsfile ]]; then
           printf '    ! scm-preflight branch=fogell-pins/%s revision=%s tree=%s jenkinsfile-blob=%s\n' \
             "$scm_revision" "$scm_revision" "$scm_tree" "$scm_blob"
+        elif [[ $(basename "$case_file") == fg177-probe-return-semantics.Jenkinsfile ]]; then
+          printf '    ! git-checkout branch=fogell-pins/%s revision=%s url=%s\n' \
+            "$git_revision" "$git_revision" "${FOGELL_STUB_ATTESTED_URL:-file:///fixture.git}"
         fi
       } > "$receipt"
     }
@@ -506,6 +517,61 @@ if [[ $execution_race_rc -eq 0 || $(bundle_hash "$published") != "$published_has
      "$fixture_tmp/execution-race.log"; then
   cat "$fixture_tmp/execution-race.log" >&2
   echo 'ERROR: executed-revision race was not refused atomically' >&2
+  exit 1
+fi
+
+# A transient content-addressed ref move during SCM definition retrieval is
+# distinct from the later explicit checkout's BuildData. The separately
+# attested pre-Pipeline revision must refuse publication even when BuildData
+# still reports the expected pin.
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/definition-race-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/definition-race-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/definition-race-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_DEFINITION_MISMATCH=1 \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/definition-race.log" 2>&1
+definition_race_rc=$?
+set -e
+if [[ $definition_race_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]] ||
+   ! grep -Fq 'Jenkins SCM definition differs from pinned revision' \
+     "$fixture_tmp/definition-race.log"; then
+  cat "$fixture_tmp/definition-race.log" >&2
+  echo 'ERROR: transient SCM-definition ref race was not refused atomically' >&2
+  exit 1
+fi
+
+# Even a planted credential-bearing engine note is refused without reflecting
+# the credential into diagnostics or replacing the prior coherent bundle.
+attestation_secret='fg177-attestation-secret'
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/credential-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/credential-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/credential-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_ATTESTED_URL="https://user:$attestation_secret@example.test/repo.git" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/credential.log" 2>&1
+credential_rc=$?
+set -e
+if [[ $credential_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]] ||
+   ! grep -Fq 'forbidden userinfo credentials' "$fixture_tmp/credential.log" ||
+   grep -FRq "$attestation_secret" "$fixture_tmp/credential.log" "$published"; then
+  sed "s/$attestation_secret/<redacted>/g" "$fixture_tmp/credential.log" >&2
+  echo 'ERROR: credential-bearing SCM attestation was not refused without leakage' >&2
   exit 1
 fi
 

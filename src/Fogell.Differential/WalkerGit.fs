@@ -2,6 +2,8 @@ namespace Fogell.Differential
 
 open System
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open Fogell.Domain
 
 /// FG-111/FG-052. The `git` step: a real clone/fetch into the workspace, and
@@ -31,6 +33,22 @@ open Fogell.Domain
 /// failing command NAMED. The `git --version` echo prints THIS engine's git —
 /// folded two-sidedly to ${GITVERSION} by the harness, never suppressed.
 module WalkerGit =
+
+    /// Produce a receipt-safe representation of a Git remote. Absolute URIs are
+    /// canonicalised (which percent-encodes spaces) and stripped of userinfo;
+    /// non-URI Git spellings are represented only by a one-way digest. Engine
+    /// notes must never become a credential exfiltration path.
+    let attestationUrl (url: string) =
+        let mutable parsed = Unchecked.defaultof<Uri>
+
+        if Uri.TryCreate(url, UriKind.Absolute, &parsed) then
+            let builder = UriBuilder parsed
+            builder.UserName <- ""
+            builder.Password <- ""
+            builder.Uri.AbsoluteUri
+        else
+            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
+            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
 
     /// Identity of the exact commit used to load an SCM-defined Jenkinsfile.
     /// Captured in the same private fetch as the bytes, so early evaluation
@@ -434,7 +452,7 @@ module WalkerGit =
 
         match completed, Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" with
         | Some revision, "fg177-probes-v1" ->
-            runCtx.NoteEngine $"git-checkout branch={branch} revision={revision} url={url}"
+            runCtx.NoteEngine $"git-checkout branch={branch} revision={revision} url={attestationUrl url}"
         | _ -> ()
 
         completed

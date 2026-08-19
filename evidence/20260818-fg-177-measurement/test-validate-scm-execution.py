@@ -22,6 +22,7 @@ def digest(path: pathlib.Path) -> str:
 def checkout_receipt() -> str:
     return (
         "fixture\n\n## Jenkins\n  engine notes (not compared):\n"
+        f"    ! scm-definition revision={SCM_REV}\n"
         f"    ! git-build-data revision={SCM_REV}\n\n"
         "## Fogell\n  result: failure\n  engine notes (not compared):\n"
         f"    ! scm-preflight branch=fogell-pins/{SCM_REV} revision={SCM_REV} "
@@ -29,10 +30,10 @@ def checkout_receipt() -> str:
     )
 
 
-def git_receipt(*, fogell_executed: bool = False) -> str:
+def git_receipt(*, fogell_executed: bool = False, url: str = "file:///fixture.git") -> str:
     fogell = ""
     if fogell_executed:
-        fogell = f"    ! git-checkout branch=fogell-pins/{GIT_REV} revision={GIT_REV} url=file:///fixture.git\n"
+        fogell = f"    ! git-checkout branch=fogell-pins/{GIT_REV} revision={GIT_REV} url={url}\n"
     return (
         "fixture\n\n## Jenkins\n  engine notes (not compared):\n"
         f"    ! git-build-data revision={GIT_REV}\n\n"
@@ -103,9 +104,41 @@ def main() -> None:
         second = invoke(pin, receipts, output)
         assert second.returncode == 1 and "already exists" in second.stderr
 
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary)
+        pin, receipts = write_fixture(root)
+        (receipts / "fg177-probe-return-semantics.receipt.txt").write_text(
+            git_receipt(fogell_executed=True, url="file:///tmp/fixture repo.git"), encoding="utf-8"
+        )
+        result = invoke(pin, receipts, root / "raw-space.tsv")
+        assert result.returncode == 0, result.stderr
+
+        (receipts / "fg177-probe-return-semantics.receipt.txt").write_text(
+            git_receipt(fogell_executed=True, url="file:///tmp/fixture%20repo.git"), encoding="utf-8"
+        )
+        result = invoke(pin, receipts, root / "encoded-space.tsv")
+        assert result.returncode == 0, result.stderr
+
     refusal(
         lambda receipts: (receipts / "fg177-probe-checkout-scm.receipt.txt").write_text(
-            checkout_receipt().replace(SCM_REV, "0" * 40), encoding="utf-8"
+            checkout_receipt().replace(f"    ! scm-definition revision={SCM_REV}\n", ""), encoding="utf-8"
+        ),
+        "Jenkins SCM definition differs",
+    )
+    refusal(
+        lambda receipts: (receipts / "fg177-probe-checkout-scm.receipt.txt").write_text(
+            checkout_receipt().replace(
+                f"scm-definition revision={SCM_REV}", f"scm-definition revision={'9' * 40}"
+            ), encoding="utf-8"
+        ),
+        "Jenkins SCM definition differs",
+    )
+
+    refusal(
+        lambda receipts: (receipts / "fg177-probe-checkout-scm.receipt.txt").write_text(
+            checkout_receipt().replace(
+                f"git-build-data revision={SCM_REV}", f"git-build-data revision={'0' * 40}"
+            ), encoding="utf-8"
         ),
         "does not exclusively attest",
     )
@@ -129,6 +162,31 @@ def main() -> None:
         ),
         "malformed or wrong-kind",
     )
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary)
+        pin, receipts = write_fixture(root)
+        secret = "fg177-super-secret"
+        (receipts / "fg177-probe-return-semantics.receipt.txt").write_text(
+            git_receipt(fogell_executed=True, url=f"https://user:{secret}@example.test/repo.git"),
+            encoding="utf-8",
+        )
+        result = invoke(pin, receipts, root / "credential.tsv")
+        assert result.returncode == 1, result.stderr
+        assert "forbidden userinfo credentials" in result.stderr
+        assert secret not in result.stdout + result.stderr
+        assert not (root / "credential.tsv").exists()
+
+        malformed = git_receipt(
+            fogell_executed=True, url=f"https://user:{secret}@example.test/repo.git"
+        ).replace(f"branch=fogell-pins/{GIT_REV}", "branch=fogell-pins/not-a-sha")
+        (receipts / "fg177-probe-return-semantics.receipt.txt").write_text(
+            malformed, encoding="utf-8"
+        )
+        result = invoke(pin, receipts, root / "malformed-credential.tsv")
+        assert result.returncode == 1, result.stderr
+        assert "malformed or wrong-kind Fogell git checkout attestation" in result.stderr
+        assert secret not in result.stdout + result.stderr
+        assert not (root / "malformed-credential.tsv").exists()
     refusal(
         lambda receipts: (receipts / "fg177-probe-unknown-policy.receipt.txt").write_text(
             git_receipt().replace(f"revision={GIT_REV}", f"revision= {GIT_REV}", 1), encoding="utf-8"
@@ -143,7 +201,8 @@ def main() -> None:
     )
     print(
         "SCM HARNESS ATTESTATION PROOF: early Fogell non-execution represented; "
-        "SCM preflight, executed git, mismatch, duplicate, spoof, padded/multiline/malformed and overwrite paths verified"
+        "full-definition revision, transient-ref mismatch, SCM preflight, spaced/redacted URLs, executed git, "
+        "mismatch, duplicate, spoof, padded/multiline/malformed and overwrite paths verified"
     )
 
 
