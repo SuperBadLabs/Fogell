@@ -21,6 +21,7 @@ repo="$sync_tmp/repo"
 desired="$sync_tmp/desired.Jenkinsfile"
 current="$sync_tmp/current.Jenkinsfile"
 remote="$sync_tmp/remote.Jenkinsfile"
+expected_index="$sync_tmp/expected.index"
 
 # The marker configures the differential harness; Jenkins checks out only the body.
 sed '1d' "$case_file" > "$desired"
@@ -31,12 +32,20 @@ fi
 
 git clone -q "$FOGELL_SCM_URL" "$repo"
 main_head=$(git -C "$repo" rev-parse refs/remotes/origin/main)
+desired_blob=$(git -C "$repo" hash-object -w -- "$desired")
+GIT_INDEX_FILE="$expected_index" git -C "$repo" read-tree "$main_head"
+GIT_INDEX_FILE="$expected_index" \
+  git -C "$repo" update-index --add --cacheinfo "100644,$desired_blob,Jenkinsfile"
+expected_tree=$(GIT_INDEX_FILE="$expected_index" git -C "$repo" write-tree)
 needs_sync=true
 
 if git -C "$repo" show "refs/remotes/origin/$branch:Jenkinsfile" > "$current" 2>/dev/null; then
   branch_head=$(git -C "$repo" rev-parse "refs/remotes/origin/$branch")
   branch_parent=$(git -C "$repo" rev-parse "$branch_head^" 2>/dev/null || true)
-  if cmp -s "$desired" "$current" && [[ "$branch_parent" == "$main_head" ]]; then
+  branch_tree=$(git -C "$repo" rev-parse "$branch_head^{tree}")
+  if cmp -s "$desired" "$current" &&
+    [[ "$branch_parent" == "$main_head" ]] &&
+    [[ "$branch_tree" == "$expected_tree" ]]; then
     needs_sync=false
   fi
 fi
@@ -44,13 +53,20 @@ fi
 if [[ "$needs_sync" == true ]]; then
   git -C "$repo" checkout -q -B "$branch" refs/remotes/origin/main
   cp "$desired" "$repo/Jenkinsfile"
+  chmod 0644 "$repo/Jenkinsfile"
   git -C "$repo" add Jenkinsfile
   GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' \
   GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
     git -C "$repo" \
       -c user.email=harness@fogell \
       -c user.name=fogell-harness \
-      commit -qm 'sync: fg177-probe-checkout-scm'
+      -c commit.gpgSign=false \
+      commit --allow-empty -qm 'sync: fg177-probe-checkout-scm'
+  local_tree=$(git -C "$repo" rev-parse 'HEAD^{tree}')
+  if [[ "$local_tree" != "$expected_tree" ]]; then
+    echo "ERROR: generated $branch tree differs from fixture main plus $case_file" >&2
+    exit 1
+  fi
   git -C "$repo" push -qf origin "HEAD:refs/heads/$branch"
 fi
 
@@ -73,11 +89,17 @@ if [[ "$remote_parent" != "$main_head" ]]; then
   exit 1
 fi
 
+remote_tree=$(git -C "$repo" rev-parse "$remote_head^{tree}")
+if [[ "$remote_tree" != "$expected_tree" ]]; then
+  echo "ERROR: $branch tree differs from fixture main plus $case_file" >&2
+  exit 1
+fi
+
 git -C "$repo" show "$remote_head:Jenkinsfile" > "$remote"
 if ! cmp -s "$desired" "$remote"; then
   echo "ERROR: $branch Jenkinsfile differs from $case_file" >&2
   exit 1
 fi
 
-printf 'fixture %s at %s verified: exact Jenkinsfile bytes, parent %s\n' \
-  "$branch" "$remote_head" "$main_head"
+printf 'fixture %s at %s verified: exact tree %s, Jenkinsfile bytes, parent %s\n' \
+  "$branch" "$remote_head" "$remote_tree" "$main_head"
