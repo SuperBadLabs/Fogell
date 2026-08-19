@@ -430,6 +430,78 @@ echo(message: 'after', fogellProbeUnknown: true)
                     MODULE.blank_non_code(source).count("\n"), source.count("\n")
                 )
 
+    def test_hosted_step_named_method_declarations_are_not_calls(self) -> None:
+        source = r'''
+def sh(String command) { command }
+String echo(String message) { message }
+public static void retry(
+    int count,
+    Closure body
+) {
+    body.call()
+}
+@Deprecated
+protected final def archiveArtifacts(
+    Map options
+) { options }
+private java.util.List<String> withEnv(List<String> values) throws Exception {
+    values
+}
+
+sh(script: 'real parenthesized', returnStatus: true)
+echo message: 'real command'
+this.retry(count: 2) { helper() }
+steps.archiveArtifacts artifacts: 'real command receiver'
+steps.withEnv(['A=B']) { helper() }
+def invokeWrapper() {
+    return retry(count: 3) { helper() }
+}
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message",)),
+                ("retry", ("count",)),
+                ("archiveArtifacts", ("artifacts",)),
+                ("withEnv", ()),
+                ("retry", ("count",)),
+            ],
+        )
+
+    def test_hosted_step_named_closure_parameters_are_not_calls(self) -> None:
+        source = r'''
+def one = { echo -> helper(echo) }
+def many = { sh, retry -> helper(sh, retry) }
+def typed = { String archiveArtifacts, final Closure withEnv ->
+    helper(archiveArtifacts, withEnv)
+}
+def parenthesized = { (junit, checkout) -> helper(junit, checkout) }
+def defaulted = { String unstash = 'fallback', int timeout = 5 ->
+    helper(unstash, timeout)
+}
+def actualDefault = { value = sh(script: 'real default', returnStatus: true) -> value }
+
+echo(message: 'real parenthesized')
+helper(echo(message: 'real nested parenthesized'))
+helper(echo 'real nested command')
+unstable message: 'real command'
+this.checkout(scm: config)
+steps.timeout time: 1, unit: 'SECONDS'
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message",)),
+                ("echo", ("message",)),
+                ("echo", ()),
+                ("unstable", ("message",)),
+                ("checkout", ("scm",)),
+                ("timeout", ("time", "unit")),
+            ],
+        )
+
     def test_known_jenkins_dsl_receivers_are_counted_once(self) -> None:
         source = r'''
 this.sh(script: 'parenthesized', returnStatus: true)

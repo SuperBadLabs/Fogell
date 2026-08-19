@@ -30,6 +30,20 @@ CONTROL_BODY_PREFIX_KEYWORDS = {"do", "else"}
 # such as `script` are deliberately absent: in shared-library code they are
 # user-selected aliases, which a lexical corpus scan cannot prove are Jenkins.
 JENKINS_DSL_RECEIVERS = ("steps", "this")
+IDENTIFIER = r"[A-Za-z_$][\w$]*"
+QUALIFIED_IDENTIFIER = rf"{IDENTIFIER}(?:\s*\.\s*{IDENTIFIER})*"
+DECLARATION_MODIFIERS = (
+    "abstract|default|final|native|private|protected|public|static|strictfp|"
+    "synchronized|transient"
+)
+METHOD_DECLARATION_PREFIX = re.compile(
+    rf"(?:^|[;{{}}\n])[ \t\r]*"
+    rf"(?:@\s*{QUALIFIED_IDENTIFIER}(?:[ \t]*\([^;{{}}\n]*\))?[ \t\r\n]*)*"
+    rf"(?:(?:{DECLARATION_MODIFIERS})[ \t\r\n]+)*"
+    rf"(?!(?:assert|case|do|else|for|if|in|new|return|throw|while|yield)\b)"
+    rf"(?:def|void|{QUALIFIED_IDENTIFIER}(?:\s*<[^;{{}}\n]+>)?"
+    rf"(?:\s*\[\s*\])*)[ \t\r\n]+$"
+)
 
 
 class CorpusVerificationError(ValueError):
@@ -428,6 +442,106 @@ def top_level_keys(code: str, start: int, end: int) -> list[tuple[str, int]]:
     return keys
 
 
+def enclosing_open_brace(code: str, offset: int) -> int | None:
+    """Return the nearest still-open brace containing ``offset``."""
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack: list[tuple[str, str, int]] = []
+    for i, char in enumerate(code[:offset]):
+        if char in pairs:
+            stack.append((char, pairs[char], i))
+        elif char in ")]}":
+            if stack and char == stack[-1][1]:
+                stack.pop()
+    for opening, _, position in reversed(stack):
+        if opening == "{":
+            return position
+    return None
+
+
+def top_level_delimiter(code: str, start: int, end: int, delimiter: str) -> int | None:
+    """Find a delimiter outside nested parentheses, brackets, and braces."""
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack: list[str] = []
+    i = start
+    while i < end:
+        char = code[i]
+        if char in pairs:
+            stack.append(pairs[char])
+        elif char in ")]}":
+            if stack and char == stack[-1]:
+                stack.pop()
+        elif not stack and code.startswith(delimiter, i):
+            return i
+        i += 1
+    return None
+
+
+def is_closure_parameter(code: str, step_start: int, step_end: int) -> bool:
+    """Recognise a vocabulary token declared before a closure's ``->``."""
+    brace = enclosing_open_brace(code, step_start)
+    if brace is None:
+        return False
+    close = matching_paren(code, brace)
+    if close is None:
+        return False
+    arrow = top_level_delimiter(code, brace + 1, close, "->")
+    if arrow is None or step_start >= arrow:
+        return False
+
+    header_start = brace + 1
+    header_end = arrow
+    while header_start < header_end and code[header_start].isspace():
+        header_start += 1
+    while header_end > header_start and code[header_end - 1].isspace():
+        header_end -= 1
+    if header_start < header_end and code[header_start] == "(":
+        parenthesized_end = matching_paren(code, header_start)
+        if parenthesized_end == header_end - 1:
+            header_start += 1
+            header_end -= 1
+
+    segment_start = header_start
+    while segment_start < header_end:
+        comma = top_level_delimiter(code, segment_start, header_end, ",")
+        segment_end = header_end if comma is None else comma
+        if segment_start <= step_start < segment_end:
+            equals = top_level_delimiter(code, segment_start, segment_end, "=")
+            declaration_end = segment_end if equals is None else equals
+            identifiers = list(
+                re.finditer(IDENTIFIER, code[segment_start:declaration_end])
+            )
+            if not identifiers:
+                return False
+            declared = identifiers[-1]
+            return (
+                segment_start + declared.start() == step_start
+                and segment_start + declared.end() == step_end
+            )
+        if comma is None:
+            break
+        segment_start = comma + 1
+    return False
+
+
+def is_method_declaration(
+    code: str,
+    match: re.Match[str],
+    opening: int,
+    closing: int,
+) -> bool:
+    """Recognise an unqualified, declaration-shaped method signature."""
+    if match.group("receiver") is not None:
+        return False
+    suffix = code[closing + 1 :]
+    if re.match(
+        rf"\s*(?:throws\s+{QUALIFIED_IDENTIFIER}"
+        rf"(?:\s*,\s*{QUALIFIED_IDENTIFIER})*)?\s*(?:\{{|;)",
+        suffix,
+    ) is None:
+        return False
+    return METHOD_DECLARATION_PREFIX.search(code[: match.start("step")]) is not None
+
+
 def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
     code = blank_non_code(source)
     receivers = "|".join(map(re.escape, JENKINS_DSL_RECEIVERS))
@@ -445,6 +559,8 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
         # an invocation even when the resulting method value is later called.
         if code[max(0, step_start - 2) : step_start] in {".&", "::"}:
             continue
+        if is_closure_parameter(code, step_start, match.end("step")):
+            continue
         # A command call's argument starts on its statement line.  Skipping all
         # whitespace here let a blanked multiline string consume its own closing
         # line and attach the next step to this one.  Parenthesised calls may put
@@ -458,7 +574,7 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
             cursor = paren_cursor
         # A vocabulary word used as a named key in some *other* call/map is not
         # itself a step call (e.g. buildPlugin(timeout: 90, ...)).
-        if cursor >= len(code) or code[cursor] in "\n};=:":
+        if cursor >= len(code) or code[cursor] in "\n,)]};=:":
             continue
         # Property/method-pointer use of a vocabulary word is not an invocation.
         # A real call followed by chaining reaches this check at its opening
@@ -468,6 +584,8 @@ def calls(source: str) -> list[tuple[str, list[tuple[str, int]], int]]:
         if code[cursor] == "(":
             end = matching_paren(code, cursor)
             if end is None:
+                continue
+            if is_method_declaration(code, match, cursor, end):
                 continue
             arg_start, arg_end = cursor + 1, end
         else:
