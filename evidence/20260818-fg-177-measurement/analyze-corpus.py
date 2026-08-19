@@ -12,8 +12,23 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import pathlib
 import re
+import sys
+
+
+REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PINNED_MANIFEST = REPOSITORY_ROOT / "corpus" / "CORPUS-SHA256SUMS"
+PINNED_MANIFEST_SHA256 = "fae0230d5f07227363cccc3764d80b6833b2cbab2b2cc2fcb5baae45db794af5"
+PINNED_CORPUS_FILES = 228
+HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
+CONTROL_HEADER_KEYWORDS = {"for", "if", "while"}
+CONTROL_BODY_PREFIX_KEYWORDS = {"do", "else"}
+
+
+class CorpusVerificationError(ValueError):
+    """The supplied corpus is not the repository-pinned measurement input."""
 
 
 STEPS = (
@@ -73,11 +88,36 @@ def blank_non_code(source: str) -> str:
             return "".join(out[i - 1 : i + 1])
         return out[i]
 
+    def closes_control_header(i: int) -> bool:
+        close = i - 1
+        while close >= 0 and out[close].isspace():
+            close -= 1
+        if close < 0 or out[close] != ")":
+            return False
+
+        depth = 1
+        cursor = close - 1
+        while cursor >= 0:
+            if out[cursor] == ")":
+                depth += 1
+            elif out[cursor] == "(":
+                depth -= 1
+                if depth == 0:
+                    return previous_token(cursor) in CONTROL_HEADER_KEYWORDS
+            cursor -= 1
+        return False
+
     def starts_slashy(i: int) -> bool:
         token = previous_token(i)
-        if token is None or token in EXPRESSION_PREFIX_KEYWORDS:
+        if (
+            token is None
+            or token in EXPRESSION_PREFIX_KEYWORDS
+            or token in CONTROL_BODY_PREFIX_KEYWORDS
+        ):
             return True
-        if token in {"++", "--", ")", "]", "}", "'", '\"', "$"}:
+        if token == ")":
+            return closes_control_header(i)
+        if token in {"++", "--", "]", "}", "'", '\"', "$"}:
             return False
         return not (token[0].isalnum() or token[0] in "_$")
 
@@ -435,11 +475,107 @@ def line_number(source: str, offset: int) -> int:
     return source.count("\n", 0, offset) + 1
 
 
+def load_manifest(
+    path: pathlib.Path, *, expected_digest: str | None = None
+) -> dict[str, str]:
+    try:
+        manifest_bytes = path.read_bytes()
+    except OSError as error:
+        raise CorpusVerificationError(f"cannot read manifest {path}: {error}") from error
+    observed_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    if expected_digest is not None and observed_digest != expected_digest:
+        raise CorpusVerificationError(
+            f"pinned manifest digest mismatch: expected {expected_digest}, got {observed_digest}"
+        )
+    try:
+        lines = manifest_bytes.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise CorpusVerificationError(f"manifest {path} is not UTF-8: {error}") from error
+
+    entries: dict[str, str] = {}
+    for line_number_, line in enumerate(lines, start=1):
+        parts = line.split("  ", 1)
+        if len(parts) != 2 or HEX_DIGEST.fullmatch(parts[0]) is None:
+            raise CorpusVerificationError(
+                f"manifest {path} has an invalid line {line_number_}"
+            )
+        digest, name = parts
+        if not name or pathlib.Path(name).name != name or not name.endswith(".Jenkinsfile"):
+            raise CorpusVerificationError(
+                f"manifest {path} has an invalid filename on line {line_number_}: {name!r}"
+            )
+        if name in entries:
+            raise CorpusVerificationError(f"manifest {path} repeats {name}")
+        entries[name] = digest
+    if not entries:
+        raise CorpusVerificationError(f"manifest {path} is empty")
+    return entries
+
+
+def verified_corpus_paths(
+    corpus: pathlib.Path,
+    manifest: pathlib.Path,
+    *,
+    expected_manifest_digest: str,
+    expected_file_count: int,
+) -> list[pathlib.Path]:
+    entries = load_manifest(
+        manifest,
+        expected_digest=expected_manifest_digest,
+    )
+    if len(entries) != expected_file_count:
+        raise CorpusVerificationError(
+            f"manifest has {len(entries)} entries; expected {expected_file_count}"
+        )
+    if not corpus.is_dir():
+        raise CorpusVerificationError(f"corpus directory does not exist: {corpus}")
+
+    try:
+        on_disk = sorted(corpus.iterdir())
+    except OSError as error:
+        raise CorpusVerificationError(f"cannot list corpus {corpus}: {error}") from error
+    actual = {path.name for path in on_disk}
+    expected = set(entries)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing {len(missing)}: {', '.join(missing[:3])}")
+        if unexpected:
+            details.append(f"unexpected {len(unexpected)}: {', '.join(unexpected[:3])}")
+        raise CorpusVerificationError("corpus filename set mismatch; " + "; ".join(details))
+
+    paths = [corpus / name for name in sorted(entries)]
+    for path in paths:
+        try:
+            content = path.read_bytes()
+        except OSError as error:
+            raise CorpusVerificationError(
+                f"cannot read corpus file {path.name}: {error}"
+            ) from error
+        observed = hashlib.sha256(content).hexdigest()
+        if observed != entries[path.name]:
+            raise CorpusVerificationError(
+                f"corpus digest mismatch for {path.name}: expected {entries[path.name]}, got {observed}"
+            )
+    return paths
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", type=pathlib.Path)
     args = parser.parse_args()
-    paths = sorted(args.corpus.glob("*.Jenkinsfile"))
+    try:
+        paths = verified_corpus_paths(
+            args.corpus,
+            PINNED_MANIFEST,
+            expected_manifest_digest=PINNED_MANIFEST_SHA256,
+            expected_file_count=PINNED_CORPUS_FILES,
+        )
+    except CorpusVerificationError as error:
+        print(f"ERROR: corpus verification failed: {error}", file=sys.stderr)
+        return 2
     counts: collections.Counter[tuple[str, str]] = collections.Counter()
     files: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
     samples: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
