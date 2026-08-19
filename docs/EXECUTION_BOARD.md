@@ -120,8 +120,10 @@ The daily work loop starts and ends on HeMan:
 4. Inspect the complete diff and evidence, then run `scripts/build-and-test.sh` on
    HeMan. A run that skips the corpus-dependent scorecard check is not the full
    local gate and does not license publication.
-5. Run the FG-199 review-coverage guard locally when the change is at a review or
-   merge boundary. Only then push the already-proven commit to GitHub.
+5. Before publication, run the local guards that exist for the ticket. FG-199 is
+   not one of them yet: its repository-wide audit cannot decide an open PR, and
+   the `--pr N` guard and its known-bad proof must land before this cycle requires
+   them.
 6. Use GitHub for final reviewers, required status checks and merge. A finding
    returns the work to HeMan; the correction is proved there before publication.
 
@@ -413,13 +415,14 @@ does not rank the tracks against each other row by row, because nobody has measu
 first corpus receipt costs; **FG-200 exists to find that out, and until it reports, the
 claim that Track 2 is binding is an argument from denominators and not a measurement.**
 
-**HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is a local pre-publication
-guardrail, not an implementation ticket and not work to perform in GitHub. Its
-checker and known-bad proof run on HeMan; querying GitHub review metadata does not
-move execution there. The guard is applied whenever a commit reaches the review or
-merge boundary. In the implementation queue, the first active ticket is FG-177;
-its branch, edit-test loop and evidence stay on HeMan until its commit is ready to
-publish.
+**HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is intended to become a local
+pre-publication guardrail, not an implementation ticket and not work to perform in
+GitHub. Its current repository-wide audit runs on HeMan, but the `--pr N` checker
+and known-bad proof remain TODO and will run there too; querying GitHub review
+metadata does not move execution there. Until that mode lands, the historical
+audit is not a required review or merge guard. In the implementation queue, the
+first active ticket is FG-177; its branch, edit-test loop and evidence stay on
+HeMan until its commit is ready to publish.
 
 ### Track 1 — Correctness
 
