@@ -16,9 +16,15 @@ export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGEL
 
 evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
+: "${FOGELL_JENKINS_ORACLE_DIR:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
 rendered="$out/rendered-cases"
-bash "$evidence_root/jenkins-oracle.sh" verify "$evidence_root"
+run_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+oracle_verification=$(
+  bash "$evidence_root/jenkins-oracle.sh" verify "$FOGELL_JENKINS_ORACLE_DIR"
+)
+oracle_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+printf '%s\n' "$oracle_verification"
 mkdir -p "$out/raw-receipts"
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence_root/render-probe-cases.py"
@@ -27,18 +33,28 @@ bash "$evidence_root/sync-checkout-scm-fixture.sh"
 cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'
 dotnet build "$cli_project" -c Release --nologo
 
+cases=(
+  "$rendered/fg177-probe-unknown-policy.Jenkinsfile"
+  "$rendered/fg177-probe-requiredness.Jenkinsfile"
+  "$rendered/fg177-probe-return-semantics.Jenkinsfile"
+  "$rendered/fg177-probe-checkout-scm.Jenkinsfile"
+)
+
 set +e
 dotnet run --project "$cli_project" -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
   "$out/raw-receipts" \
-  "$rendered/fg177-probe-unknown-policy.Jenkinsfile" \
-  "$rendered/fg177-probe-requiredness.Jenkinsfile" \
-  "$rendered/fg177-probe-return-semantics.Jenkinsfile" \
-  "$rendered/fg177-probe-checkout-scm.Jenkinsfile" \
+  "${cases[@]}" \
   2>&1 | tee "$out/probe-run.log"
 rc=${PIPESTATUS[0]}
 set -e
 
 printf 'probe-cli-exit=%s\n' "$rc" | tee "$out/probe-exit.txt"
+run_finished_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+bash "$evidence_root/write-run-manifest.sh" \
+  "$out/probe-run-manifest.tsv" probes \
+  "$run_started_at" "$oracle_verified_at" "$run_finished_at" \
+  "$rc" probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" \
+  "$FOGELL_JENKINS_ORACLE_DIR" "${cases[@]}"
 exit "$rc"

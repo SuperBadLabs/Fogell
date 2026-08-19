@@ -1,7 +1,7 @@
 # Differential receipt — fg177-probe-requiredness.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         39b9ce0c622cbdf2f7daeb88e9f0fb1d64d4d476cf1458b83373f837cc04afef
+seal:         430761cf6f622744ccbf3739610a6e31ffd8b3b61d2d66f6489e756ec67a4109
 case-digest:  52c98a6db9b773ebcac895bdbd083943985791be0d8237d1d41d00f9891d833e
 sealed-output: sequence
 
@@ -103,7 +103,7 @@ VERDICT: DIVERGED (3)
     | FG177 MISSING stash THREW java.lang.IllegalArgumentException: Could not instantiate {} for org.jenkinsci.plugins.workflow.support.steps.stash.StashStep: java.lang.reflect.InvocationTargetException
     | FG177 MISSING unstable THREW java.lang.IllegalArgumentException: Could not instantiate {} for org.jenkinsci.plugins.workflow.steps.UnstableStep: java.lang.reflect.InvocationTargetException
     | FG177 MISSING unstash THREW java.lang.IllegalArgumentException: Could not instantiate {} for org.jenkinsci.plugins.workflow.support.steps.stash.UnstashStep: java.lang.reflect.InvocationTargetException
-    | FG177 MISSING dir THREW java.lang.NullPointerException: Cannot invoke "String.startsWith(String)" because "rel" is null
+    | FG177 MISSING dir THREW java.lang.NullPointerException: null
     | Timeout expired 0 ms ago
     | Cancelling nested steps due to timeout
     | FG177 MISSING timeout THREW org.jenkinsci.plugins.workflow.steps.FlowInterruptedException: Timeout has been exceeded

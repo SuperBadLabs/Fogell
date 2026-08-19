@@ -101,6 +101,25 @@ def invoked = helper(left, (right)) / echo(message: 'call divisor')
             ],
         )
 
+    def test_parenthesized_slashy_is_literal_but_command_shaped_division_is_code(self) -> None:
+        source = r'''
+println(/literal echo(message: 'parenthesized fake')
+${sh(script: 'parenthesized interpolation real', returnStatus: true)}/)
+def println = 24
+def quotient = println / echo(message: 'division operand real') / 2
+def qualified = holder.value / unstash(name: 'qualified division real') / 2
+def safe = holder?.value / junit(testResults: 'safe division real') / 2
+'''
+        self.assertEqual(
+            compact(source),
+            [
+                ("sh", ("script", "returnStatus")),
+                ("echo", ("message",)),
+                ("unstash", ("name",)),
+                ("junit", ("testResults",)),
+            ],
+        )
+
     def test_corpus_verification_fails_closed_and_accepts_exact_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as root_text:
             root = pathlib.Path(root_text)

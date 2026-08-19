@@ -1,0 +1,23 @@
+Groovy Version: 2.4.21 JVM: 21.0.11 Vendor: Eclipse Adoptium OS: Linux
+println-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token:  @ line 1, column 32.\n   println /echo(message: 'fake')/\n                                  ^\n\n1 error\n
+print-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token:  @ line 1, column 30.\n   print /echo(message: 'fake')/\n                                ^\n\n1 error\n
+semicolon-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token: ; @ line 1, column 32.\n   println /echo(message: 'fake')/;\n                                  ^\n\n1 error\n
+comma-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token: , @ line 1, column 32.\n   println /echo(message: 'fake')/, 'second' \n                                  ^\n\n1 error\n
+cast-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token: as @ line 1, column 33.\n   println /echo(message: 'fake')/ as String\n                                   ^\n\n1 error\n
+unparenthesized-chain	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token: . @ line 1, column 32.\n   println /echo(message: 'fake')/.toString()\n                                  ^\n\n1 error\n
+binary-after-command	ERROR	groovy.lang.MissingPropertyException	No such property: println for class: Script1
+multiline-literal	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 3: unexpected token:  @ line 3, column 6.\n   last/\n        ^\n\n1 error\n
+this-println-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token:  @ line 1, column 37.\n   this.println /echo(message: 'fake')/\n                                       ^\n\n1 error\n
+safe-this-println-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token:  @ line 1, column 38.\n   this?.println /echo(message: 'fake')/\n                                        ^\n\n1 error\n
+system-println-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token:  @ line 1, column 43.\n   rintln /echo(message: 'fake')/\n                                 ^\n\n1 error\n
+echo(message: 'fake')
+chained-command-result	OK	java.lang.String	null
+return-command	ERROR	org.codehaus.groovy.control.MultipleCompilationErrorsException	startup failed:\nScript1.groovy: 1: unexpected token: } @ line 1, column 55.\n   intln /echo(message: 'fake')/ }\n                                 ^\n\n1 error\n
+control-body-command	ERROR	groovy.lang.MissingPropertyException	No such property: println for class: Script1
+assignment-command	ERROR	groovy.lang.MissingPropertyException	No such property: println for class: Script1
+head-newline-before-arg	ERROR	groovy.lang.MissingPropertyException	No such property: println for class: Script1
+plain-division	OK	java.math.BigDecimal	2
+qualified-property-division	OK	java.math.BigDecimal	2
+safe-property-division	OK	java.math.BigDecimal	2
+parenthesized-call-division	OK	java.math.BigDecimal	2
+call-result-division	OK	java.math.BigDecimal	2

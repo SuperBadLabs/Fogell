@@ -1,8 +1,9 @@
 # FG-177 Jenkins oracle provenance
 
-The 2026-08-18 measurements are owned by one controller identity. A core
-version alone is insufficient because Pipeline step descriptors and return
-objects are supplied by plugins.
+The measurement cases were registered on 2026-08-18. Their retained receipts
+and logs were regenerated on 2026-08-19 only after the shared verifier accepted
+one controller identity. A core version alone is insufficient because Pipeline
+step descriptors and return objects are supplied by plugins.
 
 The committed metadata is captured read-only from the HeMan bastion with:
 
@@ -45,3 +46,30 @@ case-insensitive `X-Jenkins` header with the pinned value on each response, an
 exact complete plugin-manifest match, and an exact live container-image match.
 Refusal creates no output directory, builds no CLI, synchronizes no fixture,
 and writes no receipt or exit marker.
+
+## Verified receipt recapture
+
+From the repository root on HeMan, the retained evidence was recaptured once,
+in this order:
+
+```sh
+bash evidence/20260818-fg-177-measurement/run-probes.sh
+bash evidence/20260818-fg-177-measurement/run-archive-schema.sh
+```
+
+Both commands returned `1`, the expected differential status for the retained
+divergences. Each runner records its start time before verification, its
+verification-complete time before the CLI build, and its finish time after the
+CLI and exit marker. It then atomically publishes an adjacent manifest:
+
+- `probe-run-manifest.tsv` binds the four ordered probe cases and receipts;
+- `archive-schema-run-manifest.tsv` binds the archive-schema case and receipt.
+
+Each manifest records the Jenkins core, the hashes of the core, plugin and
+image metadata, the complete plugin-manifest hash and row count, the controller
+image name, immutable ID and digest, the run log and exit-marker hashes, the
+ordered rendered case hashes, and the resulting receipt hashes. The manifest
+is not published if any input is missing, the timestamps are out of order, or
+the exit marker disagrees with the captured CLI status. Git commits the
+manifest and every bound file together, making the recapture independently
+auditable without relying on filesystem modification times.

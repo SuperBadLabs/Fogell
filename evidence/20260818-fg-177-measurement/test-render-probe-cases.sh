@@ -4,10 +4,39 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 evidence='evidence/20260818-fg-177-measurement'
 fixture_tmp=$(mktemp -d)
-trap 'rm -rf "$fixture_tmp"' EXIT
+server_pid=''
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$fixture_tmp"
+}
+trap cleanup EXIT
 remote="$fixture_tmp/fixture.git"
 seed="$fixture_tmp/seed"
 rendered="$fixture_tmp/rendered"
+oracle_metadata="$fixture_tmp/oracle-metadata"
+oracle_ready="$fixture_tmp/oracle-url"
+mkdir -p "$fixture_tmp/bin"
+python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
+python3 "$evidence/jenkins-oracle-fixture.py" serve "$oracle_ready" &
+server_pid=$!
+for _ in {1..100}; do
+  [[ -s "$oracle_ready" ]] && break
+  sleep 0.01
+done
+[[ -s "$oracle_ready" ]] || {
+  echo 'ERROR: local Jenkins oracle fixture did not start' >&2
+  exit 1
+}
+jenkins_url=$(<"$oracle_ready")
+cat > "$fixture_tmp/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
+printf '%s\n' 'fixture/jenkins:2.568.1|1111111111111111111111111111111111111111111111111111111111111111|sha256:2222222222222222222222222222222222222222222222222222222222222222'
+EOF
+chmod +x "$fixture_tmp/bin/ssh"
 
 require_fixed_count() {
   local mode=$1
@@ -129,18 +158,30 @@ require_fixed_count -Fxc 1 '//// NEXT BUILD ////' \
 
 # Exercise the actual runner from a fresh fixture. A fake CLI proves that all
 # paths handed to it are exact rendered files and that its status is preserved.
-mkdir -p "$fixture_tmp/bin"
 stub="$fixture_tmp/bin/dotnet"
 cat > "$stub" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FOGELL_STUB_CALLS"
 case "$1" in
   build)
+    printf 'dotnet build\n' >> "$FOGELL_STUB_ORDER"
     printf 'stub Release build\n'
     exit "${FOGELL_STUB_BUILD_RC:-0}"
     ;;
   run)
+    printf 'dotnet run\n' >> "$FOGELL_STUB_ORDER"
     printf '%s\n' "$@" > "$FOGELL_STUB_ARGS"
+    while [[ $# -gt 0 && $1 != -- ]]; do shift; done
+    shift
+    shift 2
+    receipt_dir=$1
+    shift
+    mkdir -p "$receipt_dir"
+    for case_file in "$@"; do
+      receipt_name=$(basename "${case_file%.Jenkinsfile}.receipt.txt")
+      printf 'fixture receipt for %s\n' "$(basename "$case_file")" \
+        > "$receipt_dir/$receipt_name"
+    done
     printf 'intentional probe CLI failure\n'
     exit 29
     ;;
@@ -154,12 +195,18 @@ chmod +x "$stub"
 runner_out="$fixture_tmp/runner-output"
 args="$fixture_tmp/dotnet-args"
 calls="$fixture_tmp/dotnet-calls"
+order="$fixture_tmp/runner-order"
 set +e
 PATH="$fixture_tmp/bin:$PATH" \
 FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
 FOGELL_SCM_URL="$scm_url" \
 FOGELL_STUB_ARGS="$args" \
 FOGELL_STUB_CALLS="$calls" \
+FOGELL_STUB_ORDER="$order" \
   bash "$evidence/run-probes.sh"
 rc=$?
 set -e
@@ -181,6 +228,11 @@ fi
 if [[ $(wc -l < "$calls") -ne 2 ]]; then
   printf 'ERROR: probe runner invoked dotnet more than build+run; calls=%s\n' \
     "$(tr '\n' '|' < "$calls")" >&2
+  exit 1
+fi
+if [[ $(<"$order") != $'oracle image inspect\ndotnet build\ndotnet run' ]]; then
+  printf 'ERROR: verifier did not finish before build/run; order=%s\n' \
+    "$(tr '\n' '|' < "$order")" >&2
   exit 1
 fi
 grep -Fx 'intentional probe CLI failure' "$runner_out/probe-run.log"
@@ -205,6 +257,9 @@ do
 done
 cmp "$evidence/cases/fg177-probe-checkout-scm.Jenkinsfile" \
   "$runner_out/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"
+grep -Fx $'cli-exit\t29' "$runner_out/probe-run-manifest.tsv"
+grep -Fx $'jenkins-core\t2.568.1' "$runner_out/probe-run-manifest.tsv"
+grep -Fx $'case-count\t4' "$runner_out/probe-run-manifest.tsv"
 
 # A fresh-checkout build failure must propagate before the CLI is attempted.
 build_failure_out="$fixture_tmp/build-failure-output"
@@ -212,9 +267,14 @@ build_failure_calls="$fixture_tmp/build-failure-calls"
 set +e
 PATH="$fixture_tmp/bin:$PATH" \
 FOGELL_EVIDENCE_OUT="$build_failure_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
 FOGELL_SCM_URL="$scm_url" \
 FOGELL_STUB_ARGS="$fixture_tmp/build-failure-args" \
 FOGELL_STUB_CALLS="$build_failure_calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/build-failure-order" \
 FOGELL_STUB_BUILD_RC=31 \
   bash "$evidence/run-probes.sh" > "$fixture_tmp/build-failure.log" 2>&1
 build_failure_rc=$?
