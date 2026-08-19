@@ -191,6 +191,15 @@ let private firstDuplicateName (names: string list) : string option =
     |> List.countBy id
     |> List.tryPick (fun (name, count) -> if count > 1 then Some name else None)
 
+/// Jenkins rejects repeated Declarative sections before starting the build. Keep the
+/// check on the collected section nodes so an empty first section cannot hide a later
+/// non-empty one from a first-match projection.
+let private rejectingDuplicateSections sectionName isSection sections : P<'a list> =
+    if sections |> List.filter isSection |> List.length > 1 then
+        fail $"multiple occurrences of the `{sectionName}` section: Jenkins rejects duplicate sections before running anything"
+    else
+        preturn sections
+
 /// Refuses the list if any key repeats, naming the key.
 let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a list> =
     match firstDuplicateName (items |> List.map keyOf) with
@@ -928,7 +937,8 @@ stageRef.Value <-
                                    $"a `{n}` section that does not parse is refused, never consumed opaquely"
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
-                               |>> fun _ -> SecOther n)) ])))
+                               |>> fun _ -> SecOther n)) ]))
+        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false))
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name
@@ -1041,7 +1051,11 @@ let private pipelineParser: P<Pipeline> =
     // agreement with this one.
     withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
     .>>. (keyword "pipeline"
-          >>. between (symbol "{") (symbol "}") (ws >>. many (attempt topSection))
+          >>. between
+                  (symbol "{")
+                  (symbol "}")
+                  (ws >>. many (attempt topSection)
+                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false))
           .>> ws)
     |>> fun (capturedPreamble, sections) ->
             let pick f = sections |> List.tryPick f

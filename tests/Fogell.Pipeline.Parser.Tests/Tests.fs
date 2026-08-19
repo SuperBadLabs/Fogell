@@ -268,6 +268,31 @@ let structure =
                   "the parser keeps each tool kind paired with its configured installation"
           }
 
+          test "FG-014 duplicate tools sections are rejected at pipeline and stage scope" {
+              // DIRECTLY PROBED on Jenkins 2.568.1: both scopes report "Multiple
+              // occurrences of the tools section". An empty first section does not
+              // make the second legal, and two non-empty sections fail identically.
+              let topEmptyFirst =
+                  "pipeline {\n  agent any\n  tools { }\n  tools { jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let topTwoNonempty =
+                  "pipeline {\n  agent any\n  tools { maven 'm3' }\n  tools { jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let stageEmptyFirst =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { }\n      tools { jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let stageTwoNonempty =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3' }\n      tools { jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              for label, source in
+                  [ "pipeline empty then non-empty", topEmptyFirst
+                    "pipeline two non-empty", topTwoNonempty
+                    "stage empty then non-empty", stageEmptyFirst
+                    "stage two non-empty", stageTwoNonempty ] do
+                  let e = err source
+                  Expect.equal e.Code MalformedSyntax $"{label}: duplicate section is an admission refusal"
+          }
+
           test "FG-014 tools require a Jenkins-measured newline or semicolon between entries" {
               let newline =
                   "pipeline {\n  agent any\n  tools {\n    maven 'm3'\n    jdk 'j8'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"

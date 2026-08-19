@@ -1314,6 +1314,15 @@ let unsupportedDeclarativeTools =
     let nestedParallel =
         "pipeline { agent any stages { stage('parent') { parallel { stage('branch') { tools { maven 'm3' } steps { sh 'echo ran > ran.txt' } } } } } }"
 
+    let duplicateTop =
+        "pipeline { agent any tools { } tools { maven 'm3' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+
+    let duplicateStage =
+        "pipeline { agent any stages { stage('a') { tools { } tools { jdk 'j8' } steps { sh 'echo ran > ran.txt' } } } }"
+
+    let duplicateNestedParallel =
+        "pipeline { agent any stages { stage('parent') { parallel { stage('branch') { tools { } tools { maven 'm3' } steps { sh 'echo ran > ran.txt' } } } } } }"
+
     let empty =
         "pipeline { agent any tools { } stages { stage('a') { tools { } steps { sh 'echo ran > ran.txt' } } } }"
 
@@ -1344,6 +1353,28 @@ let unsupportedDeclarativeTools =
                       | Error why ->
                           Expect.stringStarts why "unsupported_tools:" $"{label}: stable named reason"
                           Expect.stringContains why scope $"{label}: offending scope named"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "duplicate tools sections refuse before effects or workspace preparation" {
+              // The first section is deliberately empty: the former tryPick path
+              // retained it and hid the later selection from the execution preflight.
+              for label, source in
+                  [ "pipeline", duplicateTop
+                    "stage", duplicateStage
+                    "nested parallel stage", duplicateNestedParallel ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s duplicate tools unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
 
                       Expect.isTrue
                           (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
