@@ -18,7 +18,9 @@ reviews".
 WHAT IT DOES NOT CHECK, so a pass is not misread:
   - review QUALITY, or whether findings were addressed -- only presence
   - reviews by humans are counted the same as bots; --reviewers decides who counts
-  - a PR closed without merging is skipped: nothing landed, so nothing is at risk
+  - historical audit mode skips a PR closed without merge: nothing landed
+  - single-PR ``--pr N`` mode refuses a closed-unmerged PR with exit 2: it is
+    neither an open candidate nor immutable evidence of something that landed
   - it cannot see reviews GitHub has garbage-collected or that were dismissed
 
 The no-argument audit retains its historical meaning.  ``--pr N`` is the
@@ -152,16 +154,27 @@ def formal_evidence(reviews: list, reviewer: str) -> list[dict]:
         if not isinstance(review, dict):
             raise CoverageError("PR reviews contained a non-object")
         login = login_of(review, "PR review")
-        if login.casefold() != reviewer.casefold() or not review.get("submitted_at"):
+        # Validate every submitted record before filtering by expected login. A
+        # malformed unrelated entry means this API page is not trustworthy
+        # evidence; silently ignoring it would turn corrupt input into a pass.
+        submitted_at = review.get("submitted_at")
+        if submitted_at is None:
             continue
+        if not isinstance(submitted_at, str) or not submitted_at:
+            raise CoverageError("submitted PR review has no trustworthy submitted_at")
         commit = review.get("commit_id")
         if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            raise CoverageError("submitted PR review has no trustworthy full commit_id")
+        state = review.get("state")
+        if not isinstance(state, str):
+            raise CoverageError("submitted PR review has no trustworthy state")
+        if login.casefold() != reviewer.casefold():
             continue
         result.append({
             "source": "pull_request_review",
             "commit": commit.lower(),
-            "submitted_at": str(review["submitted_at"]),
-            "state": str(review.get("state", "")),
+            "submitted_at": submitted_at,
+            "state": state,
         })
     return result
 
@@ -269,25 +282,64 @@ def print_pr(result: dict) -> None:
     print(f"\nRESULT: {'covered' if result['covered'] else 'uncovered'} — {result['head']}")
 
 
+def audit_pr(value: Any, repo: str) -> dict | None:
+    """Validate a closed-list entry; return None only for closed-unmerged."""
+    if not isinstance(value, dict):
+        raise CoverageError(f"closed PR list for {repo} contained a non-object")
+    number = value.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+        raise CoverageError(f"closed PR list for {repo} contained an invalid PR number")
+    if value.get("state") != "closed":
+        raise CoverageError(f"PR {repo}#{number} from the closed list is not closed")
+    merged_at = value.get("merged_at")
+    if merged_at is None:
+        return None
+    if not isinstance(merged_at, str) or not merged_at:
+        raise CoverageError(f"merged PR {repo}#{number} has no trustworthy merged_at")
+    head = value.get("head")
+    sha = head.get("sha") if isinstance(head, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise CoverageError(f"merged PR {repo}#{number} has no trustworthy full head SHA")
+    title = value.get("title")
+    if not isinstance(title, str):
+        raise CoverageError(f"merged PR {repo}#{number} has no trustworthy title")
+    return {"number": number, "head": sha.lower(), "title": title}
+
+
 def audit_merged(repo: str, expected: list[str]) -> tuple[list[dict], list[dict]]:
     """The original repository-wide audit, kept output-compatible."""
-    prs = as_list(gh(f"repos/{repo}/pulls?state=closed&per_page=100"), "closed PRs")
+    values = as_list(gh(f"repos/{repo}/pulls?state=closed&per_page=100"), "closed PRs")
+    prs = []
+    for value in values:
+        pr = audit_pr(value, repo)
+        if pr is not None:
+            prs.append(pr)
     rows = []
     for pr in sorted(prs, key=lambda p: p["number"]):
-        if not pr.get("merged_at"):
-            continue
         n = pr["number"]
-        head = pr["head"]["sha"]
-        reviews = as_list(gh(f"repos/{repo}/pulls/{n}/reviews"), f"reviews for {repo}#{n}")
-        on_head = {r["user"]["login"] for r in reviews if r.get("commit_id") == head}
-        anywhere = {r["user"]["login"] for r in reviews}
-        missing = [r for r in expected if r not in on_head]
+        head = pr["head"]
+        reviews: list = []
+        comments: list = []
+        if expected:
+            reviews = as_list(
+                gh(f"repos/{repo}/pulls/{n}/reviews?per_page=100"),
+                f"reviews for {repo}#{n}",
+            )
+            comments = as_list(
+                gh(f"repos/{repo}/issues/{n}/comments?per_page=100"),
+                f"issue comments for {repo}#{n}",
+            )
+        reviewer_rows = [reviewer_row(reviewer, head, reviews, comments) for reviewer in expected]
+        missing = [row["reviewer"] for row in reviewer_rows if not row["covered"]]
         rows.append({
             "pr": n,
             "merged_head": head[:9],
             "covered": not missing,
             "missing_on_head": missing,
-            "absent_entirely": [r for r in expected if r not in anywhere],
+            "absent_entirely": [
+                row["reviewer"] for row in reviewer_rows
+                if row["reason"] == "never reviewed the PR at all"
+            ],
             "title": pr["title"][:58],
         })
     return rows, [row for row in rows if not row["covered"]]
@@ -314,8 +366,8 @@ def main() -> int:
     ap.add_argument("--pr", type=positive_pr)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
-    expected = expected_reviewers(args.reviewers)
     try:
+        expected = expected_reviewers(args.reviewers)
         if args.pr is not None:
             result = pr_coverage(args.repo, args.pr, expected)
             if args.json:
@@ -331,6 +383,9 @@ def main() -> int:
         return 1 if bad else 0
     except CoverageError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"FAIL: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
 

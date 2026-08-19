@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# FG-199. Offline proof for review-coverage.py --pr. The fake `gh` holds the
-# recorded #58/#59/#60 facts and planted good/bad API shapes. No network or
-# GitHub credentials are involved, so this proof is safe to run in every gate.
+# FG-199. Offline proof for review-coverage.py. The fake `gh` holds the recorded
+# #58/#59/#60 facts and planted good/bad API shapes for both --pr and historical
+# audit modes. No network or GitHub credentials are involved, so this proof is
+# safe to run in every gate.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -84,17 +85,38 @@ fixtures = {
         "reviews": [], "comments": []},
 }
 
-if case == "audit":
+if case in {"audit", "audit-malformed-pr", "audit-malformed-review",
+            "audit-malformed-unrelated-review"}:
     if path == "repos/SuperBadLabs/Fogell/pulls?state=closed&per_page=100":
+        if case == "audit-malformed-pr":
+            print(json.dumps([
+                {"number": 999, "state": "closed", "merged_at": "2026-08-18T02:00:00Z",
+                 "head": {"sha": "not-a-full-sha"}, "title": "malformed fixture"},
+            ]))
+            sys.exit(0)
         print(json.dumps([
             {"number": 999, "state": "closed", "merged_at": "2026-08-18T02:00:00Z",
              "head": {"sha": HEAD}, "title": "covered fixture"},
             {"number": 998, "state": "closed", "merged_at": None,
-             "head": {"sha": OTHER}, "title": "closed without merge"},
+             "head": "deliberately irrelevant", "title": 17},
         ]))
         sys.exit(0)
-    if path == "repos/SuperBadLabs/Fogell/pulls/999/reviews":
-        print(json.dumps([review(COPILOT, HEAD), review(CODEX, HEAD)]))
+    if path == "repos/SuperBadLabs/Fogell/pulls/999/reviews?per_page=100":
+        if case == "audit-malformed-review":
+            print(json.dumps([
+                {"user": None, "commit_id": HEAD,
+                 "submitted_at": "2026-08-18T01:00:00Z", "state": "COMMENTED"},
+            ]))
+        elif case == "audit-malformed-unrelated-review":
+            print(json.dumps([
+                {"user": {"login": "unrelated-reviewer"}, "commit_id": "short",
+                 "submitted_at": "2026-08-18T01:00:00Z", "state": "COMMENTED"},
+            ]))
+        else:
+            print(json.dumps([review(COPILOT.upper(), HEAD.upper())]))
+        sys.exit(0)
+    if path == "repos/SuperBadLabs/Fogell/issues/999/comments?per_page=100":
+        print(json.dumps([clean(CODEX.upper(), HEAD[:10].upper())]))
         sys.exit(0)
     print(f"unexpected audit endpoint: {path}", file=sys.stderr)
     sys.exit(64)
@@ -174,6 +196,14 @@ expect_text() {
     FAILED=1
   fi
 }
+expect_no_text() {
+  local text=$1
+  if grep -Fq -- "$text" "$OUT"; then
+    echo "  FAIL: output unexpectedly contained: $text"
+    sed 's/^/    | /' "$OUT"
+    FAILED=1
+  fi
+}
 
 echo "=== review coverage: recorded known-bad heads ==="
 run_case pr58 --pr 58
@@ -248,11 +278,50 @@ assert [r["reviewer"] for r in value["reviewers"]] == [
 PY
 
 run_case audit
-expect_rc "no-argument merged-PR audit remains compatible" 0
+expect_rc "historical audit accepts strict clean Codex evidence and casing" 0
 expect_text "1 merged PRs; 0 without full coverage"
+
+run_case audit-malformed-pr
+expect_rc "historical audit refuses a malformed merged PR" 2
+expect_text "has no trustworthy full head SHA"
+expect_no_text "Traceback"
+
+run_case audit-malformed-review
+expect_rc "historical audit refuses a malformed review" 2
+expect_text "PR review has no reviewer login"
+expect_no_text "Traceback"
+
+run_case audit-malformed-unrelated-review
+expect_rc "historical audit refuses malformed unrelated submitted review" 2
+expect_text "submitted PR review has no trustworthy full commit_id"
+expect_no_text "Traceback"
+
+rm -f "$LAB/state"
+set +e
+python3.12 -B - "$CHECKER" >"$OUT" 2>&1 <<'PY'
+import importlib.util
+import sys
+
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("review_coverage", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def explode(_path):
+    raise RuntimeError("planted unexpected failure")
+
+module.gh = explode
+sys.argv = [path, "--pr", "999"]
+raise SystemExit(module.main())
+PY
+RC=$?
+set -e
+expect_rc "unexpected internal exception fails closed without traceback" 2
+expect_text "FAIL: unexpected RuntimeError: planted unexpected failure"
+expect_no_text "Traceback"
 
 if [ "$FAILED" -ne 0 ]; then
   echo "REVIEW-COVERAGE PROOF FAILED"
   exit 1
 fi
-echo "REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass; identity, pagination, race, lifecycle, transport, JSON and historical-audit arms hold"
+echo "REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass in both modes; identity, casing, malformed historical shapes, pagination, race, lifecycle, transport, unexpected failure, JSON and audit arms hold"
