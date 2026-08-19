@@ -600,8 +600,20 @@ let private postConditionName: P<PostCondition> =
           attempt (keyword "regression" >>% Regression)
           attempt (keyword "notBuilt" >>% NotBuilt) ]
 
+/// Some corpus-authored Declarative structural sections carry a display label:
+/// `steps('Build')`, `stages("Matrix")`, `post('Notification')`. Jenkins 2.568.1's
+/// model converter directly accepts each form and ignores the argument when building
+/// the section model. Keep this lane deliberately narrower than Jenkins' full Groovy
+/// call surface: only the corpus-proven single string is discarded. Numeric, named,
+/// empty and multi-argument forms remain refusals rather than being consumed as
+/// unchecked raw text.
+let private structuralSection name : P<unit> =
+    keyword name
+    >>. opt (attempt (between (symbol "(") (symbol ")") stringLiteral))
+    >>% ()
+
 let private postSection: P<(PostCondition * Step list) list> =
-    keyword "post"
+    structuralSection "post"
     >>. between (symbol "{") (symbol "}") (
         ws >>. many (attempt (postConditionName .>>. stepBlock)))
 
@@ -891,7 +903,7 @@ stageRef.Value <-
                 choice
                     [ attempt (agentSpec |>> SecAgent)
                       attempt (environmentSection |>> SecEnv)
-                      attempt (keyword "steps" >>. stepBlock |>> SecSteps)
+                      attempt (structuralSection "steps" >>. stepBlock |>> SecSteps)
                       attempt (whenSection |>> SecWhen)
                       attempt (whenSectionOpaque |>> SecWhen)
                       attempt (postSection |>> SecPost)
@@ -993,7 +1005,7 @@ let private topSection: P<TopSection> =
           attempt (keyword "options" >>. stepBlock |>> TopOptions)
           attempt (keyword "parameters" >>. stepBlock |>> TopParameters)
           attempt (keyword "triggers" >>. stepBlock |>> TopTriggers)
-          attempt (keyword "stages" >>. stagesBody |>> TopStages)
+          attempt (structuralSection "stages" >>. stagesBody |>> TopStages)
           attempt (postSection |>> TopPost)
           attempt (keyword "libraries" >>. balancedRaw '{' '}' |>> fun _ -> TopOther "libraries")
           // THE TOP-LEVEL FALLBACK MUST NOT CLAIM SECTIONS FOGELL ACTS ON. Same shape

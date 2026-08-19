@@ -258,6 +258,43 @@ let structure =
               Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
           }
 
+          test "FG-014 string-labelled structural sections preserve their bodies" {
+              // DIRECTLY PROBED on Jenkins 2.568.1 at all three corpus scopes.
+              // The labels do not enter the Declarative model; the section body does.
+              let src =
+                  "pipeline {\n  agent any\n  stages('outer') {\n    stage('a') {\n      steps(\"work\") { echo 'x' }\n      post('stage-notify') {\n        failure { echo 'failed' }\n      }\n    }\n  }\n  post('notify') {\n    always { echo 'done' }\n  }\n}\n"
+
+              let pipeline = ok src
+              Expect.equal pipeline.Stages.Length 1 "the labelled stages body survives"
+              Expect.equal pipeline.Stages.[0].Name "a" "the stage survives"
+              Expect.equal pipeline.Stages.[0].Steps.Length 1 "the labelled steps body survives"
+              Expect.equal pipeline.Stages.[0].Steps.[0].Name "echo" "the enclosed step is retained"
+              Expect.equal pipeline.Stages.[0].Steps.[0].Positional [ "x" ] "the step value is retained"
+              Expect.equal (pipeline.Stages.[0].Post |> List.map fst) [ Failure ] "a labelled stage post body survives"
+              Expect.equal (pipeline.Post |> List.map fst) [ Always ] "the labelled post body survives"
+          }
+
+          test "FG-014 section labels stay on the narrow single-string boundary" {
+              // Jenkins' Groovy front-end accepts broader argument expressions, but
+              // blindly skipping balanced raw text would also accept expressions this
+              // parser never validated. This slice covers only the three corpus-proven
+              // string labels and keeps every other call shape fail-closed.
+              let sources =
+                  [ "empty steps args",
+                    "pipeline {\n  agent any\n  stages { stage('a') { steps() { echo 'x' } } }\n}"
+                    "numeric steps arg",
+                    "pipeline {\n  agent any\n  stages { stage('a') { steps(1) { echo 'x' } } }\n}"
+                    "multiple steps args",
+                    "pipeline {\n  agent any\n  stages { stage('a') { steps('a', 'b') { echo 'x' } } }\n}"
+                    "named post arg",
+                    "pipeline {\n  agent any\n  stages { stage('a') { steps { echo 'x' } } }\n  post(name: 'n') { always { echo 'y' } }\n}"
+                    "expression stages arg",
+                    "pipeline {\n  agent any\n  stages(env.LABEL) { stage('a') { steps { echo 'x' } } }\n}" ]
+
+              for label, source in sources do
+                  Expect.equal (err source).Code MalformedSyntax $"{label}: unsupported section arguments remain refused"
+          }
+
           test "FG-014 command-form tools preserve kind, value and source order" {
               let src =
                   "pipeline {\n  agent any\n  tools {\n    maven 'm3'; jdk \"j8\"\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"

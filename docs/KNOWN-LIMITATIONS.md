@@ -8,17 +8,17 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Of 228 corpus files: **1** proven, **189** admitted (parsed — NOT a
-parity claim), **38** rejected. This page covers the rejected set.
+Of 228 corpus files: **1** proven, **192** admitted (parsed — NOT a
+parity claim), **35** rejected. This page covers the rejected set.
 
 ## opaque section
 
-Files: **20**
+Files: **17**
 
 - `DeekshithSN_Jenkinsfile.Jenkinsfile`
 - `HariSekhon_Jenkins.Jenkinsfile`
 - `SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`
-- …and 17 more (see the ledger)
+- …and 14 more (see the ledger)
 
 ## Expecting: '['
 
