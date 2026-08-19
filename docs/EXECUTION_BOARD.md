@@ -121,9 +121,12 @@ The daily work loop starts and ends on HeMan:
    HeMan. A run that skips the corpus-dependent scorecard check is not the full
    local gate and does not license publication.
 5. Publish the already-proven commit to GitHub and obtain final review of that
-   exact head. A finding returns the work to HeMan; prove the correction there,
-   push it, and request a fresh review (`@codex review` for Codex). A review of an
-   earlier SHA does not carry forward.
+   exact head. A finding returns the work to HeMan. For a Codex finding, prove the
+   correction there, push it, and request `@codex review`. Copilot cannot be
+   re-requested; for a Copilot finding that changes the head, close the unmerged PR
+   and open the proved correction as a replacement PR so its open event obtains a
+   new Copilot review. Repeat that replacement if Copilot finds another issue. A
+   review of an earlier SHA does not carry forward.
 6. Once FG-199's `--pr N` mode and known-bad proof land, run the guard from HeMan
    after the review record exists and before merge. Its current repository-wide
    audit cannot decide an open PR and is not a publication guard.
