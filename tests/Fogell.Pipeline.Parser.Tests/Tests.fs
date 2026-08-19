@@ -258,6 +258,30 @@ let structure =
               Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
           }
 
+          test "FG-014 command-form tools preserve kind, value and source order" {
+              let src =
+                  "pipeline {\n  agent any\n  tools {\n    maven 'm3'; jdk \"j8\"\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
+
+              Expect.equal
+                  (ok src).Tools
+                  [ "maven", "m3"; "jdk", "j8" ]
+                  "the parser keeps each tool kind paired with its configured installation"
+          }
+
+          test "FG-014 tools keep the previously accepted assignment spelling" {
+              let quoted =
+                  "pipeline { agent any tools { maven = 'm3' } stages { stage('a') { steps { echo 'x' } } } }"
+
+              let unquoted =
+                  "pipeline {\n  agent any\n  tools {\n    maven = m3\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              Expect.equal (ok quoted).Tools [ "maven", "m3" ] "quoted assignment remains accepted"
+              Expect.equal
+                  (ok unquoted).Tools
+                  [ "maven", "m3" ]
+                  "the command-form slice does not silently narrow the old unquoted assignment surface"
+          }
+
           test "named step arguments are separated from positional" {
               let p = ok (mk "    stage('a') { steps { archiveArtifacts artifacts: '*.jar', fingerprint: true } }")
               let step = p.Stages.[0].Steps.[0]

@@ -1,5 +1,36 @@
 # Fogell day-1 backlog — the 14 files Forge rejects
 
+## FG-014 Fogell rebaseline — 2026-08-18
+
+The list below is historical Forge evidence, not the current Fogell baseline. At
+the start of FG-014, Fogell admitted 183 of the pinned 228 files and rejected 44;
+one further file was tier 1. Two of the 14 historical rows already admitted:
+`ljpengelen_jenkinsfile.Jenkinsfile` and
+`murphysecurity_murphysec-jenkins-tools.Jenkinsfile`. Twelve remained, so the old
+acceptance target of 205 admitted was impossible from this ticket's own scope:
+even moving all twelve would produce only 195.
+
+The first measured slice adds the valid Declarative command form in `tools { }`.
+The corpus, rather than the historical list, names its full movement: six files
+move from tier 3 to admitted — `beifei1_fire-cloud.Jenkinsfile`,
+`hungbang_spring-boot-aws-docdb-example.Jenkinsfile`,
+`Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile`,
+`buildit_jenkins-pipeline-libraries.Jenkinsfile`,
+`pavankjadda_BookStore.Jenkinsfile` and `sidd-harth_apigee-cicd.Jenkinsfile`.
+Each contains the same isolated construct, a tool kind followed by its quoted
+installation name. Admission therefore moves 183 -> 189 and tier 3 moves
+44 -> 38. `SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile` and
+`holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile` pass their `tools` section
+and reach a later rejection; they do not move verdict class. No other corpus
+verdict changes.
+
+The ten historical rows still open after this slice are HariSekhon, jjasghar,
+maajor, maxyermayank, metersphere, mjah, MrRameshRajendran, rosineygp, SumitKr88
+and yashpimple. Each needs its own
+minimal repro and measured row transition; their reported positions below are
+not diagnoses. FG-015 is not part of this implementation and is closure-audited
+separately.
+
 Measured 2026-07-30 via real `forge validate` dispatch over the pinned
 228-file corpus. 214/228 accepted (93.9%). All 14 failures are on the
 typed Declarative path (`Forge.Pipeline.Parser`, 995 lines).

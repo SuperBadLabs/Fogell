@@ -496,8 +496,33 @@ let private keyValueBody: P<(string * string) list> =
 let private environmentSection: P<(string * string * bool) list> =
     keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
 
+/// Declarative `tools` entries use command form, not environment assignment form:
+///
+///     tools { maven 'm3'; jdk 'j8' }
+///
+/// FG-014. The original parser reused `keyValueBody`, so it accepted only
+/// `maven = 'm3'` and rejected the valid Jenkins spelling in six pinned corpus
+/// files. Keep the old assignment spelling, including its unquoted-value
+/// fallback, as accepted compatibility forms — this slice must not silently
+/// narrow the old parser surface — but represent every spelling identically as
+/// (tool kind, configured installation name).
+let private toolEntry: P<string * string> =
+    attempt (identifier .>>. stringLiteral)
+    <|> attempt ((
+            identifier
+            .>> symbol "="
+            .>>. (stringLiteral <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim())))
+        .>> ws)
+
+let private toolsBody: P<(string * string) list> =
+    let separators = skipMany (symbol ";")
+
+    ws
+    >>. separators
+    >>. many (attempt (toolEntry .>> separators))
+
 let private toolsSection: P<(string * string) list> =
-    keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody
+    keyword "tools" >>. between (symbol "{") (symbol "}") toolsBody
 
 let private agentSpec: P<AgentSpec> =
     let inner =
