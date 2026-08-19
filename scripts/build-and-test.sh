@@ -93,6 +93,13 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 ./scripts/prove-queue-rows.sh || { echo "QUEUE-ROW PROOF FAILED"; exit 1; }
 ./scripts/audit-queue-rows.py || { echo "QUEUE-ROW AUDIT FAILED"; exit 1; }
 
+# FG-199. The live guard needs an already-published PR and GitHub metadata, so it
+# cannot belong in this pre-publication gate. Its OFFLINE proof does: a fake gh
+# records the known-bad #58/#59/#60 heads and plants both pass and refusal arms.
+# No credentials or network are used here.
+./scripts/prove-review-coverage.sh \
+  || { echo "REVIEW-COVERAGE PROOF FAILED"; exit 1; }
+
 # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
 # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
 # re-derived the hash that claim rests on — a receipt edited with that line left intact
