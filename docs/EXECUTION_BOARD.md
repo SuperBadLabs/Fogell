@@ -127,9 +127,10 @@ The daily work loop starts and ends on HeMan:
    and open the proved correction as a replacement PR so its open event obtains a
    new Copilot review. Repeat that replacement if Copilot finds another issue. A
    review of an earlier SHA does not carry forward.
-6. Once FG-199's `--pr N` mode and known-bad proof land, run the guard from HeMan
-   after the review record exists and before merge. Its current repository-wide
-   audit cannot decide an open PR and is not a publication guard.
+6. Run `scripts/review-coverage.py --pr N` from HeMan after the review record
+   exists and before merge. It names the current full head and refuses until
+   every expected reviewer covered it. The no-argument repository-wide audit
+   remains historical evidence and is not a publication guard.
 7. Use GitHub for required status checks and merge only the exact head that the
    HeMan gate and final review covered.
 
@@ -421,13 +422,13 @@ does not rank the tracks against each other row by row, because nobody has measu
 first corpus receipt costs; **FG-200 exists to find that out, and until it reports, the
 claim that Track 2 is binding is an argument from denominators and not a measurement.**
 
-**HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is intended to become a local
-post-publication, pre-merge guardrail, not an implementation ticket and not work
-to perform in GitHub. Its current repository-wide audit runs on HeMan, but the
-`--pr N` checker and known-bad proof remain TODO and will run there too; querying
-GitHub review metadata does not move execution there. The candidate must be
-published before its head and review record can exist. Until that mode lands, the
-historical audit is not a required merge guard. In the implementation queue, the
+**HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is a local post-publication,
+pre-merge guardrail, not work to perform in GitHub. Its `--pr N` checker runs on
+HeMan and queries GitHub review metadata only after the candidate is published
+and its head and review record exist. The blocking gate runs its offline
+known-bad proof without GitHub credentials or network; the live guard itself
+runs only at the review-to-merge boundary. The no-argument historical audit is
+evidence of the backlog, not a required merge guard. In the implementation queue, the
 first active ticket is FG-177; its branch, edit-test loop and evidence stay on
 HeMan until its commit is ready to publish.
 
