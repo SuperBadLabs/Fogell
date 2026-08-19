@@ -3,8 +3,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-if [[ $# -lt 11 ]]; then
-  echo "usage: $0 MANIFEST RUN STARTED VERIFIED FINISHED RC EXIT_KEY LOG EXIT_FILE METADATA CASE..." >&2
+if [[ $# -lt 12 ]]; then
+  echo "usage: $0 MANIFEST RUN STARTED VERIFIED FINISHED RC EXIT_KEY LOG EXIT_FILE REQUESTED_CORE METADATA CASE..." >&2
   exit 2
 fi
 
@@ -17,8 +17,9 @@ cli_rc=$6
 exit_key=$7
 log=$8
 exit_file=$9
-metadata=${10}
-shift 10
+requested_core=${10}
+metadata=${11}
+shift 11
 cases=("$@")
 
 fail() {
@@ -37,6 +38,8 @@ done
 [[ "$cli_rc" =~ ^[0-9]+$ && "$cli_rc" -le 255 ]] || fail "invalid CLI status: $cli_rc"
 [[ "$run_name" =~ ^[a-z0-9-]+$ ]] || fail "invalid run name: $run_name"
 [[ "$exit_key" =~ ^[a-z0-9-]+$ ]] || fail "invalid exit key: $exit_key"
+[[ "$requested_core" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ||
+  fail "requested Jenkins core is not canonical: $requested_core"
 [[ ${#cases[@]} -gt 0 ]] || fail 'run has no ordered cases'
 [[ -f "$log" ]] || fail "missing run log: $log"
 [[ -f "$exit_file" ]] || fail "missing exit marker: $exit_file"
@@ -52,6 +55,8 @@ done
 mapfile -t core_lines < "$core_file"
 [[ ${#core_lines[@]} -eq 1 ]] || fail 'core metadata is not one line'
 core=${core_lines[0]}
+[[ "$core" == "$requested_core" ]] ||
+  fail "requested Jenkins $requested_core differs from manifest metadata $core"
 mapfile -t image_lines < "$image_file"
 [[ ${#image_lines[@]} -eq 1 ]] || fail 'image metadata is not one line'
 IFS='|' read -r image_name image_id image_digest extra <<< "${image_lines[0]}"
@@ -109,7 +114,7 @@ done
   printf 'oracle-verified-at-utc\t%s\n' "$verified_at"
   printf 'finished-at-utc\t%s\n' "$finished_at"
   printf 'cli-exit\t%s\n' "$cli_rc"
-  printf 'jenkins-core\t%s\n' "$core"
+  printf 'jenkins-core\t%s\n' "$requested_core"
   printf 'core-metadata-sha256\t%s\n' "$(digest "$core_file")"
   printf 'plugin-manifest-sha256\t%s\n' "$(digest "$plugins_file")"
   printf 'plugin-count\t%s\n' "$(wc -l < "$plugins_file")"

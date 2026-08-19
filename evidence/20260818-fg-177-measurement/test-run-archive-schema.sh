@@ -4,11 +4,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 test_tmp=$(mktemp -d)
 server_pid=''
+custom_server_pid=''
 cleanup() {
-  if [[ -n "$server_pid" ]]; then
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  for pid in "$server_pid" "$custom_server_pid"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   rm -rf "$test_tmp"
 }
 trap cleanup EXIT
@@ -30,6 +33,7 @@ done
 jenkins_url=$(<"$oracle_ready")
 cat > "$test_tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
+printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
 printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
 printf '%s\n' 'fixture/jenkins:2.568.1|1111111111111111111111111111111111111111111111111111111111111111|sha256:2222222222222222222222222222222222222222222222222222222222222222'
 EOF
@@ -46,6 +50,7 @@ case "$1" in
     ;;
   run)
     printf 'dotnet run\n' >> "$FOGELL_STUB_ORDER"
+    printf '%s\n' "$@" > "${FOGELL_STUB_ARGS:-/dev/null}"
     while [[ $# -gt 0 && $1 != -- ]]; do shift; done
     shift
     shift 2
@@ -88,6 +93,7 @@ chmod +x "$stub"
 out="$test_tmp/fresh-evidence-output"
 calls="$test_tmp/dotnet-calls"
 order="$test_tmp/runner-order"
+args="$test_tmp/dotnet-args"
 sentinel_target="$out/runs/archive-schema"
 mkdir -p "$sentinel_target/raw-receipts"
 printf 'preexisting sentinel receipt\n' \
@@ -102,6 +108,7 @@ FOGELL_JENKINS_HOST=fixture-host \
 FOGELL_JENKINS_CONTAINER=fixture-controller \
 FOGELL_STUB_CALLS="$calls" \
 FOGELL_STUB_ORDER="$order" \
+FOGELL_STUB_ARGS="$args" \
   bash "$evidence/run-archive-schema.sh"
 rc=$?
 set -e
@@ -124,7 +131,7 @@ if [[ $(sed -n '1p' "$calls") != "$expected_build" || \
     "$(tr '\n' '|' < "$calls")" >&2
   exit 1
 fi
-if [[ $(<"$order") != $'oracle image inspect\ndotnet build\ndotnet run' ]]; then
+if [[ $(<"$order") != $'oracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run' ]]; then
   printf 'ERROR: archive verifier did not finish before build/run; order=%s\n' \
     "$(tr '\n' '|' < "$order")" >&2
   exit 1
@@ -134,6 +141,7 @@ grep -Fx 'archive-schema-cli-exit=1' "$published/archive-schema-exit.txt"
 grep -Fx $'cli-exit\t1' "$published/archive-schema-run-manifest.tsv"
 grep -Fx $'jenkins-core\t2.568.1' "$published/archive-schema-run-manifest.tsv"
 grep -Fx $'case-count\t1' "$published/archive-schema-run-manifest.tsv"
+grep -Fx '2.568.1' "$args"
 if [[ $(find "$published/raw-receipts" -mindepth 1 -maxdepth 1 -type f \
     -printf '%f\n') != fg177-probe-archive-schema.receipt.txt ]]; then
   echo 'ERROR: successful archive publication has the wrong receipt set' >&2
@@ -227,6 +235,90 @@ if [[ $replacement_rc -ne 1 || $(bundle_hash "$published") == "$published_hash" 
 fi
 grep -Fx 'fixture receipt two for fg177-probe-archive-schema.Jenkinsfile' \
   "$published/raw-receipts/fg177-probe-archive-schema.receipt.txt"
+
+custom_core=2.777.3
+custom_metadata="$test_tmp/custom-oracle-metadata"
+custom_ready="$test_tmp/custom-oracle-url"
+FOGELL_FIXTURE_JENKINS_CORE="$custom_core" \
+  python3 "$evidence/jenkins-oracle-fixture.py" metadata "$custom_metadata"
+FOGELL_FIXTURE_JENKINS_CORE="$custom_core" \
+  python3 "$evidence/jenkins-oracle-fixture.py" serve "$custom_ready" &
+custom_server_pid=$!
+for _ in {1..100}; do
+  [[ -s "$custom_ready" ]] && break
+  sleep 0.01
+done
+[[ -s "$custom_ready" ]] || {
+  echo 'ERROR: custom-core archive oracle fixture did not start' >&2
+  exit 1
+}
+custom_url=$(<"$custom_ready")
+custom_out="$test_tmp/custom-core-output"
+custom_args="$test_tmp/custom-core-args"
+custom_calls="$test_tmp/custom-core-calls"
+custom_order="$test_tmp/custom-core-order"
+set +e
+PATH="$test_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$custom_out" \
+FOGELL_JENKINS_ORACLE_DIR="$custom_metadata" \
+FOGELL_JENKINS_URL="$custom_url" \
+FOGELL_JENKINS_CORE="$custom_core" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_STUB_ARGS="$custom_args" \
+FOGELL_STUB_CALLS="$custom_calls" \
+FOGELL_STUB_ORDER="$custom_order" \
+  bash "$evidence/run-archive-schema.sh" > "$test_tmp/custom-core.log" 2>&1
+custom_rc=$?
+set -e
+if [[ $custom_rc -ne 1 ]]; then
+  printf 'ERROR: custom matching archive core returned %s\n' "$custom_rc" >&2
+  exit 1
+fi
+grep -Fx "oracle core $custom_core" "$custom_order"
+grep -Fx "$custom_core" "$custom_args"
+grep -Fx $'jenkins-core\t'"$custom_core" \
+  "$custom_out/runs/archive-schema/archive-schema-run-manifest.tsv"
+
+require_archive_core_refusal() {
+  local label=$1
+  local expected_rc=$2
+  local core_mode=$3
+  local core_value=${4-}
+  local refused_out="$test_tmp/core-refused-$label"
+  local refused_calls="$test_tmp/core-refused-$label-calls"
+  local refused_order="$test_tmp/core-refused-$label-order"
+  local core_command=()
+  if [[ "$core_mode" == unset ]]; then
+    core_command=(env -u FOGELL_JENKINS_CORE)
+  else
+    core_command=(env "FOGELL_JENKINS_CORE=$core_value")
+  fi
+  set +e
+  "${core_command[@]}" \
+    PATH="$test_tmp/bin:$PATH" \
+    FOGELL_EVIDENCE_OUT="$refused_out" \
+    FOGELL_JENKINS_ORACLE_DIR="$custom_metadata" \
+    FOGELL_JENKINS_URL="$custom_url" \
+    FOGELL_JENKINS_HOST=fixture-host \
+    FOGELL_JENKINS_CONTAINER=fixture-controller \
+    FOGELL_STUB_CALLS="$refused_calls" \
+    FOGELL_STUB_ORDER="$refused_order" \
+      bash "$evidence/run-archive-schema.sh" > "$test_tmp/core-refused-$label.log" 2>&1
+  local refused_rc=$?
+  set -e
+  if [[ $refused_rc -ne $expected_rc || -e "$refused_out" ||
+        -e "$refused_calls" || -e "$refused_order" ]]; then
+    printf 'ERROR: archive core refusal %s rc=%s reached oracle image/output/dotnet\n' \
+      "$label" "$refused_rc" >&2
+    exit 1
+  fi
+}
+
+require_archive_core_refusal unset-default-mismatch 1 unset
+require_archive_core_refusal caller-mismatch 1 set 2.999
+require_archive_core_refusal explicit-empty 2 set ''
+require_archive_core_refusal malformed 2 set version-next
 
 build_failure_out="$test_tmp/build-failure-output"
 build_failure_calls="$test_tmp/build-failure-calls"

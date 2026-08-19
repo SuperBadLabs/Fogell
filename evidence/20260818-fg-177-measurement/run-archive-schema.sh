@@ -2,17 +2,26 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-: "${FOGELL_JENKINS_URL:=http://127.0.0.1:18099}"
-: "${FOGELL_JENKINS_CORE:=2.568.1}"
-: "${FOGELL_JENKINS_HOST:=luigi}"
-: "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
+requested_jenkins_url=${FOGELL_JENKINS_URL:-http://127.0.0.1:18099}
+requested_jenkins_host=${FOGELL_JENKINS_HOST:-luigi}
+requested_jenkins_container=${FOGELL_JENKINS_CONTAINER:-jenkins-lab}
+if [[ ${FOGELL_JENKINS_CORE+x} ]]; then
+  requested_jenkins_core=$FOGELL_JENKINS_CORE
+else
+  requested_jenkins_core=2.568.1
+fi
+if [[ ! "$requested_jenkins_core" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  printf 'ERROR: FOGELL_JENKINS_CORE must be one canonical non-empty version, got %q\n' \
+    "$requested_jenkins_core" >&2
+  exit 2
+fi
 : "${FOGELL_SCM_URL:=git://100.105.179.51/repo.git}"
 export FOGELL_SCM_URL
 
-export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
-export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
-export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
-export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
+export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
+export FOGELL_JENKINS_ENV_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} env\""
+export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} git --version\""
+export FOGELL_JENKINS_WIPE_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
 evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
@@ -20,7 +29,11 @@ evidence_root='evidence/20260818-fg-177-measurement'
 out="$FOGELL_EVIDENCE_OUT"
 run_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 oracle_verification=$(
-  bash "$evidence_root/jenkins-oracle.sh" verify "$FOGELL_JENKINS_ORACLE_DIR"
+  FOGELL_JENKINS_URL="$requested_jenkins_url" \
+  FOGELL_JENKINS_CORE="$requested_jenkins_core" \
+  FOGELL_JENKINS_HOST="$requested_jenkins_host" \
+  FOGELL_JENKINS_CONTAINER="$requested_jenkins_container" \
+    bash "$evidence_root/jenkins-oracle.sh" verify "$FOGELL_JENKINS_ORACLE_DIR"
 )
 oracle_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 printf '%s\n' "$oracle_verification"
@@ -58,8 +71,8 @@ case_file="$stage/cases/fg177-probe-archive-schema.Jenkinsfile"
 
 set +e
 dotnet run --project "$cli_project" -c Release --no-build -- \
-  "$FOGELL_JENKINS_URL" \
-  "$FOGELL_JENKINS_CORE" \
+  "$requested_jenkins_url" \
+  "$requested_jenkins_core" \
   "$stage/raw-receipts" \
   "$case_file" \
   2>&1 | tee "$stage/archive-schema-run.log"
@@ -79,6 +92,6 @@ bash "$evidence_root/write-run-manifest.sh" \
   "$run_started_at" "$oracle_verified_at" "$run_finished_at" \
   "$rc" archive-schema-cli-exit \
   "$stage/archive-schema-run.log" "$stage/archive-schema-exit.txt" \
-  "$FOGELL_JENKINS_ORACLE_DIR" "$case_file"
+  "$requested_jenkins_core" "$FOGELL_JENKINS_ORACLE_DIR" "$case_file"
 python3 "$evidence_root/publish-run-bundle.py" "$stage" "$publication_target"
 exit "$rc"

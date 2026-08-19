@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import pathlib
+import re
 import sys
 import urllib.parse
 
 
-CORE = "2.568.1"
+CORE = os.environ.get("FOGELL_FIXTURE_JENKINS_CORE", "2.568.1")
+if re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", CORE) is None:
+    raise RuntimeError(f"invalid FOGELL_FIXTURE_JENKINS_CORE: {CORE!r}")
 IMAGE = (
     "fixture/jenkins:2.568.1|"
     + "1" * 64

@@ -5,11 +5,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 evidence='evidence/20260818-fg-177-measurement'
 fixture_tmp=$(mktemp -d)
 server_pid=''
+custom_server_pid=''
 cleanup() {
-  if [[ -n "$server_pid" ]]; then
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  for pid in "$server_pid" "$custom_server_pid"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   rm -rf "$fixture_tmp"
 }
 trap cleanup EXIT
@@ -33,6 +36,7 @@ done
 jenkins_url=$(<"$oracle_ready")
 cat > "$fixture_tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
+printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
 printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
 printf '%s\n' 'fixture/jenkins:2.568.1|1111111111111111111111111111111111111111111111111111111111111111|sha256:2222222222222222222222222222222222222222222222222222222222222222'
 EOF
@@ -264,13 +268,14 @@ if [[ $(wc -l < "$calls") -ne 2 ]]; then
     "$(tr '\n' '|' < "$calls")" >&2
   exit 1
 fi
-if [[ $(<"$order") != $'oracle image inspect\ndotnet build\ndotnet run' ]]; then
+if [[ $(<"$order") != $'oracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run' ]]; then
   printf 'ERROR: verifier did not finish before build/run; order=%s\n' \
     "$(tr '\n' '|' < "$order")" >&2
   exit 1
 fi
 grep -Fx 'probe CLI complete' "$published/probe-run.log"
 grep -Fx 'probe-cli-exit=1' "$published/probe-exit.txt"
+grep -Fx '2.568.1' "$args"
 grep -E "^$runner_out/runs/\\.probes-stage\\.[^/]+/raw-receipts$" "$args"
 for name in \
   fg177-probe-unknown-policy.Jenkinsfile \
@@ -408,6 +413,96 @@ for receipt in "$published"/raw-receipts/*.receipt.txt; do
     exit 1
   fi
 done
+
+# A caller-selected canonical core must reach the verifier child, CLI and
+# manifest unchanged. Unset defaults to 2.568.1; against this custom pin that
+# is a mismatch. Empty/malformed values refuse even before oracle I/O.
+custom_core=2.777.3
+custom_metadata="$fixture_tmp/custom-oracle-metadata"
+custom_ready="$fixture_tmp/custom-oracle-url"
+FOGELL_FIXTURE_JENKINS_CORE="$custom_core" \
+  python3 "$evidence/jenkins-oracle-fixture.py" metadata "$custom_metadata"
+FOGELL_FIXTURE_JENKINS_CORE="$custom_core" \
+  python3 "$evidence/jenkins-oracle-fixture.py" serve "$custom_ready" &
+custom_server_pid=$!
+for _ in {1..100}; do
+  [[ -s "$custom_ready" ]] && break
+  sleep 0.01
+done
+[[ -s "$custom_ready" ]] || {
+  echo 'ERROR: custom-core Jenkins oracle fixture did not start' >&2
+  exit 1
+}
+custom_url=$(<"$custom_ready")
+custom_out="$fixture_tmp/custom-core-output"
+custom_args="$fixture_tmp/custom-core-args"
+custom_calls="$fixture_tmp/custom-core-calls"
+custom_order="$fixture_tmp/custom-core-order"
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$custom_out" \
+FOGELL_JENKINS_ORACLE_DIR="$custom_metadata" \
+FOGELL_JENKINS_URL="$custom_url" \
+FOGELL_JENKINS_CORE="$custom_core" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$custom_args" \
+FOGELL_STUB_CALLS="$custom_calls" \
+FOGELL_STUB_ORDER="$custom_order" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/custom-core.log" 2>&1
+custom_rc=$?
+set -e
+if [[ $custom_rc -ne 1 ]]; then
+  printf 'ERROR: custom matching probe core returned %s\n' "$custom_rc" >&2
+  exit 1
+fi
+grep -Fx "oracle core $custom_core" "$custom_order"
+grep -Fx "$custom_core" "$custom_args"
+grep -Fx $'jenkins-core\t'"$custom_core" \
+  "$custom_out/runs/probes/probe-run-manifest.tsv"
+
+require_probe_core_refusal() {
+  local label=$1
+  local expected_rc=$2
+  local core_mode=$3
+  local core_value=${4-}
+  local refused_out="$fixture_tmp/core-refused-$label"
+  local refused_calls="$fixture_tmp/core-refused-$label-calls"
+  local refused_order="$fixture_tmp/core-refused-$label-order"
+  local core_command=()
+  if [[ "$core_mode" == unset ]]; then
+    core_command=(env -u FOGELL_JENKINS_CORE)
+  else
+    core_command=(env "FOGELL_JENKINS_CORE=$core_value")
+  fi
+  set +e
+  "${core_command[@]}" \
+    PATH="$fixture_tmp/bin:$PATH" \
+    FOGELL_EVIDENCE_OUT="$refused_out" \
+    FOGELL_JENKINS_ORACLE_DIR="$custom_metadata" \
+    FOGELL_JENKINS_URL="$custom_url" \
+    FOGELL_JENKINS_HOST=fixture-host \
+    FOGELL_JENKINS_CONTAINER=fixture-controller \
+    FOGELL_SCM_URL="$scm_url" \
+    FOGELL_STUB_ARGS="$fixture_tmp/core-refused-$label-args" \
+    FOGELL_STUB_CALLS="$refused_calls" \
+    FOGELL_STUB_ORDER="$refused_order" \
+      bash "$evidence/run-probes.sh" > "$fixture_tmp/core-refused-$label.log" 2>&1
+  local refused_rc=$?
+  set -e
+  if [[ $refused_rc -ne $expected_rc || -e "$refused_out" ||
+        -e "$refused_calls" || -e "$refused_order" ]]; then
+    printf 'ERROR: core refusal %s rc=%s reached oracle image/output/dotnet\n' \
+      "$label" "$refused_rc" >&2
+    exit 1
+  fi
+}
+
+require_probe_core_refusal unset-default-mismatch 1 unset
+require_probe_core_refusal caller-mismatch 1 set 2.999
+require_probe_core_refusal explicit-empty 2 set ''
+require_probe_core_refusal malformed 2 set version-next
 
 # A fresh-checkout build failure must propagate before the CLI is attempted.
 build_failure_out="$fixture_tmp/build-failure-output"

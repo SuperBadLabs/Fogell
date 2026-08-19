@@ -24,7 +24,7 @@ manifest="$out/probe-run-manifest.tsv"
 bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" "$out/two.Jenkinsfile"
 
 grep -Fx $'started-at-utc\t2026-08-19T10:00:00Z' "$manifest"
@@ -41,8 +41,18 @@ grep -Fx $'controller-image-digest\tsha256:'"$(printf '%064d' 2)" "$manifest"
 manifest_hash=$(sha256sum "$manifest" | awk '{ print $1 }')
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
+  2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.999 "$metadata" \
+  "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/core-mismatch.log" 2>&1; then
+  echo 'ERROR: requested/metadata core mismatch unexpectedly produced a manifest' >&2
+  exit 1
+fi
+[[ $(sha256sum "$manifest" | awk '{ print $1 }') == "$manifest_hash" ]]
+
+if bash "$evidence/write-run-manifest.sh" \
+  "$manifest" probes \
   2026-08-19T10:00:02Z 2026-08-19T10:00:01Z 2026-08-19T10:00:03Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" > "$proof_tmp/reversed.log" 2>&1; then
   echo 'ERROR: reversed provenance timestamps unexpectedly passed' >&2
   exit 1
@@ -53,7 +63,7 @@ mv "$out/raw-receipts/two.receipt.txt" "$proof_tmp/two.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/missing.log" 2>&1; then
   echo 'ERROR: missing receipt unexpectedly produced a manifest' >&2
   exit 1
@@ -71,7 +81,7 @@ mv "$proof_tmp/two.receipt.txt" "$out/raw-receipts/two.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/empty.log" 2>&1; then
   echo 'ERROR: empty receipt unexpectedly produced a manifest' >&2
   exit 1
@@ -84,7 +94,7 @@ ln -s "$proof_tmp/one.receipt.txt" "$out/raw-receipts/one.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/symlink.log" 2>&1; then
   echo 'ERROR: symlinked receipt unexpectedly produced a manifest' >&2
   exit 1
@@ -97,7 +107,7 @@ mkdir "$out/raw-receipts/unexpected.receipt.txt"
 if bash "$evidence/write-run-manifest.sh" \
   "$manifest" probes \
   2026-08-19T10:00:00Z 2026-08-19T10:00:01Z 2026-08-19T10:00:02Z \
-  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" "$metadata" \
+  1 probe-cli-exit "$out/probe-run.log" "$out/probe-exit.txt" 2.568.1 "$metadata" \
   "$out/one.Jenkinsfile" "$out/two.Jenkinsfile" > "$proof_tmp/nonregular.log" 2>&1; then
   echo 'ERROR: unexpected non-regular receipt entry produced a manifest' >&2
   exit 1

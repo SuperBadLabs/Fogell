@@ -47,6 +47,16 @@ exact complete plugin-manifest match, and an exact live container-image match.
 Refusal creates no output directory, builds no CLI, synchronizes no fixture,
 and writes no receipt or exit marker.
 
+Both runners resolve the requested Jenkins identity once. An unset
+`FOGELL_JENKINS_CORE` selects the evidence default `2.568.1`; an explicitly
+empty or noncanonical value refuses before oracle I/O. The resolved URL, core,
+host and container are passed as command-local environment to the verifier,
+so its child process does not depend on whether the runner's shell variables
+were exported. The identical resolved URL/core pair labels the differential
+CLI invocation, and the manifest writer receives that core explicitly and
+refuses unless it equals the verified metadata. Host/container also drive the
+workspace collectors, preventing verifier/collector coordinate drift.
+
 ## Verified receipt recapture
 
 From the repository root on HeMan, the retained evidence was recaptured once,
