@@ -17,6 +17,7 @@ export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGEL
 evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
+bash "$evidence_root/jenkins-oracle.sh" verify "$evidence_root"
 mkdir -p "$out/raw-receipts"
 
 cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'

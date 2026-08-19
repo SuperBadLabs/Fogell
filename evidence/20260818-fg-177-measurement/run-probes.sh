@@ -18,6 +18,7 @@ evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"
 rendered="$out/rendered-cases"
+bash "$evidence_root/jenkins-oracle.sh" verify "$evidence_root"
 mkdir -p "$out/raw-receipts"
 FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence_root/render-probe-cases.py"
