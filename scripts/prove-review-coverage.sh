@@ -83,10 +83,17 @@ fixtures = {
     "api-fail": {
         "number": 999, "head": HEAD,
         "reviews": [], "comments": []},
+    "malformed-title": {
+        "number": 999, "head": HEAD,
+        "reviews": [], "comments": []},
+    "malformed-clean-created-at": {
+        "number": 999, "head": HEAD,
+        "reviews": [review(COPILOT, HEAD)],
+        "comments": [{**clean(CODEX, HEAD[:10]), "created_at": ""}]},
 }
 
 if case in {"audit", "audit-malformed-pr", "audit-malformed-review",
-            "audit-malformed-unrelated-review"}:
+            "audit-malformed-unrelated-review", "audit-malformed-clean-created-at"}:
     if path == "repos/SuperBadLabs/Fogell/pulls?state=closed&per_page=100":
         if case == "audit-malformed-pr":
             print(json.dumps([
@@ -116,7 +123,10 @@ if case in {"audit", "audit-malformed-pr", "audit-malformed-review",
             print(json.dumps([review(COPILOT.upper(), HEAD.upper())]))
         sys.exit(0)
     if path == "repos/SuperBadLabs/Fogell/issues/999/comments?per_page=100":
-        print(json.dumps([clean(CODEX.upper(), HEAD[:10].upper())]))
+        comment = clean(CODEX.upper(), HEAD[:10].upper())
+        if case == "audit-malformed-clean-created-at":
+            comment["created_at"] = None
+        print(json.dumps([comment]))
         sys.exit(0)
     print(f"unexpected audit endpoint: {path}", file=sys.stderr)
     sys.exit(64)
@@ -140,7 +150,8 @@ if path == base:
         "state": "closed" if closed or number in {58, 59, 60} else "open",
         "merged_at": None if not (closed or number in {58, 59, 60}) else
                      (None if closed else "2026-08-15T12:00:00Z"),
-        "head": {"sha": head}, "title": f"fixture {case}",
+        "head": {"sha": head},
+        "title": 17 if case == "malformed-title" else f"fixture {case}",
     }))
     sys.exit(0)
 if path == f"{base}/reviews?per_page=100":
@@ -264,6 +275,16 @@ run_case api-fail --pr 999
 expect_rc "GitHub transport failure fails closed" 2
 expect_text "planted transport failure"
 
+run_case malformed-title --pr 999
+expect_rc "non-string PR title fails closed" 2
+expect_text "has no trustworthy title"
+expect_no_text "Traceback"
+
+run_case malformed-clean-created-at --pr 999
+expect_rc "malformed Codex clean timestamp fails closed" 2
+expect_text "Codex clean issue comment has no trustworthy created_at"
+expect_no_text "Traceback"
+
 echo "=== review coverage: JSON and historical audit compatibility ==="
 run_case pass --pr 999 --json
 expect_rc "single-PR JSON reports a covered full head" 0
@@ -296,6 +317,11 @@ expect_rc "historical audit refuses malformed unrelated submitted review" 2
 expect_text "submitted PR review has no trustworthy full commit_id"
 expect_no_text "Traceback"
 
+run_case audit-malformed-clean-created-at
+expect_rc "historical audit refuses malformed Codex clean timestamp" 2
+expect_text "Codex clean issue comment has no trustworthy created_at"
+expect_no_text "Traceback"
+
 rm -f "$LAB/state"
 set +e
 python3.12 -B - "$CHECKER" >"$OUT" 2>&1 <<'PY'
@@ -324,4 +350,4 @@ if [ "$FAILED" -ne 0 ]; then
   echo "REVIEW-COVERAGE PROOF FAILED"
   exit 1
 fi
-echo "REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass in both modes; identity, casing, malformed historical shapes, pagination, race, lifecycle, transport, unexpected failure, JSON and audit arms hold"
+echo "REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass in both modes; identity, casing, malformed titles/timestamps/historical shapes, pagination, race, lifecycle, transport, unexpected failure, JSON and audit arms hold"

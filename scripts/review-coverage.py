@@ -128,6 +128,9 @@ def pr_snapshot(repo: str, number: int) -> dict:
     sha = head.get("sha") if isinstance(head, dict) else None
     if state not in {"open", "closed"} or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
         raise CoverageError(f"PR {repo}#{number} has no trustworthy state and full head SHA")
+    title = value.get("title")
+    if not isinstance(title, str):
+        raise CoverageError(f"PR {repo}#{number} has no trustworthy title")
     merged_at = value.get("merged_at")
     if state == "closed" and not merged_at:
         raise CoverageError(f"PR {repo}#{number} is closed without merge; no candidate may pass")
@@ -136,7 +139,7 @@ def pr_snapshot(repo: str, number: int) -> dict:
         "state": "merged" if merged_at else "open",
         "head": sha.lower(),
         "merged_at": merged_at,
-        "title": str(value.get("title", "")),
+        "title": title,
     }
 
 
@@ -197,10 +200,13 @@ def codex_clean_evidence(comments: list, reviewer: str) -> list[dict]:
         # loud missing-review result rather than being guessed into a pass.
         if len(matches) != 1:
             continue
+        created_at = comment.get("created_at")
+        if not isinstance(created_at, str) or not created_at:
+            raise CoverageError("Codex clean issue comment has no trustworthy created_at")
         result.append({
             "source": "codex_clean_issue_comment",
             "commit": matches[0].group("sha").lower(),
-            "submitted_at": str(comment.get("created_at", "")),
+            "submitted_at": created_at,
             "state": "COMMENTED",
         })
     return result
