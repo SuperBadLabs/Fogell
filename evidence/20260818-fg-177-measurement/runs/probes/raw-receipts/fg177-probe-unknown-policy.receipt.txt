@@ -1,14 +1,14 @@
 # Differential receipt — fg177-probe-unknown-policy.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         dac3a907aacb612ff6bc7f1c449eb657887c0eb5c945b813484035256fb17d8e
+seal:         0e1c10b42799c9b48a3d887c13b5bdb585a2e67421337313049f6f30519f22dc
 case-digest:  98be410f3432ebaee1c7e54c7e0ef71699896fb9314764ec7bc03048056af6a4
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
   - terminal result: jenkins=unstable fogell=failure
   - output line 4: jenkins=WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep': fogellProbeUnknown fogell=+ printf sh-ran
-  - workspace hash: jenkins=8972b2c3d0bd fogell=c472557f9ff9
+  - workspace hash: jenkins=b09b9eca2ae4 fogell=c472557f9ff9
 
 ## Comparison contract
   compared: terminal result
@@ -81,7 +81,7 @@ VERDICT: DIVERGED (3)
 
 ## Jenkins
   result:         unstable
-  workspace-hash: 8972b2c3d0bd2f2978be0f17f0fa82c6e79ec59c8f603328a2b8bc2510fd6fab
+  workspace-hash: b09b9eca2ae4bf6662c3388672776c183c9a2a8853b80e0b078d79a07555b171
   output (62 lines):
     | + rm -rf fg177-unknown-*
     | + printf seed
@@ -168,20 +168,20 @@ VERDICT: DIVERGED (3)
     a53d0741798b  fg177-unknown-git/.git/hooks/push-to-checkout.sample
     44ebfc923dc5  fg177-unknown-git/.git/hooks/sendemail-validate.sample
     8d5f2fa83e10  fg177-unknown-git/.git/hooks/update.sample
-    45adeddd2234  fg177-unknown-git/.git/index
+    2062d39b00c0  fg177-unknown-git/.git/index
     6671fe83b7a0  fg177-unknown-git/.git/info/exclude
-    1a4c022b4928  fg177-unknown-git/.git/logs/HEAD
-    3c2cf1645832  fg177-unknown-git/.git/logs/refs/heads/main
-    c4333ad6a732  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
-    2c5b0c2f25c4  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
-    f345a5385e89  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
-    3982683af934  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
-    3cf9d670f292  fg177-unknown-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
-    254cd14aedde  fg177-unknown-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
-    0d6747f74142  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-checkout
-    8896949d0143  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-scm2
-    540d39386a54  fg177-unknown-git/.git/logs/refs/remotes/origin/main
-    540d39386a54  fg177-unknown-git/.git/logs/refs/remotes/origin/master
+    91d48cf2ef20  fg177-unknown-git/.git/logs/HEAD
+    bfeac371a04d  fg177-unknown-git/.git/logs/refs/heads/main
+    c053599a866c  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
+    d98c51776801  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
+    f091dd9e3b7f  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
+    dd696d7247a5  fg177-unknown-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
+    8ea011ac0621  fg177-unknown-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
+    1634296214b7  fg177-unknown-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
+    12b32cabc503  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-checkout
+    bc1ecb39d348  fg177-unknown-git/.git/logs/refs/remotes/origin/case/probe-scm2
+    b59f68908af1  fg177-unknown-git/.git/logs/refs/remotes/origin/main
+    b59f68908af1  fg177-unknown-git/.git/logs/refs/remotes/origin/master
     2ad5b70e543c  fg177-unknown-git/.git/objects/04/ba1504e096bf139af61beb00f4da6750223d0c
     27869fc5c1ec  fg177-unknown-git/.git/objects/0b/26cf2eb64e78e892048a8b481ba7df4cf4466b
     beeb14451711  fg177-unknown-git/.git/objects/14/f3e4036d4b2e6dd6711642f96a865dcd67180d

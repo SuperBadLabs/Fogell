@@ -16,6 +16,17 @@ fail() {
   exit 1
 }
 
+require_regular_nonempty() {
+  local path=$1
+  local label=$2
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label must be a non-empty regular non-symlink file: $path"
+}
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
 case "$action" in
   capture|verify) ;;
   *)
@@ -155,10 +166,16 @@ if [[ "$action" == verify ]]; then
   core_file="$metadata_dir/jenkins-core.txt"
   plugin_file="$metadata_dir/jenkins-plugins.tsv"
   image_file="$metadata_dir/jenkins-controller-image.txt"
-  [[ -f "$core_file" ]] || fail "missing pinned core file: $core_file"
-  [[ -f "$plugin_file" ]] || fail "missing pinned plugin manifest: $plugin_file"
-  [[ -f "$image_file" ]] || fail "missing pinned image metadata: $image_file"
-  mapfile -t pinned_core_lines < "$core_file"
+  require_regular_nonempty "$core_file" 'pinned core metadata'
+  require_regular_nonempty "$plugin_file" 'pinned plugin manifest'
+  require_regular_nonempty "$image_file" 'pinned image metadata'
+  pinned_core_file="$oracle_tmp/pinned-jenkins-core.txt"
+  pinned_plugin_file="$oracle_tmp/pinned-jenkins-plugins.tsv"
+  pinned_image_file="$oracle_tmp/pinned-jenkins-controller-image.txt"
+  cp -- "$core_file" "$pinned_core_file"
+  cp -- "$plugin_file" "$pinned_plugin_file"
+  cp -- "$image_file" "$pinned_image_file"
+  mapfile -t pinned_core_lines < "$pinned_core_file"
   if [[ ${#pinned_core_lines[@]} -ne 1 ||
         ! ${pinned_core_lines[0]} =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
     fail 'pinned core file is not one canonical version line'
@@ -191,12 +208,16 @@ if [[ "$action" == capture ]]; then
   exit 0
 fi
 
-if ! cmp -s "$plugin_file" "$live_plugins"; then
+if ! cmp -s "$pinned_plugin_file" "$live_plugins"; then
   fail "live plugin manifest differs from $plugin_file"
 fi
-if ! cmp -s "$image_file" "$live_image"; then
+if ! cmp -s "$pinned_image_file" "$live_image"; then
   fail "live controller image differs from $image_file"
 fi
 
-printf 'Jenkins oracle verified: core %s, %s plugins, image %s\n' \
-  "$pinned_core" "$(wc -l < "$plugin_file")" "$(cut -d '|' -f 3 "$image_file")"
+IFS='|' read -r pinned_image_name pinned_image_id pinned_image_digest < "$pinned_image_file"
+printf 'Jenkins oracle verified: core %s sha256=%s, plugins %s sha256=%s, image name=%s id=%s digest=%s sha256=%s\n' \
+  "$pinned_core" "$(sha256_file "$pinned_core_file")" \
+  "$(wc -l < "$pinned_plugin_file")" "$(sha256_file "$pinned_plugin_file")" \
+  "$pinned_image_name" "$pinned_image_id" "$pinned_image_digest" \
+  "$(sha256_file "$pinned_image_file")"

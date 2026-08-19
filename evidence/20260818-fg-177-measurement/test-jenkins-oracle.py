@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import http.server
+import hashlib
 import json
 import os
 import pathlib
@@ -28,6 +29,7 @@ PLUGINS = [
     {"shortName": "alpha", "version": "1.2", "active": True, "enabled": True},
     {"shortName": "beta", "version": "3.4", "active": False, "enabled": True},
 ]
+PLUGIN_TEXT = "alpha\t1.2\ttrue\ttrue\nbeta\t3.4\tfalse\ttrue\n"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -107,9 +109,7 @@ def main() -> int:
         metadata = temp / "metadata"
         metadata.mkdir()
         (metadata / "jenkins-core.txt").write_text(f"{CORE}\n", encoding="ascii")
-        (metadata / "jenkins-plugins.tsv").write_text(
-            "alpha\t1.2\ttrue\ttrue\nbeta\t3.4\tfalse\ttrue\n", encoding="utf-8"
-        )
+        (metadata / "jenkins-plugins.tsv").write_text(PLUGIN_TEXT, encoding="utf-8")
         (metadata / "jenkins-controller-image.txt").write_text(
             f"{IMAGE}\n", encoding="ascii"
         )
@@ -143,6 +143,18 @@ exit 99
         result = invoke("verify", metadata, url, bin_dir)
         if result.returncode != 0:
             raise AssertionError(f"valid mixed-case headers refused: {result.stdout}")
+        core_digest = hashlib.sha256(f"{CORE}\n".encode()).hexdigest()
+        plugin_digest = hashlib.sha256(PLUGIN_TEXT.encode()).hexdigest()
+        image_digest = hashlib.sha256(f"{IMAGE}\n".encode()).hexdigest()
+        expected_receipt = (
+            f"Jenkins oracle verified: core {CORE} sha256={core_digest}, "
+            f"plugins 2 sha256={plugin_digest}, image name=fixture/jenkins:2.568.1 "
+            f"id={'1' * 64} digest=sha256:{'2' * 64} sha256={image_digest}\n"
+        )
+        if result.stdout != expected_receipt:
+            raise AssertionError(
+                f"verify receipt did not bind the full canonical identity:\n{result.stdout}"
+            )
 
         root_bad = [
             ("wrong core", {"headers": [("X-Jenkins", "2.999")]}),
@@ -173,11 +185,29 @@ exit 99
                 },
             ),
             (
-                "plugin drift",
+                "same-count plugin version drift",
                 {
                     "headers": [("X-Jenkins", CORE)],
                     "body": json.dumps(
                         {"plugins": [PLUGINS[0], {**PLUGINS[1], "version": "9.9"}]}
+                    ),
+                },
+            ),
+            (
+                "same-count plugin active drift",
+                {
+                    "headers": [("X-Jenkins", CORE)],
+                    "body": json.dumps(
+                        {"plugins": [PLUGINS[0], {**PLUGINS[1], "active": True}]}
+                    ),
+                },
+            ),
+            (
+                "same-count plugin enabled drift",
+                {
+                    "headers": [("X-Jenkins", CORE)],
+                    "body": json.dumps(
+                        {"plugins": [PLUGINS[0], {**PLUGINS[1], "enabled": False}]}
                     ),
                 },
             ),
@@ -197,6 +227,19 @@ exit 99
             server.state = state()  # type: ignore[attr-defined]
             server.state["plugins"] = replacement  # type: ignore[attr-defined]
             require_refusal(invoke("verify", metadata, url, bin_dir), label)
+
+        server.state = state()  # type: ignore[attr-defined]
+        original_plugins = (metadata / "jenkins-plugins.tsv").read_text()
+        (metadata / "jenkins-plugins.tsv").write_text(
+            original_plugins.replace("3.4", "9.9"), encoding="utf-8"
+        )
+        require_refusal(
+            invoke("verify", metadata, url, bin_dir),
+            "exact pinned plugin digest differs at the same count",
+        )
+        (metadata / "jenkins-plugins.tsv").write_text(
+            original_plugins, encoding="utf-8"
+        )
 
         server.state = state()  # type: ignore[attr-defined]
         require_refusal(
@@ -290,7 +333,8 @@ exit 99
 
     print(
         "JENKINS ORACLE PROOF: casing accepted; redirect/auth/missing/multiple/"
-        "wrong/transport/plugin/image drift refused; capture stable; both runners "
+        "wrong/transport/plugin version/active/enabled/image drift refused; full "
+        "canonical identity digest bound; capture stable; both runners "
         "refuse before output or CLI"
     )
     return 0

@@ -88,7 +88,16 @@ case "$1" in
     fi
     printf 'archive schema CLI complete\n'
     if [[ -n ${FOGELL_STUB_ORACLE_DRIFT:-} ]]; then
-      printf '%s\n' "$FOGELL_STUB_ORACLE_DRIFT" > "$FOGELL_STUB_ORACLE_STATE"
+      if [[ $FOGELL_STUB_ORACLE_DRIFT == plugin-recapture ]]; then
+        printf 'plugin\n' > "$FOGELL_STUB_ORACLE_STATE"
+        sed 's/beta\t3.4/beta\t9.9/' \
+          "$FOGELL_JENKINS_ORACLE_DIR/jenkins-plugins.tsv" \
+          > "$FOGELL_JENKINS_ORACLE_DIR/jenkins-plugins.tsv.next"
+        mv "$FOGELL_JENKINS_ORACLE_DIR/jenkins-plugins.tsv.next" \
+          "$FOGELL_JENKINS_ORACLE_DIR/jenkins-plugins.tsv"
+      else
+        printf '%s\n' "$FOGELL_STUB_ORACLE_DRIFT" > "$FOGELL_STUB_ORACLE_STATE"
+      fi
     fi
     exit 1
     ;;
@@ -178,7 +187,8 @@ bundle_hash() {
 }
 published_hash=$(bundle_hash "$published")
 
-for drift in core plugin image transport; do
+for drift in core plugin image transport plugin-recapture; do
+  python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
   rm -f "$oracle_state"
   set +e
   PATH="$test_tmp/bin:$PATH" \
@@ -199,7 +209,14 @@ for drift in core plugin image transport; do
       "$drift" "$drift_rc" >&2
     exit 1
   fi
+  if [[ $drift == plugin-recapture ]] &&
+     ! grep -Fq 'Jenkins oracle identity changed during archive CLI' \
+       "$test_tmp/drift-$drift.log"; then
+    echo 'ERROR: same-count plugin metadata recapture missed receipt comparison' >&2
+    exit 1
+  fi
 done
+python3 "$evidence/jenkins-oracle-fixture.py" metadata "$oracle_metadata"
 rm -f "$oracle_state"
 
 for mode in partial zero extra failure; do

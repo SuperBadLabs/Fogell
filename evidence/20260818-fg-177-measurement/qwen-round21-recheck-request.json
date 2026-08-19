@@ -1,0 +1,7 @@
+{
+  "model": "qwen3.8",
+  "temperature": 0.1,
+  "max_tokens": 800,
+  "chat_template_kwargs": {"enable_thinking": false},
+  "context": "Path.absolute versus resolve(strict=True), focused path-shape plants, tracked renameat2 publisher, runner cmp -s snippets, and metadata-recapture proof were supplied; concrete counterexample required."
+}

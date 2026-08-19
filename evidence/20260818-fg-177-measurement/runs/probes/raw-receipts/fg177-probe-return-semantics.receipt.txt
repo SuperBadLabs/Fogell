@@ -1,14 +1,14 @@
 # Differential receipt — fg177-probe-return-semantics.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2ca4c328de6d98df25fa424a2d870622682bab4b392a1595a84357413ee03634
+seal:         4c2248dc0eb6e7154a50e396e220974d5bf99f996e2f2d53de321fc7e9c3fb81
 case-digest:  c8084d3aac4cb1918b62152faeebd4e0e3d2eee34ebd6d4ac5e32dc16e0155ff
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
   - terminal result: jenkins=unstable fogell=failure
   - output line 0: jenkins=+ rm -rf fg177-return-* fogell=<absent>
-  - workspace hash: jenkins=27623021403e fogell=e3b0c44298fc
+  - workspace hash: jenkins=e9da523a6c0c fogell=e3b0c44298fc
 
 ## Comparison contract
   compared: terminal result
@@ -81,7 +81,7 @@ VERDICT: DIVERGED (3)
 
 ## Jenkins
   result:         unstable
-  workspace-hash: 27623021403e7dd2ec0518b426e3fe0a325da1d4be236e597d6f8e2c2ee49379
+  workspace-hash: e9da523a6c0cbf4eb3db2e90e71c7780e959747782b4885dd24850e18b68fe1c
   output (52 lines):
     | + rm -rf fg177-return-*
     | + printf seed
@@ -94,7 +94,7 @@ VERDICT: DIVERGED (3)
     | Archiving artifacts
     | FG177 RETURN archiveArtifacts CLASS=null VALUE=null
     | Recording test results
-    | FG177 RETURN junit CLASS=hudson.tasks.junit.TestResultSummary VALUE=hudson.tasks.junit.TestResultSummary@7923d04f
+    | FG177 RETURN junit CLASS=hudson.tasks.junit.TestResultSummary VALUE=hudson.tasks.junit.TestResultSummary@2ceab46c
     | + printf seed
     | FG177 RETURN deleteDir CLASS=null VALUE=null
     | Selected Git installation does not exist. Using Default
@@ -155,20 +155,20 @@ VERDICT: DIVERGED (3)
     a53d0741798b  fg177-return-git/.git/hooks/push-to-checkout.sample
     44ebfc923dc5  fg177-return-git/.git/hooks/sendemail-validate.sample
     8d5f2fa83e10  fg177-return-git/.git/hooks/update.sample
-    cfd62f447e39  fg177-return-git/.git/index
+    c34031b15a26  fg177-return-git/.git/index
     6671fe83b7a0  fg177-return-git/.git/info/exclude
-    32e02479ac09  fg177-return-git/.git/logs/HEAD
-    3d239f64828c  fg177-return-git/.git/logs/refs/heads/main
-    eea1604979d8  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
-    da2002afd0f4  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
-    62306a1e3729  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
-    629951e6b16a  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
-    0d0083354fef  fg177-return-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
-    2407cc373044  fg177-return-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
-    8980e3f5beda  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-checkout
-    685a6251afd2  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-scm2
-    4129480edc1a  fg177-return-git/.git/logs/refs/remotes/origin/main
-    4129480edc1a  fg177-return-git/.git/logs/refs/remotes/origin/master
+    b4eb0bbf8c27  fg177-return-git/.git/logs/HEAD
+    634d0cd2a0af  fg177-return-git/.git/logs/refs/heads/main
+    3070a6d35446  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
+    87cba991ab15  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
+    4738c890daf9  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
+    000892a023d4  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
+    1aa0615139ca  fg177-return-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
+    1957dfcae177  fg177-return-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
+    593201b39a37  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-checkout
+    5728905d7f5f  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-scm2
+    d7206db52b0c  fg177-return-git/.git/logs/refs/remotes/origin/main
+    d7206db52b0c  fg177-return-git/.git/logs/refs/remotes/origin/master
     2ad5b70e543c  fg177-return-git/.git/objects/04/ba1504e096bf139af61beb00f4da6750223d0c
     27869fc5c1ec  fg177-return-git/.git/objects/0b/26cf2eb64e78e892048a8b481ba7df4cf4466b
     beeb14451711  fg177-return-git/.git/objects/14/f3e4036d4b2e6dd6711642f96a865dcd67180d

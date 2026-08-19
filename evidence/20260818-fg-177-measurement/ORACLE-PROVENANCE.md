@@ -46,6 +46,12 @@ Verification requires HTTP 200 without
 redirects from both the controller root and plugin API, exactly one
 case-insensitive `X-Jenkins` header with the pinned value on each response, an
 exact complete plugin-manifest match, and an exact live container-image match.
+Each verification receipt names the core value, plugin row count, image name,
+immutable image ID and digest, and binds the canonical core, complete plugin
+manifest, and image metadata bytes with SHA-256. Therefore a same-count plugin
+version, active-state, or enabled-state change alters the receipt and cannot
+pass the runners' pre/post identity comparison, even if the pinned metadata is
+recaptured to match the changed controller while the CLI is running.
 Initial refusal creates no output directory, builds no CLI, synchronizes no
 fixture, and writes no receipt or exit marker. Post-CLI refusal may leave an
 ignored temporary stage, which the bounded trap removes; it cannot mutate the
@@ -64,8 +70,8 @@ workspace collectors, preventing verifier/collector coordinate drift.
 
 ## Verified receipt recapture
 
-From the repository root on HeMan, the retained evidence was recaptured once,
-in this order:
+From the repository root on HeMan, the retained evidence was recaptured exactly
+once for the digest-bearing verification-receipt migration, in this order:
 
 ```sh
 bash evidence/20260818-fg-177-measurement/run-probes.sh

@@ -1,0 +1,8 @@
+{
+  "model": "qwen3.8",
+  "temperature": 0.1,
+  "max_tokens": 1200,
+  "chat_template_kwargs": {"enable_thinking": false},
+  "reviewed": "exact git diff --cached before these review artifacts were added",
+  "requirements": "full canonical oracle identity digest; symlink-safe private renderer stage and atomic publication; one bounded v2 live recapture"
+}
