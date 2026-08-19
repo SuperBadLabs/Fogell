@@ -268,6 +268,19 @@ let structure =
                   "the parser keeps each tool kind paired with its configured installation"
           }
 
+          test "FG-014 tools require a Jenkins-measured newline or semicolon between entries" {
+              let newline =
+                  "pipeline {\n  agent any\n  tools {\n    maven 'm3'\n    jdk 'j8'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let adjacent =
+                  "pipeline {\n  agent any\n  tools { maven 'm3' jdk 'j8' }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              Expect.equal (ok newline).Tools [ "maven", "m3"; "jdk", "j8" ] "newline separates entries"
+
+              let e = err adjacent
+              Expect.equal e.Code MalformedSyntax "space-only adjacency is not two declarations on Jenkins"
+          }
+
           test "FG-014 tools keep the previously accepted assignment spelling" {
               let quoted =
                   "pipeline { agent any tools { maven = 'm3' } stages { stage('a') { steps { echo 'x' } } } }"
@@ -280,6 +293,34 @@ let structure =
                   (ok unquoted).Tools
                   [ "maven", "m3" ]
                   "the command-form slice does not silently narrow the old unquoted assignment surface"
+          }
+
+          test "FG-014 stage tools use the same command and assignment grammar end-to-end" {
+              let command =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3'; jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let quotedAssignment =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven = 'm3' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let unquotedAssignment =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools {\n        maven = m3\n      }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              for label, source in
+                  [ "command", command
+                    "quoted assignment", quotedAssignment
+                    "newline-terminated unquoted assignment", unquotedAssignment ] do
+                  let stage = (ok source).Stages.[0]
+                  Expect.equal stage.Name "a" $"{label}: stage survives"
+                  Expect.equal stage.Steps.Length 1 $"{label}: steps survive"
+                  Expect.equal stage.Steps.[0].Name "echo" $"{label}: parsed through the complete pipeline"
+          }
+
+          test "FG-014 stage tools refuse space-only adjacent entries" {
+              let adjacent =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      tools { maven 'm3' jdk 'j8' }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let e = err adjacent
+              Expect.equal e.Code MalformedSyntax "stage scope must not invent two tools Jenkins did not model"
           }
 
           test "named step arguments are separated from positional" {

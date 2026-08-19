@@ -244,14 +244,19 @@ let stringLiteralWithKindPlain: P<string * bool> =
               attempt (quoted "\"" |>> fun s -> s, true)
               attempt (slashyQuoted |>> fun s -> s, true) ])
 
-let stringLiteral: P<string> =
-    lexeme (
-        choice
-            [ attempt (tripleQuoted "'''")
-              attempt (tripleQuoted "\"\"\"")
-              attempt (quoted "'")
-              attempt (quoted "\"")
-              attempt slashyQuoted ])
+/// A decoded string literal that leaves following whitespace in the stream.
+/// Most grammar sites want [stringLiteral]; constructs whose statement boundary
+/// is a newline need to inspect that trivia before deciding whether another item
+/// may follow.
+let stringLiteralBare: P<string> =
+    choice
+        [ attempt (tripleQuoted "'''")
+          attempt (tripleQuoted "\"\"\"")
+          attempt (quoted "'")
+          attempt (quoted "\"")
+          attempt slashyQuoted ]
+
+let stringLiteral: P<string> = lexeme stringLiteralBare
 
 /// The RAW SOURCE of a Groovy string literal — the FIVE forms this lexer knows
 /// (triple-single, triple-double, single, double, slashy), escapes respected.

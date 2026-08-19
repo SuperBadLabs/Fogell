@@ -500,26 +500,46 @@ let private environmentSection: P<(string * string * bool) list> =
 ///
 ///     tools { maven 'm3'; jdk 'j8' }
 ///
-/// FG-014. The original parser reused `keyValueBody`, so it accepted only
+/// FG-014. The original parser reused `keyValueBody`, so at pipeline scope it accepted only
 /// `maven = 'm3'` and rejected the valid Jenkins spelling in six pinned corpus
-/// files. Keep the old assignment spelling, including its unquoted-value
-/// fallback, as accepted compatibility forms — this slice must not silently
-/// narrow the old parser surface — but represent every spelling identically as
-/// (tool kind, configured installation name).
+/// files; stage scope kept that old parser after the first slice. Keep the old
+/// assignment spelling, including its newline-terminated unquoted-value fallback,
+/// as accepted compatibility forms — this slice must not silently narrow the old
+/// parser surface — but use this one grammar at both scopes.
+///
+/// DIRECTLY PROBED on Jenkins 2.568.1 after a confounded compact-pipeline probe was
+/// discarded: semicolon and newline forms each reach Declarative validation as
+/// TWO entries at pipeline and stage scope. Space-only `maven 'm3' jdk 'j8'`
+/// reaches validation as only the SECOND entry — Groovy associates it differently;
+/// it is not two adjacent tool declarations. Fogell refuses that ambiguous shape
+/// rather than inventing two tools Jenkins did not model.
 let private toolEntry: P<string * string> =
-    attempt (identifier .>>. stringLiteral)
+    attempt (identifier .>>. stringLiteralBare)
     <|> attempt ((
             identifier
             .>> symbol "="
-            .>>. (stringLiteral <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim())))
-        .>> ws)
+            .>>. (stringLiteralBare <|> (many1Satisfy (fun c -> c <> '\n') |>> fun s -> s.Trim()))))
+
+/// Trivia after one entry is a boundary only when it contains a newline or is
+/// followed by a semicolon. `ws` normally erases that distinction; capture its
+/// exact skipped source before deciding. Leading/trailing separators remain legal,
+/// matching the existing Groovy-body parsers.
+let private toolSeparator: P<unit> =
+    withSkippedString (fun skipped () -> skipped) ws
+    >>= fun skipped ->
+        if skipped.Contains '\n' || skipped.Contains '\r' then
+            skipMany (skipChar ';' >>. ws)
+        else
+            skipMany1 (skipChar ';' >>. ws)
+
+let private toolEntryEnd: P<unit> =
+    attempt toolSeparator
+    <|> (ws >>. lookAhead (skipChar '}'))
 
 let private toolsBody: P<(string * string) list> =
-    let separators = skipMany (symbol ";")
-
     ws
-    >>. separators
-    >>. many (attempt (toolEntry .>> separators))
+    >>. skipMany (skipChar ';' >>. ws)
+    >>. many (attempt (toolEntry .>> toolEntryEnd))
 
 let private toolsSection: P<(string * string) list> =
     keyword "tools" >>. between (symbol "{") (symbol "}") toolsBody
@@ -856,7 +876,7 @@ stageRef.Value <-
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
-                      attempt (keyword "tools" >>. between (symbol "{") (symbol "}") keyValueBody |>> fun _ -> SecOther "tools")
+                      attempt (toolsSection |>> fun _ -> SecOther "tools")
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
                       // THE OPAQUE FALLBACK MUST NOT CLAIM `steps`. This is the ROOT of
