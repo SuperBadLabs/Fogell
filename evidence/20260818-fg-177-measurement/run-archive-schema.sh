@@ -19,8 +19,11 @@ evidence_root='evidence/20260818-fg-177-measurement'
 out="$FOGELL_EVIDENCE_OUT"
 mkdir -p "$out/raw-receipts"
 
+cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'
+dotnet build "$cli_project" -c Release --nologo
+
 set +e
-dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
+dotnet run --project "$cli_project" -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
   "$out/raw-receipts" \

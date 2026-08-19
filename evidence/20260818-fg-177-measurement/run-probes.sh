@@ -23,8 +23,11 @@ FOGELL_RENDERED_CASES_DIR="$rendered" \
   python3 "$evidence_root/render-probe-cases.py"
 bash "$evidence_root/sync-checkout-scm-fixture.sh"
 
+cli_project='tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj'
+dotnet build "$cli_project" -c Release --nologo
+
 set +e
-dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \
+dotnet run --project "$cli_project" -c Release --no-build -- \
   "$FOGELL_JENKINS_URL" \
   "$FOGELL_JENKINS_CORE" \
   "$out/raw-receipts" \

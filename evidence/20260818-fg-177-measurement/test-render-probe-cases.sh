@@ -133,23 +133,54 @@ mkdir -p "$fixture_tmp/bin"
 stub="$fixture_tmp/bin/dotnet"
 cat > "$stub" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$@" > "$FOGELL_STUB_ARGS"
-printf 'intentional probe CLI failure\n'
-exit 29
+printf '%s\n' "$*" >> "$FOGELL_STUB_CALLS"
+case "$1" in
+  build)
+    printf 'stub Release build\n'
+    exit "${FOGELL_STUB_BUILD_RC:-0}"
+    ;;
+  run)
+    printf '%s\n' "$@" > "$FOGELL_STUB_ARGS"
+    printf 'intentional probe CLI failure\n'
+    exit 29
+    ;;
+  *)
+    printf 'ERROR: unexpected dotnet command: %s\n' "$1" >&2
+    exit 97
+    ;;
+esac
 EOF
 chmod +x "$stub"
 runner_out="$fixture_tmp/runner-output"
 args="$fixture_tmp/dotnet-args"
+calls="$fixture_tmp/dotnet-calls"
 set +e
 PATH="$fixture_tmp/bin:$PATH" \
 FOGELL_EVIDENCE_OUT="$runner_out" \
 FOGELL_SCM_URL="$scm_url" \
 FOGELL_STUB_ARGS="$args" \
+FOGELL_STUB_CALLS="$calls" \
   bash "$evidence/run-probes.sh"
 rc=$?
 set -e
 if [[ $rc -ne 29 ]]; then
   echo "ERROR: expected probe runner rc 29, got $rc" >&2
+  exit 1
+fi
+expected_build='build tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release --nologo'
+expected_run_prefix='run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release --no-build -- '
+if [[ $(sed -n '1p' "$calls") != "$expected_build" ]]; then
+  printf 'ERROR: probe runner did not build first; calls=%s\n' "$(tr '\n' '|' < "$calls")" >&2
+  exit 1
+fi
+if [[ $(sed -n '2p' "$calls") != "$expected_run_prefix"* ]]; then
+  printf 'ERROR: probe runner did not execute the prebuilt CLI second; calls=%s\n' \
+    "$(tr '\n' '|' < "$calls")" >&2
+  exit 1
+fi
+if [[ $(wc -l < "$calls") -ne 2 ]]; then
+  printf 'ERROR: probe runner invoked dotnet more than build+run; calls=%s\n' \
+    "$(tr '\n' '|' < "$calls")" >&2
   exit 1
 fi
 grep -Fx 'intentional probe CLI failure' "$runner_out/probe-run.log"
@@ -174,5 +205,33 @@ do
 done
 cmp "$evidence/cases/fg177-probe-checkout-scm.Jenkinsfile" \
   "$runner_out/rendered-cases/fg177-probe-checkout-scm.Jenkinsfile"
+
+# A fresh-checkout build failure must propagate before the CLI is attempted.
+build_failure_out="$fixture_tmp/build-failure-output"
+build_failure_calls="$fixture_tmp/build-failure-calls"
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$build_failure_out" \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/build-failure-args" \
+FOGELL_STUB_CALLS="$build_failure_calls" \
+FOGELL_STUB_BUILD_RC=31 \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/build-failure.log" 2>&1
+build_failure_rc=$?
+set -e
+if [[ $build_failure_rc -ne 31 ]]; then
+  printf 'ERROR: expected probe build rc 31, got %s\n' "$build_failure_rc" >&2
+  exit 1
+fi
+if [[ $(sed -n '1p' "$build_failure_calls") != "$expected_build" || \
+      $(wc -l < "$build_failure_calls") -ne 1 ]]; then
+  printf 'ERROR: failed probe build did not stop before CLI; calls=%s\n' \
+    "$(tr '\n' '|' < "$build_failure_calls")" >&2
+  exit 1
+fi
+if [[ -e "$build_failure_out/probe-exit.txt" ]]; then
+  echo 'ERROR: failed probe build wrote a misleading CLI exit marker' >&2
+  exit 1
+fi
 
 printf 'rendered probe cases verified with fresh local fixture %s\n' "$scm_url"
