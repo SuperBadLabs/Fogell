@@ -1,0 +1,1 @@
+Jenkins oracle verified: core 2.568.1, 154 plugins, image sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332

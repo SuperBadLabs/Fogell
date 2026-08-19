@@ -73,13 +73,11 @@ bash evidence/20260818-fg-177-measurement/run-archive-schema.sh
 ```
 
 Both commands returned `1`, the expected differential status for the retained
-divergences. Those retained 2026-08-19 bundles use
-`fogell-evidence-run-v1`: they truthfully bind the pre-CLI verification that
-was performed during that recapture and are not rewritten to claim a later
-check that did not occur. The next live recapture uses
-`fogell-evidence-run-v2`. It records its start time, pre-CLI verification time,
-post-CLI verification time, and finish time, and atomically publishes both
-identical verification receipts with the adjacent manifest:
+divergences. They were run exactly once each and sequentially: probes first,
+then archive-schema. The retained 2026-08-19 bundles now use
+`fogell-evidence-run-v2`. Each records its start time, pre-CLI verification
+time, post-CLI verification time, and finish time, and atomically publishes
+both identical verification receipts with the adjacent manifest:
 
 - `runs/probes/probe-run-manifest.tsv` binds the four ordered probe cases and
   receipts;
