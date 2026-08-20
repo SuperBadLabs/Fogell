@@ -8,17 +8,17 @@ index, NOT the full list; `docs/COMPATIBILITY-LEDGER.tsv` names every file with 
 position. A refusal is a limitation stated out loud, and ADR 0001 prefers it to a
 false success.
 
-Of 228 corpus files: **1** proven, **192** admitted (parsed — NOT a
-parity claim), **35** rejected. This page covers the rejected set.
+Of 228 corpus files: **1** proven, **197** admitted (parsed — NOT a
+parity claim), **30** rejected. This page covers the rejected set.
 
 ## opaque section
 
-Files: **17**
+Files: **10**
 
 - `DeekshithSN_Jenkinsfile.Jenkinsfile`
 - `HariSekhon_Jenkins.Jenkinsfile`
-- `SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`
-- …and 14 more (see the ledger)
+- `VAD37_unity-jenkinsfile.Jenkinsfile`
+- …and 7 more (see the ledger)
 
 ## Expecting: '['
 
@@ -36,6 +36,13 @@ Files: **2**
 - `cloudogu_ces-build-lib.Jenkinsfile`
 - `merken_netCoreBuild.Jenkinsfile`
 
+## an opaque section
+
+Files: **2**
+
+- `SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`
+- `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
+
 ## Expecting: any char in ‘ ’, '/*' or '//'
 
 Files: **2**
@@ -49,11 +56,11 @@ Files: **1**
 
 - `Terradue_DotNetOpenSearchClient.Jenkinsfile`
 
-## an opaque section
+## script block did not parse as Groovy: malformed_syntax at 13:57: Expecting: '['
 
 Files: **1**
 
-- `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
+- `cloudogu_gitops-playground.Jenkinsfile`
 
 ## 'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}'
 

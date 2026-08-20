@@ -209,11 +209,30 @@ let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a li
     | None -> preturn items
 
 let private namedArgWithKind: P<string * string * string * bool> =
+    // FG-014. A bracketed list or map is ONE named-argument value. The ordinary
+    // raw scanner stops at commas and closing braces, which are separators only
+    // at the OUTER call level; treating an inner map comma as outer truncated
+    // `publishHTML target: [allowMissing: true, reportName: 'r']`.
+    //
+    // DIRECTLY PROBED on Jenkins 2.568.1 for the list- and map-valued residual
+    // forms. `balancedRaw` is the shared scanner already used for positional
+    // lists, so quoted commas and nested brackets stay inside the value. The
+    // expression marker is retained: parsing a collection is not permission to
+    // execute it as text.
+    let namedCollection =
+        balancedRaw '[' ']' .>> ws
+        |>> fun source -> source, "\u0001" + source, false
+
     attempt (
         identifier .>>? symbol ":" .>>. (
             (wholeValue stringLiteralWithKindBoth
              |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
-            <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
+            <|> namedCollection
+            // An opening bracket commits to the balanced branch. Falling through
+            // to raw text on an unclosed collection would admit `target: [` as an
+            // expression and parse the following line as another step.
+            <|> (notFollowedBy (pchar '[')
+                 >>. rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -283,8 +302,16 @@ let private positionalArg: P<string> =
 
 let private argList
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
+    let namedCollectionPrefix =
+        attempt (identifier .>>? symbol ":" >>. lookAhead (pchar '['))
+
     let one =
-        (namedArgWithKind |>> Choice1Of2) <|> (positionalArgWithKind |>> Choice2Of2)
+        (namedArgWithKind |>> Choice1Of2)
+        <|> (notFollowedBy namedCollectionPrefix >>. positionalArgWithKind |>> Choice2Of2)
+
+    // Once `name: [` is present, failure of the balanced value is a refusal. It
+    // must not be reinterpreted as one positional expression containing the
+    // colon; that downgrade admitted an unclosed list and let the next step run.
 
     // FG-174. A DUPLICATE NAMED ARGUMENT IS REFUSED AT PARSE TIME, not at dispatch.
     //
@@ -425,6 +452,11 @@ let private parenArgs (raw: string) =
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
+let private nonEmptyInlineArgs =
+    hspaces >>. argList
+    >>= fun ((_, _, _, _, _, _, order) as args) ->
+        if List.isEmpty order then fail "no inline argument parsed" else preturn args
+
 stepRef.Value <-
     ws
     >>. pipe3 position identifier
@@ -442,8 +474,9 @@ stepRef.Value <-
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
                 [ attempt (balancedRaw '(' ')') >>= parenArgs
-                  attempt (hspaces >>. argList)
-                  preturn ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
+                  attempt nonEmptyInlineArgs
+                  notFollowedBy (attempt (hspaces >>. identifier .>>? symbol ":" >>. lookAhead (pchar '[')))
+                  >>% ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
             (fun pos name args -> pos, name, args)
     >>= (fun (pos, name, args) ->
         // FG-160. `script { … }` HOLDS SCRIPTED GROOVY, so its body is captured

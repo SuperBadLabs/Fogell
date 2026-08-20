@@ -1626,6 +1626,81 @@ let stepDescriptorValidation =
               | other -> failtestf "typed shape should remain an engine refusal, got %A" other
           } ]
 
+/// FG-014 residual slice. Balanced named collections are admitted as source expressions,
+/// not interpreted as runtime values. These real run entry points prove the shared
+/// preflight runs before a fresh-workspace wipe, an earlier step, or a post effect.
+let unsupportedNamedCollections =
+    let stageMap =
+        "pipeline { agent any stages { stage('before') { steps { sh 'echo ran > ran.txt' } } stage('publish') { steps { publishHTML target: [allowMissing: true, reportName: 'r'] } } } }"
+
+    let parameterList =
+        "pipeline { agent any parameters { choice(name: 'v', choices: ['a', 'b'], description: 'd') } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+
+    let nestedParallel =
+        "pipeline { agent any stages { stage('outer') { parallel { stage('branch') { steps { publishHTML target: [allowMissing: true] } } } } stage('after') { steps { sh 'echo ran > ran.txt' } } } }"
+
+    let pipelinePost =
+        "pipeline { agent any stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } post { always { notify recipients: ['ops'] } } }"
+
+    let scalarControl =
+        "pipeline { agent any stages { stage('a') { steps { sh script: 'echo ran > ran.txt', returnStatus: true } } } }"
+
+    let positionalCollectionControl =
+        "pipeline { agent any stages { stage('a') { steps { withEnv(['A=one']) { sh 'echo $A > ran.txt' } } } } }"
+
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-named-collection-preflight-" + Guid.NewGuid().ToString("N"))
+        let job = "job"
+        let workspace = IO.Path.Combine(root, job)
+        IO.Directory.CreateDirectory(workspace) |> ignore
+        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
+        IO.File.WriteAllText(sentinel, "keep")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-014 named collection admission fails closed before execution"
+        [ test "stage, parameter, nested and post collections refuse before effects or workspace preparation" {
+              for label, source, occurrence in
+                  [ "stage map", stageMap, "step 'publishHTML' argument `target`"
+                    "parameter list", parameterList, "step 'choice' argument `choices`"
+                    "nested parallel map", nestedParallel, "step 'publishHTML' argument `target`"
+                    "pipeline post list", pipelinePost, "step 'notify' argument `recipients`" ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringStarts why "unsupported_named_collection:" $"{label}: stable named reason"
+                          Expect.stringContains why occurrence $"{label}: offending argument named"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: no earlier or later executor effect was reached")
+          }
+
+          test "scalar named arguments and proven positional collections are unaffected" {
+              for label, source, expected in
+                  [ "scalar named", scalarControl, "ran"
+                    "positional withEnv list", positionalCollectionControl, "one" ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s control was refused: %s" label why
+                      | Ok trace -> Expect.equal trace.Result "success" $"{label}: execution remains available"
+
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "ran.txt")).Trim())
+                          expected
+                          $"{label}: the existing executor path ran")
+          } ]
+
 /// FG-014. Admission may retain tools syntax for the parse-only corpus metric, but
 /// execution must refuse before it can inherit an unrelated host toolchain and report a
 /// false success. These are real run entry points, so the sentinel proves the fresh-run
@@ -2383,6 +2458,7 @@ let main argv =
             [ hostedSignatures
               stepDescriptorValidation
               jenkinsBuildDataAttestation
+              unsupportedNamedCollections
               unsupportedDeclarativeTools
               spreadAssignmentPreflight
               userOutputSurvives
