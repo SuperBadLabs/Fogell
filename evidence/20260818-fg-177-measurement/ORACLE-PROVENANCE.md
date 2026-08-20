@@ -46,6 +46,15 @@ Verification requires HTTP 200 without
 redirects from both the controller root and plugin API, exactly one
 case-insensitive `X-Jenkins` header with the pinned value on each response, an
 exact complete plugin-manifest match, and an exact live container-image match.
+The verifier first resolves the named controller's immutable container ID and
+image record, then queries root and plugin APIs inside that exact container.
+The external responses must match the internal `X-Jenkins`, complete plugin
+surface, and exactly one nonempty case-insensitive `X-Jenkins-Session` identity.
+A final named-controller inspection must reproduce the initial container/image
+record, refusing split-controller routing, container replacement, or image
+drift. External authentication configuration is never passed into the internal
+container probe. The v2 receipt binds the immutable container ID and a SHA-256
+of the session identity, never the raw session value.
 The first verification atomically emits the exact three canonical metadata
 files it actually compared. The runner moves that private snapshot into
 `oracle-metadata/` in its run stage. The post-CLI verifier and manifest writer
@@ -75,8 +84,9 @@ workspace collectors, preventing verifier/collector coordinate drift.
 
 ## Verified receipt recapture
 
-From the repository root on HeMan, the retained evidence was recaptured exactly
-once for the immutable-snapshot `v3` migration, in this order:
+On 2026-08-20, after the local pre-live gate passed, the retained evidence was
+recaptured from the repository root on HeMan exactly once per runner for the v2
+controller-identity migration, in this order:
 
 ```sh
 bash evidence/20260818-fg-177-measurement/run-probes.sh
@@ -85,10 +95,13 @@ bash evidence/20260818-fg-177-measurement/run-archive-schema.sh
 
 Both commands returned `1`, the expected differential status for the retained
 divergences. They were run exactly once each and sequentially: probes first,
-then archive-schema. The retained 2026-08-19 bundles now use
-`fogell-evidence-run-v3`. Each records its start time, pre-CLI verification
-time, post-CLI verification time, and finish time, and atomically publishes
-both identical verification receipts with the adjacent manifest:
+then archive-schema. The retained bundles use `fogell-evidence-run-v3` with
+`fogell-jenkins-oracle-v2` receipts. Each records its start time, pre-CLI
+verification time, post-CLI verification time, and finish time, and atomically
+publishes both identical verification receipts with the adjacent manifest. The
+two bundles bind the same exact container ID, session-identity hash, core,
+complete plugin manifest, and immutable image identity; no raw session value is
+retained.
 
 - `runs/probes/probe-run-manifest.tsv` binds the four ordered probe cases and
   receipts;

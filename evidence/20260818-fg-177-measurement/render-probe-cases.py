@@ -12,6 +12,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True
+from scm_url import UnsafeScmUrl, canonical_scm_url
+
 
 SCM_TOKEN = "@@FOGELL_SCM_URL@@"
 GIT_BRANCH_TOKEN = "@@FOGELL_GIT_PINNED_BRANCH@@"
@@ -83,7 +86,7 @@ def main() -> int:
     pinned_git_branch = os.environ.get("FOGELL_GIT_PINNED_BRANCH", "")
 
     try:
-        replacement = groovy_single_quoted(scm_url)
+        replacement = groovy_single_quoted(canonical_scm_url(scm_url))
         if not pinned_git_branch.startswith("fogell-pins/") or len(pinned_git_branch) != 52:
             raise ValueError(
                 "FOGELL_GIT_PINNED_BRANCH must be fogell-pins/<40 lowercase hex>"
@@ -94,7 +97,7 @@ def main() -> int:
                 "FOGELL_GIT_PINNED_BRANCH must be fogell-pins/<40 lowercase hex>"
             )
         branch_replacement = groovy_single_quoted(pinned_git_branch)
-    except ValueError as error:
+    except (UnsafeScmUrl, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 

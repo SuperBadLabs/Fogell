@@ -6,7 +6,7 @@ workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/
   fg177-probe-unknown-policy.Jenkinsfile         DIVERGED(3)      fg177-probe-unknown-policy.receipt.txt
         terminal result: jenkins=unstable fogell=failure
         output line 4: jenkins=WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep': fogellProbeUnknown fogell=+ printf sh-ran
-        workspace hash: jenkins=14f378788943 fogell=c472557f9ff9
+        workspace hash: jenkins=37a1c538799b fogell=c472557f9ff9
   fg177-probe-requiredness.Jenkinsfile           re-running (diverged, attempt 2 of 3)
   fg177-probe-requiredness.Jenkinsfile           re-running (diverged, attempt 3 of 3)
   fg177-probe-requiredness.Jenkinsfile           DIVERGED(3)      fg177-probe-requiredness.receipt.txt
@@ -18,7 +18,7 @@ workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/
   fg177-probe-return-semantics.Jenkinsfile       DIVERGED(3)      fg177-probe-return-semantics.receipt.txt
         terminal result: jenkins=unstable fogell=failure
         output line 0: jenkins=+ rm -rf fg177-return-* fogell=<absent>
-        workspace hash: jenkins=7098e8128da3 fogell=e3b0c44298fc
+        workspace hash: jenkins=1c1bbe704051 fogell=e3b0c44298fc
   fg177-probe-checkout-scm.Jenkinsfile           re-running (diverged, attempt 2 of 3)
   fg177-probe-checkout-scm.Jenkinsfile           re-running (diverged, attempt 3 of 3)
   fg177-probe-checkout-scm.Jenkinsfile           DIVERGED(3)      fg177-probe-checkout-scm.receipt.txt

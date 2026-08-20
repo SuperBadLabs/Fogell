@@ -130,6 +130,8 @@ digest() {
 receipt_keys=(
   format
   jenkins-core
+  jenkins-session-sha256
+  controller-container-id
   core-metadata-sha256
   plugin-count
   plugin-manifest-sha256
@@ -153,8 +155,12 @@ core_metadata_digest=$(digest "$copied_core_file")
 plugin_manifest_digest=$(digest "$copied_plugins_file")
 plugin_count=$(wc -l < "$copied_plugins_file")
 image_metadata_digest=$(digest "$copied_image_file")
-[[ "${receipt_values[format]}" == fogell-jenkins-oracle-v1 ]] ||
+[[ "${receipt_values[format]}" == fogell-jenkins-oracle-v2 ]] ||
   fail 'oracle verification receipt format is unsupported'
+[[ "${receipt_values[jenkins-session-sha256]}" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'oracle receipt session identity hash is malformed'
+[[ "${receipt_values[controller-container-id]}" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'oracle receipt controller container identity is malformed'
 [[ "${receipt_values[jenkins-core]}" == "$core" ]] ||
   fail 'oracle receipt core differs from the staged snapshot'
 [[ "${receipt_values[core-metadata-sha256]}" == "$core_metadata_digest" ]] ||
@@ -323,6 +329,8 @@ done
   printf 'finished-at-utc\t%s\n' "$finished_at"
   printf 'cli-exit\t%s\n' "$cli_rc"
   printf 'jenkins-core\t%s\n' "$requested_core"
+  printf 'jenkins-session-sha256\t%s\n' "${receipt_values[jenkins-session-sha256]}"
+  printf 'controller-container-id\t%s\n' "${receipt_values[controller-container-id]}"
   printf 'oracle-metadata-directory\toracle-metadata\n'
   printf 'core-metadata-sha256\t%s\n' "$core_metadata_digest"
   printf 'plugin-manifest-sha256\t%s\n' "$plugin_manifest_digest"

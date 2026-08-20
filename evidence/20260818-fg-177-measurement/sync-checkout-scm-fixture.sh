@@ -4,6 +4,11 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 : "${FOGELL_SCM_URL:=git://100.105.179.51/repo.git}"
+evidence_root='evidence/20260818-fg-177-measurement'
+if ! FOGELL_SCM_URL=$(python3 "$evidence_root/scm_url.py" "$FOGELL_SCM_URL"); then
+  exit 1
+fi
+export FOGELL_SCM_URL
 : "${FOGELL_SCM_PIN_OUTPUT:=}"
 
 case_file='evidence/20260818-fg-177-measurement/cases/fg177-probe-checkout-scm.Jenkinsfile'

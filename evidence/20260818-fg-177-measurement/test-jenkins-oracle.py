@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -19,6 +20,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "evidence/20260818-fg-177-measurement"
 ORACLE = EVIDENCE / "jenkins-oracle.sh"
 CORE = "2.568.1"
+SESSION = "fixture-session-secret"
+CONTAINER_ID = "3" * 64
 IMAGE = (
     "fixture/jenkins:2.568.1|"
     + "1" * 64
@@ -39,7 +42,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         endpoint = "plugins" if path == "/pluginManager/api/json" else "root"
         response = state[endpoint]
         self.send_response(response.get("status", 200))
-        for name, value in response.get("headers", [("X-Jenkins", CORE)]):
+        for name, value in response.get(
+            "headers",
+            [("X-Jenkins", CORE), ("X-Jenkins-Session", SESSION)],
+        ):
             self.send_header(name, value)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -54,9 +60,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def state() -> dict[str, dict[str, object]]:
     return {
-        "root": {"headers": [("x-jEnKiNs", CORE)], "body": b"ok"},
+        "root": {
+            "headers": [("x-jEnKiNs", CORE), ("X-JeNkInS-SeSsIoN", SESSION)],
+            "body": b"ok",
+        },
         "plugins": {
-            "headers": [("X-JENKINS", CORE)],
+            "headers": [("X-JENKINS", CORE), ("x-jenkins-session", SESSION)],
             "body": json.dumps({"plugins": PLUGINS}),
         },
     }
@@ -84,10 +93,16 @@ def invoke(
             "FOGELL_JENKINS_HOST": "fixture-host",
             "FOGELL_JENKINS_CONTAINER": "fixture-controller",
             "FOGELL_STUB_IMAGE": IMAGE,
+            "FOGELL_STUB_CONTAINER_ID": CONTAINER_ID,
+            "FOGELL_STUB_INTERNAL_CORE": CORE,
+            "FOGELL_STUB_INTERNAL_SESSION": SESSION,
+            "FOGELL_STUB_INTERNAL_PLUGIN_BODY": json.dumps({"plugins": PLUGINS}),
+            "FOGELL_STUB_INSPECT_STATE": str(bin_dir.parent / "inspect-state"),
         }
     )
     if extra_env:
         env.update(extra_env)
+    pathlib.Path(env["FOGELL_STUB_INSPECT_STATE"]).unlink(missing_ok=True)
     command = ["bash", str(ORACLE), action, str(metadata)]
     if snapshot is not None:
         command.append(str(snapshot))
@@ -129,6 +144,8 @@ fi
 printf '%s\\n' "$FOGELL_STUB_IMAGE"
 """,
         )
+        shutil.copy2(EVIDENCE / "jenkins-oracle-ssh-fixture.sh", bin_dir / "ssh")
+        (bin_dir / "ssh").chmod(0o755)
         dotnet_calls = temp / "dotnet-calls"
         write_executable(
             bin_dir / "dotnet",
@@ -150,10 +167,13 @@ exit 99
         core_digest = hashlib.sha256(f"{CORE}\n".encode()).hexdigest()
         plugin_digest = hashlib.sha256(PLUGIN_TEXT.encode()).hexdigest()
         image_digest = hashlib.sha256(f"{IMAGE}\n".encode()).hexdigest()
+        session_digest = hashlib.sha256(SESSION.encode()).hexdigest()
         expected_receipt = "\n".join(
             (
-                "format\tfogell-jenkins-oracle-v1",
+                "format\tfogell-jenkins-oracle-v2",
                 f"jenkins-core\t{CORE}",
+                f"jenkins-session-sha256\t{session_digest}",
+                f"controller-container-id\t{CONTAINER_ID}",
                 f"core-metadata-sha256\t{core_digest}",
                 "plugin-count\t2",
                 f"plugin-manifest-sha256\t{plugin_digest}",
@@ -189,17 +209,52 @@ exit 99
             if (snapshot / name).is_symlink():
                 raise AssertionError(f"verified snapshot is symlinked for {name}")
 
+        if SESSION in result.stdout:
+            raise AssertionError("raw Jenkins session leaked into the oracle receipt")
+        for path in (*metadata.iterdir(), *snapshot.iterdir()):
+            if SESSION.encode() in path.read_bytes():
+                raise AssertionError(f"raw Jenkins session leaked into {path.name}")
+
         require_refusal(
             invoke("verify", metadata, url, bin_dir, snapshot=snapshot),
             "existing snapshot destination",
         )
 
         root_bad = [
-            ("wrong core", {"headers": [("X-Jenkins", "2.999")]}),
-            ("missing core", {"headers": []}),
+            (
+                "split-controller core",
+                {
+                    "headers": [
+                        ("X-Jenkins", "2.999"),
+                        ("X-Jenkins-Session", SESSION),
+                    ]
+                },
+            ),
+            ("missing core", {"headers": [("X-Jenkins-Session", SESSION)]}),
             (
                 "multiple core",
-                {"headers": [("X-Jenkins", CORE), ("x-jenkins", CORE)]},
+                {
+                    "headers": [
+                        ("X-Jenkins", CORE),
+                        ("x-jenkins", CORE),
+                        ("X-Jenkins-Session", SESSION),
+                    ]
+                },
+            ),
+            ("missing session", {"headers": [("X-Jenkins", CORE)]}),
+            (
+                "multiple session",
+                {
+                    "headers": [
+                        ("X-Jenkins", CORE),
+                        ("X-Jenkins-Session", SESSION),
+                        ("x-jenkins-session", SESSION),
+                    ]
+                },
+            ),
+            (
+                "split-controller session",
+                {"headers": [("X-Jenkins", CORE), ("X-Jenkins-Session", "other")]},
             ),
             (
                 "redirect",
@@ -214,6 +269,31 @@ exit 99
             require_refusal(invoke("verify", metadata, url, bin_dir), label)
 
         plugin_bad = [
+            (
+                "plugin endpoint missing session",
+                {"headers": [("X-Jenkins", CORE)], "body": "{}"},
+            ),
+            (
+                "plugin endpoint multiple session",
+                {
+                    "headers": [
+                        ("X-Jenkins", CORE),
+                        ("X-Jenkins-Session", SESSION),
+                        ("X-Jenkins-Session", SESSION),
+                    ],
+                    "body": json.dumps({"plugins": PLUGINS}),
+                },
+            ),
+            (
+                "plugin endpoint session mismatch",
+                {
+                    "headers": [
+                        ("X-Jenkins", CORE),
+                        ("X-Jenkins-Session", "other"),
+                    ],
+                    "body": json.dumps({"plugins": PLUGINS}),
+                },
+            ),
             ("plugin endpoint missing core", {"headers": [], "body": "{}"}),
             (
                 "plugin endpoint multiple core",
@@ -265,6 +345,93 @@ exit 99
             server.state = state()  # type: ignore[attr-defined]
             server.state["plugins"] = replacement  # type: ignore[attr-defined]
             require_refusal(invoke("verify", metadata, url, bin_dir), label)
+
+        server.state = state()  # type: ignore[attr-defined]
+        server.state["plugins"]["body"] = json.dumps(  # type: ignore[index]
+            {"plugins": [PLUGINS[0], {**PLUGINS[1], "version": "9.9"}]}
+        )
+        require_refusal(
+            invoke("verify", metadata, url, bin_dir),
+            "external/internal plugin surface hybrid",
+        )
+
+        server.state = state()  # type: ignore[attr-defined]
+        internal_bad = [
+            (
+                "internal root missing core",
+                {"FOGELL_STUB_INTERNAL_ROOT_HEADERS": "missing-core"},
+            ),
+            (
+                "internal root multiple core",
+                {"FOGELL_STUB_INTERNAL_ROOT_HEADERS": "multiple-core"},
+            ),
+            (
+                "internal root missing session",
+                {"FOGELL_STUB_INTERNAL_ROOT_HEADERS": "missing-session"},
+            ),
+            (
+                "internal root multiple session",
+                {"FOGELL_STUB_INTERNAL_ROOT_HEADERS": "multiple-session"},
+            ),
+            (
+                "internal plugin missing core",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_HEADERS": "missing-core"},
+            ),
+            (
+                "internal plugin multiple core",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_HEADERS": "multiple-core"},
+            ),
+            (
+                "internal plugin missing session",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_HEADERS": "missing-session"},
+            ),
+            (
+                "internal plugin multiple session",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_HEADERS": "multiple-session"},
+            ),
+            ("internal root core mismatch", {"FOGELL_STUB_INTERNAL_ROOT_CORE": "2.999"}),
+            (
+                "internal plugin core mismatch",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_CORE": "2.999"},
+            ),
+            (
+                "internal plugin session mismatch",
+                {"FOGELL_STUB_INTERNAL_PLUGIN_SESSION": "other"},
+            ),
+            (
+                "internal plugin surface mismatch",
+                {
+                    "FOGELL_STUB_INTERNAL_PLUGIN_BODY": json.dumps(
+                        {"plugins": [PLUGINS[0], {**PLUGINS[1], "version": "9.9"}]}
+                    )
+                },
+            ),
+            ("internal root transport", {"FOGELL_STUB_INTERNAL_ROOT_RC": "43"}),
+            ("internal plugin HTTP status", {"FOGELL_STUB_INTERNAL_PLUGIN_STATUS": "503"}),
+            (
+                "container replacement during verification",
+                {"FOGELL_STUB_CONTAINER_ID_AFTER": "4" * 64},
+            ),
+            (
+                "image replacement during verification",
+                {"FOGELL_STUB_IMAGE_AFTER": IMAGE.replace("2" * 64, "4" * 64)},
+            ),
+        ]
+        for label, planted_env in internal_bad:
+            require_refusal(invoke("verify", metadata, url, bin_dir, planted_env), label)
+
+        secret_marker = "do-not-reflect-session-secret"
+        server.state = state()  # type: ignore[attr-defined]
+        server.state["root"] = {  # type: ignore[attr-defined]
+            "headers": [
+                ("X-Jenkins", CORE),
+                ("X-Jenkins-Session", secret_marker),
+            ]
+        }
+        secret_result = invoke("verify", metadata, url, bin_dir)
+        require_refusal(secret_result, "session mismatch secret reflection")
+        if secret_marker in secret_result.stdout:
+            raise AssertionError("refusal reflected raw Jenkins session material")
 
         server.state = state()  # type: ignore[attr-defined]
         original_plugins = (metadata / "jenkins-plugins.tsv").read_text()
@@ -326,11 +493,18 @@ exit 99
         # Each runner must reject the wrong live core before creating its output,
         # building/running the CLI, synchronizing SCM, or writing an exit marker.
         server.state = state()  # type: ignore[attr-defined]
-        server.state["root"] = {"headers": [("X-Jenkins", "2.999")]}  # type: ignore[attr-defined]
+        server.state["root"] = {  # type: ignore[attr-defined]
+            "headers": [
+                ("X-Jenkins", "2.999"),
+                ("X-Jenkins-Session", SESSION),
+            ]
+        }
         for runner in ("run-probes.sh", "run-archive-schema.sh"):
             runner_out = temp / f"refused-{runner}"
             if dotnet_calls.exists():
                 dotnet_calls.unlink()
+            runner_inspect_state = temp / f"inspect-{runner}"
+            runner_inspect_state.unlink(missing_ok=True)
             env = os.environ.copy()
             env.update(
                 {
@@ -341,6 +515,12 @@ exit 99
                     "FOGELL_JENKINS_CONTAINER": "fixture-controller",
                     "FOGELL_EVIDENCE_OUT": str(runner_out),
                     "FOGELL_STUB_CALLS": str(dotnet_calls),
+                    "FOGELL_STUB_IMAGE": IMAGE,
+                    "FOGELL_STUB_CONTAINER_ID": CONTAINER_ID,
+                    "FOGELL_STUB_INTERNAL_CORE": CORE,
+                    "FOGELL_STUB_INTERNAL_SESSION": SESSION,
+                    "FOGELL_STUB_INTERNAL_PLUGIN_BODY": json.dumps({"plugins": PLUGINS}),
+                    "FOGELL_STUB_INSPECT_STATE": str(runner_inspect_state),
                 }
             )
             result = subprocess.run(

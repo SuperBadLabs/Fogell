@@ -1,5 +1,7 @@
-format	fogell-jenkins-oracle-v1
+format	fogell-jenkins-oracle-v2
 jenkins-core	2.568.1
+jenkins-session-sha256	e8e6252715c309f8771ffc811965c0e6bb3c4c2ce0963418c5c71a4080a6b393
+controller-container-id	5dc7acbed80016c90ab174f516993a10c6a21f808cb19474e8259755f8b3e8c9
 core-metadata-sha256	5c527167c41f888bbbe66d3d520592654a496c74f4847e5db4c0a3c4f5246577
 plugin-count	154
 plugin-manifest-sha256	6af6817f555a6fbbbcb5b41d48e7be58b00517efc913b21cfb825d0614630b3a

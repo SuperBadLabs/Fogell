@@ -19,9 +19,13 @@ printf 'probe-cli-exit=1\n' > "$out/probe-exit.txt"
 core_digest=$(sha256sum "$metadata/jenkins-core.txt" | awk '{print $1}')
 plugin_digest=$(sha256sum "$metadata/jenkins-plugins.tsv" | awk '{print $1}')
 image_digest=$(sha256sum "$metadata/jenkins-controller-image.txt" | awk '{print $1}')
+fixture_session_digest=$(printf fixture-session | sha256sum | awk '{print $1}')
+fixture_container_id=$(printf '%064d' 5)
 {
-  printf 'format\tfogell-jenkins-oracle-v1\n'
+  printf 'format\tfogell-jenkins-oracle-v2\n'
   printf 'jenkins-core\t2.568.1\n'
+  printf 'jenkins-session-sha256\t%s\n' "$fixture_session_digest"
+  printf 'controller-container-id\t%s\n' "$fixture_container_id"
   printf 'core-metadata-sha256\t%s\n' "$core_digest"
   printf 'plugin-count\t1\n'
   printf 'plugin-manifest-sha256\t%s\n' "$plugin_digest"
@@ -52,6 +56,8 @@ grep -Fx $'finished-at-utc\t2026-08-19T10:00:03Z' "$manifest"
 grep -Fx $'format\tfogell-evidence-run-v3' "$manifest"
 grep -Fx $'oracle-metadata-directory\toracle-metadata' "$manifest"
 grep -Fx $'jenkins-core\t2.568.1' "$manifest"
+grep -Fx $'jenkins-session-sha256\t'"$fixture_session_digest" "$manifest"
+grep -Fx $'controller-container-id\t'"$fixture_container_id" "$manifest"
 grep -Fx $'plugin-manifest-sha256\t'"$(sha256sum "$metadata/jenkins-plugins.tsv" | awk '{print $1}')" "$manifest"
 grep -Fx $'controller-image-id\t'"$(printf '%064d' 1)" "$manifest"
 grep -Fx $'controller-image-digest\tsha256:'"$(printf '%064d' 2)" "$manifest"

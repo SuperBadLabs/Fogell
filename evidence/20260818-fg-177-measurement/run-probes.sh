@@ -16,6 +16,10 @@ if [[ ! "$requested_jenkins_core" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   exit 2
 fi
 : "${FOGELL_SCM_URL:=git://100.105.179.51/repo.git}"
+evidence_root='evidence/20260818-fg-177-measurement'
+if ! FOGELL_SCM_URL=$(python3 "$evidence_root/scm_url.py" "$FOGELL_SCM_URL"); then
+  exit 1
+fi
 export FOGELL_SCM_URL
 
 export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
@@ -23,7 +27,6 @@ export FOGELL_JENKINS_ENV_CMD="ssh ${requested_jenkins_host} \"podman exec ${req
 export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} git --version\""
 export FOGELL_JENKINS_WIPE_CMD="ssh ${requested_jenkins_host} \"podman exec ${requested_jenkins_container} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
 
-evidence_root='evidence/20260818-fg-177-measurement'
 : "${FOGELL_EVIDENCE_OUT:=$evidence_root}"
 : "${FOGELL_JENKINS_ORACLE_DIR:=$evidence_root}"
 out="$FOGELL_EVIDENCE_OUT"

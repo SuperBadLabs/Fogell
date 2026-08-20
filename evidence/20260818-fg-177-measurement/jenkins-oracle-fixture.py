@@ -15,6 +15,7 @@ import urllib.parse
 CORE = os.environ.get("FOGELL_FIXTURE_JENKINS_CORE", "2.568.1")
 if re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", CORE) is None:
     raise RuntimeError(f"invalid FOGELL_FIXTURE_JENKINS_CORE: {CORE!r}")
+SESSION = os.environ.get("FOGELL_FIXTURE_JENKINS_SESSION", "fixture-session-secret")
 IMAGE = (
     "fixture/jenkins:2.568.1|"
     + "1" * 64
@@ -60,6 +61,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("x-jEnKiNs", "2.568.2" if mode == "core" else CORE)
+        self.send_header(
+            "X-JeNkInS-SeSsIoN", "drifted-session-secret" if mode == "session" else SESSION
+        )
         self.send_header("Content-Type", content_type)
         self.end_headers()
         self.wfile.write(body)

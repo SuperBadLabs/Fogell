@@ -1,14 +1,14 @@
 # Differential receipt — fg177-probe-return-semantics.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         9ca43f681663bfbb979642acc2bba23533074a2b7518e36a8e822948ad77e60e
+seal:         7bb37e05a6d991bf2e91a61a6465d82d25444e0881cb63b9ac63432baab7929c
 case-digest:  e1b655984b696738b1604b797c4d5f44071e87bccf4dfc66cb90cfc53abf7aeb
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
   - terminal result: jenkins=unstable fogell=failure
   - output line 0: jenkins=+ rm -rf fg177-return-* fogell=<absent>
-  - workspace hash: jenkins=7098e8128da3 fogell=e3b0c44298fc
+  - workspace hash: jenkins=1c1bbe704051 fogell=e3b0c44298fc
 
 ## Comparison contract
   compared: terminal result
@@ -81,7 +81,7 @@ VERDICT: DIVERGED (3)
 
 ## Jenkins
   result:         unstable
-  workspace-hash: 7098e8128da3df11084be65159731a64cee35efd9a3843c858ce5a38e25db3d0
+  workspace-hash: 1c1bbe704051eaefde8c71b75e54b3b4829b0b82a6458e24901223639b4aae19
   output (52 lines):
     | + rm -rf fg177-return-*
     | + printf seed
@@ -94,7 +94,7 @@ VERDICT: DIVERGED (3)
     | Archiving artifacts
     | FG177 RETURN archiveArtifacts CLASS=null VALUE=null
     | Recording test results
-    | FG177 RETURN junit CLASS=hudson.tasks.junit.TestResultSummary VALUE=hudson.tasks.junit.TestResultSummary@42cac196
+    | FG177 RETURN junit CLASS=hudson.tasks.junit.TestResultSummary VALUE=hudson.tasks.junit.TestResultSummary@526d4f7f
     | + printf seed
     | FG177 RETURN deleteDir CLASS=null VALUE=null
     | Selected Git installation does not exist. Using Default
@@ -155,24 +155,24 @@ VERDICT: DIVERGED (3)
     a53d0741798b  fg177-return-git/.git/hooks/push-to-checkout.sample
     44ebfc923dc5  fg177-return-git/.git/hooks/sendemail-validate.sample
     8d5f2fa83e10  fg177-return-git/.git/hooks/update.sample
-    7dd49ab72f2d  fg177-return-git/.git/index
+    71472647b275  fg177-return-git/.git/index
     6671fe83b7a0  fg177-return-git/.git/info/exclude
-    bbdf3b21ea78  fg177-return-git/.git/logs/HEAD
-    3bd8c7392d59  fg177-return-git/.git/logs/refs/heads/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
-    b51516add371  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
-    81b9d9093149  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
-    3beefc381868  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
-    b20c1bb4a6aa  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
-    a4278872ebdc  fg177-return-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
-    fd5a6c2e92fc  fg177-return-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
-    a4772bfc9bb9  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-checkout
-    bffc88986d7f  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-scm2
-    c69b7691ff94  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/1b57a845aa237fb780ef5621ed37d59040d43fa0
-    0642f197ce7a  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
-    a4278872ebdc  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
-    11a1361aaf19  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/f58182f2a15ba66580520437ad4f42ca5bf979c7
-    0642f197ce7a  fg177-return-git/.git/logs/refs/remotes/origin/main
-    0642f197ce7a  fg177-return-git/.git/logs/refs/remotes/origin/master
+    c78a991714b7  fg177-return-git/.git/logs/HEAD
+    09b68af0a08f  fg177-return-git/.git/logs/refs/heads/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+    9ba26837e273  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-basic
+    110693033a75  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-env-layering
+    af6f5f0f1005  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-skip-default
+    e713271618ef  fg177-return-git/.git/logs/refs/remotes/origin/case/checkout-scm-timeout-env
+    20051cf30745  fg177-return-git/.git/logs/refs/remotes/origin/case/fg177-probe-checkout-scm
+    4540c654a014  fg177-return-git/.git/logs/refs/remotes/origin/case/options-timestamps-scm
+    66a10bdb0fe2  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-checkout
+    bf2c8625f836  fg177-return-git/.git/logs/refs/remotes/origin/case/probe-scm2
+    96ed8e64eb82  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/1b57a845aa237fb780ef5621ed37d59040d43fa0
+    f2bd01c1b814  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/5dba3e2da2e7a2aa6628b9e0a8e3bb1637749ed5
+    20051cf30745  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    cc50007f4be7  fg177-return-git/.git/logs/refs/remotes/origin/fogell-pins/f58182f2a15ba66580520437ad4f42ca5bf979c7
+    f2bd01c1b814  fg177-return-git/.git/logs/refs/remotes/origin/main
+    f2bd01c1b814  fg177-return-git/.git/logs/refs/remotes/origin/master
     2ad5b70e543c  fg177-return-git/.git/objects/04/ba1504e096bf139af61beb00f4da6750223d0c
     27869fc5c1ec  fg177-return-git/.git/objects/0b/26cf2eb64e78e892048a8b481ba7df4cf4466b
     beeb14451711  fg177-return-git/.git/objects/14/f3e4036d4b2e6dd6711642f96a865dcd67180d

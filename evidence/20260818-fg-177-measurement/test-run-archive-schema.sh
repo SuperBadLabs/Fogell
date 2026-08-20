@@ -35,15 +35,23 @@ done
 jenkins_url=$(<"$oracle_ready")
 cat > "$test_tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
-printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
-printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
+remote_command=${*:2}
+if [[ "$remote_command" == *'podman inspect'* ]]; then
+  printf 'oracle image inspect\n' >> "$FOGELL_STUB_ORDER"
+elif [[ "$remote_command" != *'pluginManager/api/json'* ]]; then
+  printf 'oracle core %s\n' "${FOGELL_JENKINS_CORE-unset}" >> "$FOGELL_STUB_ORDER"
+fi
+export FOGELL_STUB_CONTAINER_ID=${FOGELL_STUB_CONTAINER_ID:-3333333333333333333333333333333333333333333333333333333333333333}
+export FOGELL_STUB_IMAGE=${FOGELL_STUB_IMAGE:-fixture/jenkins:2.568.1\|1111111111111111111111111111111111111111111111111111111111111111\|sha256:2222222222222222222222222222222222222222222222222222222222222222}
+export FOGELL_STUB_INTERNAL_CORE=${FOGELL_STUB_INTERNAL_CORE:-${FOGELL_JENKINS_CORE:-2.568.1}}
+export FOGELL_STUB_INTERNAL_SESSION=${FOGELL_STUB_INTERNAL_SESSION:-fixture-session-secret}
 if [[ -n ${FOGELL_STUB_ORACLE_STATE:-} && -f "$FOGELL_STUB_ORACLE_STATE" &&
       $(<"$FOGELL_STUB_ORACLE_STATE") == image ]]; then
-  printf '%s\n' 'fixture/jenkins:2.568.1|3333333333333333333333333333333333333333333333333333333333333333|sha256:4444444444444444444444444444444444444444444444444444444444444444'
-  exit 0
+  export FOGELL_STUB_IMAGE='fixture/jenkins:2.568.1|3333333333333333333333333333333333333333333333333333333333333333|sha256:4444444444444444444444444444444444444444444444444444444444444444'
 fi
-printf '%s\n' 'fixture/jenkins:2.568.1|1111111111111111111111111111111111111111111111111111111111111111|sha256:2222222222222222222222222222222222222222222222222222222222222222'
+exec "$(dirname "$0")/ssh-real" "$@"
 EOF
+cp "$evidence/jenkins-oracle-ssh-fixture.sh" "$test_tmp/bin/ssh-real"
 chmod +x "$test_tmp/bin/ssh"
 stub="$test_tmp/bin/dotnet"
 cat > "$stub" <<'EOF'
@@ -170,7 +178,7 @@ if [[ $(sed -n '1p' "$calls") != "$expected_build" || \
     "$(tr '\n' '|' < "$calls")" >&2
   exit 1
 fi
-if [[ $(<"$order") != $'oracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run\noracle core 2.568.1\noracle image inspect' ]]; then
+if [[ $(<"$order") != $'oracle image inspect\noracle core 2.568.1\noracle image inspect\ndotnet build\ndotnet run\noracle image inspect\noracle core 2.568.1\noracle image inspect' ]]; then
   printf 'ERROR: archive verifier did not bracket build/run; order=%s\n' \
     "$(tr '\n' '|' < "$order")" >&2
   exit 1
@@ -283,7 +291,7 @@ for drift in core plugin image transport plugin-recapture; do
     exit 1
   fi
   if [[ $drift == plugin-recapture ]] &&
-     ! grep -Fq 'live plugin manifest differs from' \
+     ! grep -Fq 'external plugin surface differs from the inspected controller' \
        "$test_tmp/drift-$drift.log"; then
     echo 'ERROR: archive immutable snapshot missed same-count live plugin drift' >&2
     exit 1
