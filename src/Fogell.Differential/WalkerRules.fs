@@ -196,162 +196,212 @@ module WalkerRules =
             [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
               "stash"; "unstable"; "unstash"; "dir"; "timeout"; "retry"; "withEnv" ]
 
-    /// FG-177, FIRST SLICE. How many POSITIONAL arguments each step in the script
-    /// vocabulary accepts.
-    ///
-    /// The arity DEFAULT this replaces admitted "zero or one" for every step without an
-    /// arm, and the fourteenth finding of the class is exactly what that cannot express:
-    /// `script { deleteDir('ignored') }` passed validation, the arm ignored the argument,
-    /// and Fogell DELETED THE WORKSPACE and carried on — measured, Jenkins keeps the
-    /// files and fails, because `DeleteDirStep` has an empty constructor and Jenkins'
-    /// positional binding only applies to a step with a sole REQUIRED parameter. A
-    /// destructive false success, and the one shape a default could not tell apart.
-    ///
-    /// This is DATA, which is the whole point of FG-177: "which spellings does this step
-    /// take" belongs in one reviewable table, not in thirteen hand-written arms found one
-    /// review round at a time. It is deliberately the SMALLEST useful slice — positional
-    /// arity only. Named-argument schemas (which names each step accepts, and their
-    /// types) are the rest of that ticket and are NOT here.
-    ///
-    /// Every value is measured or already held by a receipt: `deleteDir` by the probe
-    /// above, and every `1` by a committed case that passes one positional today.
-    let positionalArity: Map<string, int> =
-        Map
-            [ "sh", 1
-              "echo", 1
-              "archiveArtifacts", 1
-              "junit", 1
-              "checkout", 1
-              "deleteDir", 0
-              "git", 1
-              "stash", 1
-              "unstable", 1
-              "unstash", 1
-              "dir", 1
-              "timeout", 1
-              "retry", 1
-              "withEnv", 1 ]
+    /// FG-177 slice 1. Jenkins has two measured unknown-key binding policies.
+    type UnknownNamedBinding =
+        | WarnAndContinue of bindingClass: string
+        | ConstructorMapThrow
 
-    /// FG-177, SECOND SLICE. The SOLE REQUIRED PARAMETER of each step that has one.
-    ///
-    /// Jenkins lets a step's single required parameter be written EITHER positionally or
-    /// by name — `dir('sub')` and `dir(path: 'sub')` are the same call — and the arms
-    /// accepted only the positional spelling. The sixteenth finding of the class, and a
-    /// FALSE REFUSAL: measured, `script { dir(path: 'sub') { … } }` and
-    /// `script { withEnv(overrides: ['X=1']) { … } }` both succeed on Jenkins and failed
-    /// here with an EMPTY workspace.
-    ///
-    /// This is the layer the arity table could not supply. `positionalArity` says HOW
-    /// MANY positionals a step takes; this says WHAT the one required parameter is
-    /// CALLED, which is what lets the named spelling be normalised into the positional
-    /// one ONCE, centrally, so no arm has to learn both.
-    ///
-    /// `deleteDir` is absent because it has no parameter at all — the same fact
-    /// `positionalArity` records as 0, and the two must agree; a test holds them together.
-    let soleRequiredParameter: Map<string, string> =
-        Map
-            [ "sh", "script"
-              "echo", "message"
-              "archiveArtifacts", "artifacts"
-              "junit", "testResults"
-              "checkout", "scm"
-              "git", "url"
-              "stash", "name"
-              "unstable", "message"
-              "unstash", "name"
-              "dir", "path"
-              "timeout", "time"
-              "retry", "count"
-              "withEnv", "overrides" ]
-
-    /// FG-177. A hosted step's CALL SHAPE as DATA — the StepDescriptor move.
-    ///
-    /// Thirteen findings across FG-172/FG-174 said hand-written per-step arms do
-    /// not converge: each arm encoded what its author thought of on the day, was
-    /// too permissive AND too strict across the set, and nothing said what was
-    /// missing. This table is the replacement: one row per step, read in one
-    /// place, checked by ONE validator — and a HOSTED WRAPPER with no row here
-    /// fails a TEST, not a review round (schema-less vocabulary steps keep the
-    /// default-deny arity rule; their named arguments remain the stated gap).
-    ///
-    /// Each row states, faithfully to the arms it replaces (slice 1 is a
-    /// refactor-to-data; every behaviour change needs its own measurement):
-    ///   - `Arity`: positionals accepted AFTER normalisation (the mixed-args
-    ///     rule and sole-parameter promotion have already run);
-    ///   - `NamedKeys`: `Some names` = only these named keys, each other key
-    ///     refused BY NAME; `None` = named arguments pass through unchecked
-    ///     (`timeout`'s time/unit read downstream, and the default steps — the
-    ///     unknown-named gap the FG-177 row states is NOT closed by slice 1);
-    ///   - `ShapeText`: the refusal's wording, preserved from the arm;
-    ///   - `Check`: the step's VALUE rule, if it has one — kept in the row so a
-    ///     step's whole shape reads in one place.
-    type HostedSignature =
-        { Arity: int
-          NamedKeys: string list option
+    /// One closed call contract for every step the hosted interpreter may dispatch.
+    /// `PrimaryParameter` is a promotion name, not a requiredness assertion: Jenkins
+    /// accepts `echo()` and body-only `retry()` even though both advertise a primary.
+    type StepDescriptor =
+        { MaxPositionals: int
+          PrimaryParameter: string option
+          RequiresPrimary: bool
+          NamedKeys: Set<string>
+          UnsupportedNamedKeys: Set<string>
+          UnknownNamed: UnknownNamedBinding
           ShapeText: string
           Check: (Fogell.Groovy.Interpreter.Value list -> (string * Fogell.Groovy.Interpreter.Value) list -> string option) }
 
     let private noCheck = fun (_: Fogell.Groovy.Interpreter.Value list) (_: (string * Fogell.Groovy.Interpreter.Value) list) -> None
 
-    let hostedSignatures: Map<string, HostedSignature> =
+    let stepDescriptors: Map<string, StepDescriptor> =
         let open' = Fogell.Groovy.Interpreter.Value.toDisplay
+        let row max primary required named unsupported unknown shape check =
+            { MaxPositionals = max
+              PrimaryParameter = primary
+              RequiresPrimary = required
+              NamedKeys = Set.ofList named
+              UnsupportedNamedKeys = Set.ofList unsupported
+              UnknownNamed = unknown
+              ShapeText = shape
+              Check = check }
+        let warn className = WarnAndContinue className
 
         Map.ofList
-            [ "withEnv",
-              { Arity = 1
-                NamedKeys = Some []
-                ShapeText = "takes exactly one list argument of NAME=VALUE strings"
-                Check =
-                  fun positional _ ->
+            [ "sh",
+              row 1 (Some "script") true
+                  [ "script"; "label"; "returnStatus"; "returnStdout" ]
+                  []
+                  (warn "org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep")
+                  "takes at most 1 positional argument" noCheck
+              "echo",
+              row 1 (Some "message") false [ "message" ] [] ConstructorMapThrow
+                  "takes at most one message argument" noCheck
+              "archiveArtifacts",
+              row 1 (Some "artifacts") true
+                  [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
+                    "excludes"; "fingerprint"; "followSymlinks"; "onlyIfSuccessful" ]
+                  []
+                  (warn "hudson.tasks.ArtifactArchiver")
+                  "takes exactly one artifact pattern" noCheck
+              "junit",
+              row 1 (Some "testResults") true
+                  [ "testResults"; "allowEmptyResults"; "checksName"; "healthScale"
+                    "keepLongStdio"; "skipMarkingBuildUnstable"; "skipOldReports"
+                    "skipPublishingChecks"; "stdioRetention"; "testDataPublishers" ]
+                  []
+                  (warn "hudson.tasks.junit.pipeline.JUnitResultsStep")
+                  "takes exactly one test-results pattern" noCheck
+              "checkout",
+              row 1 (Some "scm") true [ "scm"; "changelog"; "poll" ] []
+                  (warn "org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep")
+                  "takes exactly one SCM argument" noCheck
+              "deleteDir",
+              row 0 None false [] []
+                  (warn "org.jenkinsci.plugins.workflow.steps.DeleteDirStep")
+                  "takes no positional arguments" noCheck
+              "git",
+              row 1 (Some "url") false [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ] []
+                  (warn "jenkins.plugins.git.GitStep")
+                  "takes at most one repository URL" noCheck
+              "stash",
+              row 1 (Some "name") true
+                  [ "name"; "allowEmpty"; "excludes"; "includes"; "useDefaultExcludes" ]
+                  []
+                  (warn "org.jenkinsci.plugins.workflow.support.steps.stash.StashStep")
+                  "takes exactly one stash name" noCheck
+              "unstable",
+              row 1 (Some "message") true [ "message" ] [] ConstructorMapThrow
+                  "takes exactly one message" noCheck
+              "unstash",
+              row 1 (Some "name") true [ "name" ] [] ConstructorMapThrow
+                  "takes exactly one stash name" noCheck
+              "withEnv",
+              row 1 (Some "overrides") true [ "overrides" ] [] ConstructorMapThrow
+                  "takes exactly one list argument of NAME=VALUE strings"
+                  (fun positional _ ->
                       match positional with
                       | [ Fogell.Groovy.Interpreter.VList items ] ->
                           items
                           |> List.map open'
-                          |> List.tryFind (fun e -> e.IndexOf '=' <= 0)
+                          |> List.tryFind (fun entry -> entry.IndexOf '=' <= 0)
                           |> Option.map (fun bad ->
                               $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
-                      | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings" }
+                      | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings")
               "dir",
-              { Arity = 1
-                NamedKeys = Some []
-                ShapeText = "takes exactly one path argument"
-                Check =
-                  fun positional _ ->
+              row 1 (Some "path") true [ "path" ] [] ConstructorMapThrow
+                  "takes exactly one path argument"
+                  (fun positional _ ->
                       match positional with
                       | [ _ ] -> None
-                      | _ -> Some "`dir` takes exactly one path argument" }
+                      | _ -> Some "`dir` takes exactly one path argument")
               "retry",
-              { Arity = 1
-                NamedKeys = Some [ "count" ]
-                ShapeText = "takes one attempt count, either positionally or as `count:`"
-                Check =
-                  fun positional named ->
-                      // MEASURED (receipt `script-retry-zero`): retry(0) RUNS (clamped),
-                      // named count: is valid Jenkins, conditions: refused by name.
-                      let countArg =
-                          match positional, named |> List.tryFind (fun (k, _) -> k = "count") with
-                          | [ v ], None -> Some v
-                          | [], Some(_, v) -> Some v
-                          | _ -> None
-
-                      match countArg with
-                      | None -> Some "`retry` takes one attempt count, either positionally or as `count:`"
-                      | Some(Fogell.Groovy.Interpreter.VInt _) -> None
-                      | Some other -> Some $"`retry` needs an integer attempt count, not `{open' other}`" }
+              row 1 (Some "count") false [ "count" ] [ "conditions" ]
+                  (warn "org.jenkinsci.plugins.workflow.steps.RetryStep")
+                  "takes at most one attempt count"
+                  (fun positional _ ->
+                      match positional with
+                      | [] -> None
+                      | [ Fogell.Groovy.Interpreter.VInt _ ] -> None
+                      | [ other ] -> Some $"`retry` needs an integer attempt count, not `{open' other}`"
+                      | _ -> Some "`retry` takes at most one attempt count")
               "timeout",
-              { Arity = 1
-                NamedKeys = None
-                ShapeText = "takes one positional argument or named ones"
-                Check = noCheck } ]
+              row 1 (Some "time") false [ "time"; "unit"; "activity" ] []
+                  (warn "org.jenkinsci.plugins.workflow.steps.TimeoutStep")
+                  "takes at most one positional time argument or named time/unit/activity arguments" noCheck ]
 
-    // FG-177 RETIRED the signature-case mirror set here: it was a hand-written
-    // mirror of the signature ARMS, kept equal to the hosted set by a test, and the
-    // arms are gone — the same guarantee now comes from `hostedSignatures` itself,
-    // whose row-coverage test fails for any hosted wrapper without a row. Two
-    // hand-maintained literals comparing equal guaranteed nothing the table's own
-    // key set does not (the verifier's finding on this diff). The history it
-    // guarded — `timeout` sitting in the hosted set with NO case while
-    // `timeout(1, 2)` ran its body — lives on the FG-174/FG-177 board rows.
+    /// Compatibility views are derived from the descriptor, never independently kept.
+    let positionalArity = stepDescriptors |> Map.map (fun _ descriptor -> descriptor.MaxPositionals)
+
+    let soleRequiredParameter =
+        stepDescriptors
+        |> Map.toList
+        |> List.choose (fun (name, descriptor) -> descriptor.PrimaryParameter |> Option.map (fun key -> name, key))
+        |> Map.ofList
+
+    let hostedSignatures =
+        stepDescriptors |> Map.filter (fun name _ -> scriptWrappersWithHostedBody.Contains name)
+
+    type HostedCallWarning =
+        { BindingClass: string
+          UnknownKeys: string list }
+
+    type ValidatedHostedCall =
+        { Positional: Fogell.Groovy.Interpreter.Value list
+          Named: (string * Fogell.Groovy.Interpreter.Value) list
+          Warnings: HostedCallWarning list }
+
+    type HostedCallFailure =
+        | EngineRefusal of string
+        | JenkinsBindingThrow of detail: string * warnings: HostedCallWarning list
+
+    /// The one hosted-call boundary. Unknowns are classified before primary promotion,
+    /// so `echo(message: 'x', unknown: true)` can never normalize into a valid echo.
+    let validateHostedCall
+        (name: string)
+        (positional: Fogell.Groovy.Interpreter.Value list)
+        (named: (string * Fogell.Groovy.Interpreter.Value) list)
+        : Result<ValidatedHostedCall, HostedCallFailure> =
+        let shown = positional |> List.map Fogell.Groovy.Interpreter.Value.toDisplay |> String.concat ", "
+
+        match Map.tryFind name stepDescriptors with
+        | None -> Error(EngineRefusal $"hosted step `{name}` has no descriptor")
+        | Some _ when not (List.isEmpty positional) && not (List.isEmpty named) ->
+            Error(
+                EngineRefusal
+                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+            )
+        | Some descriptor ->
+            let unsupported =
+                named
+                |> List.map fst
+                |> List.filter descriptor.UnsupportedNamedKeys.Contains
+
+            let allowed = Set.union descriptor.NamedKeys descriptor.UnsupportedNamedKeys
+
+            let unknown =
+                named
+                |> List.map fst
+                |> List.filter (fun key -> not (allowed.Contains key))
+
+            match unsupported, descriptor.UnknownNamed, unknown with
+            | first :: _, _, _ ->
+                Error(EngineRefusal $"`{name}` named key `{first}:` is recognized by Jenkins but not implemented by Fogell")
+            | [], ConstructorMapThrow, first :: _ ->
+                let parameter = defaultArg descriptor.PrimaryParameter "constructor"
+                Error(JenkinsBindingThrow($"`{name}` binds a map containing unknown key `{first}:` to `{parameter}`", []))
+            | _ ->
+                let warnings =
+                    match descriptor.UnknownNamed, unknown with
+                    | WarnAndContinue bindingClass, _ :: _ ->
+                        [ { BindingClass = bindingClass; UnknownKeys = unknown } ]
+                    | _ -> []
+
+                let normalisedPositional, normalisedNamed =
+                    match positional, descriptor.PrimaryParameter with
+                    | [], Some primary ->
+                        match named |> List.partition (fun (key, _) -> key = primary) with
+                        | [ pair ], rest ->
+                            let only = snd pair
+                            [ only ], rest
+                        | _ -> positional, named
+                    | _ -> positional, named
+
+                if List.length normalisedPositional > descriptor.MaxPositionals then
+                    Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{shown}]`")
+                elif descriptor.RequiresPrimary && List.isEmpty normalisedPositional then
+                    let primary = defaultArg descriptor.PrimaryParameter "its primary parameter"
+                    Error(JenkinsBindingThrow($"`{name}` requires `{primary}`", warnings))
+                else
+                    match descriptor.Check normalisedPositional normalisedNamed with
+                    | Some reason -> Error(EngineRefusal reason)
+                    | None ->
+                        Ok
+                            { Positional = normalisedPositional
+                              Named = normalisedNamed
+                              Warnings = warnings }
 
     /// FG-174. Whether a return flag is set — and, when it is written in a form Fogell
     /// will not guess at, a reason to refuse BEFORE the step runs.

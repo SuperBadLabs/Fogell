@@ -226,117 +226,9 @@ module WalkerOrchestration =
         // local binding keeps every call site below unchanged. `dir`, `timeout`, `retry`
         // and `withEnv` are in it because FG-172 taught their arms to run a hosted body.
         let scriptStepVocabulary = WalkerRules.scriptStepVocabulary
-        /// FG-172. The SIGNATURE a hosted step must be called with, checked centrally
-        /// before dispatch.
-        ///
-        /// WHY CENTRAL AND NOT PER-ARM. The first attempt validated `withEnv` inside its
-        /// own arm and only when the first argument was a list — so `withEnv('A=1')`, the
-        /// WRONG SHAPE entirely, fell past it: no list, no raw entries, empty bindings, and
-        /// the body RAN while Jenkins rejects the call outright (`EnvStep(List<String>)`).
-        /// Every newly admitted hosted step would otherwise get its own signature bypass,
-        /// one per arm, discovered one review round at a time. Raised by the pre-push
-        /// verifier as the eighth of its class, with exactly that argument.
-        ///
-        /// A step absent from this table is not validated here — its arm is responsible,
-        /// as before. Adding a hosted step SHOULD add a line here.
-        /// FG-177. ONE PLACE THAT DECIDES WHAT SHAPE A HOSTED CALL IS IN.
-        ///
-        /// Two things, in this order, because the order is the whole subtlety:
-        ///   1. the CPS rule — positional AND named together is rejected by Jenkins for
-        ///      EVERY step, whatever its parameters;
-        ///   2. NORMALISATION — a sole required parameter written by name becomes the
-        ///      positional form, so no arm and no dispatch path has to learn both
-        ///      spellings. `dir(path: 'sub')` is `dir('sub')`.
-        ///
-        /// Doing (2) before (1) would be wrong in a way worth naming: normalising
-        /// `sh(script: 'x', returnStatus: true)` moves `script` to the positional slot and
-        /// leaves `returnStatus` named, MANUFACTURING the mixed shape that (1) rejects —
-        /// and every existing `sh(script:…, returnStatus:…)` receipt would start failing.
-        /// So the rule reads the call as WRITTEN, and only then is it rewritten.
-        ///
-        /// The result feeds the `Step` record, the signature arms AND `HostedArgs`, so a
-        /// wrapper reading its typed argument sees the normalised form too — which is
-        /// where `withEnv(overrides: […])` was actually failing, not just in validation.
-        let normaliseHostedCall (name: string) (positional: Value list) (named: (string * Value) list) =
-            if not (List.isEmpty positional) && not (List.isEmpty named) then
-                let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-
-                Error
-                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
-            else
-                match positional, Map.tryFind name WalkerRules.soleRequiredParameter with
-                | [], Some param ->
-                    match named |> List.partition (fun (k, _) -> k = param) with
-                    | [ (_, v) ], rest -> Ok([ v ], rest)
-                    | _ -> Ok(positional, named)
-                | _ -> Ok(positional, named)
-
-        let hostedSignatureError (name: string) (positional: Value list) (named: (string * Value) list) =
-            let wrongShape expected = Some $"`{name}` {expected}"
-
-            // The CPS mixed-argument rule used to live here; it moved into
-            // `normaliseHostedCall` below, because normalisation has to happen AFTER it
-            // and both belong to the same "what shape is this call" question.
-            // POSITIONAL **OR** NAMED, NEVER BOTH — and this is not a per-step rule, which
-            // is why it sits ahead of the match rather than in an arm.
-            //
-            // Jenkins' CPS `DSL.parseArgs` throws `Expected named arguments but got …`
-            // whenever a named map arrives beside positional arguments, whatever the step
-            // is. MEASURED on TWO different steps to establish that it is step-INDEPENDENT
-            // rather than assuming it from one, and held by receipt
-            // `script-mixed-positional-named`: `sh('exit 7', returnStatus: true)` and
-            // `archiveArtifacts('*.txt', fingerprint: true)` both make Jenkins fail with
-            // the SAME workspace hash — only the earlier stage's file — while Fogell ran
-            // each and reported success.
-            //
-            // It was first written as a `timeout`-only arm, which was the fifteenth
-            // finding of this class: the right rule in the wrong scope. `timeout`'s own
-            // mixed branch is GONE rather than left beside this one, because a dead
-            // branch that can never fire reads as a second opinion.
-            // FG-177. ONE VALIDATOR, DRIVEN BY DATA. The four hand-written arms this
-            // replaces produced thirteen findings across FG-172/FG-174 — too
-            // permissive and too strict across the set — and each arm's rules now
-            // live as a row in `WalkerRules.hostedSignatures`, where a step's whole
-            // shape reads in one place and a vocabulary step with no row fails a
-            // test. Slice 1 is a refactor-to-data: behaviour is the arms',
-            // measured caveats included (retry(0) runs clamped, timeout's argument
-            // TYPES deliberately unchecked, unknown NAMED arguments on schema-less
-            // steps still pass — the stated gap). Refusal wording is unified;
-            // nothing asserted the old texts (swept) and receipts exclude
-            // diagnostic wording.
-            match Map.tryFind name WalkerRules.hostedSignatures with
-            | Some s ->
-                if List.length positional > s.Arity then
-                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-                    Some $"`{name}` {s.ShapeText}; Jenkins rejects `[{shown}]`"
-                else
-                    match s.NamedKeys with
-                    | Some allowed ->
-                        match named |> List.tryFind (fun (k, _) -> not (List.contains k allowed)) with
-                        | Some(k, _) when List.isEmpty allowed -> Some $"`{name}` {s.ShapeText}; `{k}:` is not accepted"
-                        | Some(k, _) ->
-                            let only = allowed |> List.map (sprintf "`%s:`") |> String.concat ", "
-                            Some $"`{name}` does not support `{k}`; only {only} is implemented"
-                        | None -> s.Check positional named
-                    | None -> s.Check positional named
-            | None ->
-                // DEFAULT DENY ON ARITY for every schema-less step, per
-                // `WalkerRules.positionalArity` — a blanket rule cannot tell a
-                // zero-argument step from a sole-required-parameter one, so the
-                // answer is data there too. Unknown NAMED arguments are NOT
-                // checked here: that is the remaining gap the FG-177 row states,
-                // closable only step by step with measurements.
-                let allowed = Map.tryFind name WalkerRules.positionalArity |> Option.defaultValue 1
-
-                if List.length positional > allowed then
-                    let shown = positional |> List.map Value.toDisplay |> String.concat ", "
-
-                    if allowed = 0 then
-                        wrongShape $"takes no positional arguments; Jenkins rejects `[{shown}]`"
-                    else
-                        wrongShape $"takes at most {allowed} positional argument; Jenkins rejects `[{shown}]`"
-                else
-                    None
+        // FG-177. Call shape, primary promotion, requiredness, named keys and
+        // measured unknown-key behavior now meet at WalkerRules.validateHostedCall.
+        // Keeping even a thin local second opinion would reopen the drift this slice closes.
 
         /// FG-172. Block-taking steps whose walker arm can run a HOSTED body. Defined in
         /// `WalkerRules` so a test can hold it against the set of wrappers that actually
@@ -2272,116 +2164,123 @@ module WalkerOrchestration =
                                     // only paths that END in a capturing site.
                                     if not (halted (fst hostAt.Value)) then
                                         (fst hostAt.Value).LastDiagnostic.Value <- None
-                                    // SHAPE FIRST, then everything downstream sees one
-                                    // form — the Step record, the signature arms and the
-                                    // typed `HostedArgs` a wrapper reads.
-                                    match normaliseHostedCall name rawPositional rawNamed with
-                                    | Error why ->
+                                    // ONE VALIDATION BOUNDARY, then every downstream
+                                    // consumer sees the same normalized call. Unknowns are
+                                    // classified before promotion, so promotion cannot erase
+                                    // a constructor-map throw.
+                                    let emitCallWarnings (warnings: WalkerRules.HostedCallWarning list) =
+                                        for warning in warnings do
+                                            let keys = String.concat ", " warning.UnknownKeys
+                                            emit
+                                                $"WARNING: Unknown parameter(s) found for class type '{warning.BindingClass}': {keys}"
+
+                                    match WalkerRules.validateHostedCall name rawPositional rawNamed with
+                                    | Error(WalkerRules.EngineRefusal why) ->
                                         fail $"script block: {why}"
                                         VNull
-                                    | Ok(positional, named) ->
+                                    | Error(WalkerRules.JenkinsBindingThrow(why, warnings)) ->
+                                        emitCallWarnings warnings
+                                        Interpreter.raiseStepBindingFailed name why
+                                    | Ok validated ->
+                                        let positional = validated.Positional
+                                        let named = validated.Named
+                                        emitCallWarnings validated.Warnings
 
-                                    let called =
-                                        { Name = name
-                                          Positional = positional |> List.map Value.toDisplay
-                                          Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
-                                          Block = []
-                                          // ALREADY EVALUATED by the interpreter, so no
-                                          // further interpolation: see the literal marking
-                                          // that fixed the re-rendered approval prompt.
-                                          LiteralNamedArgs = named |> List.map fst |> Set.ofList
-                                          LiteralPositionalArgs =
-                                            positional |> List.mapi (fun i _ -> i) |> Set.ofList
-                                          InterpolationSource = []
-                                          ExpressionArgs = Set.empty
-                                          ArgumentOrder =
-                                            (positional |> List.mapi (fun i _ -> $"#{i}"))
-                                            @ (named |> List.map fst)
-                                          RawArgs = ""
-                                          ScriptBody = None
-                                          Position = step.Position }
+                                        let called =
+                                            { Name = name
+                                              Positional = positional |> List.map Value.toDisplay
+                                              Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
+                                              Block = []
+                                              // ALREADY EVALUATED by the interpreter, so no
+                                              // further interpolation: see the literal marking
+                                              // that fixed the re-rendered approval prompt.
+                                              LiteralNamedArgs = named |> List.map fst |> Set.ofList
+                                              LiteralPositionalArgs =
+                                                positional |> List.mapi (fun i _ -> i) |> Set.ofList
+                                              InterpolationSource = []
+                                              ExpressionArgs = Set.empty
+                                              ArgumentOrder =
+                                                (positional |> List.mapi (fun i _ -> $"#{i}"))
+                                                @ (named |> List.map fst)
+                                              RawArgs = ""
+                                              ScriptBody = None
+                                              Position = step.Position }
 
-                                    match hostedSignatureError name positional named with
-                                    | Some why ->
-                                        fail $"script block: {why}"
-                                        VNull
-                                    | None ->
+                                        let atCtx, atCwd = hostAt.Value
 
-                                    let atCtx, atCwd = hostAt.Value
+                                        let dispatchCtx =
+                                            match runBody with
+                                            | Some thunk ->
+                                                { atCtx with
+                                                    HostedBody = Some(runBodyIn thunk)
+                                                    HostedArgs = Some(positional, named) }
+                                            // CLEARED for a plain step, not merely left alone: a
+                                            // stale runner inherited from an enclosing wrapper
+                                            // would let a body-less call run some other call's
+                                            // block.
+                                            | None ->
+                                                { atCtx with
+                                                    HostedBody = None
+                                                    HostedArgs = Some(positional, named) }
 
-                                    let dispatchCtx =
-                                        match runBody with
-                                        | Some thunk ->
-                                            { atCtx with
-                                                HostedBody = Some(runBodyIn thunk)
-                                                HostedArgs = Some(positional, named) }
-                                        // CLEARED for a plain step, not merely left alone: a
-                                        // stale runner inherited from an enclosing wrapper
-                                        // would let a body-less call run some other call's
-                                        // block.
-                                        | None ->
-                                            { atCtx with
-                                                HostedBody = None
-                                                HostedArgs = Some(positional, named) }
+                                        // The deadline a hosted `timeout` established wins over
+                                        // the one captured when the script started; without this
+                                        // the bound is announced and not applied.
+                                        let effectiveDeadline =
+                                            match atCtx.HostedDeadline with
+                                            | Some d -> Some d
+                                            | None -> deadline
 
-                                    // The deadline a hosted `timeout` established wins over
-                                    // the one captured when the script started; without this
-                                    // the bound is announced and not applied.
-                                    let effectiveDeadline =
-                                        match atCtx.HostedDeadline with
-                                        | Some d -> Some d
-                                        | None -> deadline
+                                        // FG-174. A fresh slot PER CALL: reusing one would let a
+                                        // step that returns nothing hand back the previous
+                                        // step's value, which is worse than null because it
+                                        // looks plausible.
+                                        let slot = ref VNull
 
-                                    // FG-174. A fresh slot PER CALL: reusing one would let a
-                                    // step that returns nothing hand back the previous
-                                    // step's value, which is worse than null because it
-                                    // looks plausible.
-                                    let slot = ref VNull
+                                        if not (halted dispatchCtx) then
+                                            // FG-176. OBSERVED, not sunk directly: a SHELL step's
+                                            // failure surfaces to the script as the catchable,
+                                            // retryable fault Jenkins raises (AbortException),
+                                            // instead of silently marking the branch failed where
+                                            // no try/catch could ever see it. Every other status —
+                                            // aborts included, whose FG-101 classification must
+                                            // win — re-sinks exactly as before, and every NON-shell
+                                            // step keeps the old fail-loud path until its own
+                                            // measurement moves it: a Fogell refusal caught by a
+                                            // script would recover from a gap in this engine while
+                                            // Jenkins ran the real step.
+                                            let observedStatus = ref BuildStatus.Success
+                                            let observedFailed = ref false
 
-                                    if not (halted dispatchCtx) then
-                                        // FG-176. OBSERVED, not sunk directly: a SHELL step's
-                                        // failure surfaces to the script as the catchable,
-                                        // retryable fault Jenkins raises (AbortException),
-                                        // instead of silently marking the branch failed where
-                                        // no try/catch could ever see it. Every other status —
-                                        // aborts included, whose FG-101 classification must
-                                        // win — re-sinks exactly as before, and every NON-shell
-                                        // step keeps the old fail-loud path until its own
-                                        // measurement moves it: a Fogell refusal caught by a
-                                        // script would recover from a gap in this engine while
-                                        // Jenkins ran the real step.
-                                        let observedStatus = ref BuildStatus.Success
-                                        let observedFailed = ref false
+                                            let observing =
+                                                { dispatchCtx with
+                                                    HostedResult = Some slot
+                                                    Failed = observedFailed
+                                                    Sink =
+                                                        fun s ->
+                                                            observedStatus.Value <- BuildStatus.worstOf observedStatus.Value s }
 
-                                        let observing =
-                                            { dispatchCtx with
-                                                HostedResult = Some slot
-                                                Failed = observedFailed
-                                                Sink =
-                                                    fun s ->
-                                                        observedStatus.Value <- BuildStatus.worstOf observedStatus.Value s }
+                                            runStepDispatch observing atCwd stage called effectiveDeadline
 
-                                        runStepDispatch observing atCwd stage called effectiveDeadline
+                                            if
+                                                observedStatus.Value = BuildStatus.Failure
+                                                // `sh` alone: `bat` is outside the script
+                                                // vocabulary today, so a bat arm here would
+                                                // be dead code wearing a parity claim
+                                                && name = "sh"
+                                            then
+                                                Interpreter.raiseStepFailed name
+                                            else
+                                                dispatchCtx.Sink observedStatus.Value
 
-                                        if
-                                            observedStatus.Value = BuildStatus.Failure
-                                            // `sh` alone: `bat` is outside the script
-                                            // vocabulary today, so a bat arm here would
-                                            // be dead code wearing a parity claim
-                                            && name = "sh"
-                                        then
-                                            Interpreter.raiseStepFailed name
-                                        else
-                                            dispatchCtx.Sink observedStatus.Value
+                                                if observedFailed.Value then
+                                                    dispatchCtx.Failed.Value <- true
 
-                                            if observedFailed.Value then
-                                                dispatchCtx.Failed.Value <- true
-
-                                    // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
-                                    // stdout, `sh(returnStatus: true)` its exit code as an
-                                    // Integer, and `VNull` for everything else, which is
-                                    // still every step that does not opt in.
-                                    slot.Value
+                                        // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
+                                        // stdout, `sh(returnStatus: true)` its exit code as an
+                                        // Integer, and `VNull` for everything else, which is
+                                        // still every step that does not opt in.
+                                        slot.Value
                               // FG-178. Read through `hostAt`, which POINTS AT THE
                               // WRAPPER while its body runs — so `withEnv`'s overlay is
                               // what the body evaluates against. Reading `ctx` here would

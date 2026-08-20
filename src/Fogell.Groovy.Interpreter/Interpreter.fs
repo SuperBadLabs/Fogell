@@ -82,6 +82,9 @@ type Fault =
     | Denied of Denial
     | Unsupported of construct: string
     | Thrown of Value
+    /// FG-177. Jenkins rejected the call while binding its descriptor. Unlike an
+    /// engine refusal, this is ordinary scripted-Groovy control flow and may be caught.
+    | StepBindingFailed of stepName: string * detail: string
     /// FG-176/FG-186. A SHELL STEP inside a hosted body FAILED — the outcome
     /// Jenkins surfaces as a catchable, retryable AbortException. Distinct from
     /// a refusal on purpose: a refusal says Fogell cannot MODEL the call, and
@@ -619,7 +622,7 @@ module Interpreter =
                 // FG-184. ONLY FOR A STEP THAT TAKES A BLOCK, and the restriction is the
                 // fix. Normalising unconditionally REMOVED the closure before the host
                 // could validate the call, so `def body = {}; sh('touch ran.txt', body)`
-                // reached `hostedSignatureError` as a valid one-positional `sh` with a
+                // reached `validateHostedCall` as a valid one-positional `sh` with a
                 // hosted body its dispatcher ignores — and the shell ran. Jenkins rejects
                 // the two-argument call: measured, jenkins=FAILURE with an empty workspace
                 // against fogell=SUCCESS with the file written. A green build doing work
@@ -1466,6 +1469,14 @@ module Interpreter =
                 | Some(Some t, _, _) -> [ "Exception"; "Throwable"; "IOException" ] |> List.contains t
                 | None -> false
 
+            let catchesBindingFailure =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "IllegalArgumentException" ]
+                    |> List.contains t
+                | None -> false
+
             let afterTry =
                 try
                     try
@@ -1475,6 +1486,8 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
+                    | Stop(StepBindingFailed(name, detail)) when catchesBindingFailure ->
+                        handle (VStr $"java.lang.IllegalArgumentException: {name}: {detail}")
                     | Stop(StepFailed name) when catchesStepFailure ->
                         // FG-176. The step's own ERROR narration already reached the
                         // console at dispatch; what the handler binds is the exception
@@ -1621,6 +1634,13 @@ module Interpreter =
     [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
     let raiseStepFailed (stepName: string) : 'a = raise (Stop(StepFailed stepName))
 
+    /// FG-177. The host's narrow channel for one measured Jenkins binding failure.
+    /// It is distinct from a modelling refusal: scripted try/catch may absorb this,
+    /// while it must never absorb a gap in Fogell's implementation.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseStepBindingFailed (stepName: string) (detail: string) : 'a =
+        raise (Stop(StepBindingFailed(stepName, detail)))
+
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a
     /// returned fault the loop treats as attempt failure. A refusal or an
@@ -1631,7 +1651,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an
