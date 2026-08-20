@@ -1323,6 +1323,18 @@ let unsupportedDeclarativeTools =
     let duplicateNestedParallel =
         "pipeline { agent any stages { stage('parent') { parallel { stage('branch') { tools { } tools { maven 'm3' } steps { sh 'echo ran > ran.txt' } } } } } }"
 
+    let duplicateStructuralSections =
+        [ "stage steps",
+          "pipeline { agent any stages { stage('a') { steps('empty') { } steps { sh 'echo ran > ran.txt' } } } }"
+          "stage post",
+          "pipeline { agent any stages { stage('a') { steps { sh 'echo ran > ran.txt' } post('empty') { } post { always { echo 'later' } } } } }"
+          "pipeline post",
+          "pipeline { agent any stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } post('empty') { } post { always { echo 'later' } } }"
+          "pipeline stages",
+          "pipeline { agent any stages('empty') { } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+          "nested stages",
+          "pipeline { agent any stages { stage('outer') { stages('empty') { } stages { stage('inner') { steps { sh 'echo ran > ran.txt' } } } } } }" ]
+
     let empty =
         "pipeline { agent any tools { } stages { stage('a') { tools { } steps { sh 'echo ran > ran.txt' } } } }"
 
@@ -1341,7 +1353,7 @@ let unsupportedDeclarativeTools =
                 IO.Directory.Delete(root, true)
 
     testList
-        "FG-014 unsupported Declarative tools fail closed at execution"
+        "FG-014 admission and unsupported tools fail closed before execution"
         [ test "pipeline, stage and nested parallel selections refuse before effects or workspace preparation" {
               for label, source, scope in
                   [ "pipeline", top, "pipeline"
@@ -1373,6 +1385,27 @@ let unsupportedDeclarativeTools =
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
                       | Ok trace -> failtestf "%s duplicate tools unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "duplicate labelled structural sections refuse before effects or workspace preparation" {
+              // Each first section is deliberately empty and labelled. Before the
+              // duplicate guard, the first-match projection could hide the later
+              // non-empty body. A parser refusal must precede both workspace wipe
+              // and every shell effect, at all structural scopes this slice admits.
+              for label, source in duplicateStructuralSections do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s duplicate structural section unexpectedly executed: %A" label trace
                       | Error why ->
                           Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
 

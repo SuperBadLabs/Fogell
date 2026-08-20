@@ -272,6 +272,15 @@ let structure =
               Expect.equal pipeline.Stages.[0].Steps.[0].Positional [ "x" ] "the step value is retained"
               Expect.equal (pipeline.Stages.[0].Post |> List.map fst) [ Failure ] "a labelled stage post body survives"
               Expect.equal (pipeline.Post |> List.map fst) [ Always ] "the labelled post body survives"
+
+              let nested =
+                  ok
+                      "pipeline {\n  agent any\n  stages {\n    stage('outer') {\n      stages('group') {\n        stage('inner') { steps('work') { echo 'nested' } }\n      }\n    }\n  }\n}"
+
+              Expect.equal nested.Stages.[0].Name "outer" "the outer sequential stage survives"
+              Expect.equal nested.Stages.[0].Nested.Length 1 "the labelled nested stages body survives"
+              Expect.equal nested.Stages.[0].Nested.[0].Name "inner" "the nested stage survives"
+              Expect.equal nested.Stages.[0].Nested.[0].Steps.[0].Positional [ "nested" ] "the nested body is retained"
           }
 
           test "FG-014 section labels stay on the narrow single-string boundary" {
@@ -293,6 +302,37 @@ let structure =
 
               for label, source in sources do
                   Expect.equal (err source).Code MalformedSyntax $"{label}: unsupported section arguments remain refused"
+          }
+
+          test "FG-014 duplicate labelled structural sections refuse before first-pick body loss" {
+              // DIRECTLY PROBED on Jenkins 2.568.1. Labelled/unlabelled and
+              // empty/non-empty pairs all report "Multiple occurrences" at top,
+              // stage and nested scope. In particular, the second steps body may
+              // contain an input gate and must never disappear behind `tryPick`.
+              let sources =
+                  [ "steps plain then labelled",
+                    "pipeline { agent any stages { stage('x') { steps { echo 'first' } steps('second') { input message: 'Deploy?' } } } }"
+                    "steps labelled empty then plain",
+                    "pipeline { agent any stages { stage('x') { steps('empty') { } steps { echo 'second' } } } }"
+                    "stage post plain then labelled",
+                    "pipeline { agent any stages { stage('x') { steps { echo 'x' } post { always { echo 'first' } } post('second') { failure { echo 'second' } } } } }"
+                    "stage post labelled empty then plain",
+                    "pipeline { agent any stages { stage('x') { steps { echo 'x' } post('empty') { } post { always { echo 'second' } } } } }"
+                    "top post plain then labelled",
+                    "pipeline { agent any stages { stage('x') { steps { echo 'x' } } } post { always { echo 'first' } } post('second') { failure { echo 'second' } } }"
+                    "top post labelled empty then plain",
+                    "pipeline { agent any stages { stage('x') { steps { echo 'x' } } } post('empty') { } post { always { echo 'second' } } }"
+                    "top stages plain then labelled",
+                    "pipeline { agent any stages { stage('a') { steps { echo 'a' } } } stages('second') { stage('b') { steps { echo 'b' } } } }"
+                    "top stages labelled empty then plain",
+                    "pipeline { agent any stages('empty') { } stages { stage('b') { steps { echo 'b' } } } }"
+                    "nested stages plain then labelled",
+                    "pipeline { agent any stages { stage('outer') { stages { stage('a') { steps { echo 'a' } } } stages('second') { stage('b') { steps { echo 'b' } } } } } }"
+                    "nested stages labelled empty then plain",
+                    "pipeline { agent any stages { stage('outer') { stages('empty') { } stages { stage('b') { steps { echo 'b' } } } } } }" ]
+
+              for label, source in sources do
+                  Expect.equal (err source).Code MalformedSyntax $"{label}: duplicate section is an admission refusal"
           }
 
           test "FG-014 command-form tools preserve kind, value and source order" {

@@ -907,7 +907,7 @@ stageRef.Value <-
                       attempt (whenSection |>> SecWhen)
                       attempt (whenSectionOpaque |>> SecWhen)
                       attempt (postSection |>> SecPost)
-                      attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
+                      attempt (structuralSection "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
@@ -950,7 +950,14 @@ stageRef.Value <-
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
                                |>> fun _ -> SecOther n)) ]))
-        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false))
+        // DIRECTLY PROBED on Jenkins 2.568.1 with labelled/unlabelled and
+        // empty/non-empty pairs. Every repeated section is rejected before the
+        // model is built. Guard the collected nodes before `pick` can discard a
+        // later body, especially a second `steps` body containing an input gate.
+        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false)
+        >>= rejectingDuplicateSections "steps" (function SecSteps _ -> true | _ -> false)
+        >>= rejectingDuplicateSections "post" (function SecPost _ -> true | _ -> false)
+        >>= rejectingDuplicateSections "stages" (function SecNested(_, false) -> true | _ -> false))
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name
@@ -1067,7 +1074,9 @@ let private pipelineParser: P<Pipeline> =
                   (symbol "{")
                   (symbol "}")
                   (ws >>. many (attempt topSection)
-                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false))
+                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
+                   >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
+                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false))
           .>> ws)
     |>> fun (capturedPreamble, sections) ->
             let pick f = sections |> List.tryPick f
