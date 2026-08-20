@@ -1,0 +1,24 @@
+Groovy Version: 2.4.21 JVM: 21.0.11 Vendor: Eclipse Adoptium OS: Linux
+slashy backslashes=0 closesHere=true escapesThenCloses=false
+slashy backslashes=1 closesHere=false escapesThenCloses=true
+slashy backslashes=2 closesHere=false escapesThenCloses=true
+slashy backslashes=3 closesHere=false escapesThenCloses=true
+slashy backslashes=4 closesHere=false escapesThenCloses=true
+slashy backslashes=5 closesHere=false escapesThenCloses=true
+dollar-slashy dollars=0 closesHere=true escapesThenCloses=false
+dollar-slashy dollars=1 closesHere=false escapesThenCloses=true
+dollar-slashy dollars=2 closesHere=true escapesThenCloses=false
+dollar-slashy dollars=3 closesHere=false escapesThenCloses=true
+dollar-slashy dollars=4 closesHere=true escapesThenCloses=false
+dollar-slashy dollars=5 closesHere=false escapesThenCloses=true
+dollar-slashy backslashes=0 closesHere=true
+dollar-slashy backslashes=1 closesHere=true
+dollar-slashy backslashes=2 closesHere=true
+dollar-slashy backslashes=3 closesHere=true
+dollar-slashy backslashes=4 closesHere=true
+dollar-slashy backslashes=5 closesHere=true
+
+Captured directly with `groovy-all-2.4.21.jar` from the Jenkins 2.568.1
+container. `closesHere=true` means the candidate delimiter produced a complete
+parse; `escapesThenCloses=true` means only a later delimiter completed it.
+The executable probe is `groovy-delimiter-parity.groovy` beside this receipt.

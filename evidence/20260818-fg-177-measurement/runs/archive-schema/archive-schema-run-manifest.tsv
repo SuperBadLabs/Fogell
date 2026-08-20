@@ -1,0 +1,24 @@
+format	fogell-evidence-run-v3
+run	archive-schema
+started-at-utc	2026-08-20T20:40:18Z
+oracle-verified-before-at-utc	2026-08-20T20:40:21Z
+oracle-verified-after-at-utc	2026-08-20T20:40:36Z
+finished-at-utc	2026-08-20T20:40:36Z
+cli-exit	1
+jenkins-core	2.568.1
+jenkins-session-sha256	e8e6252715c309f8771ffc811965c0e6bb3c4c2ce0963418c5c71a4080a6b393
+controller-container-id	5dc7acbed80016c90ab174f516993a10c6a21f808cb19474e8259755f8b3e8c9
+oracle-metadata-directory	oracle-metadata
+core-metadata-sha256	5c527167c41f888bbbe66d3d520592654a496c74f4847e5db4c0a3c4f5246577
+plugin-manifest-sha256	6af6817f555a6fbbbcb5b41d48e7be58b00517efc913b21cfb825d0614630b3a
+plugin-count	154
+controller-image-name	localhost/jenkins-rich:local
+controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
+controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332
+image-metadata-sha256	2a2612da07718c48b9da3b79a3665bba9e14ba99a450f09789a2d9e9dce3230c
+oracle-before-verification	oracle-before-verification.txt	1966af2d72aa46820422612f92c3efa8cd8229dbc69f1a69a4a692e53ad51842
+oracle-after-verification	oracle-after-verification.txt	1966af2d72aa46820422612f92c3efa8cd8229dbc69f1a69a4a692e53ad51842
+run-log	archive-schema-run.log	63de708839fc588bd273b4f2ac0054adff4782ceb5d961af9c65f3a794f77750
+exit-marker	archive-schema-exit.txt	9dd3c5490189b6f4c68f0d1a87a4ccbd7181db0efa4339c4e21da177650d897a
+case-count	1
+case	01	fg177-probe-archive-schema.Jenkinsfile	adffaa435048ecb47aeb82b05052a39e17f13a639217fbc599a2d3c272f5f3bc	fg177-probe-archive-schema.receipt.txt	7555d081d6582dfdd6b18f009d7b8198afbef9c20427bd6f927b180468dd9551

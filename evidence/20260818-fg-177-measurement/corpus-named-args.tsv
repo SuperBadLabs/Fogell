@@ -1,0 +1,44 @@
+corpus_files	228
+step	calls	call_files
+sh	955	131
+echo	462	78
+archiveArtifacts	58	34
+junit	36	31
+checkout	66	54
+deleteDir	26	18
+git	26	26
+stash	12	7
+unstable	21	11
+unstash	10	6
+dir	50	18
+timeout	60	30
+retry	11	7
+withEnv	28	17
+
+step	named_key	occurrences	files	samples
+sh	script	143	37	Ben1980_jenkinsexample.Jenkinsfile:36,Ben1980_jenkinsexample.Jenkinsfile:46,Blazemeter_taurus.Jenkinsfile:22
+sh	returnStdout	114	29	Blazemeter_taurus.Jenkinsfile:22,Blazemeter_taurus.Jenkinsfile:27,HariSekhon_Jenkins.Jenkinsfile:359
+sh	label	17	6	Ben1980_jenkinsexample.Jenkinsfile:36,Ben1980_jenkinsexample.Jenkinsfile:46,HariSekhon_Jenkins.Jenkinsfile:479
+sh	returnStatus	10	7	Ben1980_jenkinsexample.Jenkinsfile:36,Ben1980_jenkinsexample.Jenkinsfile:46,Chabane_mitosis-microservice-spark-cassandra.Jenkinsfile:2
+archiveArtifacts	artifacts	48	25	Blazemeter_taurus.Jenkinsfile:40,Blazemeter_taurus.Jenkinsfile:68,HariSekhon_Jenkins.Jenkinsfile:777
+archiveArtifacts	allowEmptyArchive	20	8	Blazemeter_taurus.Jenkinsfile:68,VAD37_unity-jenkinsfile.Jenkinsfile:113,VAD37_unity-jenkinsfile.Jenkinsfile:198
+archiveArtifacts	fingerprint	20	11	Blazemeter_taurus.Jenkinsfile:40,HariSekhon_Jenkins.Jenkinsfile:777,RitheeshBaradwaj_JenkinsPipeline.Jenkinsfile:64
+archiveArtifacts	onlyIfSuccessful	5	3	TomCzHen_jenkins-android-sample.Jenkinsfile:99,rmkanda_secure-pipeline-java-demo.Jenkinsfile:57,rmkanda_secure-pipeline-java-demo.Jenkinsfile:70
+archiveArtifacts	followSymlinks	3	2	devops-ws_learn-pipeline-java.Jenkinsfile:15,devops-ws_learn-pipeline-java.Jenkinsfile:22,metersphere_jenkins-plugin.Jenkinsfile:27
+archiveArtifacts	excludes	1	1	jenkinsci_jenkins.Jenkinsfile:196
+junit	testResults	17	14	SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile:140,adamrushuk_powershell-pipeline.Jenkinsfile:50,cloudogu_ces-build-lib.Jenkinsfile:45
+junit	allowEmptyResults	11	10	SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile:140,adamrushuk_powershell-pipeline.Jenkinsfile:50,cloudogu_ces-build-lib.Jenkinsfile:45
+junit	keepLongStdio	7	5	jenkins-infra_pipeline-library.Jenkinsfile:17,jenkinsci_docker-agents.Jenkinsfile:128,jenkinsci_docker-inbound-agent.Jenkinsfile:72
+junit	testDataPublishers	1	1	jenkinsci_jenkins.Jenkinsfile:233
+git	url	18	18	AmanPathak-DevOps_EKS-Terraform-GitHub-Actions.Jenkinsfile:22,Chabane_mitosis-microservice-spark-cassandra.Jenkinsfile:8,ORCID_ORCID-Source.Jenkinsfile:17
+git	branch	13	13	AmanPathak-DevOps_EKS-Terraform-GitHub-Actions.Jenkinsfile:22,ORCID_ORCID-Source.Jenkinsfile:17,SumanReddy568_Selenium-Python-Pytest-framework.Jenkinsfile:7
+git	credentialsId	4	4	beifei1_fire-cloud.Jenkinsfile:42,eldada_jenkins-pipeline-kubernetes.Jenkinsfile:149,fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile:14
+git	changelog	1	1	j8kin_habr-jenkinsfile.Jenkinsfile:100
+stash	includes	12	7	Jotschi_maven-release-workflow-test.Jenkinsfile:13,Terradue_DotNetOpenSearchClient.Jenkinsfile:59,Terradue_DotNetOpenSearchClient.Jenkinsfile:60
+stash	name	12	7	Jotschi_maven-release-workflow-test.Jenkinsfile:13,Terradue_DotNetOpenSearchClient.Jenkinsfile:59,Terradue_DotNetOpenSearchClient.Jenkinsfile:60
+stash	allowEmpty	1	1	saidsef_jenkins-pipeline-examples.Jenkinsfile:23
+unstash	name	3	1	Terradue_DotNetOpenSearchClient.Jenkinsfile:113,Terradue_DotNetOpenSearchClient.Jenkinsfile:133,Terradue_DotNetOpenSearchClient.Jenkinsfile:134
+timeout	time	55	26	HariSekhon_DevOps-Bash-tools.Jenkinsfile:40,HariSekhon_DevOps-Bash-tools.Jenkinsfile:59,HariSekhon_DevOps-Bash-tools.Jenkinsfile:70
+timeout	unit	55	26	HariSekhon_DevOps-Bash-tools.Jenkinsfile:40,HariSekhon_DevOps-Bash-tools.Jenkinsfile:59,HariSekhon_DevOps-Bash-tools.Jenkinsfile:70
+retry	conditions	5	3	jenkinsci_docker-agents.Jenkinsfile:87,jenkinsci_docker.Jenkinsfile:223,jenkinsci_jenkins.Jenkinsfile:22
+retry	count	5	3	jenkinsci_docker-agents.Jenkinsfile:87,jenkinsci_docker.Jenkinsfile:223,jenkinsci_jenkins.Jenkinsfile:22

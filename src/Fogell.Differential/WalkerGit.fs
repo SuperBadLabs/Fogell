@@ -2,6 +2,8 @@ namespace Fogell.Differential
 
 open System
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open Fogell.Domain
 
 /// FG-111/FG-052. The `git` step: a real clone/fetch into the workspace, and
@@ -31,6 +33,78 @@ open Fogell.Domain
 /// failing command NAMED. The `git --version` echo prints THIS engine's git —
 /// folded two-sidedly to ${GITVERSION} by the harness, never suppressed.
 module WalkerGit =
+
+    /// Produce a receipt-safe representation of a Git remote. Absolute URIs are
+    /// canonicalised (which percent-encodes spaces) only when every component is
+    /// safe to disclose. Userinfo, query, fragment, URI path parameters and
+    /// malformed/non-URI spellings are represented only by a one-way digest.
+    /// Engine notes must never become a credential exfiltration path.
+    let attestationUrl (url: string) =
+        let opaque () =
+            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
+            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
+
+        let hasStrictUtf8PercentEncoding (value: string) =
+            try
+                let bytes = ResizeArray<byte>()
+                let mutable index = 0
+
+                while index < value.Length do
+                    if value[index] = '%' then
+                        if index + 2 >= value.Length then
+                            invalidArg (nameof value) "truncated percent escape"
+
+                        bytes.Add(Convert.ToByte(value.Substring(index + 1, 2), 16))
+                        index <- index + 3
+                    else
+                        let next = value.IndexOf('%', index)
+                        let finish = if next < 0 then value.Length else next
+                        Encoding.UTF8.GetBytes(value.Substring(index, finish - index))
+                        |> bytes.AddRange
+                        index <- finish
+
+                let strictUtf8 = UTF8Encoding(false, true)
+                strictUtf8.GetString(bytes.ToArray()) |> ignore
+                true
+            with _ ->
+                false
+
+        let mutable parsed = Unchecked.defaultof<Uri>
+
+        if Uri.TryCreate(url, UriKind.Absolute, &parsed) then
+            let safePath =
+                if
+                    Text.RegularExpressions.Regex.IsMatch(url, "%(?![0-9A-Fa-f]{2})")
+                    || not (hasStrictUtf8PercentEncoding parsed.AbsolutePath)
+                then
+                    false
+                else
+                    try
+                        let decoded = Uri.UnescapeDataString parsed.AbsolutePath
+                        decoded.IndexOfAny [| ';'; '?'; '#' |] < 0
+                    with _ ->
+                        false
+
+            if
+                String.IsNullOrEmpty parsed.UserInfo
+                && String.IsNullOrEmpty parsed.Query
+                && String.IsNullOrEmpty parsed.Fragment
+                && safePath
+            then
+                parsed.AbsoluteUri
+            else
+                opaque ()
+        else
+            opaque ()
+
+    /// Identity of the exact commit used to load an SCM-defined Jenkinsfile.
+    /// Captured in the same private fetch as the bytes, so early evaluation
+    /// failure cannot erase which remote object Fogell actually inspected.
+    type RemoteJenkinsfile =
+        { Script: string
+          Revision: string
+          Tree: string
+          JenkinsfileBlob: string }
 
     /// One bounded git subprocess: async reads on BOTH pipes (fetch writes its
     /// progress to stderr — synchronous ReadToEnd deadlocked once the pipe
@@ -420,14 +494,22 @@ module WalkerGit =
                 ctx.Failed.Value <- true
                 ctx.Sink BuildStatus.Failure
 
-        if failure.IsNone && not cancelled then checkedOutSha else None
+        let completed =
+            if failure.IsNone && not cancelled then checkedOutSha else None
+
+        match completed, Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" with
+        | Some revision, "fg177-probes-v1" ->
+            runCtx.NoteEngine $"git-checkout branch={branch} revision={revision} url={attestationUrl url}"
+        | _ -> ()
+
+        completed
 
     /// FG-052. Read the Jenkinsfile an SCM branch currently serves — the bytes
     /// Jenkins executes. Used by the harness's fail-closed drift check, which
     /// must hold for EVERY SCM case (including skipDefaultCheckout, where no
     /// workspace checkout exists to compare against). Shallow fetch into a
     /// throwaway dir; any failure is an Error the caller refuses on.
-    let readRemoteJenkinsfile (url: string) (branch: string) : Result<string, string> =
+    let readRemoteJenkinsfile (url: string) (branch: string) : Result<RemoteJenkinsfile, string> =
         let tmp = Path.Combine(Path.GetTempPath(), "fogell-scm-verify-" + Guid.NewGuid().ToString "N")
 
         try
@@ -442,7 +524,19 @@ module WalkerGit =
 
                 run "git init" [ "init"; tmp ]
                 |> Result.bind (fun _ -> run "git fetch" [ "fetch"; "--depth"; "1"; "--"; url; branch ])
-                |> Result.bind (fun _ -> run "git show" [ "show"; "FETCH_HEAD:Jenkinsfile" ])
+                |> Result.bind (fun _ ->
+                    run "git rev-parse commit" [ "rev-parse"; "FETCH_HEAD^{commit}" ]
+                    |> Result.bind (fun revision ->
+                        run "git rev-parse tree" [ "rev-parse"; "FETCH_HEAD^{tree}" ]
+                        |> Result.bind (fun tree ->
+                            run "git rev-parse Jenkinsfile" [ "rev-parse"; "FETCH_HEAD:Jenkinsfile" ]
+                            |> Result.bind (fun blob ->
+                                run "git show Jenkinsfile" [ "show"; "FETCH_HEAD:Jenkinsfile" ]
+                                |> Result.map (fun script ->
+                                    { Script = script
+                                      Revision = revision
+                                      Tree = tree
+                                      JenkinsfileBlob = blob })))))
             with ex ->
                 Result.Error ex.Message
         finally

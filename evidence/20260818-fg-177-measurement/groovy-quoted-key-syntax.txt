@@ -1,0 +1,6 @@
+Groovy Version: 2.4.21 JVM: 25.0.3 Vendor: Eclipse Adoptium OS: Linux
+java.lang.String:script=make|java.lang.String:returnStatus=true
+java.lang.String:name=x
+java.lang.String:message=hello|java.lang.String:other-key=1
+java.lang.String:simple=2
+org.codehaus.groovy.runtime.GStringImpl:dynamic=3

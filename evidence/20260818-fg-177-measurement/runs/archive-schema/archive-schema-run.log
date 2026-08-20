@@ -1,0 +1,11 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg177-probe-archive-schema.Jenkinsfile         re-running (diverged, attempt 2 of 3)
+  fg177-probe-archive-schema.Jenkinsfile         re-running (diverged, attempt 3 of 3)
+  fg177-probe-archive-schema.Jenkinsfile         DIVERGED(2)      fg177-probe-archive-schema.receipt.txt
+        terminal result: jenkins=success fogell=failure
+        output line 1: jenkins=Archiving artifacts fogell=<absent>
+
+tier-1 proven (incl. workspace): 0 / 1
+proven-partial (result+output):  0 / 1

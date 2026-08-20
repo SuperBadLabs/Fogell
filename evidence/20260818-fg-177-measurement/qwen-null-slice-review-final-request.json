@@ -1,0 +1,16 @@
+{
+  "model": "qwen3.8",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Answer in under 180 words. Give VERDICT, COUNTEREXAMPLE, and SMALLEST SAFE DEPENDENCY only."
+    },
+    {
+      "role": "user",
+      "content": "StepValueUse statically sees only stepName plus two literal-true shell flags. Runtime call validation is later, and schema-less fallback does not check named keys. Jenkins 2.568.1 throws for echo(message:'x', unknown:true), unstable(message:'x', unknown:true), and unstash(name:'x', unknown:true). Fogell currently promotes the primary key, ignores unknown, runs, and returns VNull. Would declaring those step names GenuineNull and lifting StepValueUse remain sound without first adding/duplicating named-call schema? Review the decision to stop and require one shared descriptor/validator first."
+    }
+  ],
+  "temperature": 0,
+  "max_tokens": 2400,
+  "chat_template_kwargs": {"reasoning_effort": "low"}
+}

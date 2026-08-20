@@ -1,0 +1,8 @@
+{
+  "model": "qwen3.8",
+  "temperature": 0.1,
+  "max_tokens": 1200,
+  "chat_template_kwargs": {"enable_thinking": false},
+  "reviewed": "exact git diff --cached before this review artifact was added",
+  "requirements": "verified immutable oracle snapshot, canonical bound receipts, post-hash TOCTOU checks, transactional v3 live recapture"
+}

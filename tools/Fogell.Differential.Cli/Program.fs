@@ -421,9 +421,25 @@ let main argv =
                             | "" -> "git://100.105.179.51/repo.git"
                             | u -> u
 
-                        Some
-                            { Url = url
-                              Branch = $"case/{Path.GetFileNameWithoutExtension name}" }
+                        let defaultBranch = $"case/{Path.GetFileNameWithoutExtension name}"
+                        let pinnedBranch = Environment.GetEnvironmentVariable "FOGELL_SCM_PINNED_BRANCH"
+                        let pinnedRevision = Environment.GetEnvironmentVariable "FOGELL_SCM_PINNED_REVISION"
+
+                        let branch =
+                            match pinnedBranch, pinnedRevision with
+                            | null, null
+                            | "", "" -> defaultBranch
+                            | branch, revision
+                                when not (String.IsNullOrEmpty branch)
+                                     && not (String.IsNullOrEmpty revision)
+                                     && Text.RegularExpressions.Regex.IsMatch(revision, "^[0-9a-f]{40}$")
+                                     && branch = $"fogell-pins/{revision}" ->
+                                branch
+                            | _ ->
+                                failwith
+                                    "FOGELL_SCM_PINNED_BRANCH and FOGELL_SCM_PINNED_REVISION must name one matching content-addressed pin"
+
+                        Some { Url = url; Branch = branch }
                     else
                         None
 

@@ -3,6 +3,7 @@ namespace Fogell.Differential
 open System
 open System.Net.Http
 open System.Text
+open System.Text.Json
 open System.Text.RegularExpressions
 
 /// The Jenkins side of the differential. Drives a PINNED Jenkins over its REST
@@ -49,6 +50,74 @@ module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
 
+    /// Parse controller-owned git-plugin BuildData. Build output is script-
+    /// writable and therefore cannot attest a checkout; this API action is the
+    /// authoritative harness boundary.
+    let parseBuildDataRevisions (body: string) : Result<string list, string> =
+        try
+            use document = JsonDocument.Parse body
+            let mutable actions = Unchecked.defaultof<JsonElement>
+
+            if
+                not (document.RootElement.TryGetProperty("actions", &actions))
+                || actions.ValueKind <> JsonValueKind.Array
+            then
+                Error "Jenkins build API has no actions array"
+            else
+                actions.EnumerateArray()
+                |> Seq.choose (fun action ->
+                    let mutable revision = Unchecked.defaultof<JsonElement>
+                    let mutable sha = Unchecked.defaultof<JsonElement>
+
+                    if
+                        action.ValueKind = JsonValueKind.Object
+                        && action.TryGetProperty("lastBuiltRevision", &revision)
+                        && revision.ValueKind = JsonValueKind.Object
+                        && revision.TryGetProperty("SHA1", &sha)
+                        && sha.ValueKind = JsonValueKind.String
+                    then
+                        match sha.GetString() with
+                        | value when not (isNull value) && Regex.IsMatch(value, "^[0-9a-f]{40}$") -> Some value
+                        | _ -> None
+                    else
+                        None)
+                |> Seq.distinct
+                |> Seq.sort
+                |> List.ofSeq
+                |> Ok
+        with ex ->
+            Error $"invalid Jenkins BuildData JSON ({ex.Message})"
+
+    /// The SCM-defined Jenkinsfile is loaded before user Pipeline code starts.
+    /// In the evidence lane we force CpsScmFlowDefinition's full-checkout path,
+    /// then read only the controller-written console prefix before the first
+    /// `[Pipeline] Start of Pipeline`. A later `checkout scm` (or script output)
+    /// therefore cannot overwrite or spoof this definition identity.
+    let parseScmDefinitionRevision (console: string) : Result<string, string> =
+        let lines = console.Replace("\r\n", "\n").Split '\n'
+
+        match
+            lines
+            |> Array.tryFindIndex (fun line ->
+                line.Trim().Contains("[Pipeline] Start of Pipeline", StringComparison.Ordinal))
+        with
+        | None -> Error "Jenkins console has no Pipeline start boundary for SCM definition attestation"
+        | Some boundary ->
+            let revisions =
+                lines |> Array.take boundary
+                |> Array.choose (fun line ->
+                    let matched = Regex.Match(line.Trim(), @"^Checking out Revision ([0-9a-f]{40}) \(")
+                    if matched.Success then Some matched.Groups[1].Value else None)
+                |> Array.distinct
+                |> Array.toList
+
+            match revisions with
+            | [ revision ] -> Ok revision
+            | [] -> Error "Jenkins console has no pre-Pipeline SCM definition checkout revision"
+            | _ ->
+                let joined = String.concat "," revisions
+                Error $"Jenkins console has multiple pre-Pipeline SCM definition revisions: {joined}"
+
     let private crumb (cfg: JenkinsConfig) =
         task {
             let! body = client.GetStringAsync $"{cfg.BaseUrl}/crumbIssuer/api/json"
@@ -77,7 +146,8 @@ module Jenkins =
 
     /// CpsScmFlowDefinition: the job POINTS AT the SCM; Jenkins obtains the
     /// Jenkinsfile from it (lightweight) and Declarative auto-checks-out.
-    let private scmJobXml (spec: ScmSpec) =
+    let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
+        let lightweight = if attestDefinition then "false" else "true"
         "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
         + "<properties>"
         + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
@@ -94,7 +164,7 @@ module Jenkins =
         + "</hudson.plugins.git.BranchSpec></branches>"
         + "<doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>"
         + "<submoduleCfg class=\"empty-list\"/><extensions/></scm>"
-        + "<scriptPath>Jenkinsfile</scriptPath><lightweight>true</lightweight>"
+        + $"<scriptPath>Jenkinsfile</scriptPath><lightweight>{lightweight}</lightweight>"
         + "</definition><triggers/><disabled>false</disabled></flow-definition>"
 
     /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
@@ -127,7 +197,10 @@ module Jenkins =
                     let body =
                         match definition with
                         | Inline script -> jobXml script
-                        | FromScm spec -> scmJobXml spec
+                        | FromScm spec ->
+                            scmJobXml
+                                (Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1")
+                                spec
 
                     new StringContent(body, Encoding.UTF8, "application/xml")
 
@@ -180,6 +253,30 @@ module Jenkins =
                     let console =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
 
+                    let scmEngineNotes =
+                        if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
+                            let definitionNotes =
+                                match definition with
+                                | Inline _ -> []
+                                | FromScm _ ->
+                                    match parseScmDefinitionRevision console with
+                                    | Ok revision -> [ $"scm-definition revision={revision}" ]
+                                    | Error e -> failwith $"SCM definition attestation unavailable ({e})"
+
+                            let tree = Uri.EscapeDataString "actions[lastBuiltRevision[SHA1]]"
+                            let buildData =
+                                client.GetStringAsync(
+                                    $"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json?tree={tree}"
+                                ).Result
+
+                            match parseBuildDataRevisions buildData with
+                            | Ok revisions ->
+                                definitionNotes
+                                @ (revisions |> List.map (fun revision -> $"git-build-data revision={revision}"))
+                            | Error e -> failwith $"SCM attestation unavailable ({e})"
+                        else
+                            []
+
                     let workspaceHash, files =
                         match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
                         | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
@@ -203,7 +300,7 @@ module Jenkins =
 
                     let trace =
                         { Result = terminal
-                          EngineNotes = []
+                          EngineNotes = scmEngineNotes
                           // the workspace root is READ from the run's own banner —
                           // `Running on <node> in <path>` — so a non-default
                           // JENKINS_HOME or a remote agent canonicalises correctly;

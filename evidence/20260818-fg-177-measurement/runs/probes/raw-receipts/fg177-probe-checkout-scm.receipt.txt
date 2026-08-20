@@ -1,0 +1,165 @@
+# Differential receipt — fg177-probe-checkout-scm.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         1bdbe1b459bb03c453bcad289e77b8acb263cbe5d3b5718f9a9ff8c9e998455b
+case-digest:  31bd34928f05f06f3524bf33fc5e3b61b5ad2cacd34eb9925da19415fee128c4
+sealed-output: sequence
+
+VERDICT: DIVERGED (3)
+  - terminal result: jenkins=success fogell=failure
+  - output line 0: jenkins=Checking out git git://100.105.179.51/repo.git into ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 to read Jenkinsfile fogell=Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+  - workspace hash: jenkins=37dac3b30c58 fogell=e3b0c44298fc
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
+  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
+    timestamps() coverage. Two engines read two clocks, so the instants can never
+    agree; an engine that IGNORED the option, or honoured it for only some lines,
+    would otherwise compare equal to one that honoured it fully. Line COUNTS are
+    printed but never compared — the engines do not emit the same number of lines.
+    LIMIT: the numerator counts stamped RAW lines while the denominator is the
+    compared-output length, so a stamped-but-suppressed line can offset an
+    unstamped compared one. Catches a total miss and an ordinary partial
+    implementation (both planted); not a per-line proof. FG-118 makes it exact.
+    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
+    the option, and read as true only because none did.
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
+  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
+    context-gated, emitted identically by both engines, or an exact measured
+    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
+    text is COMPARED, and tests carry look-alike rows proving it.
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
+
+## Jenkins
+  result:         success
+  workspace-hash: 37dac3b30c5873be4bbc0d882eac60d19e9a70b3f2412a9d64b82dcfac8f59f1
+  output (62 lines):
+    | Checking out git git://100.105.179.51/repo.git into ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 to read Jenkinsfile
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | > git rev-parse --resolve-git-dir ${WORKSPACE}@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9/.git # timeout=10
+    | Fetching changes from the remote Git repository
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
+    | Commit message: "sync: fg177-probe-checkout-scm"
+    | First time build. Skipping changelog.
+    | FG177 MISSING checkout THREW java.lang.NullPointerException: Cannot invoke "hudson.scm.SCM.checkout(hudson.model.Run, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener, java.io.File, hudson.scm.SCMRevisionState)" because "scm" is null
+    | WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep': fogellProbeUnknown
+    | FG177 UNKNOWN-ONLY checkout THREW java.lang.NullPointerException: Cannot invoke "hudson.scm.SCM.checkout(hudson.model.Run, hudson.Launcher, hudson.FilePath, hudson.model.TaskListener, java.io.File, hudson.scm.SCMRevisionState)" because "scm" is null
+    | WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep': fogellProbeUnknown
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | Cloning the remote Git repository
+    | Cloning repository git://100.105.179.51/repo.git
+    | > git init ${WORKSPACE} # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | Avoid second fetch
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
+    | Commit message: "sync: fg177-probe-checkout-scm"
+    | + printf after
+    | FG177 UNKNOWN checkout CONTINUED
+    | Selected Git installation does not exist. Using Default
+    | The recommended git tool is: NONE
+    | No credentials specified
+    | > git rev-parse --resolve-git-dir ${WORKSPACE}/.git # timeout=10
+    | Fetching changes from the remote Git repository
+    | > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+    | Fetching upstream changes from git://100.105.179.51/repo.git
+    | > git --version # timeout=10
+    | > git --version # 'git version 2.47.3'
+    | > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+    | > git rev-parse refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40^{commit} # timeout=10
+    | Checking out Revision a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 (refs/remotes/origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40)
+    | > git config core.sparsecheckout # timeout=10
+    | > git checkout -f a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 # timeout=10
+    | Commit message: "sync: fg177-probe-checkout-scm"
+    | FG177 RETURN checkout CLASS=java.util.TreeMap VALUE=[GIT_BRANCH:origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40, GIT_COMMIT:a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40, GIT_URL:git://100.105.179.51/repo.git]
+    | FG177 RETURN checkout KEYS=GIT_BRANCH,GIT_COMMIT,GIT_URL
+    | FG177 RETURN checkout ENTRY GIT_BRANCH CLASS=java.lang.String VALUE=origin/fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    | FG177 RETURN checkout ENTRY GIT_COMMIT CLASS=java.lang.String VALUE=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    | FG177 RETURN checkout ENTRY GIT_URL CLASS=java.lang.String VALUE=git://100.105.179.51/repo.git
+    | + printf done
+  workspace:
+    23eb5de94601  Jenkinsfile
+    959ee89d1972  README.md
+    a4c3ed04a95a  fg177-return-checkout-complete.txt
+    f39592393ef0  fg177-unknown-checkout-after.txt
+    b6a98d9ce9a2  src/a.txt
+    f2c82decdd71  src/b.txt
+  engine notes (not compared):
+    ! scm-definition revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+    ! git-build-data revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40
+
+## Fogell
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (1 lines):
+    | Obtained Jenkinsfile from git git://100.105.179.51/repo.git
+  engine notes (not compared):
+    ! scm-preflight branch=fogell-pins/a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 revision=a0cc1278ee2e10f47150bbd7eef2d0f22fae5f40 tree=65de82b3efbbb46642e173418abb3b0adf50f90f jenkinsfile-blob=c02e3343f32b4223bfb68c3b70075d5400be07fb

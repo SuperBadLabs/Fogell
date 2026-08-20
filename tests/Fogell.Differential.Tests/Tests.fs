@@ -1396,6 +1396,118 @@ let unsupportedDeclarativeTools =
                       "the control reached its shell effect")
           } ]
 
+let jenkinsBuildDataAttestation =
+    testList
+        "FG-177 Jenkins BuildData attestation"
+        [ test "controller actions yield canonical distinct revisions only" {
+              let a = String.replicate 40 "a"
+              let b = String.replicate 40 "b"
+              let body =
+                  $"""{{"actions":[{{}},{{"lastBuiltRevision":{{"SHA1":"{b}"}}}},{{"lastBuiltRevision":{{"SHA1":"{a}"}}}},{{"lastBuiltRevision":{{"SHA1":"{b}"}}}},{{"lastBuiltRevision":{{"SHA1":"NOT-A-SHA"}}}}],"scriptText":"lastBuiltRevision SHA1 {String.replicate 40 "c"}"}}"""
+
+              match Jenkins.parseBuildDataRevisions body with
+              | Error why -> failtest why
+              | Ok revisions -> Expect.equal revisions [ a; b ] "only structural controller actions attest"
+          }
+
+          test "missing or malformed API structure fails closed" {
+              match Jenkins.parseBuildDataRevisions "not-json" with
+              | Ok value -> failtestf "malformed JSON unexpectedly parsed: %A" value
+              | Error why -> Expect.stringContains why "invalid Jenkins BuildData JSON" "parse error named"
+
+              match Jenkins.parseBuildDataRevisions "{\"queueItem\":{}}" with
+              | Ok value -> failtestf "missing actions unexpectedly parsed: %A" value
+              | Error why -> Expect.stringContains why "no actions array" "missing structure named"
+          }
+
+          test "SCM evidence jobs use a full definition checkout" {
+              let spec = { Url = "file:///fixture.git"; Branch = "fogell-pins/" + String.replicate 40 "a" }
+              Expect.stringContains
+                  (Jenkins.scmJobXml true spec)
+                  "<lightweight>false</lightweight>"
+                  "the attestation lane records the definition checkout before Pipeline code"
+              Expect.stringContains
+                  (Jenkins.scmJobXml false spec)
+                  "<lightweight>true</lightweight>"
+                  "ordinary differential runs retain lightweight retrieval"
+          }
+
+          test "definition revision comes only from the pre-Pipeline checkout" {
+              let definitionRevision = String.replicate 40 "a"
+              let laterCheckout = String.replicate 40 "b"
+              let console =
+                  $"""Started by user harness
+Checking out Revision {definitionRevision} (refs/remotes/origin/pin)
+[Pipeline] Start of Pipeline
+Checking out Revision {laterCheckout} (refs/remotes/origin/pin)
+script says Checking out Revision {laterCheckout} (spoof)
+"""
+
+              match Jenkins.parseScmDefinitionRevision console with
+              | Error why -> failtest why
+              | Ok revision ->
+                  Expect.equal revision definitionRevision "later checkout and script text cannot replace the definition identity"
+          }
+
+          test "missing or conflicting pre-Pipeline definition revisions fail closed" {
+              let a = String.replicate 40 "a"
+              let b = String.replicate 40 "b"
+              match Jenkins.parseScmDefinitionRevision "[Pipeline] Start of Pipeline\n" with
+              | Ok revision -> failtestf "missing definition revision unexpectedly parsed: %s" revision
+              | Error why -> Expect.stringContains why "no pre-Pipeline" "missing checkout named"
+
+              match
+                  Jenkins.parseScmDefinitionRevision(
+                      $"Checking out Revision {a} (a)\nChecking out Revision {b} (b)\n[Pipeline] Start of Pipeline\n"
+                  )
+              with
+              | Ok revision -> failtestf "conflicting definitions unexpectedly parsed: %s" revision
+              | Error why -> Expect.stringContains why "multiple pre-Pipeline" "ambiguous checkout named"
+          }
+
+          test "SCM attestation URLs encode safe spaces and make unsafe components opaque" {
+              let spaced = WalkerGit.attestationUrl "file:///tmp/fixture repo.git"
+              Expect.equal spaced "file:///tmp/fixture%20repo.git" "spaces use a single URI encoding"
+
+              let secret = "round26-" + "planted-secret"
+              let assertOpaque label url =
+                  let attested = WalkerGit.attestationUrl url
+                  Expect.stringStarts attested "sha256:" $"{label} is represented opaquely"
+                  Expect.equal attested.Length 71 $"{label} has exactly one SHA-256 identity"
+                  Expect.isFalse (attested.Contains secret) $"{label} secret is absent"
+
+              assertOpaque "userinfo" $"https://user:{secret}@example.test/repo.git"
+              assertOpaque "raw query" $"https://example.test/repo.git?access_token={secret}"
+
+              let encodedSecret =
+                  secret
+                  |> System.Text.Encoding.UTF8.GetBytes
+                  |> Array.map (sprintf "%%%02X")
+                  |> String.concat ""
+
+              assertOpaque
+                  "encoded query"
+                  $"https://example.test/repo.git?%%61ccess_token={encodedSecret}"
+              assertOpaque "raw fragment" $"https://example.test/repo.git#access_token={secret}"
+              assertOpaque
+                  "encoded fragment"
+                  $"https://example.test/repo.git#%%61ccess_token={encodedSecret}"
+              assertOpaque "semicolon parameter" $"https://example.test/repo.git;access_token={secret}"
+              assertOpaque
+                  "encoded semicolon parameter"
+                  $"https://example.test/repo.git%%3Baccess_token={encodedSecret}"
+              assertOpaque
+                  "encoded query delimiter"
+                  $"https://example.test/repo.git%%3Faccess_token={encodedSecret}"
+              assertOpaque "malformed URI" $"https://[broken/{secret}"
+              assertOpaque "malformed percent path" $"https://example.test/repo.git%%ZZ{secret}"
+              assertOpaque "invalid UTF-8 path" $"https://example.test/repo.git/%%C3%%28{secret}"
+
+              let opaque = WalkerGit.attestationUrl "git@example.test:repo.git"
+              Expect.stringStarts opaque "sha256:" "non-URI remotes are represented opaquely"
+              Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -1405,6 +1517,7 @@ let main argv =
         (testList
             "Fogell.Differential"
             [ hostedSignatures
+              jenkinsBuildDataAttestation
               unsupportedDeclarativeTools
               userOutputSurvives
               stringModel

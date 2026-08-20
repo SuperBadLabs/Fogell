@@ -477,12 +477,17 @@ module FogellSide =
                 // the subprocess reader trims trailing whitespace, so compare TRIMMED
                 // on both sides (a trailing newline is not a different script) with
                 // line endings normalised
-                | Ok remote when remote.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() ->
-                    failwith (
-                        "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                        + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                    )
-                | Ok _ -> ()
+                | Ok remote ->
+                    if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
+                        runCtx.NoteEngine(
+                            $"scm-preflight branch={spec.Branch} revision={remote.Revision} tree={remote.Tree} jenkinsfile-blob={remote.JenkinsfileBlob}"
+                        )
+
+                    if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
+                        failwith (
+                            "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                        )
             | None -> ()
 
 
