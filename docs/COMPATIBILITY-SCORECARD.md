@@ -15,8 +15,8 @@ counterexample four paragraphs down.
 |---|---|---|
 | 1 | proven compatible — a differential receipt names this file | 1 of 228 |
 | 2 | ADR tier 2 (parses **and executes**) | **NOT ASSESSED** — corpus is never executed |
-| — | admitted (parses only; **not an ADR tier**) | 189 of 228 |
-| 3 | rejected — named error code and source position | 38 of 228 |
+| — | admitted (parses only; **not an ADR tier**) | 192 of 228 |
+| 3 | rejected — named error code and source position | 35 of 228 |
 
 **The admitted row is not ADR tier 2.** The ADR requires parsing AND executing; this scorer only parses, because corpus files are untrusted third-party CI code and are never run here. Labelling them tier 2 would assert an execution result nobody measured, so ADR tier 2 is published as NOT ASSESSED.
 
@@ -32,7 +32,7 @@ What verification does NOT cover: whether each case on disk still matches the di
 
 | Code | Files |
 |---|---|
-| `malformed_syntax` | 38 |
+| `malformed_syntax` | 35 |
 
 ## Differential case suite (hand-written cases — a DIFFERENT population)
 

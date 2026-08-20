@@ -32,11 +32,26 @@ or inject tool-specific `PATH`, `JAVA_HOME` or Maven home variables. That runtim
 is a separate follow-on dependency; silently inheriting similarly named host binaries
 would be a false success, not partial tool support.
 
-The ten historical rows still open after this slice are HariSekhon, jjasghar,
-maajor, maxyermayank, metersphere, mjah, MrRameshRajendran, rosineygp, SumitKr88
-and yashpimple. Each needs its own
-minimal repro and measured row transition; their reported positions below are
-not diagnoses. FG-015 is not part of this implementation and is closure-audited
+The second slice covers a separate construct accepted by direct Jenkins 2.568.1
+model-converter probes: a structural Declarative section carrying one quoted
+display label. `steps('Collect All Mesh')`, `post('Notification')` and
+`stages("mkdkr_exporter")` share that exact grammar. The label is not retained in
+the Declarative model, while each section body is. The three matching rows —
+`maajor_Blender-Geometry-CI.Jenkinsfile`,
+`metersphere_jenkins-plugin.Jenkinsfile` and `rosineygp_mkdkr.Jenkinsfile` — move
+from tier 3 to admitted. Admission therefore moves 189 -> 192 and tier 3 moves
+38 -> 35, with no other corpus verdict change. Broader structural-section
+argument shapes remain refused rather than being skipped as unchecked Groovy.
+
+Seven historical rows remain after oracle-preserving minimisation and parser
+instrumentation: HariSekhon reaches a closure-valued named argument (and later a
+chained-call named value); jjasghar a trailing comma in `parallel`; maxyermayank
+a map-valued named step argument; mjah an inline named Kubernetes stage agent;
+MrRameshRajendran a GString property name; SumitKr88 a list-valued `choice`
+argument; and yashpimple is rejected by Jenkins itself for an unterminated
+quoted URL. These are isolated-probe diagnoses, not guesses from ledger error
+positions, and are not grouped merely because several surface inside step
+bodies. FG-015 is not part of this implementation and is closure-audited
 separately.
 
 Measured 2026-07-30 via real `forge validate` dispatch over the pinned

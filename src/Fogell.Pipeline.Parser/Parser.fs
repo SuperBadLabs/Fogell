@@ -600,8 +600,20 @@ let private postConditionName: P<PostCondition> =
           attempt (keyword "regression" >>% Regression)
           attempt (keyword "notBuilt" >>% NotBuilt) ]
 
+/// Some corpus-authored Declarative structural sections carry a display label:
+/// `steps('Build')`, `stages("Matrix")`, `post('Notification')`. Jenkins 2.568.1's
+/// model converter directly accepts each form and ignores the argument when building
+/// the section model. Keep this lane deliberately narrower than Jenkins' full Groovy
+/// call surface: only the corpus-proven single string is discarded. Numeric, named,
+/// empty and multi-argument forms remain refusals rather than being consumed as
+/// unchecked raw text.
+let private structuralSection name : P<unit> =
+    keyword name
+    >>. opt (attempt (between (symbol "(") (symbol ")") stringLiteral))
+    >>% ()
+
 let private postSection: P<(PostCondition * Step list) list> =
-    keyword "post"
+    structuralSection "post"
     >>. between (symbol "{") (symbol "}") (
         ws >>. many (attempt (postConditionName .>>. stepBlock)))
 
@@ -878,6 +890,22 @@ type private StageSection =
     | SecOptions of Step list
     | SecOther of string
 
+/// Jenkins permits exactly one body form on a Declarative stage. Keep this check on
+/// the complete node list so neither a second body of the same kind nor a different
+/// body kind can disappear behind the first-match projections used below.
+let private rejectingMultipleStageBodies sections : P<StageSection list> =
+    let isBody = function
+        | SecSteps _
+        | SecNested _
+        | SecOther "matrix" -> true
+        | _ -> false
+
+    if sections |> List.filter isBody |> List.length > 1 then
+        fail
+            "only one of `matrix`, `parallel`, `stages`, or `steps` is allowed for a stage: Jenkins rejects competing stage bodies before running anything"
+    else
+        preturn sections
+
 stageRef.Value <-
     ws
     >>. keyword "stage"
@@ -891,11 +919,11 @@ stageRef.Value <-
                 choice
                     [ attempt (agentSpec |>> SecAgent)
                       attempt (environmentSection |>> SecEnv)
-                      attempt (keyword "steps" >>. stepBlock |>> SecSteps)
+                      attempt (structuralSection "steps" >>. stepBlock |>> SecSteps)
                       attempt (whenSection |>> SecWhen)
                       attempt (whenSectionOpaque |>> SecWhen)
                       attempt (postSection |>> SecPost)
-                      attempt (keyword "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
+                      attempt (structuralSection "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
                       attempt (keyword "options" >>. stepBlock |>> SecOptions)
@@ -938,7 +966,13 @@ stageRef.Value <-
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
                                |>> fun _ -> SecOther n)) ]))
-        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false))
+        // DIRECTLY PROBED on Jenkins 2.568.1 with every pair of stage body kinds,
+        // all four kinds together, labelled empty-first forms and recursively nested
+        // stages. Jenkins rejects the collected model before a build starts. Guard
+        // the nodes before `pick` can discard a body, especially an input gate.
+        >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false)
+        >>= rejectingDuplicateSections "post" (function SecPost _ -> true | _ -> false)
+        >>= rejectingMultipleStageBodies)
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name
@@ -993,7 +1027,7 @@ let private topSection: P<TopSection> =
           attempt (keyword "options" >>. stepBlock |>> TopOptions)
           attempt (keyword "parameters" >>. stepBlock |>> TopParameters)
           attempt (keyword "triggers" >>. stepBlock |>> TopTriggers)
-          attempt (keyword "stages" >>. stagesBody |>> TopStages)
+          attempt (structuralSection "stages" >>. stagesBody |>> TopStages)
           attempt (postSection |>> TopPost)
           attempt (keyword "libraries" >>. balancedRaw '{' '}' |>> fun _ -> TopOther "libraries")
           // THE TOP-LEVEL FALLBACK MUST NOT CLAIM SECTIONS FOGELL ACTS ON. Same shape
@@ -1055,7 +1089,9 @@ let private pipelineParser: P<Pipeline> =
                   (symbol "{")
                   (symbol "}")
                   (ws >>. many (attempt topSection)
-                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false))
+                   >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
+                   >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
+                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false))
           .>> ws)
     |>> fun (capturedPreamble, sections) ->
             let pick f = sections |> List.tryPick f
@@ -1361,6 +1397,5 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
-
 
 
