@@ -1,14 +1,11 @@
 # Differential receipt — fg015-spread-dot.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         70dcb51499f861c8753477fe7fac11e2d9f6b3847cdc651b4208705b799a5d0f
+seal:         19bff8d21a0b8a28f5a5d73a88fa4e80bc8198dc2ae31b732d4532a5fd9b4051
 case-digest:  599e00661a84b6beaebfacdd066d58d8d1635d33f89d96a747ae49b80cadeaf5
 sealed-output: sequence
 
-VERDICT: DIVERGED (3)
-  - terminal result: jenkins=success fogell=failure
-  - output line 0: jenkins=+ printf %s [a, b] fogell=<absent>
-  - workspace hash: jenkins=82aa79bbf401 fogell=e3b0c44298fc
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Comparison contract
   compared: terminal result
@@ -88,6 +85,9 @@ VERDICT: DIVERGED (3)
     5af6c271183b  spread-dot.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  result:         success
+  workspace-hash: 82aa79bbf4019d108d22979ce93d63fedb3bbdd20a10bcd1cc96c5f5a4f0efd4
+  output (1 lines):
+    | + printf %s [a, b]
+  workspace:
+    5af6c271183b  spread-dot.txt

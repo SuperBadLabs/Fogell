@@ -61,8 +61,21 @@ let grammar =
               Expect.isTrue (parses "if (a instanceof String) { echo 'x' }\n") "instanceof"
               Expect.isTrue (parses "def (a, b) = [1, 2]\n") "multi-assign"
           }
-          test "spread-dot and safe navigation" {
-              Expect.isTrue (parses "def a = b*.c\ndef d = e?.f\n") "*. and ?."
+          test "spread-dot, ordinary property and safe navigation keep distinct AST shapes" {
+              let source =
+                  "def spread = rows*.child\n"
+                  + "def nested = rows*.child*.name\n"
+                  + "def safeAfterSpread = rows*.child?.name\n"
+                  + "def ordinary = rows.child\n"
+                  + "def safe = rows?.child\n"
+
+              match parseOk source with
+              | [ SDef("spread", Some(ESpreadProp(EVar "rows", "child")))
+                  SDef("nested", Some(ESpreadProp(ESpreadProp(EVar "rows", "child"), "name")))
+                  SDef("safeAfterSpread", Some(ESafeProp(ESpreadProp(EVar "rows", "child"), "name")))
+                  SDef("ordinary", Some(EProp(EVar "rows", "child")))
+                  SDef("safe", Some(ESafeProp(EVar "rows", "child"))) ] -> ()
+              | other -> failtestf "property operators collapsed in the AST: %A" other
           }
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
@@ -1015,14 +1028,15 @@ let fg180Grammar =
               | other -> failtestf "merged into a declaration: %A" other
           } ]
 
-/// FG-015. The board row outlived the implementation that admitted most of its
-/// six constructs. Keep one named semantic repro per construct so a closure
-/// audit cannot mistake grammar acceptance for execution parity. Spread-dot is
-/// deliberately a passing pin of the one remaining divergence: once it is
-/// implemented, this assertion and the PARTIAL board row must change together.
+/// FG-015. Keep one named semantic repro per recovered construct so a closure
+/// audit cannot mistake grammar acceptance for execution parity. Spread-dot's
+/// measured boundary has adjacent pins because null omission, null retention and
+/// chained safe navigation are different semantics hidden behind one token.
 let fg015ClosureAudit =
-    let runStrict src =
-        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+    let runStrictWith budget src =
+        Interpreter.runStrictVars budget steps Env.empty (parseOk src)
+
+    let runStrict = runStrictWith Budget.defaults
 
     testList
         "FG-015 six-construct closure audit"
@@ -1071,12 +1085,72 @@ let fg015ClosureAudit =
               Expect.equal (stepArgs o) [ "echo", [ "L:R" ] ] "both names are bound"
           }
 
-          test "spread-dot remains divergent instead of masquerading as closed" {
-              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\ndef names = rows*.name\nreturn names\n"
+          test "spread-dot projects one property from every non-null list element" {
+              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows*.name\n"
+              Expect.isNone o.Fault "the measured list projection evaluates"
+              Expect.equal o.Returned (Some(VList [ VStr "a"; VStr "b" ])) "source order is preserved"
+          }
+
+          test "spread-dot keeps the measured null and receiver boundaries" {
+              let source =
+                  "def withoutNulls = [[name: 'a'], [name: 'b']]*.name\n"
+                  + "def withNullElement = [[name: 'a'], null, [name: 'b']]*.name\n"
+                  + "def missingMapValues = [[name: 'a'], [:], [name: null]]*.name\n"
+                  + "def maybe = null\n"
+                  + "def nullReceiver = maybe*.name\n"
+                  + "def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]\n"
+                  + "def nested = groups*.child*.name\n"
+                  + "def safeAfterSpread = groups*.child?.name\n"
+                  + "def mapValue = [left: 1, right: 2]\n"
+                  + "def mapResult = mapValue*.key\n"
+                  + "echo withoutNulls\necho withNullElement\necho missingMapValues\n"
+                  + "echo nullReceiver\necho nested\necho safeAfterSpread\necho mapResult\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "all measured successful receiver shapes evaluate"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a, b]" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "[a, null, null]" ]
+                    "echo", [ "null" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "null" ] ]
+                  "null receivers are omitted, null property values remain, and non-lists use ordinary lookup"
+          }
+
+          test "spread-dot missing properties remain catchable" {
+              let source =
+                  "def scalarResult = 'not-caught'\n"
+                  + "try { def scalarProjection = [[name: 'a'], 42]*.name } "
+                  + "catch (MissingPropertyException e) { scalarResult = 'caught' }\n"
+                  + "def stringResult = 'not-caught'\n"
+                  + "try { def stringProjection = 'ab'*.length } "
+                  + "catch (MissingPropertyException e) { stringResult = 'caught' }\n"
+                  + "echo scalarResult\necho stringResult\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both measured missing-property failures are intercepted"
+              Expect.equal (stepArgs o) [ "echo", [ "caught" ]; "echo", [ "caught" ] ] "catch runs"
+          }
+
+          test "ordinary property access on a list stays ordinary" {
+              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows.name\n"
 
               match o.Fault with
               | Some(UnknownProperty "name") -> ()
-              | other -> failtestf "expected the measured spread-dot divergence, got %A" other
+              | other -> failtestf "ordinary EProp gained spread semantics: %A" other
+          }
+
+          test "spread projection is bounded like other collection iteration" {
+              let budget = { Budget.defaults with MaxLoopIterations = 1 }
+              let o = runStrictWith budget "return [[name: 'a'], [name: 'b']]*.name\n"
+
+              match o.Fault with
+              | Some(BudgetExhausted message) -> Expect.stringContains message "spread projection" "names the bound"
+              | other -> failtestf "expected bounded spread refusal, got %A" other
           } ]
 
 [<EntryPoint>]

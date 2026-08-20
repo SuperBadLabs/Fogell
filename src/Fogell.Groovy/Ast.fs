@@ -23,6 +23,10 @@ type Expr =
     | EMap of (string * Expr) list
     | EVar of string
     | EProp of target: Expr * name: string
+    /// `a*.b` — Groovy's spread-safe property projection. This must remain
+    /// distinct from [EProp]: a list receiver projects in order, while ordinary
+    /// property access reads one receiver and must not acquire collection semantics.
+    | ESpreadProp of target: Expr * name: string
     /// `a?.b` — Groovy's safe navigation. Distinct from [EProp] because the
     /// difference IS the semantics: a null receiver yields null instead of a
     /// property lookup, so collapsing the two made `${env.OPTIONAL?.value}`
@@ -151,6 +155,7 @@ module Ast =
             | EList xs -> xs |> List.map ofExpr |> Set.unionMany
             | EMap kvs -> kvs |> List.map (snd >> ofExpr) |> Set.unionMany
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> ofExpr t
             | EIndex(t, i) -> Set.union (ofExpr t) (ofExpr i)
             | EUnary(_, x) -> ofExpr x

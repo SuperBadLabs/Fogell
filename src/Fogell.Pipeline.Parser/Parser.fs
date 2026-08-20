@@ -1243,6 +1243,7 @@ module private LoopControl =
             | EList xs -> xs |> List.collect expr
             | EMap kvs -> kvs |> List.collect (snd >> expr)
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> expr t
             | EIndex(t, i) -> expr t @ expr i
             | EUnary(_, o) -> expr o

@@ -268,6 +268,12 @@ module Interpreter =
                             raise (Stop(UnknownProperty n))
                         else
                             VNull // Groovy resolves unknown bindings late; treat as null
+        | ESpreadProp(target, name) -> evalSpreadProp st (evalExpr st env target) name
+        | ESafeProp((ESpreadProp _ as target), name) ->
+            // Jenkins 2.568.1: `rows*.child?.name` keeps projecting across the
+            // spread result, while still short-circuiting a null receiver. Keep
+            // this syntax-bounded; ordinary safe property access is unchanged.
+            evalSpreadProp st (evalExpr st env target) name
         | ESafeProp(target, name) ->
             // Safe navigation: a NULL receiver short-circuits to null — no lookup,
             // no strict fault. A non-null receiver behaves exactly like [EProp],
@@ -327,6 +333,27 @@ module Interpreter =
         | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
         | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
         | _ -> VNull
+
+    and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
+        match recv with
+        | VNull -> VNull
+        | VList xs ->
+            if xs.Length > st.Budget.MaxLoopIterations then
+                raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
+
+            xs
+            |> List.choose (fun item ->
+                tick st
+
+                match item with
+                // Jenkins' spread-safe operator omits a null RECEIVER. A non-null
+                // receiver whose property value is null stays in the result.
+                | VNull -> None
+                | value -> Some(evalProp st value name))
+            |> VList
+        // Jenkins applies the ordinary property rule to non-list receivers:
+        // map key lookup stays map lookup, and unsupported scalar properties fault.
+        | value -> evalProp st value name
 
     and private evalBinary (st: State) (env: Env) op l r : Value =
         // short-circuit before evaluating the right side

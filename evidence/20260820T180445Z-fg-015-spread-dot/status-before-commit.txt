@@ -1,0 +1,19 @@
+A  .gitattributes
+A  differential/cases/fg015-spread-dot-boundary.Jenkinsfile
+R  evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.Jenkinsfile -> differential/cases/fg015-spread-dot.Jenkinsfile
+A  differential/receipts/fg015-spread-dot-boundary.receipt.txt
+R  evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt -> differential/receipts/fg015-spread-dot.receipt.txt
+M  docs/COMPATIBILITY-SCORECARD.md
+M  docs/EXECUTION_BOARD.md
+M  evidence/20260819T053832Z-fg-015-closure-audit/README.md
+A  evidence/20260820T230832Z-fg-015-spread-dot/README.md
+A  evidence/20260820T230832Z-fg-015-spread-dot/boundary-receipts/fg015-spread-dot-boundary.receipt.txt
+A  evidence/20260820T230832Z-fg-015-spread-dot/fg015-spread-dot-boundary.Jenkinsfile
+A  evidence/20260820T230832Z-fg-015-spread-dot/oracle-verification.txt
+M  src/Fogell.Groovy.Interpreter/Interpreter.fs
+M  src/Fogell.Groovy.Interpreter/StepValueUse.fs
+M  src/Fogell.Groovy.Parser/Parser.fs
+M  src/Fogell.Groovy/Ast.fs
+M  src/Fogell.Pipeline.Parser/Parser.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260820T180445Z-fg-015-spread-dot/
