@@ -1015,6 +1015,70 @@ let fg180Grammar =
               | other -> failtestf "merged into a declaration: %A" other
           } ]
 
+/// FG-015. The board row outlived the implementation that admitted most of its
+/// six constructs. Keep one named semantic repro per construct so a closure
+/// audit cannot mistake grammar acceptance for execution parity. Spread-dot is
+/// deliberately a passing pin of the one remaining divergence: once it is
+/// implemented, this assertion and the PARTIAL board row must change together.
+let fg015ClosureAudit =
+    let runStrict src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-015 six-construct closure audit"
+        [ test "nested-quote GString keeps whitespace in one shell argument" {
+              let o =
+                  runStrict
+                      "def who = 'alpha beta'\nsh \"printf '<%s>' \\\"${who}\\\" > nested-quote-gstring.txt\"\n"
+
+              Expect.isNone o.Fault "the GString evaluates"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "sh", [ "printf '<%s>' \"alpha beta\" > nested-quote-gstring.txt" ] ]
+                  "quotes remain load-bearing around the whitespace-bearing value"
+          }
+
+          test "range is inclusive when used as a for-in source" {
+              let o = runStrict "def seen = ''\nfor (i in 1..3) { seen = seen + i }\necho seen\n"
+              Expect.isNone o.Fault "the range evaluates"
+              Expect.equal (stepArgs o) [ "echo", [ "123" ] ] "both endpoints are visited"
+          }
+
+          test "switch selects an arm and break leaves the switch" {
+              let src =
+                  "def selected = 'miss'\n"
+                  + "switch ('b') {\n"
+                  + "  case 'a': selected = 'a'; break\n"
+                  + "  case 'b': selected = 'b'; break\n"
+                  + "  default: selected = 'default'; break\n"
+                  + "}\necho selected\n"
+
+              let o = runStrict src
+              Expect.isNone o.Fault "the switch evaluates"
+              Expect.equal (stepArgs o) [ "echo", [ "b" ] ] "the matching arm wins"
+          }
+
+          test "instanceof recognises a String" {
+              let o = runStrict "def value = 'text'\nreturn value instanceof String\n"
+              Expect.isNone o.Fault "the type check evaluates"
+              Expect.equal o.Returned (Some(VBool true)) "String is recognised"
+          }
+
+          test "multi-assign binds list elements by index" {
+              let o = runStrict "def (left, right) = ['L', 'R']\necho \"${left}:${right}\"\n"
+              Expect.isNone o.Fault "the assignment evaluates"
+              Expect.equal (stepArgs o) [ "echo", [ "L:R" ] ] "both names are bound"
+          }
+
+          test "spread-dot remains divergent instead of masquerading as closed" {
+              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\ndef names = rows*.name\nreturn names\n"
+
+              match o.Fault with
+              | Some(UnknownProperty "name") -> ()
+              | other -> failtestf "expected the measured spread-dot divergence, got %A" other
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
