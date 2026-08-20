@@ -5,8 +5,8 @@ pipeline {
         stage('Probe') {
             steps {
                 script {
-                    def who = 'world'
-                    sh "printf '%s' \"${who}\" > nested-quote-gstring.txt"
+                    def who = 'alpha beta'
+                    sh "printf '<%s>' \"${who}\" > nested-quote-gstring.txt"
                 }
             }
         }

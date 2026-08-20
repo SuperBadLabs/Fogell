@@ -1026,10 +1026,17 @@ let fg015ClosureAudit =
 
     testList
         "FG-015 six-construct closure audit"
-        [ test "nested-quote GString renders the quoted inner text" {
-              let o = runStrict "def who = 'world'\necho \"say \\\"${who}\\\"\"\n"
+        [ test "nested-quote GString keeps whitespace in one shell argument" {
+              let o =
+                  runStrict
+                      "def who = 'alpha beta'\nsh \"printf '<%s>' \\\"${who}\\\" > nested-quote-gstring.txt\"\n"
+
               Expect.isNone o.Fault "the GString evaluates"
-              Expect.equal (stepArgs o) [ "echo", [ "say \"world\"" ] ] "quotes survive around the interpolation"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "sh", [ "printf '<%s>' \"alpha beta\" > nested-quote-gstring.txt" ] ]
+                  "quotes remain load-bearing around the whitespace-bearing value"
           }
 
           test "range is inclusive when used as a for-in source" {

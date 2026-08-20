@@ -1,8 +1,8 @@
 # Differential receipt — fg015-nested-quote-gstring.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d6568235fda12076567ed8c2f657c150526a9a1e133b5cdc12df4d320926add6
-case-digest:  76b70ced9d572757eda14c21a37262ff4631a174d0b7c5650ec15b65a828e753
+seal:         bb5a68892e019855456351185d6b323b8c15c985d9cdf223ae312c3e9c20664e
+case-digest:  994abcaf78c2898b96ead812f1de67d5e9482e830ce0d8dea4f73093fd5f74c2
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -78,16 +78,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: b579eebd789158b8af2ab1722e44403624f36b431fdc47c3dadaac6fea1f79ba
+  workspace-hash: 9f17b26ad1a9f5e4453109db9a94fbd23d57fe3deddfc9b6bf7fa76dba8f8e7c
   output (1 lines):
-    | + printf %s world
+    | + printf <%s> alpha beta
   workspace:
-    486ea46224d1  nested-quote-gstring.txt
+    51126eb3d53b  nested-quote-gstring.txt
 
 ## Fogell
   result:         success
-  workspace-hash: b579eebd789158b8af2ab1722e44403624f36b431fdc47c3dadaac6fea1f79ba
+  workspace-hash: 9f17b26ad1a9f5e4453109db9a94fbd23d57fe3deddfc9b6bf7fa76dba8f8e7c
   output (1 lines):
-    | + printf %s world
+    | + printf <%s> alpha beta
   workspace:
-    486ea46224d1  nested-quote-gstring.txt
+    51126eb3d53b  nested-quote-gstring.txt

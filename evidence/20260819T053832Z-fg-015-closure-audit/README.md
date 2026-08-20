@@ -10,12 +10,12 @@ The current shortened row was not used as the specification.
 
 | construct | Jenkins 2.568.1 | Fogell | classification | durable evidence |
 |---|---|---|---|---|
-| nested-quote GString | success, quoted `world` reaches `sh` | same result, output and workspace | already closed | `differential/receipts/fg015-nested-quote-gstring.receipt.txt` |
+| nested-quote GString | success, quoted `alpha beta` reaches `sh` as one argument and writes `<alpha beta>` | same result, output and workspace | already closed | `differential/receipts/fg015-nested-quote-gstring.receipt.txt` |
 | inclusive range | success, visits `1`, `2`, `3` | same result, output and workspace | already closed | `differential/receipts/fg015-range.receipt.txt` |
 | `switch` | success, `case 'b'` assigns and `break` exits | same result, output and workspace | already closed | `differential/receipts/fg015-switch.receipt.txt` |
 | `instanceof` | success, String branch writes `yes` | same result, output and workspace | already closed | `differential/receipts/fg015-instanceof.receipt.txt` |
 | multi-assign | success, binds `L:R` | same result, output and workspace | already closed | `differential/receipts/fg015-multi-assign.receipt.txt` |
-| spread-dot | success, projects `[a, b]` | failure before `sh`; empty workspace | divergent | `evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt` (three identical runs) |
+| spread-dot | success, projects `[a, b]` | failure before `sh`; empty workspace | divergent | `evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt` (one retained run; `DIVERGED (3)` counts result, output and workspace difference dimensions) |
 
 The spread-dot failure is structural, not a missing builtin. The parser lowers
 both `rows.name` and `rows*.name` to `EProp(rows, "name")`; by interpreter time
