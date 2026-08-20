@@ -335,6 +335,59 @@ let structure =
                   Expect.equal (err source).Code MalformedSyntax $"{label}: duplicate section is an admission refusal"
           }
 
+          test "FG-014 a stage has exactly one structural body kind" {
+              // DIRECTLY PROBED on Jenkins 2.568.1. Every pair drawn from steps,
+              // stages, parallel and matrix reports that only one body is allowed.
+              // The same rule holds for all four together, labelled empty-first
+              // forms, and recursively nested stages. Validate the complete node
+              // collection before a first-match projection can discard a body.
+              let wrap body =
+                  "pipeline {\n  agent any\n  stages {\n    stage('target') {\n"
+                  + body
+                  + "\n    }\n  }\n}"
+
+              let bodies =
+                  [ "steps", "      steps { echo 'step' }"
+                    "stages", "      stages { stage('child') { steps { echo 'nested' } } }"
+                    "parallel", "      parallel { stage('branch') { steps { echo 'branch' } } }"
+                    "matrix",
+                    "      matrix {\n        axes {\n          axis {\n            name 'OS'\n            values 'linux'\n          }\n        }\n        stages { stage('cell') { steps { echo 'cell' } } }\n      }" ]
+
+              for label, body in bodies do
+                  ok (wrap body) |> ignore
+
+              for leftIndex in 0 .. bodies.Length - 2 do
+                  for rightIndex in leftIndex + 1 .. bodies.Length - 1 do
+                      let leftLabel, leftBody = bodies.[leftIndex]
+                      let rightLabel, rightBody = bodies.[rightIndex]
+                      let e = err (wrap (leftBody + "\n" + rightBody))
+                      Expect.equal e.Code MalformedSyntax $"{leftLabel} + {rightLabel}: competing bodies refuse"
+
+              let labelledAndNested =
+                  [ "labelled empty steps then stages",
+                    wrap
+                        "      steps('empty') { }\n      stages { stage('child') { steps { echo 'nested' } } }"
+                    "labelled empty stages then steps",
+                    wrap "      stages('empty') { }\n      steps { echo 'step' }"
+                    "empty parallel then parallel",
+                    wrap
+                        "      parallel { }\n      parallel { stage('branch') { steps { echo 'branch' } } }"
+                    "empty matrix then matrix",
+                    wrap
+                        "      matrix { }\n      matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { echo 'cell' } } } }"
+                    "all four",
+                    wrap (bodies |> List.map snd |> String.concat "\n")
+                    "nested sequential child",
+                    wrap
+                        "      stages {\n        stage('inner') {\n          steps('work') { echo 'x' }\n          parallel { stage('branch') { steps { echo 'y' } } }\n        }\n      }"
+                    "nested parallel child",
+                    wrap
+                        "      parallel {\n        stage('branch') {\n          stages('group') { stage('inner') { steps { echo 'x' } } }\n          matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { echo 'y' } } } }\n        }\n      }" ]
+
+              for label, source in labelledAndNested do
+                  Expect.equal (err source).Code MalformedSyntax $"{label}: the recursive guard refuses body loss"
+          }
+
           test "FG-014 command-form tools preserve kind, value and source order" {
               let src =
                   "pipeline {\n  agent any\n  tools {\n    maven 'm3'; jdk \"j8\"\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"

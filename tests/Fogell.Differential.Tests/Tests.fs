@@ -1335,6 +1335,26 @@ let unsupportedDeclarativeTools =
           "nested stages",
           "pipeline { agent any stages { stage('outer') { stages('empty') { } stages { stage('inner') { steps { sh 'echo ran > ran.txt' } } } } } }" ]
 
+    let competingStageBodies =
+        [ "labelled steps gate then stages effect",
+          "pipeline { agent any stages { stage('target') { steps('gate') { input message: 'Deploy?' } stages { stage('child') { steps { sh 'echo ran > ran.txt' } } } } } }"
+          "labelled empty stages then steps effect",
+          "pipeline { agent any stages { stage('target') { stages('empty') { } steps { sh 'echo ran > ran.txt' } } } }"
+          "empty steps then parallel effect",
+          "pipeline { agent any stages { stage('target') { steps { } parallel { stage('branch') { steps { sh 'echo ran > ran.txt' } } } } } }"
+          "empty parallel then parallel effect",
+          "pipeline { agent any stages { stage('target') { parallel { } parallel { stage('branch') { steps { sh 'echo ran > ran.txt' } } } } } }"
+          "empty steps then matrix effect",
+          "pipeline { agent any stages { stage('target') { steps { } matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { sh 'echo ran > ran.txt' } } } } } } }"
+          "empty matrix then matrix effect",
+          "pipeline { agent any stages { stage('target') { matrix { } matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { sh 'echo ran > ran.txt' } } } } } } }"
+          "all four body kinds",
+          "pipeline { agent any stages { stage('target') { steps('gate') { input message: 'Deploy?' } stages { stage('child') { steps { sh 'echo ran > ran.txt' } } } parallel { stage('branch') { steps { sh 'echo ran > parallel.txt' } } } matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { sh 'echo ran > matrix.txt' } } } } } } }"
+          "nested sequential child",
+          "pipeline { agent any stages { stage('outer') { stages { stage('inner') { steps('gate') { input message: 'Deploy?' } parallel { stage('branch') { steps { sh 'echo ran > ran.txt' } } } } } } } }"
+          "nested parallel child",
+          "pipeline { agent any stages { stage('outer') { parallel { stage('branch') { stages('group') { stage('inner') { steps { sh 'echo ran > ran.txt' } } } matrix { axes { axis { name 'OS'; values 'linux' } } stages { stage('cell') { steps { sh 'echo ran > matrix.txt' } } } } } } } } }" ]
+
     let empty =
         "pipeline { agent any tools { } stages { stage('a') { tools { } steps { sh 'echo ran > ran.txt' } } } }"
 
@@ -1416,6 +1436,28 @@ let unsupportedDeclarativeTools =
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
                           $"{label}: executor effect was not reached")
+          }
+
+          test "competing stage body kinds refuse before effects or workspace preparation" {
+              // A stage body is a single tagged choice in Jenkins, not four
+              // independently optional projections. These plants put approval and
+              // shell effects in bodies that the former first-match construction
+              // could discard or run. Recursive stages use the same admission guard.
+              for label, source in competingStageBodies do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s competing bodies unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      for file in [ "ran.txt"; "parallel.txt"; "matrix.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{label}: {file} effect was not reached")
           }
 
           test "empty tools sections are not refused" {

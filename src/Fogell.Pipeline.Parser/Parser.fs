@@ -890,6 +890,22 @@ type private StageSection =
     | SecOptions of Step list
     | SecOther of string
 
+/// Jenkins permits exactly one body form on a Declarative stage. Keep this check on
+/// the complete node list so neither a second body of the same kind nor a different
+/// body kind can disappear behind the first-match projections used below.
+let private rejectingMultipleStageBodies sections : P<StageSection list> =
+    let isBody = function
+        | SecSteps _
+        | SecNested _
+        | SecOther "matrix" -> true
+        | _ -> false
+
+    if sections |> List.filter isBody |> List.length > 1 then
+        fail
+            "only one of `matrix`, `parallel`, `stages`, or `steps` is allowed for a stage: Jenkins rejects competing stage bodies before running anything"
+    else
+        preturn sections
+
 stageRef.Value <-
     ws
     >>. keyword "stage"
@@ -950,14 +966,13 @@ stageRef.Value <-
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
                                |>> fun _ -> SecOther n)) ]))
-        // DIRECTLY PROBED on Jenkins 2.568.1 with labelled/unlabelled and
-        // empty/non-empty pairs. Every repeated section is rejected before the
-        // model is built. Guard the collected nodes before `pick` can discard a
-        // later body, especially a second `steps` body containing an input gate.
+        // DIRECTLY PROBED on Jenkins 2.568.1 with every pair of stage body kinds,
+        // all four kinds together, labelled empty-first forms and recursively nested
+        // stages. Jenkins rejects the collected model before a build starts. Guard
+        // the nodes before `pick` can discard a body, especially an input gate.
         >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false)
-        >>= rejectingDuplicateSections "steps" (function SecSteps _ -> true | _ -> false)
         >>= rejectingDuplicateSections "post" (function SecPost _ -> true | _ -> false)
-        >>= rejectingDuplicateSections "stages" (function SecNested(_, false) -> true | _ -> false))
+        >>= rejectingMultipleStageBodies)
     |>> fun ((pos, name), sections) ->
             let pick f = sections |> List.tryPick f
             { Name = name
@@ -1382,6 +1397,5 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
-
 
 
