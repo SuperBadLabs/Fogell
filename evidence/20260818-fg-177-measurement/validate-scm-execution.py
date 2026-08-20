@@ -114,11 +114,31 @@ def validate_attested_url(value: str) -> None:
         if HEX64.fullmatch(value.removeprefix("sha256:")) is None:
             fail("Fogell git checkout URL digest is malformed")
         return
-    parsed = urllib.parse.urlsplit(value)
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        username, password = parsed.username, parsed.password
+        hostname, _port = parsed.hostname, parsed.port
+    except ValueError:
+        fail("Fogell git checkout URL is malformed")
     if not parsed.scheme:
         fail("Fogell git checkout URL is not absolute or opaque")
-    if parsed.username is not None or parsed.password is not None:
+    if username is not None or password is not None:
         fail("Fogell git checkout URL contains forbidden userinfo credentials")
+    scheme = parsed.scheme.lower()
+    if scheme in {"git", "http", "https", "ssh"} and hostname is None:
+        fail("Fogell git checkout URL is malformed")
+    if scheme == "file" and not parsed.path.startswith("/"):
+        fail("Fogell git checkout URL is malformed")
+    if parsed.query or parsed.fragment or "?" in value or "#" in value:
+        fail("Fogell git checkout URL contains a forbidden query or fragment")
+    if re.search(r"%(?![0-9A-Fa-f]{2})", parsed.path):
+        fail("Fogell git checkout URL path has malformed percent encoding")
+    try:
+        decoded_path = urllib.parse.unquote(parsed.path, errors="strict")
+    except UnicodeDecodeError:
+        fail("Fogell git checkout URL path has malformed percent encoding")
+    if any(delimiter in decoded_path for delimiter in ";?#"):
+        fail("Fogell git checkout URL contains forbidden path parameters or encoded delimiters")
 
 
 def validate_checkout(path: pathlib.Path, pin: dict[str, str]) -> tuple[str, str]:

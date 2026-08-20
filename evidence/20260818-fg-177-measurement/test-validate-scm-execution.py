@@ -187,6 +187,51 @@ def main() -> None:
         assert "malformed or wrong-kind Fogell git checkout attestation" in result.stderr
         assert secret not in result.stdout + result.stderr
         assert not (root / "malformed-credential.tsv").exists()
+
+        encoded_secret = "".join(f"%{byte:02X}" for byte in secret.encode("utf-8"))
+        unsafe_urls = (
+            ("raw-query", f"https://example.test/repo.git?access_token={secret}", "query or fragment"),
+            (
+                "encoded-query",
+                f"https://example.test/repo.git?%61ccess_token={encoded_secret}",
+                "query or fragment",
+            ),
+            ("raw-fragment", f"https://example.test/repo.git#access_token={secret}", "query or fragment"),
+            (
+                "encoded-fragment",
+                f"https://example.test/repo.git#%61ccess_token={encoded_secret}",
+                "query or fragment",
+            ),
+            (
+                "semicolon-parameter",
+                f"https://example.test/repo.git;access_token={secret}",
+                "path parameters or encoded delimiters",
+            ),
+            (
+                "encoded-semicolon",
+                f"https://example.test/repo.git%3Baccess_token={encoded_secret}",
+                "path parameters or encoded delimiters",
+            ),
+            (
+                "encoded-query-delimiter",
+                f"https://example.test/repo.git%3Faccess_token={encoded_secret}",
+                "path parameters or encoded delimiters",
+            ),
+            ("malformed-uri", f"https://[broken/{secret}", "URL is malformed"),
+            ("malformed-port", f"https://example.test:{secret}/repo.git", "URL is malformed"),
+            ("missing-host", f"https:///{secret}/repo.git", "URL is malformed"),
+            ("malformed-percent", f"https://example.test/repo.git%ZZ{secret}", "percent encoding"),
+            ("invalid-utf8", f"https://example.test/repo.git/%C3%28{secret}", "percent encoding"),
+        )
+        for label, url, diagnostic in unsafe_urls:
+            (receipts / "fg177-probe-return-semantics.receipt.txt").write_text(
+                git_receipt(fogell_executed=True, url=url), encoding="utf-8"
+            )
+            result = invoke(pin, receipts, root / f"{label}.tsv")
+            assert result.returncode == 1, (label, result.stderr)
+            assert diagnostic in result.stderr, (label, result.stderr)
+            assert secret not in result.stdout + result.stderr, label
+            assert not (root / f"{label}.tsv").exists(), label
     refusal(
         lambda receipts: (receipts / "fg177-probe-unknown-policy.receipt.txt").write_text(
             git_receipt().replace(f"revision={GIT_REV}", f"revision= {GIT_REV}", 1), encoding="utf-8"
@@ -201,7 +246,7 @@ def main() -> None:
     )
     print(
         "SCM HARNESS ATTESTATION PROOF: early Fogell non-execution represented; "
-        "full-definition revision, transient-ref mismatch, SCM preflight, spaced/redacted URLs, executed git, "
+        "full-definition revision, transient-ref mismatch, SCM preflight, spaced/opaque unsafe URLs, executed git, "
         "mismatch, duplicate, spoof, padded/multiline/malformed and overwrite paths verified"
     )
 

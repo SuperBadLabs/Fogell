@@ -575,6 +575,35 @@ if [[ $credential_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]
   exit 1
 fi
 
+# Query credentials are just as unsafe as userinfo. Refuse the staged receipt,
+# keep the old atomic bundle, and never copy the planted token into diagnostics.
+query_secret='fg177-query-'
+query_secret+='secret'
+set +e
+PATH="$fixture_tmp/bin:$PATH" \
+FOGELL_EVIDENCE_OUT="$runner_out" \
+FOGELL_JENKINS_ORACLE_DIR="$oracle_metadata" \
+FOGELL_JENKINS_URL="$jenkins_url" \
+FOGELL_JENKINS_HOST=fixture-host \
+FOGELL_JENKINS_CONTAINER=fixture-controller \
+FOGELL_SCM_URL="$scm_url" \
+FOGELL_STUB_ARGS="$fixture_tmp/query-credential-args" \
+FOGELL_STUB_CALLS="$fixture_tmp/query-credential-calls" \
+FOGELL_STUB_ORDER="$fixture_tmp/query-credential-order" \
+FOGELL_STUB_ORACLE_STATE="$oracle_state" \
+FOGELL_STUB_ATTESTED_URL="https://example.test/repo.git?access_token=$query_secret" \
+  bash "$evidence/run-probes.sh" > "$fixture_tmp/query-credential.log" 2>&1
+query_credential_rc=$?
+set -e
+if [[ $query_credential_rc -eq 0 || $(bundle_hash "$published") != "$published_hash" ]] ||
+   ! grep -Fq 'forbidden query or fragment' "$fixture_tmp/query-credential.log" ||
+   grep -FRq "$query_secret" "$fixture_tmp/query-credential.log" "$published" ||
+   find "$runner_out/runs" -maxdepth 1 -name '.*stage*' -print -quit | grep -q .; then
+  sed "s/$query_secret/<redacted>/g" "$fixture_tmp/query-credential.log" >&2
+  echo 'ERROR: query-credential SCM attestation was not refused without leakage' >&2
+  exit 1
+fi
+
 # Separate evidence roots synchronize and execute concurrently without sharing
 # a publication lock; both must independently bind the same immutable refs.
 concurrent_a="$fixture_tmp/concurrent-output-a"

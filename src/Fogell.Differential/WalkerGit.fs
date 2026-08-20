@@ -35,20 +35,67 @@ open Fogell.Domain
 module WalkerGit =
 
     /// Produce a receipt-safe representation of a Git remote. Absolute URIs are
-    /// canonicalised (which percent-encodes spaces) and stripped of userinfo;
-    /// non-URI Git spellings are represented only by a one-way digest. Engine
-    /// notes must never become a credential exfiltration path.
+    /// canonicalised (which percent-encodes spaces) only when every component is
+    /// safe to disclose. Userinfo, query, fragment, URI path parameters and
+    /// malformed/non-URI spellings are represented only by a one-way digest.
+    /// Engine notes must never become a credential exfiltration path.
     let attestationUrl (url: string) =
+        let opaque () =
+            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
+            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
+
+        let hasStrictUtf8PercentEncoding (value: string) =
+            try
+                let bytes = ResizeArray<byte>()
+                let mutable index = 0
+
+                while index < value.Length do
+                    if value[index] = '%' then
+                        if index + 2 >= value.Length then
+                            invalidArg (nameof value) "truncated percent escape"
+
+                        bytes.Add(Convert.ToByte(value.Substring(index + 1, 2), 16))
+                        index <- index + 3
+                    else
+                        let next = value.IndexOf('%', index)
+                        let finish = if next < 0 then value.Length else next
+                        Encoding.UTF8.GetBytes(value.Substring(index, finish - index))
+                        |> bytes.AddRange
+                        index <- finish
+
+                let strictUtf8 = UTF8Encoding(false, true)
+                strictUtf8.GetString(bytes.ToArray()) |> ignore
+                true
+            with _ ->
+                false
+
         let mutable parsed = Unchecked.defaultof<Uri>
 
         if Uri.TryCreate(url, UriKind.Absolute, &parsed) then
-            let builder = UriBuilder parsed
-            builder.UserName <- ""
-            builder.Password <- ""
-            builder.Uri.AbsoluteUri
+            let safePath =
+                if
+                    Text.RegularExpressions.Regex.IsMatch(url, "%(?![0-9A-Fa-f]{2})")
+                    || not (hasStrictUtf8PercentEncoding parsed.AbsolutePath)
+                then
+                    false
+                else
+                    try
+                        let decoded = Uri.UnescapeDataString parsed.AbsolutePath
+                        decoded.IndexOfAny [| ';'; '?'; '#' |] < 0
+                    with _ ->
+                        false
+
+            if
+                String.IsNullOrEmpty parsed.UserInfo
+                && String.IsNullOrEmpty parsed.Query
+                && String.IsNullOrEmpty parsed.Fragment
+                && safePath
+            then
+                parsed.AbsoluteUri
+            else
+                opaque ()
         else
-            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
-            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
+            opaque ()
 
     /// Identity of the exact commit used to load an SCM-defined Jenkinsfile.
     /// Captured in the same private fetch as the bytes, so early evaluation

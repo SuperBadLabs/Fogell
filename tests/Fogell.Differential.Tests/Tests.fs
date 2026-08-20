@@ -1465,14 +1465,43 @@ script says Checking out Revision {laterCheckout} (spoof)
               | Error why -> Expect.stringContains why "multiple pre-Pipeline" "ambiguous checkout named"
           }
 
-          test "SCM attestation URLs encode spaces and remove credentials" {
+          test "SCM attestation URLs encode safe spaces and make unsafe components opaque" {
               let spaced = WalkerGit.attestationUrl "file:///tmp/fixture repo.git"
               Expect.equal spaced "file:///tmp/fixture%20repo.git" "spaces use a single URI encoding"
 
-              let credentialed = WalkerGit.attestationUrl "https://user:super-secret@example.test/repo.git"
-              Expect.equal credentialed "https://example.test/repo.git" "userinfo is removed, not merely masked"
-              Expect.isFalse (credentialed.Contains "user") "username is absent"
-              Expect.isFalse (credentialed.Contains "super-secret") "password is absent"
+              let secret = "round26-" + "planted-secret"
+              let assertOpaque label url =
+                  let attested = WalkerGit.attestationUrl url
+                  Expect.stringStarts attested "sha256:" $"{label} is represented opaquely"
+                  Expect.equal attested.Length 71 $"{label} has exactly one SHA-256 identity"
+                  Expect.isFalse (attested.Contains secret) $"{label} secret is absent"
+
+              assertOpaque "userinfo" $"https://user:{secret}@example.test/repo.git"
+              assertOpaque "raw query" $"https://example.test/repo.git?access_token={secret}"
+
+              let encodedSecret =
+                  secret
+                  |> System.Text.Encoding.UTF8.GetBytes
+                  |> Array.map (sprintf "%%%02X")
+                  |> String.concat ""
+
+              assertOpaque
+                  "encoded query"
+                  $"https://example.test/repo.git?%%61ccess_token={encodedSecret}"
+              assertOpaque "raw fragment" $"https://example.test/repo.git#access_token={secret}"
+              assertOpaque
+                  "encoded fragment"
+                  $"https://example.test/repo.git#%%61ccess_token={encodedSecret}"
+              assertOpaque "semicolon parameter" $"https://example.test/repo.git;access_token={secret}"
+              assertOpaque
+                  "encoded semicolon parameter"
+                  $"https://example.test/repo.git%%3Baccess_token={encodedSecret}"
+              assertOpaque
+                  "encoded query delimiter"
+                  $"https://example.test/repo.git%%3Faccess_token={encodedSecret}"
+              assertOpaque "malformed URI" $"https://[broken/{secret}"
+              assertOpaque "malformed percent path" $"https://example.test/repo.git%%ZZ{secret}"
+              assertOpaque "invalid UTF-8 path" $"https://example.test/repo.git/%%C3%%28{secret}"
 
               let opaque = WalkerGit.attestationUrl "git@example.test:repo.git"
               Expect.stringStarts opaque "sha256:" "non-URI remotes are represented opaquely"
