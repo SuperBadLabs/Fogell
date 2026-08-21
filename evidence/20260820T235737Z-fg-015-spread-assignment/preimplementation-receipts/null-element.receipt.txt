@@ -1,14 +1,14 @@
-# Differential receipt — fg015-spread-dot.Jenkinsfile
+# Differential receipt — null-element.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         70dcb51499f861c8753477fe7fac11e2d9f6b3847cdc651b4208705b799a5d0f
-case-digest:  599e00661a84b6beaebfacdd066d58d8d1635d33f89d96a747ae49b80cadeaf5
+seal:         ca89189a0af78a511f1cbf71f4f5deab14d0cacf2f81d30c67c7887123c63834
+case-digest:  efa91e69ccae622f0bfecda7063316610104b5904fd7fce73a8da88417ab7970
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
-  - terminal result: jenkins=success fogell=failure
-  - output line 0: jenkins=+ printf %s [a, b] fogell=<absent>
-  - workspace hash: jenkins=82aa79bbf401 fogell=e3b0c44298fc
+  - terminal result: jenkins=failure fogell=success
+  - output line 1: jenkins=<absent> fogell=+ printf %s [a, b]
+  - workspace hash: jenkins=b925983d9c95 fogell=eaf5f2821991
 
 ## Comparison contract
   compared: terminal result
@@ -80,14 +80,21 @@ VERDICT: DIVERGED (3)
     minus fenced regions; it is NOT implemented, so this list is what holds today.
 
 ## Jenkins
-  result:         success
-  workspace-hash: 82aa79bbf4019d108d22979ce93d63fedb3bbdd20a10bcd1cc96c5f5a4f0efd4
+  result:         failure
+  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
   output (1 lines):
-    | + printf %s [a, b]
+    | + touch before-assignment.txt
   workspace:
-    5af6c271183b  spread-dot.txt
+    e3b0c44298fc  before-assignment.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  result:         success
+  workspace-hash: eaf5f2821991b67b6cce5e0449e5f4d160a6e4ee6e065ba4cc292e7bf952b5c7
+  output (3 lines):
+    | + touch before-assignment.txt
+    | + printf %s [a, b]
+    | + touch after-assignment.txt
+  workspace:
+    e3b0c44298fc  after-assignment.txt
+    5af6c271183b  assignment-result.txt
+    e3b0c44298fc  before-assignment.txt

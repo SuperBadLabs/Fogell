@@ -1,0 +1,19 @@
+ .gitattributes                                     |   3 +
+ .../cases/fg015-spread-dot-boundary.Jenkinsfile    |  41 ++++++++
+ .../cases}/fg015-spread-dot.Jenkinsfile            |   0
+ .../receipts/fg015-spread-dot-boundary.receipt.txt |  93 ++++++++++++++++++
+ .../receipts}/fg015-spread-dot.receipt.txt         |  16 +--
+ docs/COMPATIBILITY-SCORECARD.md                    |   2 +-
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ .../README.md                                      |  35 +++----
+ .../20260820T230832Z-fg-015-spread-dot/README.md   |  44 +++++++++
+ .../fg015-spread-dot-boundary.receipt.txt          | 109 +++++++++++++++++++++
+ .../fg015-spread-dot-boundary.Jenkinsfile          |  52 ++++++++++
+ .../oracle-verification.txt                        |   6 ++
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       |  27 +++++
+ src/Fogell.Groovy.Interpreter/StepValueUse.fs      |   2 +
+ src/Fogell.Groovy.Parser/Parser.fs                 |   2 +-
+ src/Fogell.Groovy/Ast.fs                           |   5 +
+ src/Fogell.Pipeline.Parser/Parser.fs               |   1 +
+ tests/Fogell.Groovy.Tests/Tests.fs                 |  98 +++++++++++++++---
+ 18 files changed, 493 insertions(+), 45 deletions(-)

@@ -70,6 +70,7 @@ module StepValueUse =
             | EList xs -> for x in xs do expr where true x
             | EMap kvs -> for (_, v) in kvs do expr where true v
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> expr "a property read" true t
             | EIndex(t, i) ->
                 expr "an index target" true t
@@ -228,6 +229,7 @@ module StepValueUse =
             | EList xs -> for x in xs do expr x
             | EMap kvs -> for (_, v) in kvs do expr v
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> expr t
             | EIndex(t, i) ->
                 expr t

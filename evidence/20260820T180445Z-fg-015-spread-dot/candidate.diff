@@ -1,0 +1,742 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..0a51239
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,3 @@
++# A unified diff encodes blank context lines as one-space lines. They are valid
++# patch syntax, not source whitespace defects in the embedded evidence file.
++evidence/*/candidate.diff -whitespace
+diff --git a/differential/cases/fg015-spread-dot-boundary.Jenkinsfile b/differential/cases/fg015-spread-dot-boundary.Jenkinsfile
+new file mode 100644
+index 0000000..6c5f545
+--- /dev/null
++++ b/differential/cases/fg015-spread-dot-boundary.Jenkinsfile
+@@ -0,0 +1,41 @@
++// FG-015: directly measured Jenkins 2.568.1 spread-dot semantic boundary.
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                script {
++                    def present = [[name: 'a'], [name: 'b']]*.name
++                    def withNullElement = [[name: 'a'], null, [name: 'b']]*.name
++                    def missingMapValues = [[name: 'a'], [:], [name: null]]*.name
++
++                    def maybe = null
++                    def nullReceiver = maybe*.name
++
++                    def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]
++                    def nested = groups*.child*.name
++                    def safeAfterSpread = groups*.child?.name
++
++                    def mapValue = [left: 1, right: 2]
++                    def mapResult = mapValue*.key
++
++                    def scalarResult = 'not-caught'
++                    try {
++                        def scalarProjection = [[name: 'a'], 42]*.name
++                    } catch (MissingPropertyException e) {
++                        scalarResult = 'caught'
++                    }
++
++                    def stringResult = 'not-caught'
++                    try {
++                        def stringProjection = 'ab'*.length
++                    } catch (MissingPropertyException e) {
++                        stringResult = 'caught'
++                    }
++
++                    sh "printf '%s' '${present}|${withNullElement}|${missingMapValues}|${nullReceiver}|${nested}|${safeAfterSpread}|${mapResult}|${scalarResult}|${stringResult}' > spread-dot-boundary.txt"
++                }
++            }
++        }
++    }
++}
+diff --git a/evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.Jenkinsfile b/differential/cases/fg015-spread-dot.Jenkinsfile
+similarity index 100%
+rename from evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.Jenkinsfile
+rename to differential/cases/fg015-spread-dot.Jenkinsfile
+diff --git a/differential/receipts/fg015-spread-dot-boundary.receipt.txt b/differential/receipts/fg015-spread-dot-boundary.receipt.txt
+new file mode 100644
+index 0000000..b4879a0
+--- /dev/null
++++ b/differential/receipts/fg015-spread-dot-boundary.receipt.txt
+@@ -0,0 +1,93 @@
++# Differential receipt — fg015-spread-dot-boundary.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         dd2ab472d5e63b35e60355241ac50ce5338be946d71a8dfa256f71ee51b1ce9f
++case-digest:  1d45557585b384b00ec3ee2e0532fa31cf593dd22f02b53cca688c54ff1ed62f
++sealed-output: sequence
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         success
++  workspace-hash: 55bad561361d5ca8f40486e09543cf22e4f3bd552be51ed4427e04deda9867f7
++  output (1 lines):
++    | + printf %s [a, b]|[a, b]|[a, null, null]|null|[a, b]|[a, b]|null|caught|caught
++  workspace:
++    e675dbb8da0a  spread-dot-boundary.txt
++
++## Fogell
++  result:         success
++  workspace-hash: 55bad561361d5ca8f40486e09543cf22e4f3bd552be51ed4427e04deda9867f7
++  output (1 lines):
++    | + printf %s [a, b]|[a, b]|[a, null, null]|null|[a, b]|[a, b]|null|caught|caught
++  workspace:
++    e675dbb8da0a  spread-dot-boundary.txt
+diff --git a/evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt b/differential/receipts/fg015-spread-dot.receipt.txt
+similarity index 93%
+rename from evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt
+rename to differential/receipts/fg015-spread-dot.receipt.txt
+index c836b31..260ee11 100644
+--- a/evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt
++++ b/differential/receipts/fg015-spread-dot.receipt.txt
+@@ -1,14 +1,11 @@
+ # Differential receipt — fg015-spread-dot.Jenkinsfile
+ 
+ jenkins-core: 2.568.1
+-seal:         70dcb51499f861c8753477fe7fac11e2d9f6b3847cdc651b4208705b799a5d0f
++seal:         19bff8d21a0b8a28f5a5d73a88fa4e80bc8198dc2ae31b732d4532a5fd9b4051
+ case-digest:  599e00661a84b6beaebfacdd066d58d8d1635d33f89d96a747ae49b80cadeaf5
+ sealed-output: sequence
+ 
+-VERDICT: DIVERGED (3)
+-  - terminal result: jenkins=success fogell=failure
+-  - output line 0: jenkins=+ printf %s [a, b] fogell=<absent>
+-  - workspace hash: jenkins=82aa79bbf401 fogell=e3b0c44298fc
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+ 
+ ## Comparison contract
+   compared: terminal result
+@@ -88,6 +85,9 @@ VERDICT: DIVERGED (3)
+     5af6c271183b  spread-dot.txt
+ 
+ ## Fogell
+-  result:         failure
+-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-  output (0 lines):
++  result:         success
++  workspace-hash: 82aa79bbf4019d108d22979ce93d63fedb3bbdd20a10bcd1cc96c5f5a4f0efd4
++  output (1 lines):
++    | + printf %s [a, b]
++  workspace:
++    5af6c271183b  spread-dot.txt
+diff --git a/docs/COMPATIBILITY-SCORECARD.md b/docs/COMPATIBILITY-SCORECARD.md
+index 0d403c2..d88d178 100644
+--- a/docs/COMPATIBILITY-SCORECARD.md
++++ b/docs/COMPATIBILITY-SCORECARD.md
+@@ -38,6 +38,6 @@ What verification does NOT cover: whether each case on disk still matches the di
+ 
+ | Expected | Present | Proven |
+ |---|---|---|
+-| 195 | 195 | 195 of 195 |
++| 197 | 197 | 197 of 197 |
+ 
+ **These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **1** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 9ba3cd0..19ac912 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -509,7 +509,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
+ | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
+ | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |
+-| FG-015 | P1 | **PARTIAL** | Closure-audited independently on 2026-08-19 against Jenkins 2.568.1 ([evidence](../evidence/20260819T053832Z-fg-015-closure-audit)). Five constructs are already closed and now receipt-proven: nested-quote GString, inclusive range, `switch`, `instanceof`, and multi-assign. Spread-dot is not closed: Jenkins projects `[a, b]` and succeeds while Fogell faults before the step, because `*.` is erased to ordinary `EProp` in the AST. FG-015b remains separate; this audit does not absorb list index assignment | six named unit repros pass; five new tier-1 receipts; spread-dot's one retained DIVERGED receipt records three difference dimensions (result, output, workspace) and remains outside the passing suite; corpus verdicts unchanged |
++| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment | ten focused FG-015 semantic tests plus exact parser-shape pins; seven tier-1 receipts across the six constructs, including the promoted original spread failure and the bounded adjacent matrix; exact result/output/workspace parity; corpus verdicts unchanged |
+ | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
+ | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
+ | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
+diff --git a/evidence/20260819T053832Z-fg-015-closure-audit/README.md b/evidence/20260819T053832Z-fg-015-closure-audit/README.md
+index d3edd46..5df2cea 100644
+--- a/evidence/20260819T053832Z-fg-015-closure-audit/README.md
++++ b/evidence/20260819T053832Z-fg-015-closure-audit/README.md
+@@ -15,28 +15,19 @@ The current shortened row was not used as the specification.
+ | `switch` | success, `case 'b'` assigns and `break` exits | same result, output and workspace | already closed | `differential/receipts/fg015-switch.receipt.txt` |
+ | `instanceof` | success, String branch writes `yes` | same result, output and workspace | already closed | `differential/receipts/fg015-instanceof.receipt.txt` |
+ | multi-assign | success, binds `L:R` | same result, output and workspace | already closed | `differential/receipts/fg015-multi-assign.receipt.txt` |
+-| spread-dot | success, projects `[a, b]` | failure before `sh`; empty workspace | divergent | `evidence/20260819T053832Z-fg-015-closure-audit/fg015-spread-dot.receipt.txt` (one retained run; `DIVERGED (3)` counts result, output and workspace difference dimensions) |
++| spread-dot | success, projects `[a, b]` | same result, output and workspace | closed by the measured follow-on | `differential/receipts/fg015-spread-dot.receipt.txt` and [boundary evidence](../20260820T230832Z-fg-015-spread-dot) |
+ 
+-The spread-dot failure is structural, not a missing builtin. The parser lowers
+-both `rows.name` and `rows*.name` to `EProp(rows, "name")`; by interpreter time
+-there is no remaining bit that says projection was requested. The strict script
+-path therefore raises `UnknownProperty "name"` on the list receiver. No parser or
+-interpreter repair is bundled into this audit.
++The initial failure was structural: the parser lowered both `rows.name` and
++`rows*.name` to `EProp(rows, "name")`, so the interpreter could not know that
++projection was requested. The follow-on measured Jenkins before implementation
++and now preserves `*.` as `ESpreadProp`. Ordinary `EProp` remains unchanged.
+ 
+-## Precise remaining spread-dot task
++The bounded interpreter matches the measured boundary: ordered list projection;
++null receiver to null; null elements omitted; null property values retained;
++non-list receivers delegated to ordinary property lookup; catchable missing
++properties; and the measured `*.child?.name` chain. Both the original failure and
++the adjacent boundary are tier-1 PROVEN.
+ 
+-1. Measure Jenkins on list-of-maps projection for present, missing, and null
+-   properties; a null list receiver; and a non-list receiver. These decide the
+-   boundary before code is written.
+-2. Add a distinct AST node such as `ESpreadProp(target, name)`; keep ordinary
+-   `EProp` unchanged and add parser-shape tests proving the two spellings cannot
+-   collapse again.
+-3. Interpret the new node only for the Jenkins-measured receiver/value shapes,
+-   preserving list order and null positions. Refuse every unmeasured shape by
+-   name rather than guessing.
+-4. Replace the preserved divergent probe with tier-1 differential cases for the
+-   measured shapes, then change this ticket from PARTIAL to DONE.
+-
+-FG-015b is deliberately out of scope. It concerns mutation through
+-`xs[index] = value`; spread-dot is a read/projection operator and shares no safe
+-implementation root with list index assignment.
++All six recovered FG-015 constructs are now closed. FG-015b remains deliberately
++out of scope: `xs[index] = value` is mutation and shares no safe implementation
++root with this read/projection operator.
+diff --git a/evidence/20260820T230832Z-fg-015-spread-dot/README.md b/evidence/20260820T230832Z-fg-015-spread-dot/README.md
+new file mode 100644
+index 0000000..4b3a001
+--- /dev/null
++++ b/evidence/20260820T230832Z-fg-015-spread-dot/README.md
+@@ -0,0 +1,44 @@
++# FG-015 spread-dot follow-on
++
++Baseline: `0eedd5fccfcad62cbf03bbbdb94a4bd18d3cc63a`.
++Oracle: Jenkins core 2.568.1 in the pinned `jenkins-lab` container; exact
++verification is recorded in `oracle-verification.txt`.
++
++## Direct boundary measurement before implementation
++
++`fg015-spread-dot-boundary.Jenkinsfile` was run against Jenkins before parser
++or interpreter code changed. Its retained receipt is
++`boundary-receipts/fg015-spread-dot-boundary.receipt.txt`; the Fogell side
++diverges there because the baseline erased `*.` to ordinary `EProp`.
++
++| expression | Jenkins 2.568.1 result |
++|---|---|
++| `[[name: 'a'], [name: 'b']]*.name` | `[a, b]`, in source order |
++| `[[name: 'a'], null, [name: 'b']]*.name` | `[a, b]`; a null element is omitted |
++| `[[name: 'a'], [:], [name: null]]*.name` | `[a, null, null]`; null property results remain |
++| `[[name: 'a'], 42]*.name` | catchable `MissingPropertyException` |
++| `null*.name` | `null` |
++| `groups*.child*.name` | `[a, b]`; the null intermediate is omitted |
++| `map*.key` for a map without key `key` | `null`, the ordinary map-property result |
++| `'ab'*.length` | catchable `MissingPropertyException`, the ordinary String-property result |
++| `groups*.child?.name` | `[a, b]`; safe navigation immediately after a spread keeps projecting |
++
++The implemented boundary is therefore exact and bounded: null receiver to null;
++a list projects in order, omitting null receivers but retaining null property
++values; a non-list uses unchanged ordinary property lookup; and a missing
++property keeps the existing catchable fault. Projection refuses above the
++interpreter's collection-iteration budget.
++
++## Closure evidence
++
++- `differential/receipts/fg015-spread-dot.receipt.txt` promotes the original
++  retained failure to tier 1.
++- `differential/receipts/fg015-spread-dot-boundary.receipt.txt` proves the
++  complete measured boundary, including both catchability controls.
++- Parser-shape tests keep `ESpreadProp`, `EProp`, and `ESafeProp` distinct.
++- The [final gate bundle](../20260820T180445Z-fg-015-spread-dot) binds the
++  exact candidate diff to the clean tree, corpus, build, and test results.
++
++This closes FG-015's recovered spread-property construct. It does not claim
++spread method calls or broader collection coercion. FG-015b remains separate:
++`xs[index] = value` is mutation and shares no implementation root with this read.
+diff --git a/evidence/20260820T230832Z-fg-015-spread-dot/boundary-receipts/fg015-spread-dot-boundary.receipt.txt b/evidence/20260820T230832Z-fg-015-spread-dot/boundary-receipts/fg015-spread-dot-boundary.receipt.txt
+new file mode 100644
+index 0000000..5b69153
+--- /dev/null
++++ b/evidence/20260820T230832Z-fg-015-spread-dot/boundary-receipts/fg015-spread-dot-boundary.receipt.txt
+@@ -0,0 +1,109 @@
++# Differential receipt — fg015-spread-dot-boundary.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         54bb1b8ca4403206f03cf7fe889fbfe5d62f2fca6097bba9666669117b470870
++case-digest:  fc15d30a9c20b00c1f6b9e8c3a5f11117fa85cb531fbfa02f9bde3286a6dece9
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=success fogell=failure
++  - output line 0: jenkins=+ printf %s list_present=OK:[a, b] fogell=<absent>
++  - workspace hash: jenkins=aa046e1a6d69 fogell=e3b0c44298fc
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         success
++  workspace-hash: aa046e1a6d69a582abffd2d2bb480fb620f9eae767122535ab42f79ac2a003d0
++  output (9 lines):
++    | + printf %s list_present=OK:[a, b]
++    | + printf %s list_null_element=OK:[a, b]
++    | + printf %s list_missing_map=OK:[a, null, null]
++    | + printf %s list_scalar_failure=ERR:groovy.lang.MissingPropertyException
++    | + printf %s null_receiver=OK:null
++    | + printf %s nested_projection=OK:[a, b]
++    | + printf %s map_receiver=OK:null
++    | + printf %s string_receiver=ERR:groovy.lang.MissingPropertyException
++    | + printf %s safe_after_spread=OK:[a, b]
++  workspace:
++    6ecd1509572d  list_missing_map.txt
++    cbd3a13d8538  list_null_element.txt
++    b91a74cfe621  list_present.txt
++    46d09ce33e45  list_scalar_failure.txt
++    1e6d9e583e49  map_receiver.txt
++    db1a52414007  nested_projection.txt
++    8181eb66f9fa  null_receiver.txt
++    48a6cf36cc95  safe_after_spread.txt
++    841dbb14319a  string_receiver.txt
++
++## Fogell
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (0 lines):
+diff --git a/evidence/20260820T230832Z-fg-015-spread-dot/fg015-spread-dot-boundary.Jenkinsfile b/evidence/20260820T230832Z-fg-015-spread-dot/fg015-spread-dot-boundary.Jenkinsfile
+new file mode 100644
+index 0000000..9e33dc7
+--- /dev/null
++++ b/evidence/20260820T230832Z-fg-015-spread-dot/fg015-spread-dot-boundary.Jenkinsfile
+@@ -0,0 +1,52 @@
++// FG-015 spread-dot boundary probe. Jenkins 2.568.1 is the semantic oracle.
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                script {
++                    def capture = { String label, Closure thunk ->
++                        try {
++                            def value = thunk()
++                            sh "printf '%s' '${label}=OK:${value}' > ${label}.txt"
++                        } catch (Throwable e) {
++                            sh "printf '%s' '${label}=ERR:${e.class.name}' > ${label}.txt"
++                        }
++                    }
++
++                    capture('list_present') {
++                        [[name: 'a'], [name: 'b']]*.name
++                    }
++                    capture('list_null_element') {
++                        [[name: 'a'], null, [name: 'b']]*.name
++                    }
++                    capture('list_missing_map') {
++                        [[name: 'a'], [:], [name: null]]*.name
++                    }
++                    capture('list_scalar_failure') {
++                        [[name: 'a'], 42, [name: 'b']]*.name
++                    }
++                    capture('null_receiver') {
++                        def rows = null
++                        rows*.name
++                    }
++                    capture('nested_projection') {
++                        def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]
++                        groups*.child*.name
++                    }
++                    capture('map_receiver') {
++                        def values = [left: 1, right: 2]
++                        values*.key
++                    }
++                    capture('string_receiver') {
++                        'ab'*.length
++                    }
++                    capture('safe_after_spread') {
++                        def rows = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]
++                        rows*.child?.name
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T230832Z-fg-015-spread-dot/oracle-verification.txt b/evidence/20260820T230832Z-fg-015-spread-dot/oracle-verification.txt
+new file mode 100644
+index 0000000..ffa4a36
+--- /dev/null
++++ b/evidence/20260820T230832Z-fg-015-spread-dot/oracle-verification.txt
+@@ -0,0 +1,6 @@
++verified-at-utc	2026-08-20T23:19:37Z
++x-jenkins	2.568.1
++jenkins-core	2.568.1
++controller-image-name	localhost/jenkins-rich:local
++controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
++controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index bef72e4..0227f3b 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -268,6 +268,12 @@ module Interpreter =
+                             raise (Stop(UnknownProperty n))
+                         else
+                             VNull // Groovy resolves unknown bindings late; treat as null
++        | ESpreadProp(target, name) -> evalSpreadProp st (evalExpr st env target) name
++        | ESafeProp((ESpreadProp _ as target), name) ->
++            // Jenkins 2.568.1: `rows*.child?.name` keeps projecting across the
++            // spread result, while still short-circuiting a null receiver. Keep
++            // this syntax-bounded; ordinary safe property access is unchanged.
++            evalSpreadProp st (evalExpr st env target) name
+         | ESafeProp(target, name) ->
+             // Safe navigation: a NULL receiver short-circuits to null — no lookup,
+             // no strict fault. A non-null receiver behaves exactly like [EProp],
+@@ -328,6 +334,27 @@ module Interpreter =
+         | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
+         | _ -> VNull
+ 
++    and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
++        match recv with
++        | VNull -> VNull
++        | VList xs ->
++            if xs.Length > st.Budget.MaxLoopIterations then
++                raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
++
++            xs
++            |> List.choose (fun item ->
++                tick st
++
++                match item with
++                // Jenkins' spread-safe operator omits a null RECEIVER. A non-null
++                // receiver whose property value is null stays in the result.
++                | VNull -> None
++                | value -> Some(evalProp st value name))
++            |> VList
++        // Jenkins applies the ordinary property rule to non-list receivers:
++        // map key lookup stays map lookup, and unsupported scalar properties fault.
++        | value -> evalProp st value name
++
+     and private evalBinary (st: State) (env: Env) op l r : Value =
+         // short-circuit before evaluating the right side
+         match op with
+diff --git a/src/Fogell.Groovy.Interpreter/StepValueUse.fs b/src/Fogell.Groovy.Interpreter/StepValueUse.fs
+index 19bbd4d..929e34e 100644
+--- a/src/Fogell.Groovy.Interpreter/StepValueUse.fs
++++ b/src/Fogell.Groovy.Interpreter/StepValueUse.fs
+@@ -70,6 +70,7 @@ module StepValueUse =
+             | EList xs -> for x in xs do expr where true x
+             | EMap kvs -> for (_, v) in kvs do expr where true v
+             | EProp(t, _)
++            | ESpreadProp(t, _)
+             | ESafeProp(t, _) -> expr "a property read" true t
+             | EIndex(t, i) ->
+                 expr "an index target" true t
+@@ -228,6 +229,7 @@ module StepValueUse =
+             | EList xs -> for x in xs do expr x
+             | EMap kvs -> for (_, v) in kvs do expr v
+             | EProp(t, _)
++            | ESpreadProp(t, _)
+             | ESafeProp(t, _) -> expr t
+             | EIndex(t, i) ->
+                 expr t
+diff --git a/src/Fogell.Groovy.Parser/Parser.fs b/src/Fogell.Groovy.Parser/Parser.fs
+index 4bae384..6b12183 100644
+--- a/src/Fogell.Groovy.Parser/Parser.fs
++++ b/src/Fogell.Groovy.Parser/Parser.fs
+@@ -316,7 +316,7 @@ let private primary: P<Expr> =
+ let private postfixChain (start: Expr) : P<Expr> =
+     let step (e: Expr) =
+         choice
+-            [ attempt (symbol "*." >>. plainIdent |>> fun n -> EProp(e, n)) // spread-dot
++            [ attempt (symbol "*." >>. plainIdent |>> fun n -> ESpreadProp(e, n))
+               attempt (
+                   symbol "?." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
+                   |>> fun ((n, args), trailing) ->
+diff --git a/src/Fogell.Groovy/Ast.fs b/src/Fogell.Groovy/Ast.fs
+index e19c2f4..491cf16 100644
+--- a/src/Fogell.Groovy/Ast.fs
++++ b/src/Fogell.Groovy/Ast.fs
+@@ -23,6 +23,10 @@ type Expr =
+     | EMap of (string * Expr) list
+     | EVar of string
+     | EProp of target: Expr * name: string
++    /// `a*.b` — Groovy's spread-safe property projection. This must remain
++    /// distinct from [EProp]: a list receiver projects in order, while ordinary
++    /// property access reads one receiver and must not acquire collection semantics.
++    | ESpreadProp of target: Expr * name: string
+     /// `a?.b` — Groovy's safe navigation. Distinct from [EProp] because the
+     /// difference IS the semantics: a null receiver yields null instead of a
+     /// property lookup, so collapsing the two made `${env.OPTIONAL?.value}`
+@@ -151,6 +155,7 @@ module Ast =
+             | EList xs -> xs |> List.map ofExpr |> Set.unionMany
+             | EMap kvs -> kvs |> List.map (snd >> ofExpr) |> Set.unionMany
+             | EProp(t, _)
++            | ESpreadProp(t, _)
+             | ESafeProp(t, _) -> ofExpr t
+             | EIndex(t, i) -> Set.union (ofExpr t) (ofExpr i)
+             | EUnary(_, x) -> ofExpr x
+diff --git a/src/Fogell.Pipeline.Parser/Parser.fs b/src/Fogell.Pipeline.Parser/Parser.fs
+index e3a9775..de1ed9f 100644
+--- a/src/Fogell.Pipeline.Parser/Parser.fs
++++ b/src/Fogell.Pipeline.Parser/Parser.fs
+@@ -1243,6 +1243,7 @@ module private LoopControl =
+             | EList xs -> xs |> List.collect expr
+             | EMap kvs -> kvs |> List.collect (snd >> expr)
+             | EProp(t, _)
++            | ESpreadProp(t, _)
+             | ESafeProp(t, _) -> expr t
+             | EIndex(t, i) -> expr t @ expr i
+             | EUnary(_, o) -> expr o
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index 56f68ab..a824dbb 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -61,8 +61,21 @@ let grammar =
+               Expect.isTrue (parses "if (a instanceof String) { echo 'x' }\n") "instanceof"
+               Expect.isTrue (parses "def (a, b) = [1, 2]\n") "multi-assign"
+           }
+-          test "spread-dot and safe navigation" {
+-              Expect.isTrue (parses "def a = b*.c\ndef d = e?.f\n") "*. and ?."
++          test "spread-dot, ordinary property and safe navigation keep distinct AST shapes" {
++              let source =
++                  "def spread = rows*.child\n"
++                  + "def nested = rows*.child*.name\n"
++                  + "def safeAfterSpread = rows*.child?.name\n"
++                  + "def ordinary = rows.child\n"
++                  + "def safe = rows?.child\n"
++
++              match parseOk source with
++              | [ SDef("spread", Some(ESpreadProp(EVar "rows", "child")))
++                  SDef("nested", Some(ESpreadProp(ESpreadProp(EVar "rows", "child"), "name")))
++                  SDef("safeAfterSpread", Some(ESafeProp(ESpreadProp(EVar "rows", "child"), "name")))
++                  SDef("ordinary", Some(EProp(EVar "rows", "child")))
++                  SDef("safe", Some(ESafeProp(EVar "rows", "child"))) ] -> ()
++              | other -> failtestf "property operators collapsed in the AST: %A" other
+           }
+           // FG-174. Both parsers hold this rule, because both produce calls and a rule
+           // held by only one of them is the shape of half the findings on this branch.
+@@ -1015,14 +1028,15 @@ let fg180Grammar =
+               | other -> failtestf "merged into a declaration: %A" other
+           } ]
+ 
+-/// FG-015. The board row outlived the implementation that admitted most of its
+-/// six constructs. Keep one named semantic repro per construct so a closure
+-/// audit cannot mistake grammar acceptance for execution parity. Spread-dot is
+-/// deliberately a passing pin of the one remaining divergence: once it is
+-/// implemented, this assertion and the PARTIAL board row must change together.
++/// FG-015. Keep one named semantic repro per recovered construct so a closure
++/// audit cannot mistake grammar acceptance for execution parity. Spread-dot's
++/// measured boundary has adjacent pins because null omission, null retention and
++/// chained safe navigation are different semantics hidden behind one token.
+ let fg015ClosureAudit =
+-    let runStrict src =
+-        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
++    let runStrictWith budget src =
++        Interpreter.runStrictVars budget steps Env.empty (parseOk src)
++
++    let runStrict = runStrictWith Budget.defaults
+ 
+     testList
+         "FG-015 six-construct closure audit"
+@@ -1071,12 +1085,72 @@ let fg015ClosureAudit =
+               Expect.equal (stepArgs o) [ "echo", [ "L:R" ] ] "both names are bound"
+           }
+ 
+-          test "spread-dot remains divergent instead of masquerading as closed" {
+-              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\ndef names = rows*.name\nreturn names\n"
++          test "spread-dot projects one property from every non-null list element" {
++              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows*.name\n"
++              Expect.isNone o.Fault "the measured list projection evaluates"
++              Expect.equal o.Returned (Some(VList [ VStr "a"; VStr "b" ])) "source order is preserved"
++          }
++
++          test "spread-dot keeps the measured null and receiver boundaries" {
++              let source =
++                  "def withoutNulls = [[name: 'a'], [name: 'b']]*.name\n"
++                  + "def withNullElement = [[name: 'a'], null, [name: 'b']]*.name\n"
++                  + "def missingMapValues = [[name: 'a'], [:], [name: null]]*.name\n"
++                  + "def maybe = null\n"
++                  + "def nullReceiver = maybe*.name\n"
++                  + "def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]\n"
++                  + "def nested = groups*.child*.name\n"
++                  + "def safeAfterSpread = groups*.child?.name\n"
++                  + "def mapValue = [left: 1, right: 2]\n"
++                  + "def mapResult = mapValue*.key\n"
++                  + "echo withoutNulls\necho withNullElement\necho missingMapValues\n"
++                  + "echo nullReceiver\necho nested\necho safeAfterSpread\necho mapResult\n"
++
++              let o = runStrict source
++              Expect.isNone o.Fault "all measured successful receiver shapes evaluate"
++
++              Expect.equal
++                  (stepArgs o)
++                  [ "echo", [ "[a, b]" ]
++                    "echo", [ "[a, b]" ]
++                    "echo", [ "[a, null, null]" ]
++                    "echo", [ "null" ]
++                    "echo", [ "[a, b]" ]
++                    "echo", [ "[a, b]" ]
++                    "echo", [ "null" ] ]
++                  "null receivers are omitted, null property values remain, and non-lists use ordinary lookup"
++          }
++
++          test "spread-dot missing properties remain catchable" {
++              let source =
++                  "def scalarResult = 'not-caught'\n"
++                  + "try { def scalarProjection = [[name: 'a'], 42]*.name } "
++                  + "catch (MissingPropertyException e) { scalarResult = 'caught' }\n"
++                  + "def stringResult = 'not-caught'\n"
++                  + "try { def stringProjection = 'ab'*.length } "
++                  + "catch (MissingPropertyException e) { stringResult = 'caught' }\n"
++                  + "echo scalarResult\necho stringResult\n"
++
++              let o = runStrict source
++              Expect.isNone o.Fault "both measured missing-property failures are intercepted"
++              Expect.equal (stepArgs o) [ "echo", [ "caught" ]; "echo", [ "caught" ] ] "catch runs"
++          }
++
++          test "ordinary property access on a list stays ordinary" {
++              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows.name\n"
+ 
+               match o.Fault with
+               | Some(UnknownProperty "name") -> ()
+-              | other -> failtestf "expected the measured spread-dot divergence, got %A" other
++              | other -> failtestf "ordinary EProp gained spread semantics: %A" other
++          }
++
++          test "spread projection is bounded like other collection iteration" {
++              let budget = { Budget.defaults with MaxLoopIterations = 1 }
++              let o = runStrictWith budget "return [[name: 'a'], [name: 'b']]*.name\n"
++
++              match o.Fault with
++              | Some(BudgetExhausted message) -> Expect.stringContains message "spread projection" "names the bound"
++              | other -> failtestf "expected bounded spread refusal, got %A" other
+           } ]
+ 
+ [<EntryPoint>]

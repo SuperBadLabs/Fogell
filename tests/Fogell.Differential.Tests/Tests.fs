@@ -399,6 +399,16 @@ let stringModel =
                   (fun () -> GString.render env (step [ "m", "e=${1 - 'x'}" ] [] [] [] [] []) "m" "e=${1 - 'x'}" |> ignore)
                   "an unmodelled operator combination fails the argument"
 
+              Expect.throws
+                  (fun () ->
+                      GString.render
+                          env
+                          (step [ "m", "n=${def target = null; target?.name = 'x'}" ] [] [] [] [] [])
+                          "m"
+                          "n=${def target = null; target?.name = 'x'}"
+                      |> ignore)
+                  "a null assignment receiver cannot degrade into raw placeholder success"
+
               // A closure ASSIGNMENT hits the shared script Binding, even though the
               // closure environment itself is discarded.
               let b6 = GString.ScriptBinding()
@@ -1471,6 +1481,469 @@ let unsupportedDeclarativeTools =
                       "the control reached its shell effect")
           } ]
 
+let spreadAssignmentPreflight =
+    let pipelineWithBody body =
+        "pipeline { agent any stages { stage('probe') { steps { script { "
+        + "def rows = [[name: 'a'], [name: 'b']]; "
+        + body
+        + " } } } } }"
+
+    let expectNamedRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                $"{label}: exact stable reason"
+
+    let expectSpreadIndexRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
+                $"{label}: exact stable projected-index reason"
+
+    let expectPreambleAnalysisRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                FogellSide.preambleAnalysisRefusal
+                $"{label}: exact stable preamble-analysis reason"
+
+    let expectEpilogueRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                FogellSide.epilogueRefusal
+                $"{label}: exact stable epilogue reason"
+
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
+        let job = "job"
+        let workspace = IO.Path.Combine(root, job)
+        IO.Directory.CreateDirectory(workspace) |> ignore
+        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
+        IO.File.WriteAllText(sentinel, "keep")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-015 spread assignment fails closed before execution"
+        [ test "plain, compound, increment, decrement and wrapped targets share one refusal" {
+              for label, statement in
+                  [ "plain", "rows*.name = 'x'"
+                    "compound", "rows*.name += 'x'"
+                    "increment", "rows*.name++"
+                    "decrement", "rows*.name--"
+                    "property wrapper", "rows*.child.name = 'x'"
+                    "safe wrapper", "rows*.child?.name = 'x'" ] do
+                  expectNamedRefusal label (pipelineWithBody statement)
+          }
+
+          test "direct projected indexes have a distinct refusal across assignment forms and locations" {
+              for label, statement in
+                  [ "plain", "rows*.child[0] = 'x'"
+                    "compound", "rows*.child[0] += 'x'"
+                    "increment", "rows*.count[0]++"
+                    "decrement", "rows*.count[0]--"
+                    "nested index", "rows*.children[0][1] = 'x'" ] do
+                  expectSpreadIndexRefusal label (pipelineWithBody statement)
+
+              let preamble =
+                  "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              expectSpreadIndexRefusal "preamble" preamble
+
+              let epilogue =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
+
+              expectSpreadIndexRefusal "epilogue" epilogue
+
+              expectSpreadIndexRefusal
+                  "nested closure"
+                  (pipelineWithBody "def later = { rows*.child[0] = [name: 'x'] }; echo 'never'")
+
+              let whenBody =
+                  "pipeline { agent any stages { stage('probe') { when { expression { "
+                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']; true } } "
+                  + "steps { echo 'never' } } } }"
+
+              expectSpreadIndexRefusal "when expression" whenBody
+          }
+
+          test "direct projected-index refusal blocks workspace, earlier, RHS, later and post effects" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-index.txt' } } "
+                  + "stage('bad') { steps { script { "
+                  + "def rows = [[children: [[name: 'a']]]]; "
+                  + "rows*.children.first()[0] = sh 'touch rhs-index.txt' "
+                  + "} sh 'touch after-index.txt' } } "
+                  + "} post { always { sh 'touch post-index.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "projected-index assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-index.txt"; "rhs-index.txt"; "after-index.txt"; "post-index.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+          test "nested closure, helper, post and nested-stage locations cannot hide the target" {
+              let closure = pipelineWithBody "def later = { rows*.name = 'x' }; echo 'never'"
+              expectNamedRefusal "closure" closure
+
+              let helper =
+                  "def change(rows) { rows*.name = 'x' }\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "change([[name: 'a']]) } } } } }"
+
+              expectNamedRefusal "preamble helper" helper
+
+              let preambleWithoutScriptBody =
+                  "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              expectNamedRefusal "preamble without script body" preambleWithoutScriptBody
+
+              let locations =
+                  [ "stage post",
+                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } "
+                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }"
+                    "pipeline post",
+                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } "
+                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } }"
+                    "nested stage",
+                    "pipeline { agent any stages { stage('outer') { stages { stage('inner') { steps { "
+                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } } }"
+                    "nested step block",
+                    "pipeline { agent any stages { stage('probe') { steps { timeout(time: 1, unit: 'MINUTES') { "
+                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }" ]
+
+              for label, source in locations do
+                  expectNamedRefusal label source
+          }
+
+          test "an unparsable nonblank preamble fails closed instead of proving no spread write" {
+              let ordinaryPipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              let defaultHelper = "def helper(x = true) { x }\n"
+
+              let hiddenSpread =
+                  defaultHelper
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "default helper then spread write" hiddenSpread
+              expectPreambleAnalysisRefusal "default helper alone" (defaultHelper + ordinaryPipeline)
+
+              let caught =
+                  defaultHelper
+                  + "try { def rows = [[name: 'a']]; rows*.name = 'x' } catch (Throwable e) { }\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "caught top-level spread write" caught
+
+              let nestedClosure =
+                  "def helper(x = true) { def later = { def rows = [[name: 'a']]; rows*.name = 'x' }; later() }\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "spread write nested in default-parameter helper" nestedClosure
+
+              // The diagnostic is a stable capability name, not a reflection of parser
+              // internals or user-controlled preamble text.
+              let alternate = "def secretMarker(value = 'DO_NOT_REFLECT') { value }\n" + ordinaryPipeline
+              expectPreambleAnalysisRefusal "diagnostic nonreflection" alternate
+
+              match FogellSide.preflightExecution alternate with
+              | Ok _ -> failtest "alternate preamble unexpectedly passed"
+              | Error why ->
+                  Expect.isFalse (why.Contains "DO_NOT_REFLECT") "refusal does not echo source text"
+                  Expect.isFalse (why.Contains "secretMarker") "refusal does not echo identifiers"
+          }
+
+          test "unparsable preambles block earlier stages, post blocks and workspace preparation" {
+              let source =
+                  "def helper(x = true) { x }\n"
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-preamble.txt' } } "
+                  + "stage('after') { steps { sh 'touch after-preamble.txt' } } "
+                  + "} post { always { sh 'touch preamble-post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "unparsable preamble unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal why FogellSide.preambleAnalysisRefusal "stable fail-closed reason"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-preamble.txt"; "after-preamble.txt"; "preamble-post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+          test "blank and fully analyzable preambles remain admitted" {
+              let ordinaryPipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              for label, source in
+                  [ "blank", ordinaryPipeline
+                    "whitespace", "  \n\t" + ordinaryPipeline
+                    "parsed helper", "def helper(x) { x }\n" + ordinaryPipeline ] do
+                  match FogellSide.preflightExecution source with
+                  | Error why -> failtestf "%s preamble was over-refused: %s" label why
+                  | Ok _ -> ()
+          }
+
+          test "a trailing spread write uses the shared spread-assignment refusal" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+
+              expectNamedRefusal "trailing spread assignment" source
+
+              let nested =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def change(rows) { try { rows*.name = 'x' } catch (Throwable e) { } }\n"
+
+              expectNamedRefusal "spread assignment nested in trailing helper and catch" nested
+          }
+
+          test "parsed and unparsable nontrivial epilogues share one conservative refusal" {
+              let pipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+
+              let sources =
+                  [ "parsed helper and call", "def trailing(v) { echo v }; trailing('ok')\n"
+                    "default-parameter helper", "def trailing(v = 'ok') { echo v }; trailing()\n"
+                    "ordinary top-level call", "echo 'tail'\n" ]
+
+              for label, tail in sources do
+                  expectEpilogueRefusal label (pipeline + tail)
+          }
+
+          test "epilogue comments and whitespace are parsed as empty and remain admitted" {
+              let pipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              for label, tail in
+                  [ "empty", ""
+                    "whitespace", "  \n\t\r\n"
+                    "line comment", "\n// trailing } comment\n"
+                    "block comment", "\n/* trailing { pipeline { } } */\n  " ] do
+                  match FogellSide.preflightExecution (pipeline + tail) with
+                  | Error why -> failtestf "%s epilogue was over-refused: %s" label why
+                  | Ok _ -> ()
+          }
+
+          test "trailing-source refusals block earlier stages, post and workspace preparation" {
+              let pipeline =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-epilogue.txt' } } "
+                  + "stage('after') { steps { sh 'touch after-epilogue.txt' } } "
+                  + "} post { always { sh 'touch epilogue-post.txt' } } }\n"
+
+              for label, tail, expected in
+                  [ "spread", "def rows = [[name: 'a']]; rows*.name = 'x'\n",
+                    Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                    "unmodelled", "def trailing(v) { echo v }; trailing('ok')\n",
+                    FogellSide.epilogueRefusal
+                    "unparsable", "def trailing(v = 'ok') { echo v }; trailing()\n",
+                    FogellSide.epilogueRefusal ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" (pipeline + tail) with
+                      | Ok trace -> failtestf "%s trailing source unexpectedly executed: %A" label trace
+                      | Error why -> Expect.equal why expected $"{label}: stable refusal"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: workspace preparation was not reached"
+
+                      for file in [ "before-epilogue.txt"; "after-epilogue.txt"; "epilogue-post.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{label}: {file} effect was not reached")
+          }
+          test "when expressions in top, nested and parallel stages cannot hide the target" {
+              let assignment = "def rows = [[name: 'a']]; rows*.name = 'x'; true"
+
+              let sources =
+                  [ "top allOf false sibling",
+                    "pipeline { agent any stages { stage('probe') { when { allOf { "
+                    + "expression { false } expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } }"
+                    "nested anyOf",
+                    "pipeline { agent any stages { stage('outer') { stages { stage('inner') { "
+                    + "when { anyOf { branch 'never'; expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } } } }"
+                    "parallel not",
+                    "pipeline { agent any stages { stage('fanout') { parallel { "
+                    + "stage('left') { steps { echo 'ordinary' } } "
+                    + "stage('right') { when { not { expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } } } }" ]
+
+              for label, source in sources do
+                  expectNamedRefusal label source
+          }
+
+          test "a false when sibling cannot hide the refusal or permit earlier effects" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-when.txt' } } "
+                  + "stage('guarded') { when { allOf { expression { false } expression { "
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'; true } } } "
+                  + "steps { sh 'touch guarded.txt' } } "
+                  + "} post { always { sh 'touch when-post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "when spread assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-when.txt"; "guarded.txt"; "when-post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+
+          test "workspace preparation, RHS, later steps and post are all blocked" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before.txt' } } "
+                  + "stage('bad') { steps { script { def rows = [[name: 'a']]; "
+                  + "rows*.name = sh 'touch rhs.txt' } sh 'touch after.txt' } } "
+                  + "} post { always { sh 'touch post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "spread assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "fresh-workspace wipe was not reached"
+
+                  for file in [ "before.txt"; "rhs.txt"; "after.txt"; "post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+          test "catching Jenkins runtime exceptions is an explicit unsupported boundary" {
+              let source =
+                  pipelineWithBody
+                      "try { rows*.name = 'x' } catch (Throwable e) { echo 'caught' }; echo 'after'"
+
+              expectNamedRefusal "caught form" source
+          }
+
+          test "spread reads and ordinary assignments remain executable" {
+              match FogellSide.preflightExecution (pipelineWithBody "def names = rows*.name; rows[0].name = 'x'") with
+              | Error why -> failtestf "read-only spread or ordinary write was over-refused: %s" why
+              | Ok _ -> ()
+          }
+
+          test "outer writes on spread-index results remain admitted" {
+              for label, statement in
+                  [ "property", "rows*.child[0].name = 'x'"
+                    "safe property", "rows*.child[0]?.name = 'x'"
+                    "compound property", "rows*.child[0].count += 1"
+                    "increment property", "rows*.child[0].count++"
+                    "decrement property", "rows*.child[0].count--"
+                    "nested index then property", "rows*.children[0][1].name = 'x'"
+                    "index then method then property", "rows*.children[0].first().name = 'x'" ] do
+                  let source =
+                      "pipeline { agent any stages { stage('probe') { steps { script { "
+                      + "def rows = [[child: [name: 'a', count: 1], children: [[name: 'a0'], [name: 'a1']]]]; "
+                      + statement
+                      + " } } } } }"
+
+                  match FogellSide.preflightExecution source with
+                  | Error why -> failtestf "%s outer write was over-refused: %s" label why
+                  | Ok _ -> ()
+          }
+
+          test "spread reads in call inputs, index keys and method receivers remain outside the write refusal" {
+              for label, statement in
+                  [ "positional call argument", "foo(rows*.name).bar = 1"
+                    "named call argument", "foo(values: rows*.name).bar = 1"
+                    "trailing closure read", "holder.foo { rows*.name }.bar = 1"
+                    "index key", "xs[rows*.name[0]] = 'x'"
+                    "method result property", "rows*.child.first().name = 'x'"
+                    "method result safe property", "rows*.child.first()?.name = 'x'"
+                    "safe-method result safe property", "rows*.child?.first()?.name = 'x'"
+                    "named method result", "rows*.child.find(index: 0).name = 'x'"
+                    "trailing method result", "rows*.child.find { true }.name = 'x'" ] do
+                  match FogellSide.preflightExecution (pipelineWithBody statement) with
+                  | Error why -> failtestf "%s spread read was over-refused: %s" label why
+                  | Ok _ -> ()
+
+              for label, statement in
+                  [ "direct property wrapper", "rows*.child.name = 'x'"
+                    "direct safe wrapper", "rows*.child?.name = 'x'"
+                    "new spread after method", "rows*.child.first()*.name = 'x'" ] do
+                  expectNamedRefusal label (pipelineWithBody statement)
+
+              expectSpreadIndexRefusal "direct index wrapper" (pipelineWithBody "rows*.child[0] = 'x'")
+
+              for label, statement in
+                  [ "method-result list index", "rows*.children.first()[0] = [name: 'x']"
+                    "safe-method-result list index", "rows*.children?.first()[0] = [name: 'x']"
+                    "nested method-result list index", "rows*.children.first().first()[0] = [name: 'x']"
+                    "method-result list compound", "rows*.counts.first()[0] += 1"
+                    "method-result list increment", "rows*.counts.first()[0]++"
+                    "method-result list decrement", "rows*.counts.first()[0]--"
+                    "method-result ambiguous map index", "rows*.holder.first()['slot'] = 'x'" ] do
+                  expectSpreadIndexRefusal label (pipelineWithBody statement)
+
+              expectNamedRefusal
+                  "actual assignment in method trailing closure"
+                  (pipelineWithBody "holder.foo { rows*.name = 'x' }.bar = 1")
+          } ]
+
 let jenkinsBuildDataAttestation =
     testList
         "FG-177 Jenkins BuildData attestation"
@@ -1594,6 +2067,7 @@ let main argv =
             [ hostedSignatures
               jenkinsBuildDataAttestation
               unsupportedDeclarativeTools
+              spreadAssignmentPreflight
               userOutputSurvives
               stringModel
               sealBindsCaseSource

@@ -1,0 +1,530 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index ad8e136..82b0c03 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -509,7 +509,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
+ | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
+ | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |
+-| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused | twelve focused FG-015 semantic/refusal tests, four exact AST-shape pins, and eight differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |
++| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused. A review probe also found that an unsupported-but-Jenkins-valid default-parameter helper made the analyzer treat the whole preamble's parse error as proof of no spread write; any nonblank preamble that execution analysis cannot parse now fails closed before effects as `unsupported_preamble_analysis`, while blank and fully parsed preambles remain admitted | twelve focused FG-015 semantic/refusal tests, four exact AST-shape pins, and eleven differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment and unanalyzable-preamble probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |
+ | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
+ | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
+ | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+index 7f64a67..2e00660 100644
+--- a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+@@ -106,3 +106,21 @@ the separate recursive statement traversal.
+ 
+ The [method-result review gate bundle](../20260820T195656Z-fg-015-spread-assignment-call-boundary)
+ seals this incremental correction against exact base `bcfbf9c`.
++
++## Unanalyzable preamble boundary
++
++The next exact-head review found a fail-open before the spread-write scanner:
++a Jenkins-valid default-parameter helper makes the bounded Groovy analyzer
++reject the complete captured preamble, and the scanner had treated that error
++as proof that no spread assignment existed. A following top-level
++`rows*.name = 'x'` therefore failed Jenkins before the pipeline but allowed
++Fogell to run stage and workspace effects.
++
++The shared execution preflight now refuses any nonblank captured preamble that
++it cannot parse for execution analysis, before workspace preparation or effects,
++with the stable `unsupported_preamble_analysis` reason. This is deliberately
++conservative: Fogell has no complete statement splitter for Groovy, so it does
++not guess around the unsupported declaration. Blank and fully analyzed
++preambles remain admitted. The retained direct Jenkins measurement and the
++incremental gate bundle are under
++[`20260821T012214Z-fg-015-preamble-analysis`](../20260821T012214Z-fg-015-preamble-analysis).
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/README.md b/evidence/20260821T012214Z-fg-015-preamble-analysis/README.md
+new file mode 100644
+index 0000000..4585714
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/README.md
+@@ -0,0 +1,29 @@
++# FG-015 unanalyzable-preamble review boundary
++
++Reviewed base: `b1cf6c3d6ef3811e1308cf97f89901ee0bb8812b`.
++
++The minimal `default-helper-spread.Jenkinsfile` was run directly from HeMan
++against the pinned Jenkins 2.568.1 oracle before implementation. Across three
++retained attempts Jenkins failed before stage or post effects and left an empty
++workspace. Fogell succeeded, ran `touch stage-ran.txt`, and produced a nonempty
++workspace. The sealed pre-fix differential receipt is
++`preimplementation-receipts/fg015-default-helper-spread.receipt.txt`.
++
++The pipeline parser correctly captured the complete preamble. Fogell's bounded
++Groovy parser rejected the Jenkins-valid default parameter in
++`def helper(x = true)`, and the spread-write preflight converted that parse
++error to `false`. It therefore misclassified the later top-level
++`rows*.name = 'x'` as absent.
++
++The correction makes a nonblank preamble analysis failure a stable
++`unsupported_preamble_analysis` execution refusal before workspace preparation
++or effects. It does not invent a partial Groovy statement splitter and does not
++broaden the parser. Blank and fully analyzed preambles preserve their existing
++behavior. Script-body parse errors were audited separately: they are not
++discarded by the execution path, which surfaces them when the hosted block is
++reached; only the preamble path intentionally maps a parse failure to an empty
++function set, so that is the shared fail-open boundary closed here.
++
++The post-fix receipt is expected to be `NOT COMPARABLE`: Jenkins reaches its
++catchable spread-assignment runtime failure, while Fogell makes the documented
++conservative refusal earlier. Timing and catchability parity are not claimed.
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/default-helper-spread.Jenkinsfile b/evidence/20260821T012214Z-fg-015-preamble-analysis/default-helper-spread.Jenkinsfile
+new file mode 100644
+index 0000000..f4bd858
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/default-helper-spread.Jenkinsfile
+@@ -0,0 +1,19 @@
++def helper(x = true) { x }
++def rows = [[name: 'a'], [name: 'b']]
++rows*.name = 'x'
++
++pipeline {
++  agent any
++  stages {
++    stage('probe') {
++      steps {
++        sh 'touch stage-ran.txt'
++      }
++    }
++  }
++  post {
++    always {
++      sh 'touch post-ran.txt'
++    }
++  }
++}
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/oracle-verification.txt b/evidence/20260821T012214Z-fg-015-preamble-analysis/oracle-verification.txt
+new file mode 100644
+index 0000000..2fe2be9
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/oracle-verification.txt
+@@ -0,0 +1,11 @@
++format	fogell-jenkins-oracle-v2
++jenkins-core	2.568.1
++jenkins-session-sha256	e8e6252715c309f8771ffc811965c0e6bb3c4c2ce0963418c5c71a4080a6b393
++controller-container-id	5dc7acbed80016c90ab174f516993a10c6a21f808cb19474e8259755f8b3e8c9
++core-metadata-sha256	5c527167c41f888bbbe66d3d520592654a496c74f4847e5db4c0a3c4f5246577
++plugin-count	154
++plugin-manifest-sha256	6af6817f555a6fbbbcb5b41d48e7be58b00517efc913b21cfb825d0614630b3a
++controller-image-name	localhost/jenkins-rich:local
++controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
++controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332
++image-metadata-sha256	2a2612da07718c48b9da3b79a3665bba9e14ba99a450f09789a2d9e9dce3230c
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/postfix-receipts/default-helper-spread.receipt.txt b/evidence/20260821T012214Z-fg-015-preamble-analysis/postfix-receipts/default-helper-spread.receipt.txt
+new file mode 100644
+index 0000000..b0fe060
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/postfix-receipts/default-helper-spread.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — default-helper-spread.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         a918e071d59387db95c95b9dc47ae8be6607c6add793d6e210bf7537e5aabc85
++case-digest:  6157fc24982fa74c0c6c5f2138aaa391c31228812a40eecb8135a9adfb3f5bba
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_preamble_analysis: Fogell cannot parse this nonblank Declarative preamble for execution analysis; refusing before workspace preparation or effects because absence of an unsupported spread-property assignment cannot be proven
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/preimplementation-receipts/fg015-default-helper-spread.receipt.txt b/evidence/20260821T012214Z-fg-015-preamble-analysis/preimplementation-receipts/fg015-default-helper-spread.receipt.txt
+new file mode 100644
+index 0000000..950c4f2
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/preimplementation-receipts/fg015-default-helper-spread.receipt.txt
+@@ -0,0 +1,95 @@
++# Differential receipt — fg015-default-helper-spread.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         afc872ff652014eaf1fad3eed63a3b97176d4353b6c42c4fff95e0574a4ed3c2
++case-digest:  6157fc24982fa74c0c6c5f2138aaa391c31228812a40eecb8135a9adfb3f5bba
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 0: jenkins=<absent> fogell=+ touch stage-ran.txt
++  - workspace hash: jenkins=e3b0c44298fc fogell=0edebe1d240c
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (0 lines):
++
++## Fogell
++  result:         success
++  workspace-hash: 0edebe1d240c08af839418ed3cbf0f8bff68797f0f42e7e43b4f3d78d49c0114
++  output (2 lines):
++    | + touch stage-ran.txt
++    | + touch post-ran.txt
++  workspace:
++    e3b0c44298fc  post-ran.txt
++    e3b0c44298fc  stage-ran.txt
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-request.json b/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-request.json
+new file mode 100644
+index 0000000..446f276
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-request.json
+@@ -0,0 +1,18 @@
++{
++  "model": "qwen3.8",
++  "temperature": 0,
++  "max_tokens": 900,
++  "messages": [
++    {
++      "role": "system",
++      "content": "Review the exact bounded Fogell patch for concrete correctness or evidence-integrity gaps only. Do not request broader Groovy support. Return VERDICT and ACTION ITEMS, with exact counterexamples for any finding."
++    },
++    {
++      "role": "user",
++      "content": "Requirements: A Jenkins-valid but Fogell-Groovy-unparsable nonblank captured preamble must never be treated as empty or proof of no spread assignment. Fail closed before workspace/effects with one stable nonreflective named reason. Blank and fully parsed preambles remain admitted. Script-body parse failures must be audited, not conflated with the deliberately ignored preamble path. Default-parameter helper plus later spread write, helper alone, caught/nested shapes, earlier stage/post effects, and controls need coverage. Exact patch:\n\ndiff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md\nindex ad8e136..82b0c03 100644\n--- a/docs/EXECUTION_BOARD.md\n+++ b/docs/EXECUTION_BOARD.md\n@@ -509,7 +509,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s\n | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |\n | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |\n | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |\n-| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused | twelve focused FG-015 semantic/refusal tests, four exact AST-shape pins, and eight differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |\n+| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused. A review probe also found that an unsupported-but-Jenkins-valid default-parameter helper made the analyzer treat the whole preamble's parse error as proof of no spread write; any nonblank preamble that execution analysis cannot parse now fails closed before effects as `unsupported_preamble_analysis`, while blank and fully parsed preambles remain admitted | twelve focused FG-015 semantic/refusal tests, four exact AST-shape pins, and eleven differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment and unanalyzable-preamble probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |\n | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |\n | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |\n | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |\ndiff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md\nindex 7f64a67..2e00660 100644\n--- a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md\n+++ b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md\n@@ -106,3 +106,21 @@ the separate recursive statement traversal.\n \n The [method-result review gate bundle](../20260820T195656Z-fg-015-spread-assignment-call-boundary)\n seals this incremental correction against exact base `bcfbf9c`.\n+\n+## Unanalyzable preamble boundary\n+\n+The next exact-head review found a fail-open before the spread-write scanner:\n+a Jenkins-valid default-parameter helper makes the bounded Groovy analyzer\n+reject the complete captured preamble, and the scanner had treated that error\n+as proof that no spread assignment existed. A following top-level\n+`rows*.name = 'x'` therefore failed Jenkins before the pipeline but allowed\n+Fogell to run stage and workspace effects.\n+\n+The shared execution preflight now refuses any nonblank captured preamble that\n+it cannot parse for execution analysis, before workspace preparation or effects,\n+with the stable `unsupported_preamble_analysis` reason. This is deliberately\n+conservative: Fogell has no complete statement splitter for Groovy, so it does\n+not guess around the unsupported declaration. Blank and fully analyzed\n+preambles remain admitted. The retained direct Jenkins measurement and the\n+incremental gate bundle are under\n+[`20260821T012214Z-fg-015-preamble-analysis`](../20260821T012214Z-fg-015-preamble-analysis).\ndiff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs\nindex 357c964..acc3ab3 100644\n--- a/src/Fogell.Differential/Fogell.fs\n+++ b/src/Fogell.Differential/Fogell.fs\n@@ -100,7 +100,10 @@ module FogellSide =\n         | WhenNot inner -> whenExpressionBodies inner\n         | _ -> []\n \n-    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : bool =\n+    let preambleAnalysisRefusal =\n+        \"unsupported_preamble_analysis: Fogell cannot parse this nonblank Declarative preamble for execution analysis; refusing before workspace preparation or effects because absence of an unsupported spread-property assignment cannot be proven\"\n+\n+    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : Result<bool, string> =\n         let bodies =\n             [ yield! scriptBodies (pipeline.Post |> List.collect snd)\n               for stage in Pipeline.flattenStages pipeline.Stages do\n@@ -115,11 +118,22 @@ module FogellSide =\n             | Result.Ok script -> Fogell.Groovy.Ast.containsSpreadAssignment script\n             | Result.Error _ -> false\n \n-        let preambleContainsAssignment =\n-            not (System.String.IsNullOrWhiteSpace pipeline.Preamble)\n-            && sourceContainsAssignment pipeline.Preamble\n+        let bodiesContainAssignment = bodies |> List.exists sourceContainsAssignment\n \n-        preambleContainsAssignment || (bodies |> List.exists sourceContainsAssignment)\n+        // Unlike script bodies, whose parse failure is surfaced when the hosted block\n+        // executes, the walker deliberately ignores an unparsable preamble because it\n+        // commonly contains unmodelled annotations and imports. That made `Error ->\n+        // false` unsafe here: a supported Jenkins declaration such as a default-parameter\n+        // helper could hide a later top-level spread write, and Fogell would run every\n+        // stage after Jenkins had already failed. There is no complete statement splitter\n+        // for Groovy, so a nonblank preamble that this analyzer cannot parse fails closed.\n+        if System.String.IsNullOrWhiteSpace pipeline.Preamble then\n+            Result.Ok bodiesContainAssignment\n+        else\n+            match Fogell.Groovy.Parser.Parser.parse pipeline.Preamble with\n+            | Result.Ok script ->\n+                Result.Ok(Fogell.Groovy.Ast.containsSpreadAssignment script || bodiesContainAssignment)\n+            | Result.Error _ -> Result.Error preambleAnalysisRefusal\n \n     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a\n     /// parsed construct must not become an executable no-op. Jenkins resolves every\n@@ -135,24 +149,27 @@ module FogellSide =\n         match Fogell.Pipeline.Parser.Parser.parse script with\n         | Result.Error e ->\n             Result.Error $\"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}\"\n-        | Result.Ok pipeline when containsUnsupportedSpreadAssignment pipeline ->\n-            Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal\n         | Result.Ok pipeline ->\n-            let scopes =\n-                [ if not (List.isEmpty pipeline.Tools) then\n-                      \"pipeline\"\n-                  for stage in Pipeline.flattenStages pipeline.Stages do\n-                      if not (List.isEmpty stage.Tools) then\n-                          $\"stage '{stage.Name}'\" ]\n+            match containsUnsupportedSpreadAssignment pipeline with\n+            | Result.Error why -> Result.Error why\n+            | Result.Ok true ->\n+                Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal\n+            | Result.Ok false ->\n+                let scopes =\n+                    [ if not (List.isEmpty pipeline.Tools) then\n+                          \"pipeline\"\n+                      for stage in Pipeline.flattenStages pipeline.Stages do\n+                          if not (List.isEmpty stage.Tools) then\n+                              $\"stage '{stage.Name}'\" ]\n \n-            if List.isEmpty scopes then\n-                Result.Ok pipeline\n-            else\n-                Result.Error(\n-                    \"unsupported_tools: Declarative tools selections are parsed for admission but execution is refused \"\n-                    + \"until installation lookup, agent provisioning and tool environment injection are implemented; scopes: \"\n-                    + String.concat \", \" scopes\n-                )\n+                if List.isEmpty scopes then\n+                    Result.Ok pipeline\n+                else\n+                    Result.Error(\n+                        \"unsupported_tools: Declarative tools selections are parsed for admission but execution is refused \"\n+                        + \"until installation lookup, agent provisioning and tool environment injection are implemented; scopes: \"\n+                        + String.concat \", \" scopes\n+                    )\n \n     let internal runWith\n         (envReplacements: (string * string) list)\ndiff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs\nindex 1952c85..206a1ec 100644\n--- a/tests/Fogell.Differential.Tests/Tests.fs\n+++ b/tests/Fogell.Differential.Tests/Tests.fs\n@@ -1487,6 +1487,15 @@ let spreadAssignmentPreflight =\n                 Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal\n                 $\"{label}: exact stable reason\"\n \n+    let expectPreambleAnalysisRefusal label source =\n+        match FogellSide.preflightExecution source with\n+        | Ok _ -> failtestf \"%s unexpectedly passed execution preflight\" label\n+        | Error why ->\n+            Expect.equal\n+                why\n+                FogellSide.preambleAnalysisRefusal\n+                $\"{label}: exact stable preamble-analysis reason\"\n+\n     let withWorkspace (f: string -> string -> unit) =\n         let root = IO.Path.Combine(IO.Path.GetTempPath(), \"fogell-spread-assignment-preflight-\" + Guid.NewGuid().ToString(\"N\"))\n         let job = \"job\"\n@@ -1549,6 +1558,83 @@ let spreadAssignmentPreflight =\n               for label, source in locations do\n                   expectNamedRefusal label source\n           }\n+\n+          test \"an unparsable nonblank preamble fails closed instead of proving no spread write\" {\n+              let ordinaryPipeline =\n+                  \"pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\"\n+\n+              let defaultHelper = \"def helper(x = true) { x }\\n\"\n+\n+              let hiddenSpread =\n+                  defaultHelper\n+                  + \"def rows = [[name: 'a']]; rows*.name = 'x'\\n\"\n+                  + ordinaryPipeline\n+\n+              expectPreambleAnalysisRefusal \"default helper then spread write\" hiddenSpread\n+              expectPreambleAnalysisRefusal \"default helper alone\" (defaultHelper + ordinaryPipeline)\n+\n+              let caught =\n+                  defaultHelper\n+                  + \"try { def rows = [[name: 'a']]; rows*.name = 'x' } catch (Throwable e) { }\\n\"\n+                  + ordinaryPipeline\n+\n+              expectPreambleAnalysisRefusal \"caught top-level spread write\" caught\n+\n+              let nestedClosure =\n+                  \"def helper(x = true) { def later = { def rows = [[name: 'a']]; rows*.name = 'x' }; later() }\\n\"\n+                  + ordinaryPipeline\n+\n+              expectPreambleAnalysisRefusal \"spread write nested in default-parameter helper\" nestedClosure\n+\n+              // The diagnostic is a stable capability name, not a reflection of parser\n+              // internals or user-controlled preamble text.\n+              let alternate = \"def secretMarker(value = 'DO_NOT_REFLECT') { value }\\n\" + ordinaryPipeline\n+              expectPreambleAnalysisRefusal \"diagnostic nonreflection\" alternate\n+\n+              match FogellSide.preflightExecution alternate with\n+              | Ok _ -> failtest \"alternate preamble unexpectedly passed\"\n+              | Error why ->\n+                  Expect.isFalse (why.Contains \"DO_NOT_REFLECT\") \"refusal does not echo source text\"\n+                  Expect.isFalse (why.Contains \"secretMarker\") \"refusal does not echo identifiers\"\n+          }\n+\n+          test \"unparsable preambles block earlier stages, post blocks and workspace preparation\" {\n+              let source =\n+                  \"def helper(x = true) { x }\\n\"\n+                  + \"def rows = [[name: 'a']]; rows*.name = 'x'\\n\"\n+                  + \"pipeline { agent any stages { \"\n+                  + \"stage('before') { steps { sh 'touch before-preamble.txt' } } \"\n+                  + \"stage('after') { steps { sh 'touch after-preamble.txt' } } \"\n+                  + \"} post { always { sh 'touch preamble-post.txt' } } }\"\n+\n+              withWorkspace (fun root workspace ->\n+                  match FogellSide.run [] root \"job\" source with\n+                  | Ok trace -> failtestf \"unparsable preamble unexpectedly executed: %A\" trace\n+                  | Error why ->\n+                      Expect.equal why FogellSide.preambleAnalysisRefusal \"stable fail-closed reason\"\n+\n+                  Expect.isTrue\n+                      (IO.File.Exists(IO.Path.Combine(workspace, \"sentinel.txt\")))\n+                      \"workspace preparation was not reached\"\n+\n+                  for file in [ \"before-preamble.txt\"; \"after-preamble.txt\"; \"preamble-post.txt\" ] do\n+                      Expect.isFalse\n+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))\n+                          $\"{file} effect was not reached\")\n+          }\n+\n+          test \"blank and fully analyzable preambles remain admitted\" {\n+              let ordinaryPipeline =\n+                  \"pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\"\n+\n+              for label, source in\n+                  [ \"blank\", ordinaryPipeline\n+                    \"whitespace\", \"  \\n\\t\" + ordinaryPipeline\n+                    \"parsed helper\", \"def helper(x) { x }\\n\" + ordinaryPipeline ] do\n+                  match FogellSide.preflightExecution source with\n+                  | Error why -> failtestf \"%s preamble was over-refused: %s\" label why\n+                  | Ok _ -> ()\n+          }\n           test \"when expressions in top, nested and parallel stages cannot hide the target\" {\n               let assignment = \"def rows = [[name: 'a']]; rows*.name = 'x'; true\"\n \n"
++    }
++  ],
++  "chat_template_kwargs": {
++    "enable_thinking": false
++  }
++}
+diff --git a/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-response.json b/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-response.json
+new file mode 100644
+index 0000000..5d4a094
+--- /dev/null
++++ b/evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-response.json
+@@ -0,0 +1 @@
++{"id":"chatcmpl-b3eebb6bb9c9a5c5","object":"chat.completion","created":1787275674,"model":"qwen3.8","choices":[{"index":0,"message":{"role":"assistant","content":"VERDICT: PASS\n\nACTION ITEMS:\n1. No action required. The patch correctly implements the fail-closed behavior for unparsable nonblank preambles.\n2. The logic correctly distinguishes between script body parse failures (which are audited later during execution) and preamble parse failures (which are refused immediately in preflight).\n3. The stable error reason `unsupported_preamble_analysis` is non-reflective and does not leak source text, as verified by the \"diagnostic nonreflection\" test.\n4. Coverage includes the required cases: default-parameter helper, hidden spread write, caught/nested shapes, and controls for blank/parsed preambles.\n5. The workspace/effect isolation is verified by the test ensuring no files are created when the preamble fails analysis.","refusal":null,"annotations":null,"audio":null,"function_call":null,"reasoning":null},"logprobs":null,"finish_reason":"stop","stop_reason":null,"token_ids":null,"routed_experts":null}],"service_tier":null,"system_fingerprint":"vllm-0.24.0-d81bbc5c","usage":{"prompt_tokens":4659,"total_tokens":4823,"completion_tokens":164,"prompt_tokens_details":null},"prompt_logprobs":null,"prompt_token_ids":null,"prompt_text":null,"kv_transfer_params":null}
+\ No newline at end of file
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 357c964..acc3ab3 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -100,7 +100,10 @@ module FogellSide =
+         | WhenNot inner -> whenExpressionBodies inner
+         | _ -> []
+ 
+-    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : bool =
++    let preambleAnalysisRefusal =
++        "unsupported_preamble_analysis: Fogell cannot parse this nonblank Declarative preamble for execution analysis; refusing before workspace preparation or effects because absence of an unsupported spread-property assignment cannot be proven"
++
++    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : Result<bool, string> =
+         let bodies =
+             [ yield! scriptBodies (pipeline.Post |> List.collect snd)
+               for stage in Pipeline.flattenStages pipeline.Stages do
+@@ -115,11 +118,22 @@ module FogellSide =
+             | Result.Ok script -> Fogell.Groovy.Ast.containsSpreadAssignment script
+             | Result.Error _ -> false
+ 
+-        let preambleContainsAssignment =
+-            not (System.String.IsNullOrWhiteSpace pipeline.Preamble)
+-            && sourceContainsAssignment pipeline.Preamble
++        let bodiesContainAssignment = bodies |> List.exists sourceContainsAssignment
+ 
+-        preambleContainsAssignment || (bodies |> List.exists sourceContainsAssignment)
++        // Unlike script bodies, whose parse failure is surfaced when the hosted block
++        // executes, the walker deliberately ignores an unparsable preamble because it
++        // commonly contains unmodelled annotations and imports. That made `Error ->
++        // false` unsafe here: a supported Jenkins declaration such as a default-parameter
++        // helper could hide a later top-level spread write, and Fogell would run every
++        // stage after Jenkins had already failed. There is no complete statement splitter
++        // for Groovy, so a nonblank preamble that this analyzer cannot parse fails closed.
++        if System.String.IsNullOrWhiteSpace pipeline.Preamble then
++            Result.Ok bodiesContainAssignment
++        else
++            match Fogell.Groovy.Parser.Parser.parse pipeline.Preamble with
++            | Result.Ok script ->
++                Result.Ok(Fogell.Groovy.Ast.containsSpreadAssignment script || bodiesContainAssignment)
++            | Result.Error _ -> Result.Error preambleAnalysisRefusal
+ 
+     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
+     /// parsed construct must not become an executable no-op. Jenkins resolves every
+@@ -135,24 +149,27 @@ module FogellSide =
+         match Fogell.Pipeline.Parser.Parser.parse script with
+         | Result.Error e ->
+             Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+-        | Result.Ok pipeline when containsUnsupportedSpreadAssignment pipeline ->
+-            Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+         | Result.Ok pipeline ->
+-            let scopes =
+-                [ if not (List.isEmpty pipeline.Tools) then
+-                      "pipeline"
+-                  for stage in Pipeline.flattenStages pipeline.Stages do
+-                      if not (List.isEmpty stage.Tools) then
+-                          $"stage '{stage.Name}'" ]
++            match containsUnsupportedSpreadAssignment pipeline with
++            | Result.Error why -> Result.Error why
++            | Result.Ok true ->
++                Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
++            | Result.Ok false ->
++                let scopes =
++                    [ if not (List.isEmpty pipeline.Tools) then
++                          "pipeline"
++                      for stage in Pipeline.flattenStages pipeline.Stages do
++                          if not (List.isEmpty stage.Tools) then
++                              $"stage '{stage.Name}'" ]
+ 
+-            if List.isEmpty scopes then
+-                Result.Ok pipeline
+-            else
+-                Result.Error(
+-                    "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
+-                    + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
+-                    + String.concat ", " scopes
+-                )
++                if List.isEmpty scopes then
++                    Result.Ok pipeline
++                else
++                    Result.Error(
++                        "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
++                        + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
++                        + String.concat ", " scopes
++                    )
+ 
+     let internal runWith
+         (envReplacements: (string * string) list)
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 1952c85..206a1ec 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -1487,6 +1487,15 @@ let spreadAssignmentPreflight =
+                 Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                 $"{label}: exact stable reason"
+ 
++    let expectPreambleAnalysisRefusal label source =
++        match FogellSide.preflightExecution source with
++        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
++        | Error why ->
++            Expect.equal
++                why
++                FogellSide.preambleAnalysisRefusal
++                $"{label}: exact stable preamble-analysis reason"
++
+     let withWorkspace (f: string -> string -> unit) =
+         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
+         let job = "job"
+@@ -1549,6 +1558,83 @@ let spreadAssignmentPreflight =
+               for label, source in locations do
+                   expectNamedRefusal label source
+           }
++
++          test "an unparsable nonblank preamble fails closed instead of proving no spread write" {
++              let ordinaryPipeline =
++                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
++
++              let defaultHelper = "def helper(x = true) { x }\n"
++
++              let hiddenSpread =
++                  defaultHelper
++                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
++                  + ordinaryPipeline
++
++              expectPreambleAnalysisRefusal "default helper then spread write" hiddenSpread
++              expectPreambleAnalysisRefusal "default helper alone" (defaultHelper + ordinaryPipeline)
++
++              let caught =
++                  defaultHelper
++                  + "try { def rows = [[name: 'a']]; rows*.name = 'x' } catch (Throwable e) { }\n"
++                  + ordinaryPipeline
++
++              expectPreambleAnalysisRefusal "caught top-level spread write" caught
++
++              let nestedClosure =
++                  "def helper(x = true) { def later = { def rows = [[name: 'a']]; rows*.name = 'x' }; later() }\n"
++                  + ordinaryPipeline
++
++              expectPreambleAnalysisRefusal "spread write nested in default-parameter helper" nestedClosure
++
++              // The diagnostic is a stable capability name, not a reflection of parser
++              // internals or user-controlled preamble text.
++              let alternate = "def secretMarker(value = 'DO_NOT_REFLECT') { value }\n" + ordinaryPipeline
++              expectPreambleAnalysisRefusal "diagnostic nonreflection" alternate
++
++              match FogellSide.preflightExecution alternate with
++              | Ok _ -> failtest "alternate preamble unexpectedly passed"
++              | Error why ->
++                  Expect.isFalse (why.Contains "DO_NOT_REFLECT") "refusal does not echo source text"
++                  Expect.isFalse (why.Contains "secretMarker") "refusal does not echo identifiers"
++          }
++
++          test "unparsable preambles block earlier stages, post blocks and workspace preparation" {
++              let source =
++                  "def helper(x = true) { x }\n"
++                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
++                  + "pipeline { agent any stages { "
++                  + "stage('before') { steps { sh 'touch before-preamble.txt' } } "
++                  + "stage('after') { steps { sh 'touch after-preamble.txt' } } "
++                  + "} post { always { sh 'touch preamble-post.txt' } } }"
++
++              withWorkspace (fun root workspace ->
++                  match FogellSide.run [] root "job" source with
++                  | Ok trace -> failtestf "unparsable preamble unexpectedly executed: %A" trace
++                  | Error why ->
++                      Expect.equal why FogellSide.preambleAnalysisRefusal "stable fail-closed reason"
++
++                  Expect.isTrue
++                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
++                      "workspace preparation was not reached"
++
++                  for file in [ "before-preamble.txt"; "after-preamble.txt"; "preamble-post.txt" ] do
++                      Expect.isFalse
++                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
++                          $"{file} effect was not reached")
++          }
++
++          test "blank and fully analyzable preambles remain admitted" {
++              let ordinaryPipeline =
++                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
++
++              for label, source in
++                  [ "blank", ordinaryPipeline
++                    "whitespace", "  \n\t" + ordinaryPipeline
++                    "parsed helper", "def helper(x) { x }\n" + ordinaryPipeline ] do
++                  match FogellSide.preflightExecution source with
++                  | Error why -> failtestf "%s preamble was over-refused: %s" label why
++                  | Ok _ -> ()
++          }
+           test "when expressions in top, nested and parallel stages cannot hide the target" {
+               let assignment = "def rows = [[name: 'a']]; rows*.name = 'x'; true"
+ 

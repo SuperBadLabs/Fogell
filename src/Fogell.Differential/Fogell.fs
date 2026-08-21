@@ -84,6 +84,99 @@ module FogellSide =
 
                 Map.ofList entries
 
+    let rec private scriptBodies (steps: Step list) : string list =
+        steps
+        |> List.collect (fun step ->
+            [ match step.ScriptBody with
+              | Some source -> yield source
+              | None -> ()
+              yield! scriptBodies step.Block ])
+
+    let rec private whenExpressionBodies (condition: WhenCondition) : string list =
+        match condition with
+        | WhenExpression source -> [ source ]
+        | WhenAllOf conditions
+        | WhenAnyOf conditions -> conditions |> List.collect whenExpressionBodies
+        | WhenNot inner -> whenExpressionBodies inner
+        | _ -> []
+
+    let preambleAnalysisRefusal =
+        "unsupported_preamble_analysis: Fogell cannot parse this nonblank Declarative preamble for execution analysis; refusing before workspace preparation or effects because absence of an unsupported spread-property assignment cannot be proven"
+
+    let epilogueRefusal =
+        "unsupported_epilogue: nontrivial top-level Groovy after the Declarative pipeline is outside Fogell's execution model; refusing before workspace preparation or effects"
+
+    let private assignmentRefusal (script: Fogell.Groovy.Stmt list) =
+        if Fogell.Groovy.Ast.containsSpreadAssignment script then
+            Some Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+        elif Fogell.Groovy.Ast.containsSpreadDerivedIndexAssignment script then
+            Some Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
+        else
+            None
+
+    let private unsupportedAssignmentRefusal (pipeline: Pipeline) : Result<string option, string> =
+        let bodies =
+            [ yield! scriptBodies (pipeline.Post |> List.collect snd)
+              for stage in Pipeline.flattenStages pipeline.Stages do
+                  yield! scriptBodies stage.Steps
+                  yield! scriptBodies (stage.Post |> List.collect snd)
+                  match stage.When with
+                  | Some condition -> yield! whenExpressionBodies condition
+                  | None -> () ]
+
+        let sourceRefusal source =
+            match Fogell.Groovy.Parser.Parser.parse source with
+            | Result.Ok script -> assignmentRefusal script
+            | Result.Error _ -> None
+
+        let bodiesRefusal = bodies |> List.tryPick sourceRefusal
+
+        // Unlike script bodies, whose parse failure is surfaced when the hosted block
+        // executes, the walker deliberately ignores an unparsable preamble because it
+        // commonly contains unmodelled annotations and imports. That made `Error ->
+        // false` unsafe here: a supported Jenkins declaration such as a default-parameter
+        // helper could hide a later top-level spread write, and Fogell would run every
+        // stage after Jenkins had already failed. There is no complete statement splitter
+        // for Groovy, so a nonblank preamble that this analyzer cannot parse fails closed.
+        let preambleResult =
+            if System.String.IsNullOrWhiteSpace pipeline.Preamble then
+                Result.Ok None
+            else
+                match Fogell.Groovy.Parser.Parser.parse pipeline.Preamble with
+                | Result.Ok script -> Result.Ok(assignmentRefusal script)
+                | Result.Error _ -> Result.Error preambleAnalysisRefusal
+
+        match preambleResult with
+        | Result.Error why -> Result.Error why
+        | Result.Ok preambleRefusal ->
+            // Jenkins executes top-level Groovy after the Declarative block returns.
+            // Fogell deliberately does not add that execution model in this bounded
+            // spread-write slice, but the exact suffix is retained by Pipeline.Epilogue
+            // and can no longer disappear. Parse through the same Groovy grammar used
+            // for preamble/body analysis: comments and whitespace become an empty script;
+            // a definite spread write gets the shared spread refusal; every other
+            // statement or parse failure gets one stable conservative boundary.
+            let epilogueResult =
+                if System.String.IsNullOrWhiteSpace pipeline.Epilogue then
+                    Result.Ok None
+                else
+                    match Fogell.Groovy.Parser.Parser.parse pipeline.Epilogue with
+                    | Result.Ok [] -> Result.Ok None
+                    | Result.Ok script ->
+                        match assignmentRefusal script with
+                        | Some why -> Result.Ok(Some why)
+                        | None -> Result.Error epilogueRefusal
+                    | Result.Error _ -> Result.Error epilogueRefusal
+
+            match epilogueResult with
+            | Result.Error why -> Result.Error why
+            | Result.Ok epilogueRefusal ->
+                match preambleRefusal, epilogueRefusal, bodiesRefusal with
+                | Some why, _, _
+                | None, Some why, _
+                | None, None, Some why -> Result.Ok(Some why)
+                | None, None, None -> Result.Ok None
+
     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
     /// parsed construct must not become an executable no-op. Jenkins resolves every
     /// Declarative tools selection against the agent, installs/translates it, and wraps
@@ -99,21 +192,25 @@ module FogellSide =
         | Result.Error e ->
             Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
         | Result.Ok pipeline ->
-            let scopes =
-                [ if not (List.isEmpty pipeline.Tools) then
-                      "pipeline"
-                  for stage in Pipeline.flattenStages pipeline.Stages do
-                      if not (List.isEmpty stage.Tools) then
-                          $"stage '{stage.Name}'" ]
+            match unsupportedAssignmentRefusal pipeline with
+            | Result.Error why -> Result.Error why
+            | Result.Ok(Some why) -> Result.Error why
+            | Result.Ok None ->
+                let scopes =
+                    [ if not (List.isEmpty pipeline.Tools) then
+                          "pipeline"
+                      for stage in Pipeline.flattenStages pipeline.Stages do
+                          if not (List.isEmpty stage.Tools) then
+                              $"stage '{stage.Name}'" ]
 
-            if List.isEmpty scopes then
-                Result.Ok pipeline
-            else
-                Result.Error(
-                    "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
-                    + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
-                    + String.concat ", " scopes
-                )
+                if List.isEmpty scopes then
+                    Result.Ok pipeline
+                else
+                    Result.Error(
+                        "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
+                        + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
+                        + String.concat ", " scopes
+                    )
 
     let internal runWith
         (envReplacements: (string * string) list)

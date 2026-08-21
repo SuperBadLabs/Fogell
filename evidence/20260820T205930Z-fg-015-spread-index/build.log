@@ -1,0 +1,20 @@
+  Fogell.Execution -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Execution.Tests -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Groovy.Tests -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tests/Fogell.Groovy.Tests/bin/Release/net10.0/Fogell.Groovy.Tests.dll
+  Fogell.Corpus.Score -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tools/Fogell.Corpus.Score/bin/Release/net10.0/fogell-score.dll
+  Fogell.Differential -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Pipeline.Parser.Tests -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+  Fogell.Differential.Tests -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+  Fogell.Differential.Cli -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+  Fogell.Run.Host -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host.dll
+  Fogell.Controller.Api -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Controller.Api.Tests -> /home/srikanth/projects/fogell-worktrees/fg-015-spread-dot/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:02.15

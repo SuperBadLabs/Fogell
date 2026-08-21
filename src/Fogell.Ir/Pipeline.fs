@@ -154,7 +154,7 @@ type Pipeline =
       Tools: (string * string) list
       Stages: Stage list
       Post: (PostCondition * Step list) list
-      /// FG-188. The source OUTSIDE `pipeline { }` — shebang, imports, annotations and,
+      /// FG-188. The source BEFORE `pipeline { }` — shebang, imports, annotations and,
       /// the reason this field exists, top-level `def` helpers.
       ///
       /// Kept as TEXT rather than parsed here: this is the Declarative IR, and a Groovy
@@ -164,7 +164,14 @@ type Pipeline =
       /// It was DISCARDED entirely, so `def helper() { … }` before `pipeline { }` — the
       /// commonest escape construct in the corpus, 56 files — was invisible to every
       /// `script` block, and calling it failed as an unknown name.
-      Preamble: string }
+      Preamble: string
+      /// FG-015. The exact source AFTER the outer `pipeline { ... }` closing brace.
+      /// Jenkins executes top-level Groovy there after the Declarative pipeline returns;
+      /// Fogell does not model that execution yet. Retaining the raw text lets execution
+      /// preflight refuse nontrivial suffixes instead of silently reporting success after
+      /// dropping them. Trivia is retained too so the Groovy parser, not a second scanner,
+      /// decides whether comments/whitespace contain no statements.
+      Epilogue: string }
 
 module Pipeline =
 
@@ -178,7 +185,8 @@ module Pipeline =
           Tools = []
           Stages = []
           Post = []
-          Preamble = "" }
+          Preamble = ""
+          Epilogue = "" }
 
     /// Flatten nested/parallel stages into execution order for planning.
     let rec flattenStages (stages: Stage list) : Stage list =

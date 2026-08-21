@@ -218,6 +218,12 @@ module GString =
                 | Some(UnknownProperty name), _ ->
                     absorb outcome
                     raise (MissingProperty name)
+                | Some(NullReceiverAssignment target), _ ->
+                    // Assignment through null is a real runtime exception, not
+                    // lax placeholder lookup. Never let the non-strict render
+                    // fallback turn it back into an unevaluated successful value.
+                    absorb outcome
+                    raise (UnsupportedExpression $"expression threw: NullPointerException assigning through null {target} receiver")
                 | Some(Fault.Unsupported what), _ when strict ->
                     absorb outcome
                     raise (UnsupportedExpression what)

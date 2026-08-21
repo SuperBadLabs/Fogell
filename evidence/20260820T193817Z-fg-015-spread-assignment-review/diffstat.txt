@@ -1,0 +1,8 @@
+ docs/EXECUTION_BOARD.md                            |  2 +-
+ .../README.md                                      | 21 +++++++
+ src/Fogell.Differential/Fogell.fs                  | 13 +++-
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       |  2 +-
+ src/Fogell.Groovy/Ast.fs                           | 69 +++++++++-------------
+ tests/Fogell.Differential.Tests/Tests.fs           | 65 ++++++++++++++++++++
+ tests/Fogell.Groovy.Tests/Tests.fs                 | 32 ++++++++++
+ 7 files changed, 160 insertions(+), 44 deletions(-)

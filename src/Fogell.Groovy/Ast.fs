@@ -23,6 +23,10 @@ type Expr =
     | EMap of (string * Expr) list
     | EVar of string
     | EProp of target: Expr * name: string
+    /// `a*.b` — Groovy's spread-safe property projection. This must remain
+    /// distinct from [EProp]: a list receiver projects in order, while ordinary
+    /// property access reads one receiver and must not acquire collection semantics.
+    | ESpreadProp of target: Expr * name: string
     /// `a?.b` — Groovy's safe navigation. Distinct from [EProp] because the
     /// difference IS the semantics: a null receiver yields null instead of a
     /// property lookup, so collapsing the two made `${env.OPTIONAL?.value}`
@@ -124,6 +128,153 @@ module Ast =
               | SContinue
               | SThrow _ -> 0)
 
+    /// True only when spread-property syntax participates in the l-value
+    /// receiver chain. An index key, call arguments (including named and
+    /// trailing-closure arguments), and the receiver feeding a method call all
+    /// compute a value. Method and index results are fresh l-value receiver
+    /// boundaries; spread reads below either are not writes through a projection.
+    ///
+    /// Jenkins 2.568.1 accepts actual spread write paths but raises a catchable
+    /// runtime exception without mutating the elements. Fogell does not model
+    /// that write boundary yet, so execution preflight and the interpreter's
+    /// defensive fallback share this deliberately directional traversal.
+    let rec assignmentTargetContainsSpreadProperty (expr: Expr) : bool =
+        match expr with
+        | ESpreadProp _ -> true
+        | EProp(target, _)
+        | ESafeProp(target, _) -> assignmentTargetContainsSpreadProperty target
+        | EIndex _
+        | ECall _ -> false
+        | ENull
+        | EBool _
+        | EInt _
+        | EStr _
+        | EGString _
+        | EList _
+        | EMap _
+        | EVar _
+        | EUnary _
+        | EBinary _
+        | ETernary _
+        | EElvis _
+        | EClosure _ -> false
+
+    /// A direct index l-value whose receiver was computed from spread projection
+    /// is distinct from an outer write on the value returned by indexing. Jenkins
+    /// executes both, but the direct form can be list-index assignment: simple and
+    /// compound writes can update only the temporary projection, while another
+    /// index or a method such as `first()` can select a referenced source list and
+    /// persist. Calls on a spread-derived RECEIVER preserve that provenance; free
+    /// calls and every call input remain value boundaries. Static analysis cannot
+    /// prove whether the final receiver is a list or map, so the direct-index form
+    /// is deliberately refused as FG-015b while outer writes stay admitted.
+    let assignmentTargetIsSpreadDerivedIndex (expr: Expr) : bool =
+        let rec receiverUsesSpreadBeforeBoundary value =
+            match value with
+            | ESpreadProp _ -> true
+            | EProp(target, _)
+            | ESafeProp(target, _)
+            | EIndex(target, _) -> receiverUsesSpreadBeforeBoundary target
+            | ECall(MethodCall(target, _), _, _)
+            | ECall(SafeMethodCall(target, _), _, _) -> receiverUsesSpreadBeforeBoundary target
+            | ECall(FreeCall _, _, _) -> false
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EGString _
+            | EList _
+            | EMap _
+            | EVar _
+            | EUnary _
+            | EBinary _
+            | ETernary _
+            | EElvis _
+            | EClosure _ -> false
+
+        match expr with
+        | EIndex(target, _) -> receiverUsesSpreadBeforeBoundary target
+        | _ -> false
+
+    let rec private containsAssignmentWhere targetMatches (stmts: Stmt list) : bool =
+        let rec expressionHasNestedAssignment expr =
+            match expr with
+            | EClosure closure -> containsAssignmentWhere targetMatches closure.Body
+            | EGString parts ->
+                parts
+                |> List.exists (function
+                    | GLit _ -> false
+                    | GExpr value -> expressionHasNestedAssignment value)
+            | EList values -> values |> List.exists expressionHasNestedAssignment
+            | EMap entries -> entries |> List.exists (snd >> expressionHasNestedAssignment)
+            | EProp(target, _)
+            | ESpreadProp(target, _)
+            | ESafeProp(target, _)
+            | EUnary(_, target) -> expressionHasNestedAssignment target
+            | EIndex(target, index)
+            | EBinary(_, target, index)
+            | EElvis(target, index) ->
+                expressionHasNestedAssignment target || expressionHasNestedAssignment index
+            | ETernary(cond, yes, no) ->
+                expressionHasNestedAssignment cond
+                || expressionHasNestedAssignment yes
+                || expressionHasNestedAssignment no
+            | ECall(target, args, trailing) ->
+                let receiverHasAssignment =
+                    match target with
+                    | FreeCall _ -> false
+                    | MethodCall(receiver, _)
+                    | SafeMethodCall(receiver, _) -> expressionHasNestedAssignment receiver
+
+                receiverHasAssignment
+                || (args
+                    |> List.exists (function
+                        | APos value -> expressionHasNestedAssignment value
+                        | ANamed(_, value) -> expressionHasNestedAssignment value))
+                || (trailing |> Option.exists (fun closure -> containsAssignmentWhere targetMatches closure.Body))
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EVar _ -> false
+
+        stmts
+        |> List.exists (function
+            | SAssign(target, value) ->
+                targetMatches target
+                || expressionHasNestedAssignment target
+                || expressionHasNestedAssignment value
+            | SExpr expr -> expressionHasNestedAssignment expr
+            | SDef(_, value)
+            | SReturn value -> value |> Option.exists expressionHasNestedAssignment
+            | SIf(cond, yes, no) ->
+                expressionHasNestedAssignment cond
+                || containsAssignmentWhere targetMatches yes
+                || containsAssignmentWhere targetMatches no
+            | SForIn(_, source, body)
+            | SWhile(source, body) ->
+                expressionHasNestedAssignment source || containsAssignmentWhere targetMatches body
+            | SSwitch(subject, arms) ->
+                expressionHasNestedAssignment subject
+                || (arms
+                    |> List.exists (fun (case, body) ->
+                        (case |> Option.exists expressionHasNestedAssignment)
+                        || containsAssignmentWhere targetMatches body))
+            | SThrow expr -> expressionHasNestedAssignment expr
+            | STry(body, catch, finallyBlock) ->
+                containsAssignmentWhere targetMatches body
+                || (catch |> Option.exists (fun (_, _, handler) -> containsAssignmentWhere targetMatches handler))
+                || containsAssignmentWhere targetMatches finallyBlock
+            | SFunc(_, _, body) -> containsAssignmentWhere targetMatches body
+            | SBreak
+            | SContinue -> false)
+
+    let containsSpreadAssignment stmts =
+        containsAssignmentWhere assignmentTargetContainsSpreadProperty stmts
+
+    let containsSpreadDerivedIndexAssignment stmts =
+        containsAssignmentWhere assignmentTargetIsSpreadDerivedIndex stmts
+
     /// Names called as bare functions — the step vocabulary a script needs.
     let rec freeCalls (stmts: Stmt list) : Set<string> =
         let rec ofExpr e =
@@ -151,6 +302,7 @@ module Ast =
             | EList xs -> xs |> List.map ofExpr |> Set.unionMany
             | EMap kvs -> kvs |> List.map (snd >> ofExpr) |> Set.unionMany
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> ofExpr t
             | EIndex(t, i) -> Set.union (ofExpr t) (ofExpr i)
             | EUnary(_, x) -> ofExpr x

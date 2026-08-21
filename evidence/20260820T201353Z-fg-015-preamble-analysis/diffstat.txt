@@ -1,0 +1,12 @@
+ docs/EXECUTION_BOARD.md                            |  2 +-
+ .../README.md                                      | 18 ++++
+ .../README.md                                      | 29 +++++++
+ .../default-helper-spread.Jenkinsfile              | 19 +++++
+ .../oracle-verification.txt                        | 11 +++
+ .../default-helper-spread.receipt.txt              | 84 +++++++++++++++++++
+ .../fg015-default-helper-spread.receipt.txt        | 95 ++++++++++++++++++++++
+ .../qwen-request.json                              | 18 ++++
+ .../qwen-response.json                             |  1 +
+ src/Fogell.Differential/Fogell.fs                  | 59 +++++++++-----
+ tests/Fogell.Differential.Tests/Tests.fs           | 86 ++++++++++++++++++++
+ 11 files changed, 400 insertions(+), 22 deletions(-)

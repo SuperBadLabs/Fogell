@@ -1087,13 +1087,17 @@ let private pipelineParser: P<Pipeline> =
     .>>. (keyword "pipeline"
           >>. between
                   (symbol "{")
-                  (symbol "}")
+                  // Do not lexeme-consume after the OUTER closing brace. Everything
+                  // from the next byte through EOF is Pipeline.Epilogue provenance;
+                  // consuming trivia here made comments/whitespace impossible to retain
+                  // exactly and left executable trailing statements silently unconsumed.
+                  (skipChar '}')
                   (ws >>. many (attempt topSection)
                    >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
-                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false))
-          .>> ws)
-    |>> fun (capturedPreamble, sections) ->
+                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false)))
+    .>>. manyChars anyChar
+    |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
               Environment =
@@ -1118,6 +1122,7 @@ let private pipelineParser: P<Pipeline> =
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
               Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
               Preamble = capturedPreamble
+              Epilogue = capturedEpilogue
               Stages = defaultArg (pick (function TopStages s -> Some s | _ -> None)) []
               Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
 
@@ -1243,6 +1248,7 @@ module private LoopControl =
             | EList xs -> xs |> List.collect expr
             | EMap kvs -> kvs |> List.collect (snd >> expr)
             | EProp(t, _)
+            | ESpreadProp(t, _)
             | ESafeProp(t, _) -> expr t
             | EIndex(t, i) -> expr t @ expr i
             | EUnary(_, o) -> expr o
@@ -1373,7 +1379,7 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
         if not (looksDeclarative source) then
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
-            match runParserOnString (pipelineParser .>> ws) () "Jenkinsfile" source with
+            match runParserOnString (pipelineParser .>> eof) () "Jenkinsfile" source with
             | ParserResult.Success(p, _, _) ->
                 if List.isEmpty p.Stages then
                     Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
@@ -1397,5 +1403,4 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
-
 

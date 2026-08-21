@@ -316,7 +316,7 @@ let private primary: P<Expr> =
 let private postfixChain (start: Expr) : P<Expr> =
     let step (e: Expr) =
         choice
-            [ attempt (symbol "*." >>. plainIdent |>> fun n -> EProp(e, n)) // spread-dot
+            [ attempt (symbol "*." >>. plainIdent |>> fun n -> ESpreadProp(e, n))
               attempt (
                   symbol "?." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
                   |>> fun ((n, args), trailing) ->

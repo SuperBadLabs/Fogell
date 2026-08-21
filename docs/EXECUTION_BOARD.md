@@ -509,10 +509,41 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
 | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
 | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
 | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |
-| FG-015 | P1 | **PARTIAL** | Closure-audited independently on 2026-08-19 against Jenkins 2.568.1 ([evidence](../evidence/20260819T053832Z-fg-015-closure-audit)). Five constructs are already closed and now receipt-proven: nested-quote GString, inclusive range, `switch`, `instanceof`, and multi-assign. Spread-dot is not closed: Jenkins projects `[a, b]` and succeeds while Fogell faults before the step, because `*.` is erased to ordinary `EProp` in the AST. FG-015b remains separate; this audit does not absorb list index assignment | six named unit repros pass; five new tier-1 receipts; spread-dot's one retained DIVERGED receipt records three difference dimensions (result, output, workspace) and remains outside the passing suite; corpus verdicts unchanged |
+| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused. A review probe also found that an unsupported-but-Jenkins-valid default-parameter helper made the analyzer treat the whole preamble's parse error as proof of no spread write; any nonblank preamble that execution analysis cannot parse now fails closed before effects as `unsupported_preamble_analysis`, while blank and fully parsed preambles remain admitted. The symmetric trailing-source probe found that Jenkins executes Groovy after the Declarative block while Fogell silently left it unconsumed; exact raw `Pipeline.Epilogue` provenance now reaches EOF, comments/whitespace remain admitted as an empty Groovy script, trailing spread writes share `unsupported_spread_assignment`, and every other nontrivial or unparsable suffix fails closed as `unsupported_epilogue` without claiming suffix execution | twelve focused FG-015 semantic/refusal tests, six exact AST/source-boundary pins, and fifteen differential preflight tests; eight tier-1 receipts across the read constructs and inert epilogue control, including the promoted original spread failure and bounded adjacent matrix; assignment, unanalyzable-preamble, and nontrivial-epilogue probes retain honest post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than or intentionally replaces Jenkins execution; corpus verdicts unchanged |
 | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
 | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
 | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
+
+**FG-015 exact-head index-boundary addendum.** Direct Jenkins 2.568.1
+measurement proved an `EIndex` result is an ordinary receiver boundary for an
+outer property, safe-property, or method-result write; the selected source map
+mutates and the two focused cases add tier-1 receipts. A direct projected-index
+l-value is different: simple/compound/inc/dec writes change only the temporary
+projection, while another index can reach a referenced source list and persist.
+That remains FG-015b. Fogell gives every such direct target the distinct stable
+`unsupported_spread_index_assignment` preflight refusal before effects instead
+of silently discarding or misdirecting it. Evidence: [spread-index boundary](../evidence/20260821T020910Z-fg-015-spread-index-boundary).
+
+**FG-015 method-result write addendum.** Review probes on Jenkins 2.568.1
+measured the receiver boundary rather than inferring it: `rows*.child.first()?.name`
+mutates the returned non-null map; a null receiver raises a catchable
+`NullPointerException`; a scalar raises a catchable `MissingPropertyException`;
+and receiver effects precede RHS effects before either fault. Fogell now routes
+every `ESafeProp` assignment through the ordinary map writer, with a distinct
+typed null fault, instead of evaluating the RHS and reporting success without a
+write. Unsupported list-index receivers and syntactically invalid assignment
+targets likewise refuse explicitly before the RHS.
+
+The same probe proved `rows*.children.first()[0] = value` persistently mutates
+the selected source list, a null receiver throws catchably, and the statically
+indistinguishable map spelling also mutates. Because Fogell cannot decide the
+receiver type before execution without crossing FG-015b, a direct `EIndex`
+l-value retains spread-read provenance across method-call receivers and receives
+the conservative pre-effect `unsupported_spread_index_assignment` refusal in
+both list and map cases. This deliberate map over-refusal is named; outer
+property/safe-property writes on call or index results, free-call arguments,
+method arguments, trailing closures, and spread reads used as index keys remain
+admitted. Evidence: [method-result write boundary](../evidence/20260821T025710Z-fg-015-call-write-boundary).
 
 ## Wave 2 — Durable spine (McLoving-inspired)
 

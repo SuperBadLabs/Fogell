@@ -1,0 +1,19 @@
+Direct Jenkins 2.568.1 run from HeMan, before implementation
+CASE spread-index-direct-writes RESULT success
+  direct:ok:a:b
+  compound:ok:null:null
+  increment:ok:1:10
+  decrement:ok:1:10
+  nested:ok:nested-direct:b1
+CASE spread-index-outer-writes RESULT success
+  plain:plain:b
+  safe:safe:b
+  compound:3:10
+  nested:nested:b1
+  method:method:b0
+CASE spread-index-safe-null RESULT success
+  safe-null:caught:null:b
+
+Additional uncaught safe-null diagnostic captured from the same pinned oracle:
+  result: failure
+  java.lang.NullPointerException: Cannot set property 'name' on null object

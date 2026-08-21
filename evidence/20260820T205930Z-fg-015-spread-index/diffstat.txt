@@ -1,0 +1,23 @@
+ .../fg015-spread-index-outer-writes.Jenkinsfile    |  32 ++++++
+ .../cases/fg015-spread-index-safe-null.Jenkinsfile |  18 +++
+ .../fg015-spread-index-outer-writes.receipt.txt    |  97 ++++++++++++++++
+ .../fg015-spread-index-safe-null.receipt.txt       |  89 +++++++++++++++
+ docs/COMPATIBILITY-SCORECARD.md                    |   2 +-
+ docs/EXECUTION_BOARD.md                            |  10 ++
+ .../README.md                                      |  18 +++
+ .../README.md                                      |  74 +++++++++++++
+ .../oracle-measurement.txt                         |  19 ++++
+ .../oracle-verification.txt                        |  11 ++
+ .../qwen-request.json                              |  18 +++
+ .../qwen-response.json                             |   1 +
+ .../spread-index-direct-writes.Jenkinsfile         |  50 +++++++++
+ .../spread-index-outer-writes.Jenkinsfile          |  32 ++++++
+ .../spread-index-safe-null.Jenkinsfile             |  18 +++
+ .../fg015-spread-index-outer-writes.receipt.txt    |  97 ++++++++++++++++
+ .../fg015-spread-index-safe-null.receipt.txt       |  89 +++++++++++++++
+ src/Fogell.Differential/Fogell.fs                  |  54 +++++----
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       |  17 +++
+ src/Fogell.Groovy/Ast.fs                           |  68 +++++++++---
+ tests/Fogell.Differential.Tests/Tests.fs           |  96 +++++++++++++++-
+ tests/Fogell.Groovy.Tests/Tests.fs                 | 123 ++++++++++++++++++++-
+ 22 files changed, 987 insertions(+), 46 deletions(-)

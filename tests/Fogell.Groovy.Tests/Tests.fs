@@ -61,8 +61,199 @@ let grammar =
               Expect.isTrue (parses "if (a instanceof String) { echo 'x' }\n") "instanceof"
               Expect.isTrue (parses "def (a, b) = [1, 2]\n") "multi-assign"
           }
-          test "spread-dot and safe navigation" {
-              Expect.isTrue (parses "def a = b*.c\ndef d = e?.f\n") "*. and ?."
+          test "spread-dot, ordinary property and safe navigation keep distinct AST shapes" {
+              let source =
+                  "def spread = rows*.child\n"
+                  + "def nested = rows*.child*.name\n"
+                  + "def safeAfterSpread = rows*.child?.name\n"
+                  + "def ordinary = rows.child\n"
+                  + "def safe = rows?.child\n"
+
+              match parseOk source with
+              | [ SDef("spread", Some(ESpreadProp(EVar "rows", "child")))
+                  SDef("nested", Some(ESpreadProp(ESpreadProp(EVar "rows", "child"), "name")))
+                  SDef("safeAfterSpread", Some(ESafeProp(ESpreadProp(EVar "rows", "child"), "name")))
+                  SDef("ordinary", Some(EProp(EVar "rows", "child")))
+                  SDef("safe", Some(ESafeProp(EVar "rows", "child"))) ] -> ()
+              | other -> failtestf "property operators collapsed in the AST: %A" other
+          }
+          test "every assignment-like direct spread target stays visible to the refusal scanner" {
+              let source =
+                  "rows*.name = 'x'\n"
+                  + "rows*.name += 'x'\n"
+                  + "rows*.name++\n"
+                  + "rows*.name--\n"
+                  + "rows*.child.name = 'x'\n"
+                  + "rows*.child?.name = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(EProp(ESpreadProp(EVar "rows", "child"), "name"), _)
+                  SAssign(ESafeProp(ESpreadProp(EVar "rows", "child"), "name"), _) ] as script ->
+                  Expect.isTrue (Ast.containsSpreadAssignment script) "all target wrappers are detected"
+              | other -> failtestf "assignment target lost its spread node: %A" other
+
+              Expect.isFalse
+                  (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
+                  "ordinary assignment remains outside the refusal"
+          }
+          test "index results are outer receiver boundaries while direct projected indexes stay visible" {
+              let outer =
+                  parseOk (
+                      "rows*.child[0].name = 'x'\n"
+                      + "rows*.child[0]?.name = 'x'\n"
+                      + "rows*.children[0][1].name = 'x'\n"
+                      + "rows*.children[0].first().name = 'x'\n"
+                  )
+
+              match outer with
+              | [ SAssign(EProp(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "name"), _)
+                  SAssign(ESafeProp(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "name"), _)
+                  SAssign(
+                      EProp(
+                          EIndex(EIndex(ESpreadProp(EVar "rows", "children"), EInt 0L), EInt 1L),
+                          "name"
+                      ),
+                      _
+                  )
+                  SAssign(
+                      EProp(
+                          ECall(
+                              MethodCall(EIndex(ESpreadProp(EVar "rows", "children"), EInt 0L), "first"),
+                              [],
+                              None
+                          ),
+                          "name"
+                      ),
+                      _
+                  ) ] -> ()
+              | other -> failtestf "index-result write boundaries lost their AST shapes: %A" other
+
+              Expect.isFalse (Ast.containsSpreadAssignment outer) "outer writes are not spread l-values"
+              Expect.isFalse
+                  (Ast.containsSpreadDerivedIndexAssignment outer)
+                  "an outer property or method write does not become a direct index write"
+
+              let direct =
+                  parseOk (
+                      "rows*.child[0] = 'x'\n"
+                      + "rows*.child[0] += 'x'\n"
+                      + "rows*.child[0]++\n"
+                      + "rows*.child[0]--\n"
+                      + "rows*.children[0][1] = 'x'\n"
+                  )
+
+              match direct with
+              | [ SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SAssign(EIndex(EIndex(ESpreadProp(EVar "rows", "children"), EInt 0L), EInt 1L), _) ] -> ()
+              | other -> failtestf "direct projected-index targets lost their AST shapes: %A" other
+
+              Expect.isFalse (Ast.containsSpreadAssignment direct) "index results stop the spread-write traversal"
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment direct)
+                  "plain, compound, increment, decrement and nested direct indexes share the bounded refusal"
+          }
+          test "spread reads used to compute a write target are not themselves write paths" {
+              let source =
+                  "foo(rows*.name).bar = 1\n"
+                  + "foo(values: rows*.name).bar = 1\n"
+                  + "holder.foo { rows*.name }.bar = 1\n"
+                  + "xs[rows*.name[0]] = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(
+                      EProp(ECall(FreeCall "foo", [ APos(ESpreadProp(EVar "rows", "name")) ], None), "bar"),
+                      _
+                  )
+                  SAssign(
+                      EProp(ECall(FreeCall "foo", [ ANamed("values", ESpreadProp(EVar "rows", "name")) ], None), "bar"),
+                      _
+                  )
+                  SAssign(EProp(ECall(MethodCall(EVar "holder", "foo"), [], Some trailing), "bar"), _)
+                  SAssign(EIndex(EVar "xs", EIndex(ESpreadProp(EVar "rows", "name"), EInt 0L)), _) ] as script ->
+                  Expect.equal
+                      trailing.Body
+                      [ SExpr(ESpreadProp(EVar "rows", "name")) ]
+                      "trailing closure keeps the spread read visible"
+
+                  Expect.isFalse
+                      (Ast.containsSpreadAssignment script)
+                      "call arguments, trailing closure reads and index keys are not write receivers"
+              | other -> failtestf "spread-read target probes lost their AST shapes: %A" other
+
+              Expect.isFalse
+                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first().name = 'x'\n"))
+                  "a method result starts a fresh ordinary write receiver"
+          }
+
+          test "method-call result boundaries preserve exact property, safe and index AST shapes" {
+              let source =
+                  "rows*.child.first().name = 'x'\n"
+                  + "rows*.child.first()?.name = 'x'\n"
+                  + "rows*.child.first()[0] = 'x'\n"
+                  + "rows*.child.find(index: 0).name = 'x'\n"
+                  + "rows*.child.find { true }.name = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(
+                      EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
+                      _
+                  )
+                  SAssign(
+                      ESafeProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
+                      _
+                  )
+                  SAssign(
+                      EIndex(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), EInt 0L),
+                      _
+                  )
+                  SAssign(
+                      EProp(
+                          ECall(
+                              MethodCall(ESpreadProp(EVar "rows", "child"), "find"),
+                              [ ANamed("index", EInt 0L) ],
+                              None
+                          ),
+                          "name"
+                      ),
+                      _
+                  )
+                  SAssign(EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "find"), [], Some trailing), "name"), _) ] as script ->
+                  Expect.equal trailing.Body [ SExpr(EBool true) ] "trailing closure stays attached to the boundary call"
+                  Expect.isFalse (Ast.containsSpreadAssignment script) "no call-result wrapper is a spread write"
+                  Expect.isTrue
+                      (Ast.containsSpreadDerivedIndexAssignment script)
+                      "the direct method-result index retains spread-read provenance for preflight"
+              | other -> failtestf "method-result write boundaries lost their AST shapes: %A" other
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.holder.first()['slot'] = 'x'\n"))
+                  "a statically ambiguous map/list receiver is conservatively classified"
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.children?.first()[0] = 'x'\n"))
+                  "safe method calls preserve the same direct-index provenance"
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.children.first().first()[0] = 'x'\n"))
+                  "nested method-call chains preserve provenance through every receiver"
+
+              Expect.isTrue
+                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first()*.name = 'x'\n"))
+                  "a new spread operator after the call remains an actual spread target"
+
+              Expect.isTrue
+                  (Ast.containsSpreadAssignment (parseOk "holder.foo { rows*.name = 'x' }.bar = 1\n"))
+                  "the separate statement traversal still sees a write inside a call closure"
           }
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
@@ -290,15 +481,13 @@ let predicateValues =
 
           test "an assignment through a property or index target yields its RHS" {
               // Round-7 finding: only the bare-variable form recorded a value, so
-              // `env.DEPLOY = false` or `values[0] = false` as the FINAL statement left
+              // a supported map-property target as the FINAL statement left
               // LastValue absent or stale — reported unevaluable, or reusing an earlier
               // truthy value. Groovy assignments yield their RHS whatever the target is.
-              Expect.equal (run "true\nenv.DEPLOY = false").Returned (Some(VBool false)) "property target"
-
-              // The INDEX form (`xs[0] = false`) is not asserted here because the
-              // Groovy parser cannot parse it at all yet — a separate gap, measured at
-              // 9 corpus files, tracked as FG-015b. Asserting it here would have made
-              // this test fail for a reason unrelated to what it is testing.
+              Expect.equal
+                  (run "def values = [:]\ntrue\nvalues.DEPLOY = false").Returned
+                  (Some(VBool false))
+                  "a write that actually occurred yields its RHS"
           }
 
           test "a closure returns its trailing expression without `return`" {
@@ -1015,14 +1204,15 @@ let fg180Grammar =
               | other -> failtestf "merged into a declaration: %A" other
           } ]
 
-/// FG-015. The board row outlived the implementation that admitted most of its
-/// six constructs. Keep one named semantic repro per construct so a closure
-/// audit cannot mistake grammar acceptance for execution parity. Spread-dot is
-/// deliberately a passing pin of the one remaining divergence: once it is
-/// implemented, this assertion and the PARTIAL board row must change together.
+/// FG-015. Keep one named semantic repro per recovered construct so a closure
+/// audit cannot mistake grammar acceptance for execution parity. Spread-dot's
+/// measured boundary has adjacent pins because null omission, null retention and
+/// chained safe navigation are different semantics hidden behind one token.
 let fg015ClosureAudit =
-    let runStrict src =
-        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+    let runStrictWith budget src =
+        Interpreter.runStrictVars budget steps Env.empty (parseOk src)
+
+    let runStrict = runStrictWith Budget.defaults
 
     testList
         "FG-015 six-construct closure audit"
@@ -1071,13 +1261,253 @@ let fg015ClosureAudit =
               Expect.equal (stepArgs o) [ "echo", [ "L:R" ] ] "both names are bound"
           }
 
-          test "spread-dot remains divergent instead of masquerading as closed" {
-              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\ndef names = rows*.name\nreturn names\n"
+          test "spread-dot projects one property from every non-null list element" {
+              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows*.name\n"
+              Expect.isNone o.Fault "the measured list projection evaluates"
+              Expect.equal o.Returned (Some(VList [ VStr "a"; VStr "b" ])) "source order is preserved"
+          }
+
+          test "spread-dot keeps the measured null and receiver boundaries" {
+              let source =
+                  "def withoutNulls = [[name: 'a'], [name: 'b']]*.name\n"
+                  + "def withNullElement = [[name: 'a'], null, [name: 'b']]*.name\n"
+                  + "def missingMapValues = [[name: 'a'], [:], [name: null]]*.name\n"
+                  + "def maybe = null\n"
+                  + "def nullReceiver = maybe*.name\n"
+                  + "def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]\n"
+                  + "def nested = groups*.child*.name\n"
+                  + "def safeAfterSpread = groups*.child?.name\n"
+                  + "def mapValue = [left: 1, right: 2]\n"
+                  + "def mapResult = mapValue*.key\n"
+                  + "echo withoutNulls\necho withNullElement\necho missingMapValues\n"
+                  + "echo nullReceiver\necho nested\necho safeAfterSpread\necho mapResult\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "all measured successful receiver shapes evaluate"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a, b]" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "[a, null, null]" ]
+                    "echo", [ "null" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "[a, b]" ]
+                    "echo", [ "null" ] ]
+                  "null receivers are omitted, null property values remain, and non-lists use ordinary lookup"
+          }
+
+          test "spread-dot missing properties remain catchable" {
+              let source =
+                  "def scalarResult = 'not-caught'\n"
+                  + "try { def scalarProjection = [[name: 'a'], 42]*.name } "
+                  + "catch (MissingPropertyException e) { scalarResult = 'caught' }\n"
+                  + "def stringResult = 'not-caught'\n"
+                  + "try { def stringProjection = 'ab'*.length } "
+
+                  + "catch (MissingPropertyException e) { stringResult = 'caught' }\n"
+                  + "echo scalarResult\necho stringResult\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both measured missing-property failures are intercepted"
+              Expect.equal (stepArgs o) [ "echo", [ "caught" ]; "echo", [ "caught" ] ] "catch runs"
+          }
+
+          test "ordinary property access on a list stays ordinary" {
+              let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows.name\n"
 
               match o.Fault with
               | Some(UnknownProperty "name") -> ()
-              | other -> failtestf "expected the measured spread-dot divergence, got %A" other
-          } ]
+              | other -> failtestf "ordinary EProp gained spread semantics: %A" other
+          }
+
+          test "spread projection is bounded like other collection iteration" {
+              let budget = { Budget.defaults with MaxLoopIterations = 1 }
+              let o = runStrictWith budget "return [[name: 'a'], [name: 'b']]*.name\n"
+
+              match o.Fault with
+              | Some(BudgetExhausted message) -> Expect.stringContains message "spread projection" "names the bound"
+              | other -> failtestf "expected bounded spread refusal, got %A" other
+          }
+
+
+          test "spread assignment refuses before its RHS and is not claimed catchable" {
+              let source =
+                  "def rows = [[name: 'a'], [name: 'b']]\n"
+                  + "try { rows*.name = sh 'touch rhs.txt' } "
+                  + "catch (Throwable e) { echo 'caught' }\n"
+                  + "echo 'after'\n"
+
+              let o = runStrict source
+
+              match o.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.spreadAssignmentRefusal "stable named boundary"
+              | other -> failtestf "expected the defensive spread-assignment refusal, got %A" other
+
+              Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
+          }
+
+          test "direct projected-index assignment refuses before target, RHS and catch effects" {
+              for label, statement in
+                  [ "plain", "rows*.child[0] = sh 'plain-rhs'"
+                    "compound", "rows*.child[0] += sh 'compound-rhs'"
+                    "increment", "rows*.count[0]++"
+                    "decrement", "rows*.count[0]--"
+                    "nested", "rows*.children[0][1] = sh 'nested-rhs'" ] do
+                  let source =
+                      "def rows = [[child: [name: 'a'], count: 1, children: [[name: 'a0'], [name: 'a1']]]]\n"
+                      + "try { " + statement + " } catch (Throwable e) { echo 'caught' }\n"
+                      + "echo 'after'\n"
+
+                  let o = runStrict source
+
+                  match o.Fault with
+                  | Some(Unsupported why) ->
+                      Expect.equal why Interpreter.spreadIndexAssignmentRefusal $"{label}: stable named boundary"
+                  | other -> failtestf "%s: expected projected-index refusal, got %A" label other
+
+                  Expect.isEmpty o.Effects $"{label}: target, RHS, catch and later effects are blocked"
+          }
+
+          test "spread index results support bounded property and safe-property writes" {
+              let source =
+                  "def rows = [[child: [name: 'a', count: 1]], [child: [name: 'b', count: 10]]]\n"
+                  + "rows*.child[0].name = 'plain'\n"
+                  + "rows*.child[0]?.name = 'safe'\n"
+                  + "rows*.child[0].count += 2\n"
+                  + "rows*.child[0].count++\n"
+                  + "rows*.child[0].count--\n"
+                  + "echo rows[0].child.name\n"
+                  + "echo rows[1].child.name\n"
+                  + "echo rows[0].child.count\n"
+                  + "echo rows[1].child.count\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the measured outer writes execute"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "safe" ]; "echo", [ "b" ]; "echo", [ "3" ]; "echo", [ "10" ] ]
+                  "only the selected first child mutates and all assignment forms compose"
+          }
+
+          test "safe-property assignment on a null indexed result is catchable and does not mutate" {
+              let source =
+                  "def rows = [[child: null], [child: [name: 'b']]]\n"
+                  + "try { rows*.child[0]?.name = 'x' } catch (Exception e) { echo 'caught' }\n"
+                  + "echo rows[0].child\n"
+                  + "echo rows[1].child.name\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the null-target fault is intercepted"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "caught" ]; "echo", [ "null" ]; "echo", [ "b" ] ]
+                  "catch runs and neither source child changes"
+          }
+
+          test "spread read through first supports an ordinary returned-child write" {
+              let source =
+                  "def rows = [[child: [name: 'a']], [child: [name: 'b']]]\n"
+                  + "rows*.child.first().name = 'x'\n"
+                  + "echo rows[0].child.name\n"
+                  + "echo rows[1].child.name\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the method result is an ordinary map receiver"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "x" ]; "echo", [ "b" ] ]
+                  "only the child returned by first is mutated"
+          }
+
+
+          test "safe-property writes after method calls mutate maps for every assignment form" {
+              let source =
+                  "def rows = [[child: [name: 'a', count: 1]], [child: [name: 'b', count: 10]]]\n"
+                  + "rows*.child.first()?.name = 'safe'\n"
+                  + "rows*.child.first()?.count += 2\n"
+                  + "rows*.child.first()?.count++\n"
+                  + "rows*.child.first()?.count--\n"
+                  + "echo \"${rows[0].child.name}:${rows[1].child.name}:${rows[0].child.count}:${rows[1].child.count}\"\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "all safe-property assignment forms execute"
+              Expect.equal (stepArgs o) [ "echo", [ "safe:b:3:10" ] ] "only first()'s returned map mutates"
+          }
+
+          test "safe-property null and missing receivers fault catchably after RHS effects" {
+              let source =
+                  "try { sh('null-target')?.name = sh('null-rhs') } "
+                  + "catch (NullPointerException e) { echo 'null-caught' }\n"
+                  + "def rows = [[child: 'text']]\n"
+                  + "try { rows*.child.first()?.name = sh('missing-rhs') } "
+                  + "catch (MissingPropertyException e) { echo 'missing-caught' }\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both exact runtime classes are intercepted"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "sh", [ "null-target" ]
+                    "sh", [ "null-rhs" ]
+                    "echo", [ "null-caught" ]
+                    "sh", [ "missing-rhs" ]
+                    "echo", [ "missing-caught" ] ]
+                  "receiver precedes RHS; the fault follows the RHS and never skips the catch"
+          }
+
+          test "narrow null and missing-property catches never intercept each other" {
+              let nullThroughMissing =
+                  runStrict (
+                      "def target = null\n"
+                      + "try { target?.name = 'x' } catch (MissingPropertyException e) { echo 'wrong' }\n"
+                  )
+
+              match nullThroughMissing.Fault with
+              | Some(NullReceiverAssignment "name") -> ()
+              | other -> failtestf "MissingPropertyException over-caught the null fault: %A" other
+
+              Expect.isEmpty nullThroughMissing.Effects "the wrong catch did not run"
+
+              let missingThroughNull =
+                  runStrict (
+                      "def target = 'text'\n"
+                      + "try { target?.name = 'x' } catch (NullPointerException e) { echo 'wrong' }\n"
+                  )
+
+              match missingThroughNull.Fault with
+              | Some(UnknownProperty "name") -> ()
+              | other -> failtestf "NullPointerException over-caught the missing-property fault: %A" other
+
+              Expect.isEmpty missingThroughNull.Effects "the wrong catch did not run"
+          }
+
+          test "unsupported assignment receivers and targets never degrade to RHS-only success" {
+              let listOutcome = runStrict "def xs = [1]\nxs[0] = sh 'list-rhs'\necho 'after'\n"
+
+              match listOutcome.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.listIndexAssignmentRefusal "stable list-index boundary"
+              | other -> failtestf "expected list-index refusal, got %A" other
+
+              Expect.isEmpty listOutcome.Effects "list-index refusal precedes RHS and later effects"
+
+              let invalidTarget =
+                  Interpreter.runStrictVars
+                      Budget.defaults
+                      steps
+                      Env.empty
+                      [ SAssign(EInt 1L, ECall(FreeCall "sh", [ APos(EStr "target-rhs") ], None)) ]
+
+              match invalidTarget.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.assignmentTargetRefusal "stable unsupported-target boundary"
+              | other -> failtestf "expected target refusal, got %A" other
+
+              Expect.isEmpty invalidTarget.Effects "an unsupported target cannot evaluate its RHS"
+          }
+          ]
 
 [<EntryPoint>]
 let main argv =

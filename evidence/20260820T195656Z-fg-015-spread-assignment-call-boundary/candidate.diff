@@ -1,0 +1,211 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 7cd5ee9..ad8e136 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -509,7 +509,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
+ | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
+ | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |
+-| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only l-value receivers: spread reads used solely as call inputs or index keys remain admitted | eleven focused FG-015 semantic/refusal tests, three exact AST-shape pins, and eight differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |
++| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects, including expression bodies recursively nested in stage `when` trees. Runtime timing and catchability parity are explicitly not claimed. The write-path test follows only the live l-value chain: spread reads used solely as call inputs, index keys, or to produce a method-call result remain admitted; a new spread operator after the call remains refused | twelve focused FG-015 semantic/refusal tests, four exact AST-shape pins, and eight differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |
+ | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
+ | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
+ | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+index c3a1655..7f64a67 100644
+--- a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+@@ -80,9 +80,29 @@ The same pass narrows the assignment predicate to the l-value receiver chain.
+ Parser-shape and preflight probes admit spread reads used only in positional or
+ named call arguments, a trailing closure, and an index key — including the
+ reviewer examples `foo(rows*.name).bar = 1` and
+-`xs[rows*.name[0]] = 'x'`. A spread below a called receiver remains refused.
++`xs[rows*.name[0]] = 'x'`. A method-call result is also a fresh l-value receiver;
++only a new spread operator after that call is a spread write.
+ Nested closures containing an actual spread assignment remain visible through
+ the separate statement traversal. No Jenkins boundary receipt changed.
+ 
+ The [exact-head review gate bundle](../20260820T193817Z-fg-015-spread-assignment-review)
+ seals this incremental correction against its published base.
++
++## Method-result receiver boundary
++
++A subsequent exact-head review found the remaining over-refusal:
++`rows*.child.first().name = 'x'`. The projection supplies the receiver of
++`first()`; the actual assignment is an ordinary property write on the returned
++child. `assignmentTargetContainsSpreadProperty` now stops at every `ECall`
++result rather than recursing into its receiver or inputs.
++
++Exact AST and preflight probes cover ordinary property, safe-property, and
++index wrappers after `first()`, plus named and trailing-closure call forms. A
++runtime probe proves the reviewer case mutates only the first returned child
++(`a` to `x`, with the second remaining `b`). Direct property/safe/index
++wrappers rooted in `ESpreadProp` still refuse, as does a new `*.` after the
++method call. A real spread assignment inside a call closure is still caught by
++the separate recursive statement traversal.
++
++The [method-result review gate bundle](../20260820T195656Z-fg-015-spread-assignment-call-boundary)
++seals this incremental correction against exact base `bcfbf9c`.
+diff --git a/src/Fogell.Groovy/Ast.fs b/src/Fogell.Groovy/Ast.fs
+index 77768d1..0a9b91d 100644
+--- a/src/Fogell.Groovy/Ast.fs
++++ b/src/Fogell.Groovy/Ast.fs
+@@ -129,9 +129,10 @@ module Ast =
+               | SThrow _ -> 0)
+ 
+     /// True only when spread-property syntax participates in the l-value
+-    /// receiver chain. An index key and call arguments (including named and
+-    /// trailing-closure arguments) compute values; spread reads inside them are
+-    /// not writes through a projection and must remain admitted.
++    /// receiver chain. An index key, call arguments (including named and
++    /// trailing-closure arguments), and the receiver feeding a method call all
++    /// compute a value. The method result is a fresh l-value receiver boundary;
++    /// spread reads below it are not writes through a projection and remain admitted.
+     ///
+     /// Jenkins 2.568.1 accepts actual spread write paths but raises a catchable
+     /// runtime exception without mutating the elements. Fogell does not model
+@@ -143,11 +144,7 @@ module Ast =
+         | EProp(target, _)
+         | ESafeProp(target, _) -> assignmentTargetContainsSpreadProperty target
+         | EIndex(target, _) -> assignmentTargetContainsSpreadProperty target
+-        | ECall(target, _, _) ->
+-            match target with
+-            | FreeCall _ -> false
+-            | MethodCall(receiver, _)
+-            | SafeMethodCall(receiver, _) -> assignmentTargetContainsSpreadProperty receiver
++        | ECall _ -> false
+         | ENull
+         | EBool _
+         | EInt _
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 2dff601..1952c85 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -1641,19 +1641,31 @@ let spreadAssignmentPreflight =
+               | Ok _ -> ()
+           }
+ 
+-          test "spread reads in call inputs and index keys remain outside the write refusal" {
++          test "spread reads in call inputs, index keys and method receivers remain outside the write refusal" {
+               for label, statement in
+                   [ "positional call argument", "foo(rows*.name).bar = 1"
+                     "named call argument", "foo(values: rows*.name).bar = 1"
+                     "trailing closure read", "holder.foo { rows*.name }.bar = 1"
+-                    "index key", "xs[rows*.name[0]] = 'x'" ] do
++                    "index key", "xs[rows*.name[0]] = 'x'"
++                    "method result property", "rows*.child.first().name = 'x'"
++                    "method result safe property", "rows*.child.first()?.name = 'x'"
++                    "method result index", "rows*.child.first()[0] = 'x'"
++                    "named method result", "rows*.child.find(index: 0).name = 'x'"
++                    "trailing method result", "rows*.child.find { true }.name = 'x'" ] do
+                   match FogellSide.preflightExecution (pipelineWithBody statement) with
+                   | Error why -> failtestf "%s spread read was over-refused: %s" label why
+                   | Ok _ -> ()
+ 
++              for label, statement in
++                  [ "direct property wrapper", "rows*.child.name = 'x'"
++                    "direct safe wrapper", "rows*.child?.name = 'x'"
++                    "direct index wrapper", "rows*.child[0] = 'x'"
++                    "new spread after method", "rows*.child.first()*.name = 'x'" ] do
++                  expectNamedRefusal label (pipelineWithBody statement)
++
+               expectNamedRefusal
+-                  "spread in called receiver write path"
+-                  (pipelineWithBody "rows*.child.find().name = 'x'")
++                  "actual assignment in method trailing closure"
++                  (pipelineWithBody "holder.foo { rows*.name = 'x' }.bar = 1")
+           } ]
+ 
+ let jenkinsBuildDataAttestation =
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index d51d653..d63a1c7 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -130,9 +130,55 @@ let grammar =
+                       "call arguments, trailing closure reads and index keys are not write receivers"
+               | other -> failtestf "spread-read target probes lost their AST shapes: %A" other
+ 
++              Expect.isFalse
++                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first().name = 'x'\n"))
++                  "a method result starts a fresh ordinary write receiver"
++          }
++
++          test "method-call result boundaries preserve exact property, safe and index AST shapes" {
++              let source =
++                  "rows*.child.first().name = 'x'\n"
++                  + "rows*.child.first()?.name = 'x'\n"
++                  + "rows*.child.first()[0] = 'x'\n"
++                  + "rows*.child.find(index: 0).name = 'x'\n"
++                  + "rows*.child.find { true }.name = 'x'\n"
++
++              match parseOk source with
++              | [ SAssign(
++                      EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
++                      _
++                  )
++                  SAssign(
++                      ESafeProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
++                      _
++                  )
++                  SAssign(
++                      EIndex(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), EInt 0L),
++                      _
++                  )
++                  SAssign(
++                      EProp(
++                          ECall(
++                              MethodCall(ESpreadProp(EVar "rows", "child"), "find"),
++                              [ ANamed("index", EInt 0L) ],
++                              None
++                          ),
++                          "name"
++                      ),
++                      _
++                  )
++                  SAssign(EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "find"), [], Some trailing), "name"), _) ] as script ->
++                  Expect.equal trailing.Body [ SExpr(EBool true) ] "trailing closure stays attached to the boundary call"
++                  Expect.isFalse (Ast.containsSpreadAssignment script) "no call-result wrapper is a spread write"
++              | other -> failtestf "method-result write boundaries lost their AST shapes: %A" other
++
+               Expect.isTrue
+-                  (Ast.containsSpreadAssignment (parseOk "rows*.child.find().name = 'x'\n"))
+-                  "spread below a called receiver remains an actual write path"
++                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first()*.name = 'x'\n"))
++                  "a new spread operator after the call remains an actual spread target"
++
++              Expect.isTrue
++                  (Ast.containsSpreadAssignment (parseOk "holder.foo { rows*.name = 'x' }.bar = 1\n"))
++                  "the separate statement traversal still sees a write inside a call closure"
+           }
+           // FG-174. Both parsers hold this rule, because both produce calls and a rule
+           // held by only one of them is the shape of half the findings on this branch.
+@@ -1185,6 +1231,7 @@ let fg015ClosureAudit =
+                   + "catch (MissingPropertyException e) { scalarResult = 'caught' }\n"
+                   + "def stringResult = 'not-caught'\n"
+                   + "try { def stringProjection = 'ab'*.length } "
++
+                   + "catch (MissingPropertyException e) { stringResult = 'caught' }\n"
+                   + "echo scalarResult\necho stringResult\n"
+ 
+@@ -1227,6 +1274,21 @@ let fg015ClosureAudit =
+ 
+               Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
+           }
++
++          test "spread read through first supports an ordinary returned-child write" {
++              let source =
++                  "def rows = [[child: [name: 'a']], [child: [name: 'b']]]\n"
++                  + "rows*.child.first().name = 'x'\n"
++                  + "echo rows[0].child.name\n"
++                  + "echo rows[1].child.name\n"
++
++              let o = runStrict source
++              Expect.isNone o.Fault "the method result is an ordinary map receiver"
++              Expect.equal
++                  (stepArgs o)
++                  [ "echo", [ "x" ]; "echo", [ "b" ] ]
++                  "only the child returned by first is mutated"
++          }
+           ]
+ 
+ [<EntryPoint>]
