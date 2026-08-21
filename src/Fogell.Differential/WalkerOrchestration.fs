@@ -1972,6 +1972,19 @@ module WalkerOrchestration =
                     atCtx.Failed.Value <- true
                     atCtx.Sink BuildStatus.Failure
 
+                let commitHostedStatusHalt (atCtx: BranchCtx) haltKind diagnosticText =
+                    // The step already narrated its failure/abort. Ownership here
+                    // is only durable state publication after surrounding finally
+                    // control flow has allowed the fresh cleanup halt to escape.
+                    atCtx.LastDiagnostic.Value <- Some(runCtx.MaskSecrets diagnosticText)
+                    atCtx.Failed.Value <- true
+
+                    atCtx.Sink(
+                        match haltKind with
+                        | HostedFailure -> BuildStatus.Failure
+                        | HostedAborted -> BuildStatus.Aborted
+                    )
+
                 // `script` TAKES NO ARGUMENTS — only its implicit closure. The guard
                 // above checks `ScriptBody` alone, so `script('ignored') { … }` ran the
                 // body while Jenkins rejects the argument and leaves the workspace EMPTY.
@@ -2149,6 +2162,8 @@ module WalkerOrchestration =
                                     // eager halt: record the reason on THIS child so retry
                                     // can recover or publish its final attempt.
                                     fail why
+                                | Some(Interpreter.StepStatusHalt(_, haltKind, diagnosticText)) ->
+                                    commitHostedStatusHalt inner haltKind diagnosticText
                             finally
                                 hostAt.Value <- saved
 
@@ -2288,6 +2303,7 @@ module WalkerOrchestration =
                                                 // Jenkins ran the real step.
                                                 let observedStatus = ref BuildStatus.Success
                                                 let observedFailed = ref false
+                                                let diagnosticBefore = dispatchCtx.LastDiagnostic.Value
 
                                                 let observing =
                                                     { dispatchCtx with
@@ -2306,7 +2322,8 @@ module WalkerOrchestration =
                                                     // vocabulary today, so a bat arm here would be
                                                     // dead code wearing a parity claim. Other hosted
                                                     // failures keep the fail-loud path until measured.
-                                                    && (name = "sh" || name = "unstash")
+                                                    && WalkerRules.hostedStatusFailureDelivery name
+                                                       = Some WalkerRules.CatchableStepFailure
                                                 then
                                                     let diagnosticText, exceptionText =
                                                         if name = "sh" then
@@ -2327,10 +2344,32 @@ module WalkerOrchestration =
 
                                                     Interpreter.raiseStepFailed name exceptionText diagnosticText
                                                 else
-                                                    dispatchCtx.Sink observedStatus.Value
+                                                    let freshHalt =
+                                                        match observedStatus.Value with
+                                                        | BuildStatus.Aborted -> Some HostedAborted
+                                                        | BuildStatus.Failure -> Some HostedFailure
+                                                        | _ when observedFailed.Value -> Some HostedFailure
+                                                        | _ -> None
 
-                                                    if observedFailed.Value then
-                                                        dispatchCtx.Failed.Value <- true
+                                                    match finallyUnwind, freshHalt with
+                                                    | true, Some haltKind ->
+                                                        let diagnosticText =
+                                                            match dispatchCtx.LastDiagnostic.Value with
+                                                            | Some current when Some current <> diagnosticBefore -> current
+                                                            | _ ->
+                                                                let suffix =
+                                                                    match haltKind with
+                                                                    | HostedFailure -> "failed"
+                                                                    | HostedAborted -> "aborted"
+
+                                                                $"hosted step '{name}' {suffix} during finally cleanup"
+
+                                                        Interpreter.raiseHostedStepHalted name haltKind diagnosticText
+                                                    | _ ->
+                                                        dispatchCtx.Sink observedStatus.Value
+
+                                                        if observedFailed.Value then
+                                                            dispatchCtx.Failed.Value <- true
 
                                             // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
                                             // stdout, `sh(returnStatus: true)` its exit code as an
@@ -2374,6 +2413,8 @@ module WalkerOrchestration =
                                     $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
                             | HostedCallRefused why ->
                                 fail why
+                            | HostedStepHalted(_, haltKind, diagnosticText) ->
+                                commitHostedStatusHalt (fst hostAt.Value) haltKind diagnosticText
                             | StepFailed(_, _, diagnosticText) ->
                                 // FG-176. The failing step already narrated its own ERROR at
                                 // dispatch; an uncaught escape must fail the build exactly as

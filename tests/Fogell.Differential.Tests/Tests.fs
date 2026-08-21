@@ -1405,6 +1405,32 @@ let stepDescriptorValidation =
               Expect.equal (Set.union warned thrown) WalkerRules.scriptStepVocabulary "policies partition the vocabulary"
           }
 
+          test "terminal hosted-status delivery is exhaustive over all 14 descriptors" {
+              let catchable = set [ "sh"; "unstash" ]
+              let deferred = Set.difference WalkerRules.scriptStepVocabulary catchable
+
+              for step in WalkerRules.scriptStepVocabulary do
+                  let expected =
+                      if catchable.Contains step then
+                          Some WalkerRules.CatchableStepFailure
+                      else
+                          Some WalkerRules.DeferredStatusHalt
+
+                  Expect.equal
+                      (WalkerRules.hostedStatusFailureDelivery step)
+                      expected
+                      $"{step} has an explicit measured terminal-status delivery"
+
+              Expect.equal
+                  (Set.union catchable deferred)
+                  (WalkerRules.stepDescriptors |> Map.keys |> Set.ofSeq)
+                  "catchable and deferred status paths cover every descriptor exactly"
+
+              Expect.isNone
+                  (WalkerRules.hostedStatusFailureDelivery "outside-vocabulary")
+                  "an unregistered step never acquires an implicit status policy"
+          }
+
           test "primary promotion cannot erase a constructor-map unknown" {
               match
                   WalkerRules.validateHostedCall

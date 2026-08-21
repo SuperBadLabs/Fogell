@@ -196,6 +196,22 @@ module WalkerRules =
             [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
               "stash"; "unstable"; "unstash"; "dir"; "timeout"; "retry"; "withEnv" ]
 
+    /// How a fresh terminal status returned by a hosted step is delivered to
+    /// scripted Groovy. Only the two pinned AbortException paths are catchable;
+    /// every other vocabulary member remains a catch-opaque status halt. This
+    /// exhaustive policy replaces the orchestration layer's ad-hoc name check.
+    type HostedStatusFailureDelivery =
+        | CatchableStepFailure
+        | DeferredStatusHalt
+
+    let hostedStatusFailureDelivery name =
+        if not (scriptStepVocabulary.Contains name) then
+            None
+        elif name = "sh" || name = "unstash" then
+            Some CatchableStepFailure
+        else
+            Some DeferredStatusHalt
+
     /// FG-177 slice 1. Jenkins has two measured unknown-key binding policies.
     type UnknownNamedBinding =
         | WarnAndContinue of bindingClass: string

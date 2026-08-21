@@ -39,6 +39,13 @@ type HostedCallPhase =
     | OrdinaryCall
     | FinallyUnwind
 
+/// A fresh terminal status introduced by a hosted call while `finally` is
+/// unwinding an older branch halt. Kept independent of the differential
+/// layer's BuildStatus so the interpreter/host boundary stays acyclic.
+type HostedStepHaltKind =
+    | HostedFailure
+    | HostedAborted
+
 type PerformStep =
     { /// The phase is explicit because a hosted branch that has already halted
       /// still executes calls in a `finally` while its failure unwinds. Hosts
@@ -119,6 +126,11 @@ type Fault =
     /// opaque to Groovy catch clauses, but is deferred until it escapes the
     /// current control-flow scope so `finally` and retry retain ownership.
     | HostedCallRefused of detail: string
+    /// A cleanup call returned normally after introducing a new terminal build
+    /// status. This is catch-opaque like the existing hosted halt: it stops
+    /// successor cleanup statements, but still participates in nested `finally`
+    /// and return precedence before the wrapper/top-level owner commits it.
+    | HostedStepHalted of stepName: string * haltKind: HostedStepHaltKind * diagnosticText: string
     | BudgetExhausted of what: string
     /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
     /// throws MissingPropertyException here; the default mode's late-binding null
@@ -166,6 +178,7 @@ module Interpreter =
     type HostedBodyHalt =
         | BranchHalt
         | CallRefusalHalt of detail: string
+        | StepStatusHalt of stepName: string * haltKind: HostedStepHaltKind * diagnosticText: string
 
 
     let spreadAssignmentRefusal =
@@ -1753,6 +1766,13 @@ module Interpreter =
     let raiseHostedCallRefused (detail: string) : 'a =
         raise (Stop(HostedCallRefused detail))
 
+    /// A status-only cleanup halt is deliberately deferred until it escapes
+    /// surrounding finally control flow. The call has already narrated its own
+    /// failure; the eventual owner only publishes status and durability state.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseHostedStepHalted (stepName: string) (haltKind: HostedStepHaltKind) (diagnosticText: string) : 'a =
+        raise (Stop(HostedStepHalted(stepName, haltKind, diagnosticText)))
+
     /// A hosted wrapper owns the context it gives its body. When that child
     /// context halts, the interpreter signal must return control to the wrapper
     /// so retry can inspect the attempt and either retry or publish its failure;
@@ -1771,6 +1791,8 @@ module Interpreter =
             Some BranchHalt
         | Stop(HostedCallRefused detail) ->
             Some(CallRefusalHalt detail)
+        | Stop(HostedStepHalted(stepName, haltKind, diagnosticText)) ->
+            Some(StepStatusHalt(stepName, haltKind, diagnosticText))
 
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a

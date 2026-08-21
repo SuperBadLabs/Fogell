@@ -989,6 +989,79 @@ let hostedSteps =
               Expect.equal outcome.Returned (Some(VInt 9L)) "the innermost replacing return wins"
           }
 
+          test "a fresh status-only cleanup halt stops successors and still runs nested finally" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name _ _ _ ->
+                            performed.Add(phase, name)
+
+                            match name with
+                            | "stage" ->
+                                reachable.Value <- false
+                                VNull
+                            | "stash" ->
+                                Interpreter.raiseHostedStepHalted
+                                    "stash"
+                                    HostedFailure
+                                    "hosted step 'stash' failed during finally cleanup"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (Set.add "stash" steps) Env.empty (parseOk (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { stash name: 'cleanup'; echo 'inner-successor' } "
+                      + "finally { echo 'nested-cleanup' }; "
+                      + "echo 'outer-successor' }"
+                  ))
+
+              Expect.equal
+                  outcome.Fault
+                  (Some(HostedStepHalted(
+                      "stash",
+                      HostedFailure,
+                      "hosted step 'stash' failed during finally cleanup"
+                  )))
+                  "the fresh cleanup status owns the escaping halt"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage"
+                    FinallyUnwind, "stash"
+                    FinallyUnwind, "echo" ]
+                  "nested cleanup runs but both successors stay suppressed"
+          }
+
+          test "a nested finally return may replace a fresh status-only cleanup halt" {
+              let reachable = ref true
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name _ _ _ ->
+                            match name with
+                            | "stage" ->
+                                reachable.Value <- false
+                                VNull
+                            | "stash" ->
+                                Interpreter.raiseHostedStepHalted "stash" HostedFailure "cleanup failed"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (Set.add "stash" steps) Env.empty (parseOk (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { stash name: 'cleanup'; return 7 } finally { return 9 } }"
+                  ))
+
+              Expect.isNone outcome.Fault "the nested return replaces both pending halts"
+              Expect.equal outcome.Returned (Some(VInt 9L)) "the innermost replacing return wins"
+          }
+
           test "a hosted call refusal stays opaque to Groovy catch and explicit at wrapper ownership" {
               let performed = ResizeArray<string>()
 
@@ -1014,6 +1087,15 @@ let hostedSteps =
                   caught
                   (Some(Interpreter.CallRefusalHalt "wrapper reason"))
                   "the wrapper receives the precise deferred reason"
+
+              let statusCaught =
+                  Interpreter.catchHostedHalt (fun () ->
+                      Interpreter.raiseHostedStepHalted "stash" HostedAborted "cleanup aborted")
+
+              Expect.equal
+                  statusCaught
+                  (Some(Interpreter.StepStatusHalt("stash", HostedAborted, "cleanup aborted")))
+                  "wrapper ownership preserves status kind and diagnostic"
           }
 
           test "a nested argument that halts unwinds before later arguments and the outer step" {

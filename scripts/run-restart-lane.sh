@@ -685,6 +685,49 @@ for f in warned.txt wrong.txt continued.txt; do
 done
 echo "each attempt kept its halt boundary; the final durable reason stayed the original refusal"
 
+echo "=== FG-177: a status-only cleanup halt owns durability and terminal replay ==="
+SH_LANE="$LANE/fg177-status-cleanup-diagnostic"
+mkdir -p "$SH_LANE/ws"
+cat > "$SH_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('status-cleanup-diagnostic') {
+            steps {
+                script {
+                    try {
+                        stash(name: 'original')
+                    } finally {
+                        archiveArtifacts(artifacts: 'missing/**')
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$SH_LANE/Jenkinsfile" "$SH_LANE/ws" fg177sh "$SH_LANE/build.journal" > "$SH_LANE/run.log" 2>&1
+SH_RC=$?
+set -e
+[ "$SH_RC" -eq 1 ] || { echo "FAIL: status cleanup reported rc $SH_RC, expected 1"; cat "$SH_LANE/run.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tstatus-cleanup-diagnostic\t0\t' "$SH_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: cleanup status did not journal exactly one reason"; cat "$SH_LANE/build.journal"; exit 1; }
+grep -q 'No artifacts found that match the file pattern "missing/\*\*"' "$SH_LANE/build.journal" || { echo "FAIL: durable reason is not the cleanup step's precise diagnostic"; cat "$SH_LANE/build.journal"; exit 1; }
+grep -q 'No files included in stash' "$SH_LANE/build.journal" && { echo "FAIL: inherited stash reason replaced the newer cleanup diagnostic"; cat "$SH_LANE/build.journal"; exit 1; }
+for f in wrong.txt continued.txt; do
+  [ ! -f "$SH_LANE/ws/fg177sh/$f" ] || { echo "FAIL: status cleanup successor $f landed"; exit 1; }
+done
+set +e
+"${HOST[@]}" "$SH_LANE/Jenkinsfile" "$SH_LANE/ws" fg177sh "$SH_LANE/build.journal" > "$SH_LANE/rerun.log" 2>&1
+SH_REPLAY_RC=$?
+set -e
+[ "$SH_REPLAY_RC" -eq 0 ] || { echo "FAIL: terminal status replay reported rc $SH_REPLAY_RC, expected terminal no-op 0"; cat "$SH_LANE/rerun.log"; exit 1; }
+grep -q 'already-terminal: failure' "$SH_LANE/rerun.log" || { echo "FAIL: terminal status journal was not a no-op"; cat "$SH_LANE/rerun.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tstatus-cleanup-diagnostic\t0\t' "$SH_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: replay duplicated the durable cleanup reason"; cat "$SH_LANE/build.journal"; exit 1; }
+echo "fresh cleanup status replaced the inherited halt once; terminal replay duplicated no reason or effect"
+
 echo "=== FG-177: binding failures preserve their measured exception class ==="
 B_LANE="$LANE/fg177-binding-class"
 mkdir -p "$B_LANE/ws"
