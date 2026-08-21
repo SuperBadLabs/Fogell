@@ -194,63 +194,79 @@ module FogellSide =
             | Result.Error why -> Result.Error why
             | Result.Ok(Some why) -> Result.Error why
             | Result.Ok None ->
-                let scopes =
-                    [ if not (List.isEmpty pipeline.Tools) then
-                          "pipeline"
+                let agentScopes =
+                    [ match pipeline.Agent with
+                      | AgentUnmodelled(kind, _) -> yield $"pipeline (`{kind}`)"
+                      | _ -> ()
                       for stage in Pipeline.flattenStages pipeline.Stages do
-                          if not (List.isEmpty stage.Tools) then
-                              $"stage '{stage.Name}'" ]
+                          match stage.Agent with
+                          | Some(AgentUnmodelled(kind, _)) -> yield $"stage '{stage.Name}' (`{kind}`)"
+                          | _ -> () ]
 
-                if not (List.isEmpty scopes) then
+                if not (List.isEmpty agentScopes) then
                     Result.Error(
-                        "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
-                        + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
-                        + String.concat ", " scopes
+                        "unsupported_agent: plugin-defined Declarative agents are parsed for admission but execution is refused "
+                        + "until provisioning, workspace placement and agent environment semantics are implemented; scopes: "
+                        + String.concat ", " agentScopes
                     )
                 else
-                    // FG-014 residual slice. Bracket-valued named arguments are retained as
-                    // source expressions for parse-only corpus admission. No executor arm has
-                    // been proven to consume a named list/map with Jenkins semantics, so the
-                    // shared execution preflight refuses them before workspace preparation or
-                    // any earlier step. Positional collections such as `withEnv(['A=1'])` are
-                    // deliberately outside this rule: that existing runtime path is proven.
-                    let rec flattenSteps (steps: Step list) =
-                        steps |> List.collect (fun step -> step :: flattenSteps step.Block)
+                    let scopes =
+                        [ if not (List.isEmpty pipeline.Tools) then
+                              "pipeline"
+                          for stage in Pipeline.flattenStages pipeline.Stages do
+                              if not (List.isEmpty stage.Tools) then
+                                  $"stage '{stage.Name}'" ]
 
-                    let postSteps (post: (PostCondition * Step list) list) =
-                        post |> List.collect (fun (_, steps) -> flattenSteps steps)
-
-                    let allSteps =
-                        flattenSteps (pipeline.Options @ pipeline.Parameters @ pipeline.Triggers)
-                        @ (pipeline.Stages
-                           |> Pipeline.flattenStages
-                           |> List.collect (fun stage ->
-                               flattenSteps (stage.Options @ stage.Steps) @ postSteps stage.Post))
-                        @ postSteps pipeline.Post
-
-                    let unsupportedCollections =
-                        allSteps
-                        |> List.collect (fun step ->
-                            step.Named
-                            |> List.choose (fun (name, source) ->
-                                let value = source.Trim()
-
-                                if step.ExpressionArgs.Contains name
-                                   && value.StartsWith("[", StringComparison.Ordinal)
-                                   && value.EndsWith("]", StringComparison.Ordinal) then
-                                    Some $"step '{step.Name}' argument `{name}`"
-                                else
-                                    None))
-                        |> List.distinct
-
-                    if List.isEmpty unsupportedCollections then
-                        Result.Ok pipeline
-                    else
+                    if not (List.isEmpty scopes) then
                         Result.Error(
-                            "unsupported_named_collection: named list/map arguments are parsed for admission but execution is refused "
-                            + "until their step semantics are implemented; occurrences: "
-                            + String.concat ", " unsupportedCollections
+                            "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
+                            + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
+                            + String.concat ", " scopes
                         )
+                    else
+                        // FG-014 residual slice. Bracket-valued named arguments are retained as
+                        // source expressions for parse-only corpus admission. No executor arm has
+                        // been proven to consume a named list/map with Jenkins semantics, so the
+                        // shared execution preflight refuses them before workspace preparation or
+                        // any earlier step. Positional collections such as `withEnv(['A=1'])` are
+                        // deliberately outside this rule: that existing runtime path is proven.
+                        let rec flattenSteps (steps: Step list) =
+                            steps |> List.collect (fun step -> step :: flattenSteps step.Block)
+
+                        let postSteps (post: (PostCondition * Step list) list) =
+                            post |> List.collect (fun (_, steps) -> flattenSteps steps)
+
+                        let allSteps =
+                            flattenSteps (pipeline.Options @ pipeline.Parameters @ pipeline.Triggers)
+                            @ (pipeline.Stages
+                               |> Pipeline.flattenStages
+                               |> List.collect (fun stage ->
+                                   flattenSteps (stage.Options @ stage.Steps) @ postSteps stage.Post))
+                            @ postSteps pipeline.Post
+
+                        let unsupportedCollections =
+                            allSteps
+                            |> List.collect (fun step ->
+                                step.Named
+                                |> List.choose (fun (name, source) ->
+                                    let value = source.Trim()
+
+                                    if step.ExpressionArgs.Contains name
+                                       && value.StartsWith("[", StringComparison.Ordinal)
+                                       && value.EndsWith("]", StringComparison.Ordinal) then
+                                        Some $"step '{step.Name}' argument `{name}`"
+                                    else
+                                        None))
+                            |> List.distinct
+
+                        if List.isEmpty unsupportedCollections then
+                            Result.Ok pipeline
+                        else
+                            Result.Error(
+                                "unsupported_named_collection: named list/map arguments are parsed for admission but execution is refused "
+                                + "until their step semantics are implemented; occurrences: "
+                                + String.concat ", " unsupportedCollections
+                            )
 
     let internal runWith
         (envReplacements: (string * string) list)

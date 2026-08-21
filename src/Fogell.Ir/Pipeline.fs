@@ -10,8 +10,15 @@ type AgentSpec =
     | AgentLabel of string
     | AgentDocker of image: string * args: string option
     | AgentDockerfile of dir: string option
-    /// `agent { kubernetes { ... } }` and friends — recognised, not modelled.
-    | AgentUnmodelled of kind: string
+    /// Plugin-defined agents such as `kubernetes` — recognised, not modelled.
+    ///
+    /// `InlineArguments` retains the exact source bytes after the agent kind and
+    /// before the enclosing `agent { ... }` closing brace. That includes leading
+    /// and trailing trivia, comments, newlines, quote kind and interpolation source;
+    /// only the structural kind and brace delimiters are excluded. `None` is the
+    /// legacy block form. Retention is parse admission only; execution rejects this
+    /// case until the corresponding provisioning and environment semantics exist.
+    | AgentUnmodelled of kind: string * InlineArguments: string option
 
 /// A step is a call: a name, positional arguments, named arguments, and an
 /// optional trailing block. `sh 'make'`, `archiveArtifacts artifacts: '*.jar'`,
