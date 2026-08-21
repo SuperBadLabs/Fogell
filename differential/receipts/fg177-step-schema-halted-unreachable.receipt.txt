@@ -1,8 +1,8 @@
 # Differential receipt — fg177-step-schema-halted-unreachable.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e055821fc189a170f091a8f00eddd9708d1f87bfdd0b3596667555338694be24
-case-digest:  574dab52b15f3de2c6a844ffa2a9c12b2c53dbb47df8c671061ceb9b3db0c8d7
+seal:         9c400a01e61403fd039348de2e053768c3730747f3a941b11d2bd4d9bc175d70
+case-digest:  9a0db8ccc9609b56962caa6c72e6816937f2f6fde90b9a76d31d06a868eaeffb
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash

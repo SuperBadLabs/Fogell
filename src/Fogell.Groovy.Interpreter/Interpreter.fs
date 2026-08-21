@@ -37,10 +37,11 @@ type Effect =
 /// block, so a wrapper can set up its context, call it, and tear down.
 type PerformStep =
     { Perform: string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
-      /// Whether a registered hosted step is still reachable. Asked before any
-      /// positional, named, or closure-value argument is evaluated, so a halted
-      /// branch cannot acquire new faults or effects from an unreachable call.
-      CanEvaluate: string -> bool
+      /// Whether the hosted branch can continue evaluating Groovy at all. Asked
+      /// before every call and again after a hosted step returns, so a step that
+      /// halts the branch unwinds the script before a later helper, builtin, or
+      /// argument can acquire a replacement fault or effect.
+      CanContinue: unit -> bool
       /// `env.NAME = value` inside the script. The interpreter updates its own binding
       /// either way; this tells the host so that steps AFTER the block see it too, which
       /// is what Jenkins does and what the batch model could not express.
@@ -168,6 +169,7 @@ module Interpreter =
     exception private ReturnSignal of Value
     exception private BreakSignal
     exception private ContinueSignal
+    exception private HostedHaltSignal
 
     type private State =
         { mutable Steps: int
@@ -545,15 +547,32 @@ module Interpreter =
         if st.Depth >= st.Budget.MaxCallDepth then
             raise (Stop(BudgetExhausted $"call depth exceeded {st.Budget.MaxCallDepth}"))
 
-        // A registered step can become unreachable after an earlier hosted call
-        // halts the branch without throwing back into this interpreter. Ask the
-        // host BEFORE forcing any argument. Only FreeCall can resolve to `Step`;
-        // method/safe-method targets use admitMethod and cannot enter the hosted
-        // step path, so this one predicate covers every hosted call entry.
-        let canEvaluateArguments () =
-            match target, st.Host with
-            | FreeCall name, Some host when st.RegisteredSteps.Contains name -> host.CanEvaluate name
-            | _ -> true
+        // RESOLVE A FREE CALL BEFORE REACHABILITY IS APPLIED. A script helper wins
+        // over a registered step in Sandbox.admitCall; checking RegisteredSteps here
+        // instead made `def sh(x) { ... }; sh(MISSING)` look like a hosted step after
+        // halt, discarded MISSING, then invoked the helper with ZERO arguments. Keep
+        // the authoritative resolution result and use it again at dispatch.
+        let admittedFreeCall =
+            match target with
+            | FreeCall name -> Some(Sandbox.admitCall st.RegisteredSteps st.Defined name)
+            | _ -> None
+
+        // A hosted halt ends Groovy evaluation; it is not a null-valued call and it
+        // is not an interpreter fault. Unwind before forcing any call argument, and
+        // check again around nested evaluation and after Perform because the call
+        // itself can be what halts the branch.
+        let ensureCanContinue () =
+            match st.Host with
+            | Some host when not (host.CanContinue()) -> raise HostedHaltSignal
+            | _ -> ()
+
+        let evalArgument e =
+            ensureCanContinue ()
+            let value = evalExpr st env e
+            ensureCanContinue ()
+            value
+
+        ensureCanContinue ()
 
         // LAZY: a safe call on a null receiver short-circuits the WHOLE call, its
         // arguments included — `a?.m(sideEffect())` runs nothing when a is null.
@@ -561,14 +580,14 @@ module Interpreter =
             lazy
                 (args
                  |> List.choose (function
-                     | APos e when canEvaluateArguments () -> Some(evalExpr st env e)
+                     | APos e -> Some(evalArgument e)
                      | _ -> None))
 
         let namedLazy =
             lazy
                 (args
                  |> List.choose (function
-                     | ANamed(n, e) when canEvaluateArguments () -> Some(n, evalExpr st env e)
+                     | ANamed(n, e) -> Some(n, evalArgument e)
                      | _ -> None))
 
         match target with
@@ -640,9 +659,10 @@ module Interpreter =
                 )
             | None ->
 
-            match Sandbox.admitCall st.RegisteredSteps st.Defined name with
-            | Error d -> raise (Stop(Denied d))
-            | Ok(Step s) ->
+            match admittedFreeCall with
+            | None -> failwith "FreeCall must have an admission result"
+            | Some(Error d) -> raise (Stop(Denied d))
+            | Some(Ok(Step s)) ->
                 // ONE NORMALISED BODY, from either representation. A block reaches a call
                 // as `trailing` OR as a FINAL CLOSURE ARGUMENT depending on which parser
                 // path matched — `dir('sub') { … }` versus `dir 'sub', { … }` — and taking
@@ -674,8 +694,7 @@ module Interpreter =
                 // call for the answer to be wrong about.
                 let takesBlock =
                     match st.Host with
-                    | Some h when canEvaluateArguments () -> h.TakesBlock name
-                    | Some _ -> false
+                    | Some h -> h.TakesBlock name
                     | None -> true
 
                 // FG-179. THE CLOSURE'S OWN ENV TRAVELS WITH IT. A closure reaching a
@@ -895,20 +914,20 @@ module Interpreter =
                     // enter JenkinsEnvCells. Refreshing even when the host declined to
                     // run the body only moves the cell TOWARD the live environment,
                     // which is where every hosted read should land.
-                    if not (canEvaluateArguments ()) then
-                        VNull
-                    else
-                        try
-                            host.Perform s positionalArgs namedLazy.Value runBody
-                        finally
-                            if runBody.IsSome then
-                                match Map.tryFind "env" env.Vars with
-                                | Some cell when st.JenkinsEnvCells.Contains cell ->
-                                    let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                    let freshMap = ref (Map.ofList current)
-                                    st.JenkinsEnvMaps.Add freshMap |> ignore
-                                    cell.Value <- VMap freshMap
-                                | _ -> ()
+                    try
+                        ensureCanContinue ()
+                        let value = host.Perform s positionalArgs namedLazy.Value runBody
+                        ensureCanContinue ()
+                        value
+                    finally
+                        if runBody.IsSome then
+                            match Map.tryFind "env" env.Vars with
+                            | Some cell when st.JenkinsEnvCells.Contains cell ->
+                                let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                let freshMap = ref (Map.ofList current)
+                                st.JenkinsEnvMaps.Add freshMap |> ignore
+                                cell.Value <- VMap freshMap
+                            | _ -> ()
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     //
@@ -923,7 +942,7 @@ module Interpreter =
                     st.Effects <- StepCall(s, positionalArgs, namedLazy.Value) :: st.Effects
                     runBody |> Option.iter (fun run -> run ())
                     VNull
-            | Ok(Builtin b) ->
+            | Some(Ok(Builtin b)) ->
                 match Map.tryFind b env.Funcs with
                 | Some candidates ->
                     // FG-195. RESOLUTION IS BY SIGNATURE, as Groovy's is — the model that
@@ -1622,6 +1641,12 @@ module Interpreter =
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
+        | HostedHaltSignal ->
+            { Effects = List.rev st.Effects
+              Fault = None
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
+              NewBindings = List.rev st.NewBindings
+              Returned = None }
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f

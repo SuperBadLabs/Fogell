@@ -672,7 +672,7 @@ let hostedSteps =
     // These test the seam, not the walker; the walker side is separate work.
     let hostThat perform setEnv =
         { Perform = perform
-          CanEvaluate = fun _ -> true
+          CanContinue = fun () -> true
           SetEnv = setEnv
           // FG-178. These tests exercise the SEAM, not a walker environment; an empty
           // list keeps the body's bindings exactly as `runHosted` set them.
@@ -790,29 +790,29 @@ let hostedSteps =
                   "a host exception propagates rather than being swallowed"
           }
 
-          test "an unreachable hosted call does not evaluate arguments or enter Perform" {
+          test "a hosted halt unwinds before later arguments or Perform" {
               let performed = ref false
 
               let host =
                   { hostThat (fun _ _ _ _ -> performed.Value <- true; VNull) (fun _ _ -> ()) with
-                      CanEvaluate = fun _ -> false }
+                      CanContinue = fun () -> false }
 
               let missing =
                   runIt host "sh(script: MISSING)\nreturn 'SURVIVED'"
 
               Expect.isNone missing.Fault "the unreachable missing property was never forced"
-              Expect.equal missing.Returned (Some(VStr "SURVIVED")) "execution continues without a replacement fault"
+              Expect.isNone missing.Returned "the halted script unwinds without a replacement return"
               Expect.isFalse performed.Value "Perform is not entered after reachability says false"
 
               let sideEffect =
                   runIt host "def arg() { sh 'nested'; return 'outer' }\nsh(script: arg())\nreturn 'DONE'"
 
               Expect.isNone sideEffect.Fault "the unreachable helper argument was never invoked"
-              Expect.equal sideEffect.Returned (Some(VStr "DONE")) "the call itself remains a null-valued no-op"
+              Expect.isNone sideEffect.Returned "the halted script does not resume after the call"
               Expect.isFalse performed.Value "neither the nested nor outer step was performed"
           }
 
-          test "a nested argument that halts skips later arguments and the outer step" {
+          test "a nested argument that halts unwinds before later arguments and the outer step" {
               let reachable = ref true
               let performed = ResizeArray<string>()
 
@@ -826,14 +826,56 @@ let hostedSteps =
 
                             VNull)
                         (fun _ _ -> ()) with
-                      CanEvaluate = fun _ -> reachable.Value }
+                      CanContinue = fun () -> reachable.Value }
 
               let outcome =
                   runIt host "echo(sh('halt'), MISSING)\nreturn 'SURVIVED'"
 
               Expect.isNone outcome.Fault "MISSING after the halting nested call was not forced"
-              Expect.equal outcome.Returned (Some(VStr "SURVIVED")) "the interpreter reaches the statement after the skipped outer call"
+              Expect.isNone outcome.Returned "the interpreter does not resume after the halting nested call"
               Expect.equal (List.ofSeq performed) [ "sh" ] "the outer echo never enters Perform"
+          }
+
+          test "script helpers shadow hosted step names while the branch is live" {
+              for helper in [ "sh"; "echo"; "node"; "archiveArtifacts" ] do
+                  let performed = ResizeArray<string>()
+
+                  let host =
+                      hostThat
+                          (fun name _ _ _ -> performed.Add name; VNull)
+                          (fun _ _ -> ())
+
+                  let outcome =
+                      runIt host $"def {helper}(value) {{ return value }}\nreturn {helper}('HELPER')"
+
+                  Expect.isNone outcome.Fault $"{helper}: the helper call succeeds"
+                  Expect.equal outcome.Returned (Some(VStr "HELPER")) $"{helper}: helper result wins"
+                  Expect.isEmpty performed $"{helper}: hosted Perform is never entered"
+          }
+
+          test "a hosted halt never invokes a shadowing helper with missing or side-effect arguments" {
+              for helper in [ "sh"; "echo"; "node"; "archiveArtifacts" ] do
+                  let reachable = ref true
+                  let performed = ResizeArray<string>()
+
+                  let host =
+                      { hostThat
+                            (fun name _ _ _ ->
+                                performed.Add name
+
+                                if name = "stage" then
+                                    reachable.Value <- false
+
+                                VNull)
+                            (fun _ _ -> ()) with
+                          CanContinue = fun () -> reachable.Value }
+
+                  let outcome =
+                      runIt host $"def {helper}(value) {{ library 'helper-body'; return value }}\nstage 'halt'\n{helper}(MISSING)\n{helper}(echo('side-effect'))\nreturn 'REPLACED'"
+
+                  Expect.isNone outcome.Fault $"{helper}: the original hosted halt is not replaced"
+                  Expect.isNone outcome.Returned $"{helper}: execution stops at the hosted halt"
+                  Expect.equal (List.ofSeq performed) [ "stage" ] $"{helper}: helper body and argument effects never run"
           }
 
           test "a NESTED wrapper still refreshes the Jenkins env binding" {
@@ -878,7 +920,7 @@ let hostedSteps =
                            | _ -> runBody |> Option.iter (fun run -> run ()))
 
                           VNull
-                    CanEvaluate = fun _ -> true
+                    CanContinue = fun () -> true
                     SetEnv = fun _ _ -> ()
                     CurrentEnv = fun () -> overlay.Value
                     TakesBlock = fun name -> Set.contains name (set [ "dir"; "withEnv" ]) }
@@ -1053,7 +1095,7 @@ let mapIdentity =
 
               let host =
                   { Perform = fun _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
-                    CanEvaluate = fun _ -> true
+                    CanContinue = fun () -> true
                     SetEnv = fun k v -> sets.Add(k, v)
                     CurrentEnv = fun () -> []
                     TakesBlock = fun _ -> false }

@@ -400,17 +400,28 @@ echo "an absorbed reason cannot explain a later refusal, and an uncaught one sti
 H_LANE="$LANE/fg206-halted"
 mkdir -p "$H_LANE/ws"
 cat > "$H_LANE/Jenkinsfile" <<'JF'
+def git(value) {
+    sh 'printf helper-body > helper-body.txt'
+    return value
+}
+
 pipeline {
     agent any
     stages {
         stage('Gate') {
             steps {
                 script {
+                    // A script helper wins over the hosted step of the same name.
+                    // After the refusal below halts the branch it must not be called
+                    // with discarded arguments (the old path invoked it with zero),
+                    // and neither its body nor its arguments may run.
                     def unreachableArg = {
                         sh 'printf arg > arg.txt'
                         return 'ignored'
                     }
                     sh('invalid', 'extra')
+                    git(MISSING)
+                    git(unreachableArg())
                     sh(script: MISSING)
                     sh(script: unreachableArg())
                     sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
@@ -440,6 +451,7 @@ grep -q 'StepBindingFailed\|fogellProbeUnknown' "$H_LANE/build.journal" && {
 grep -q 'UnknownProperty\|MISSING' "$H_LANE/build.journal" && {
   echo "FAIL: an unreachable argument fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
 [ -f "$H_LANE/ws/fg206h/arg.txt" ] && { echo "FAIL: unreachable argument side effect landed"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/helper-body.txt" ] && { echo "FAIL: a shadowing helper ran after halt"; exit 1; }
 [ -f "$H_LANE/ws/fg206h/warned.txt" ] && { echo "FAIL: unreachable warning-class effect landed"; exit 1; }
 [ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
 echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"

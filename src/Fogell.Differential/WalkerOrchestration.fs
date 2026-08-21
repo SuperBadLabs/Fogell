@@ -2285,10 +2285,12 @@ module WalkerOrchestration =
                                             // Integer, and `VNull` for everything else, which is
                                             // still every step that does not opt in.
                                             slot.Value
-                              // The interpreter asks this before it evaluates a
-                              // registered step's arguments. Perform repeats the
-                              // guard as a hard boundary for direct callers.
-                              CanEvaluate = fun _ -> not (halted (fst hostAt.Value))
+                              // The interpreter asks before every call and again after
+                              // Perform. Once a hosted step halts the branch, Groovy
+                              // evaluation unwinds before later helper/builtin arguments
+                              // can fault or acquire effects. Perform repeats the guard
+                              // as a hard boundary for direct callers.
+                              CanContinue = fun () -> not (halted (fst hostAt.Value))
                               // FG-178. Read through `hostAt`, which POINTS AT THE
                               // WRAPPER while its body runs — so `withEnv`'s overlay is
                               // what the body evaluates against. Reading `ctx` here would
