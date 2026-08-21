@@ -1411,9 +1411,90 @@ let cyclicValues =
     let runS src =
         Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
 
+    let sharedDag leaf depth =
+        let mutable value = VList(ref [ leaf ])
+
+        for _ in 1..depth do
+            value <- VList(ref [ value; value ])
+
+        value
+
     testList
         "FG-191 cyclic values and closure identity"
-        [ test "displaying a self-referential map renders (this Map), as Groovy does" {
+        [ test "reference-cycle scan visits a shared DAG once and remains stack-safe" {
+              let depth = 30
+              let dag = sharedDag (VInt 1L) depth
+              let scan = Value.scanReferenceCycles dag
+
+              Expect.isFalse scan.HasCycle "sibling aliases are not ancestry cycles"
+              Expect.equal scan.ReferencesVisited (depth + 1) "every distinct list ref is entered once"
+              Expect.equal scan.EdgesVisited (1 + (2 * depth)) "edges are charged once per completed node"
+
+              let mutable deep = VNull
+              let deepLength = 50000
+
+              for _ in 1..deepLength do
+                  deep <- VList(ref [ deep ])
+
+              let deepScan = Value.scanReferenceCycles deep
+              Expect.isFalse deepScan.HasCycle "a deep acyclic chain is not a cycle"
+              Expect.equal deepScan.ReferencesVisited deepLength "iterative traversal reaches every ref without stack recursion"
+              Expect.equal deepScan.EdgesVisited deepLength "one edge per chain node"
+
+              let direct = ref [ VNull ]
+              direct.Value <- [ VList direct ]
+              Expect.isTrue (Value.scanReferenceCycles (VList direct)).HasCycle "a direct list cycle remains visible"
+
+              let mixedList = ref [ VNull ]
+              let mixedMap = ref (Map.ofList [ "back", VList mixedList ])
+              mixedList.Value <- [ VMap mixedMap ]
+              Expect.isTrue (Value.scanReferenceCycles (VList mixedList)).HasCycle "a mixed list/map cycle remains visible"
+          }
+
+          test "equality and ordering memoize completed shared pairs" {
+              let left = sharedDag (VInt 1L) 26
+              let right = sharedDag (VInt 1L) 26
+              let unequal = sharedDag (VInt 2L) 26
+
+              Expect.equal (Value.tryEq left right) (Value.Answer true) "equal shared DAGs terminate without re-expansion"
+              Expect.equal (Value.tryCompare left right) (Value.Order 0) "ordering shared DAGs terminates without re-expansion"
+              Expect.equal (Value.tryEq left unequal) (Value.Answer false) "memoization cannot turn a leaf mismatch into equality"
+              Expect.equal (Value.tryCompare left unequal) (Value.Order -1) "memoization retains the first nonzero leaf order"
+
+              let directLeft = ref [ VNull ]
+              let directRight = ref [ VNull ]
+              directLeft.Value <- [ VList directLeft ]
+              directRight.Value <- [ VList directRight ]
+
+              Expect.equal
+                  (Value.tryEq (VList directLeft) (VList directRight))
+                  Value.CycleDetected
+                  "completed pairs never mask a direct equality cycle"
+
+              Expect.equal
+                  (Value.tryCompare (VList directLeft) (VList directRight))
+                  Value.OrderingCycleDetected
+                  "completed pairs never mask a direct ordering cycle"
+
+              let mixedListLeft = ref [ VNull ]
+              let mixedListRight = ref [ VNull ]
+              let mixedMapLeft = ref (Map.ofList [ "back", VList mixedListLeft ])
+              let mixedMapRight = ref (Map.ofList [ "back", VList mixedListRight ])
+              mixedListLeft.Value <- [ VMap mixedMapLeft ]
+              mixedListRight.Value <- [ VMap mixedMapRight ]
+
+              Expect.equal
+                  (Value.tryEq (VList mixedListLeft) (VList mixedListRight))
+                  Value.CycleDetected
+                  "a list/map equality cycle crosses both memoized pair kinds"
+
+              Expect.equal
+                  (Value.tryCompare (VList mixedListLeft) (VList mixedListRight))
+                  Value.OrderingCycleDetected
+                  "a list/map ordering cycle crosses both memoized pair kinds"
+          }
+
+          test "displaying a self-referential map renders (this Map), as Groovy does" {
               let o = runS "def m = [:]\nm.self = m\nreturn \"${m}\""
               Expect.isNone o.Fault "survives"
               Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
@@ -1644,6 +1725,37 @@ let cyclicValues =
               Expect.isNone caught.Fault "Error catches the pre-dispatch StackOverflowError"
               Expect.equal caught.Returned (Some(VStr "caught")) "the handler ran"
               Expect.isEmpty performed "named coercion also has zero hosted effects"
+          }
+
+          test "a shared DAG reaches hosted validation promptly without an effect" {
+              let mutable validations = 0
+              let effects = ResizeArray<string>()
+
+              let host =
+                  { Perform =
+                      fun _ _ _ _ _ ->
+                          validations <- validations + 1
+                          Interpreter.raiseHostedCallRefused "deleteDir takes no arguments"
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let stopwatch = System.Diagnostics.Stopwatch.StartNew()
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (set [ "deleteDir" ]) Env.empty
+                      (parseOk (
+                          "def dag = [1]\ndef i = 0\n"
+                          + "while (i < 30) { dag = [dag, dag]; i++ }\n"
+                          + "deleteDir dag"
+                      ))
+
+              stopwatch.Stop()
+              Expect.equal outcome.Fault (Some(HostedCallRefused "deleteDir takes no arguments")) "validation refusal is returned"
+              Expect.equal validations 1 "the small shared graph crosses cycle coercion once"
+              Expect.isEmpty effects "validation refusal records no hosted effect"
+              Expect.isLessThan stopwatch.ElapsedMilliseconds 5000L "completed-reference memoization avoids exponential alias expansion"
           }
 
           test "cyclic map keys preserve hashing Error ancestry" {

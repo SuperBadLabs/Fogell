@@ -1671,6 +1671,24 @@ let stepDescriptorValidation =
               match WalkerRules.validateHostedCall "withEnv" [ v "A=1" ] [] with
               | Error(WalkerRules.EngineRefusal _) -> ()
               | other -> failtestf "typed shape should remain an engine refusal, got %A" other
+          }
+
+          test "invalid hosted calls diagnose a shared DAG promptly without rendering it" {
+              let mutable dag =
+                  Fogell.Groovy.Interpreter.VList(ref [ Fogell.Groovy.Interpreter.VInt 1L ])
+
+              for _ in 1..30 do
+                  dag <- Fogell.Groovy.Interpreter.VList(ref [ dag; dag ])
+
+              let stopwatch = Diagnostics.Stopwatch.StartNew()
+
+              match WalkerRules.validateHostedCall "deleteDir" [ dag ] [] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  stopwatch.Stop()
+                  Expect.stringContains reason "<list>" "the bounded marker still identifies the rejected value type"
+                  Expect.isLessThan reason.Length 200 "the refusal cannot contain an exponentially expanded value"
+                  Expect.isLessThan stopwatch.ElapsedMilliseconds 5000L "validation reaches the refusal promptly"
+              | other -> failtestf "invalid deleteDir call escaped its no-effect validation boundary: %A" other
           } ]
 
 /// FG-177 slice 2. These cross the real hosted boundary: validation, walker dispatch,

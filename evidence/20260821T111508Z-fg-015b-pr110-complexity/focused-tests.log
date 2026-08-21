@@ -1,0 +1,5 @@
+[37m[[37m06:16:49 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m06:16:50 [37mINF[37m] [37mEXPECTO! [36m169[37m tests run in [32m00:00:00.1848208[37m for [36mFogell.Groovy[37m – [36m169[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m06:16:50 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m06:16:50 [37mINF[37m] [37mEXPECTO! [36m114[37m tests run in [32m00:00:00.3941083[37m for [36mFogell.Differential[37m – [36m114[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m

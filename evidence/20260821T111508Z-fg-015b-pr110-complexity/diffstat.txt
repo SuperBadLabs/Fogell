@@ -1,0 +1,6 @@
+ docs/EXECUTION_BOARD.md                  |   7 ++
+ src/Fogell.Differential/WalkerRules.fs   |  26 ++++-
+ src/Fogell.Groovy.Interpreter/Value.fs   | 163 +++++++++++++++++++++----------
+ tests/Fogell.Differential.Tests/Tests.fs |  18 ++++
+ tests/Fogell.Groovy.Tests/Tests.fs       | 114 ++++++++++++++++++++-
+ 5 files changed, 272 insertions(+), 56 deletions(-)

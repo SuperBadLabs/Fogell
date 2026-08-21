@@ -622,6 +622,13 @@ harness that can…". Doing them together is one push instead of five stalls.
 
 Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
 
+FG-015b's PR #110 complexity closure is retained in
+[evidence](../evidence/20260821T111508Z-fg-015b-pr110-complexity): reference-cycle
+scanning is iterative O(V+E) over identity-memoized completed nodes, sibling
+aliases remain legal, equality/ordering no longer re-expand completed shared-DAG
+pairs, and invalid hosted calls no longer force expanded collection display
+before their no-effect validation refusal. Compatibility counts are unchanged.
+
 | id | pri | status | item | demand |
 |---|---|---|---|---:|
 | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |

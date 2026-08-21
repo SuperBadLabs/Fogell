@@ -60,55 +60,91 @@ and Env =
     { Vars: Map<string, Value ref>
       Funcs: Map<string, (string list * Stmt list) list> }
 
+type private ReferencePairComparer() =
+    interface System.Collections.Generic.IEqualityComparer<obj * obj> with
+        member _.Equals((leftA, leftB), (rightA, rightB)) =
+            System.Object.ReferenceEquals(leftA, rightA)
+            && System.Object.ReferenceEquals(leftB, rightB)
+
+        member _.GetHashCode((left, right)) =
+            let leftHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode left
+            let rightHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode right
+            (leftHash * 397) ^^^ rightHash
+
 module Value =
 
     let rangeItems values = values |> List.map VInt
+
+    type ReferenceCycleScan =
+        { HasCycle: bool
+          ReferencesVisited: int
+          EdgesVisited: int }
+
+    type private ReferenceCycleFrame =
+        | InspectReference of Value
+        | CompleteReference of obj
 
     /// Whether a value graph contains a reference cycle of any length. This is
     /// deliberately stricter than [tryToDisplay]: Groovy's collection renderer
     /// has direct-self markers, but Jenkins' step argument coercion/hash path
     /// still overflows for those same values before a hosted call is dispatched.
-    /// Repeated aliases on sibling paths are not cycles, so the active path —
-    /// rather than one global visited set — is the boundary.
-    let hasReferenceCycle value =
-        let mutable pending: (obj list * Value) list = [ [], value ]
+    /// Repeated aliases on sibling paths are not cycles, so [active] is the
+    /// ancestry boundary. [completed] is separately memoized: once one acyclic
+    /// reference and all of its descendants have been discharged, a sibling
+    /// alias cannot disclose a new back edge and is skipped in O(1).
+    let scanReferenceCycles value =
+        let active = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+        let completed = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+        let pending = System.Collections.Generic.List<ReferenceCycleFrame>()
         let mutable cycle = false
+        let mutable referencesVisited = 0
+        let mutable edgesVisited = 0
 
-        while not cycle && not pending.IsEmpty do
-            let path, current = List.head pending
-            pending <- List.tail pending
+        pending.Add(InspectReference value)
 
-            let alreadyActive candidate =
-                path
-                |> List.exists (fun prior -> System.Object.ReferenceEquals(prior, candidate))
+        let enter identity children =
+            if completed.Contains identity then
+                ()
+            elif active.Contains identity then
+                cycle <- true
+            else
+                active.Add identity |> ignore
+                referencesVisited <- referencesVisited + 1
+                edgesVisited <- edgesVisited + List.length children
+                pending.Add(CompleteReference identity)
 
-            match current with
-            | VList items ->
-                if alreadyActive items then
-                    cycle <- true
-                else
-                    let inner = box items :: path
-                    pending <- (items.Value |> List.map (fun item -> inner, item)) @ pending
-            | VMap entries ->
-                if alreadyActive entries then
-                    cycle <- true
-                else
-                    let inner = box entries :: path
+                // LIFO: the completion marker stays below every child, so
+                // [active] is exactly the current DFS ancestry. A later alias
+                // reaches [completed] in O(1) rather than expanding again.
+                for child in List.rev children do
+                    pending.Add(InspectReference child)
 
-                    pending <-
-                        (entries.Value
-                         |> Map.toList
-                         |> List.map (fun (_, item) -> inner, item))
-                        @ pending
-            | VNull
-            | VBool _
-            | VInt _
-            | VStr _
-            | VRange _
-            | VClosure _
-            | VFunc _ -> ()
+        while not cycle && pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
 
-        cycle
+            match frame with
+            | InspectReference current ->
+                match current with
+                | VList items -> enter (box items) items.Value
+                | VMap entries -> enter (box entries) (entries.Value |> Map.toList |> List.map snd)
+                | VNull
+                | VBool _
+                | VInt _
+                | VStr _
+                | VRange _
+                | VClosure _
+                | VFunc _ -> ()
+            | CompleteReference identity ->
+                active.Remove identity |> ignore
+                completed.Add identity |> ignore
+
+        { HasCycle = cycle
+          ReferencesVisited = referencesVisited
+          EdgesVisited = edgesVisited }
+
+    let hasReferenceCycle value = (scanReferenceCycles value).HasCycle
 
     /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
     /// discovery of a reference cycle that structural recursion would chase
@@ -213,11 +249,16 @@ module Value =
     ///     distinct pairs reported rather than chased.
     let tryEq (a: Value) (b: Value) : Compared =
         let mutable cycle = false
+        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
 
         let rec go (seen: (obj * obj) list) a b =
             match a, b with
             | VMap ma, VMap mb ->
+                let pair = box ma, box mb
+
                 if System.Object.ReferenceEquals(ma, mb) then
+                    true
+                elif completed.Contains pair then
                     true
                 elif
                     seen
@@ -227,16 +268,24 @@ module Value =
                     cycle <- true
                     false
                 else
-                    let inner = (box ma, box mb) :: seen
+                    let inner = pair :: seen
 
-                    ma.Value.Count = mb.Value.Count
-                    && ma.Value
-                       |> Map.forall (fun k v ->
-                           match Map.tryFind k mb.Value with
-                           | Some w -> go inner v w
-                           | None -> false)
+                    let equal =
+                        ma.Value.Count = mb.Value.Count
+                        && ma.Value
+                           |> Map.forall (fun k v ->
+                               match Map.tryFind k mb.Value with
+                               | Some w -> go inner v w
+                               | None -> false)
+
+                    if equal && not cycle then completed.Add pair |> ignore
+                    equal
             | VList xa, VList xb ->
+                let pair = box xa, box xb
+
                 if System.Object.ReferenceEquals(xa, xb) then
+                    true
+                elif completed.Contains pair then
                     true
                 elif
                     seen
@@ -246,8 +295,10 @@ module Value =
                     cycle <- true
                     false
                 else
-                    let inner = (box xa, box xb) :: seen
-                    xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
+                    let inner = pair :: seen
+                    let equal = xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
+                    if equal && not cycle then completed.Add pair |> ignore
+                    equal
             | VRange xa, VRange xb -> xa = xb
             | VRange xa, VList xb ->
                 let left = rangeItems xa
@@ -281,6 +332,7 @@ module Value =
     let tryCompare (a: Value) (b: Value) : Ordered =
         let mutable cycle = false
         let mutable unorderable = false
+        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
 
         let rank = function
             | VNull -> 0
@@ -312,23 +364,32 @@ module Value =
                 | VInt x, VInt y -> compare x y
                 | VStr x, VStr y -> compare x y
                 | VList xs, VList ys ->
-                    if seenPair seen (box xs) (box ys) then
+                    let pair = box xs, box ys
+
+                    if completed.Contains pair then
+                        0
+                    elif seenPair seen (box xs) (box ys) then
                         cycle <- true
                         0
                     else
-                        compareLists ((box xs, box ys) :: seen) xs.Value ys.Value
+                        let answer = compareLists (pair :: seen) xs.Value ys.Value
+                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
+                        answer
                 | VRange xs, VRange ys -> compareLists seen (rangeItems xs) (rangeItems ys)
                 | VRange xs, VList ys -> compareLists seen (rangeItems xs) ys.Value
                 | VList xs, VRange ys -> compareLists seen xs.Value (rangeItems ys)
                 | VMap xs, VMap ys ->
-                    if seenPair seen (box xs) (box ys) then
+                    let pair = box xs, box ys
+
+                    if completed.Contains pair then
+                        0
+                    elif seenPair seen (box xs) (box ys) then
                         cycle <- true
                         0
                     else
-                        compareEntries
-                            ((box xs, box ys) :: seen)
-                            (Map.toList xs.Value)
-                            (Map.toList ys.Value)
+                        let answer = compareEntries (pair :: seen) (Map.toList xs.Value) (Map.toList ys.Value)
+                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
+                        answer
                 | VClosure _, VClosure _
                 | VFunc _, VFunc _ ->
                     unorderable <- true
