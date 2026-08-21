@@ -456,6 +456,69 @@ grep -q 'UnknownProperty\|MISSING' "$H_LANE/build.journal" && {
 [ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
 echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"
 
+echo "=== FG-177: named retry count promotes and controls the attempt budget ==="
+RN_LANE="$LANE/fg177-retry-named-count"
+mkdir -p "$RN_LANE/ws"
+cat > "$RN_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-named-count') {
+            steps {
+                script {
+                    retry(count: 2) {
+                        sh 'n=$(cat attempts.txt 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > attempts.txt; [ "$n" -ge 2 ]'
+                    }
+                    sh 'echo continued >> continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$RN_LANE/Jenkinsfile" "$RN_LANE/ws" fg177rn "$RN_LANE/build.journal" > "$RN_LANE/run.log" 2>&1
+grep -q 'completed: success' "$RN_LANE/run.log" || { echo "FAIL: named retry count did not recover on attempt 2"; cat "$RN_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RN_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: named retry count did not establish exactly two attempts"; cat "$RN_LANE/run.log"; exit 1; }
+[ "$(cat "$RN_LANE/ws/fg177rn/attempts.txt")" = 2 ] || { echo "FAIL: named retry body did not execute exactly twice"; exit 1; }
+[ "$(grep -c '^continued$' "$RN_LANE/ws/fg177rn/continued.txt" || true)" -eq 1 ] || { echo "FAIL: named retry continuation did not execute exactly once"; exit 1; }
+echo "named count promoted to one integer positional and governed exactly two attempts"
+
+echo "=== FG-177: non-integer named retry count refuses before body effects ==="
+RT_LANE="$LANE/fg177-retry-named-count-type"
+mkdir -p "$RT_LANE/ws"
+cat > "$RT_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-named-count-type') {
+            steps {
+                script {
+                    retry(count: 'two') {
+                        sh 'echo body > body.txt'
+                    }
+                    sh 'echo continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RT_LANE/Jenkinsfile" "$RT_LANE/ws" fg177rt "$RT_LANE/build.journal" > "$RT_LANE/run.log" 2>&1
+RT_RC=$?
+set -e
+[ "$RT_RC" -eq 1 ] || { echo "FAIL: non-integer named retry count returned rc $RT_RC, expected 1"; cat "$RT_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RT_LANE/run.log" || { echo "FAIL: non-integer named retry count did not fail"; cat "$RT_LANE/run.log"; exit 1; }
+grep -Fq '`retry` needs an integer attempt count, not `two`' "$RT_LANE/build.journal" || {
+  echo "FAIL: non-integer named retry count lost its stable refusal reason"
+  cat "$RT_LANE/build.journal"
+  exit 1
+}
+[ ! -f "$RT_LANE/ws/fg177rt/body.txt" ] || { echo "FAIL: refused retry executed its body"; exit 1; }
+[ ! -f "$RT_LANE/ws/fg177rt/continued.txt" ] || { echo "FAIL: refused retry executed its successor"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RT_LANE/run.log" || true)" -eq 0 ] || { echo "FAIL: refused retry entered attempt control flow"; cat "$RT_LANE/run.log"; exit 1; }
+echo "non-integer named count refused with a stable reason before body, retry, or successor effects"
+
 echo "=== FG-177: a hosted child halt returns to retry ownership ==="
 RH_LANE="$LANE/fg177-retry-child-halt"
 mkdir -p "$RH_LANE/ws"

@@ -1434,6 +1434,74 @@ let stepDescriptorValidation =
               | Error error -> failtestf "warning-and-continue call refused: %A" error
           }
 
+          test "every descriptor primary promotes through the shared boundary exactly once" {
+              let primaryValue name =
+                  match name with
+                  | "retry" -> Fogell.Groovy.Interpreter.VInt 2L
+                  | "withEnv" -> Fogell.Groovy.Interpreter.VList [ v "A=1" ]
+                  | _ -> v $"sample-{name}"
+
+              let mutable promoted = 0
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  match descriptor.PrimaryParameter with
+                  | None -> ()
+                  | Some primary ->
+                      let supplied = primaryValue name
+
+                      match WalkerRules.validateHostedCall name [] [ primary, supplied ] with
+                      | Ok validated ->
+                          Expect.equal validated.Positional [ supplied ] $"{name}: primary promoted to one positional"
+                          Expect.isEmpty validated.Named $"{name}: promoted key is removed from named arguments"
+                          Expect.isEmpty validated.Warnings $"{name}: a supported primary never warns"
+                          promoted <- promoted + 1
+                      | Error error -> failtestf "%s primary failed shared-boundary promotion: %A" name error
+
+              Expect.equal
+                  promoted
+                  (WalkerRules.stepDescriptors
+                   |> Map.values
+                   |> Seq.filter (fun descriptor -> descriptor.PrimaryParameter.IsSome)
+                   |> Seq.length)
+                  "every advertised primary passed through the shared promotion path"
+          }
+
+          test "typed primary checks run after named promotion" {
+              match
+                  WalkerRules.validateHostedCall
+                      "retry"
+                      []
+                      [ "count", Fogell.Groovy.Interpreter.VInt 2L ]
+              with
+              | Ok validated ->
+                  Expect.equal validated.Positional [ Fogell.Groovy.Interpreter.VInt 2L ] "named count promoted once"
+                  Expect.isEmpty validated.Named "count is not left behind for a second interpretation"
+              | Error error -> failtestf "valid named retry count refused: %A" error
+
+              match WalkerRules.validateHostedCall "retry" [] [ "count", v "two" ] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.equal reason "`retry` needs an integer attempt count, not `two`" "stable retry type refusal"
+              | other -> failtestf "non-integer named retry count escaped its promoted type check: %A" other
+
+              match
+                  WalkerRules.validateHostedCall
+                      "withEnv"
+                      []
+                      [ "overrides", Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+              with
+              | Ok validated ->
+                  Expect.equal
+                      validated.Positional
+                      [ Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+                      "named overrides promoted before its list contract"
+              | Error error -> failtestf "valid named withEnv overrides refused: %A" error
+
+              match WalkerRules.validateHostedCall "withEnv" [] [ "overrides", v "A=1" ] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.equal reason "`withEnv` takes exactly one list argument of NAME=VALUE strings" "stable withEnv type refusal"
+              | other -> failtestf "non-list named withEnv overrides escaped its promoted type check: %A" other
+          }
+
           test "supported named keys never masquerade as unknowns" {
               match
                   WalkerRules.validateHostedCall
