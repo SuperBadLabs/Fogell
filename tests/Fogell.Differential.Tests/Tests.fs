@@ -1641,19 +1641,31 @@ let spreadAssignmentPreflight =
               | Ok _ -> ()
           }
 
-          test "spread reads in call inputs and index keys remain outside the write refusal" {
+          test "spread reads in call inputs, index keys and method receivers remain outside the write refusal" {
               for label, statement in
                   [ "positional call argument", "foo(rows*.name).bar = 1"
                     "named call argument", "foo(values: rows*.name).bar = 1"
                     "trailing closure read", "holder.foo { rows*.name }.bar = 1"
-                    "index key", "xs[rows*.name[0]] = 'x'" ] do
+                    "index key", "xs[rows*.name[0]] = 'x'"
+                    "method result property", "rows*.child.first().name = 'x'"
+                    "method result safe property", "rows*.child.first()?.name = 'x'"
+                    "method result index", "rows*.child.first()[0] = 'x'"
+                    "named method result", "rows*.child.find(index: 0).name = 'x'"
+                    "trailing method result", "rows*.child.find { true }.name = 'x'" ] do
                   match FogellSide.preflightExecution (pipelineWithBody statement) with
                   | Error why -> failtestf "%s spread read was over-refused: %s" label why
                   | Ok _ -> ()
 
+              for label, statement in
+                  [ "direct property wrapper", "rows*.child.name = 'x'"
+                    "direct safe wrapper", "rows*.child?.name = 'x'"
+                    "direct index wrapper", "rows*.child[0] = 'x'"
+                    "new spread after method", "rows*.child.first()*.name = 'x'" ] do
+                  expectNamedRefusal label (pipelineWithBody statement)
+
               expectNamedRefusal
-                  "spread in called receiver write path"
-                  (pipelineWithBody "rows*.child.find().name = 'x'")
+                  "actual assignment in method trailing closure"
+                  (pipelineWithBody "holder.foo { rows*.name = 'x' }.bar = 1")
           } ]
 
 let jenkinsBuildDataAttestation =

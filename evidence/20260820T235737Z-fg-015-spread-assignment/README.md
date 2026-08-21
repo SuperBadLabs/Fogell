@@ -80,9 +80,29 @@ The same pass narrows the assignment predicate to the l-value receiver chain.
 Parser-shape and preflight probes admit spread reads used only in positional or
 named call arguments, a trailing closure, and an index key — including the
 reviewer examples `foo(rows*.name).bar = 1` and
-`xs[rows*.name[0]] = 'x'`. A spread below a called receiver remains refused.
+`xs[rows*.name[0]] = 'x'`. A method-call result is also a fresh l-value receiver;
+only a new spread operator after that call is a spread write.
 Nested closures containing an actual spread assignment remain visible through
 the separate statement traversal. No Jenkins boundary receipt changed.
 
 The [exact-head review gate bundle](../20260820T193817Z-fg-015-spread-assignment-review)
 seals this incremental correction against its published base.
+
+## Method-result receiver boundary
+
+A subsequent exact-head review found the remaining over-refusal:
+`rows*.child.first().name = 'x'`. The projection supplies the receiver of
+`first()`; the actual assignment is an ordinary property write on the returned
+child. `assignmentTargetContainsSpreadProperty` now stops at every `ECall`
+result rather than recursing into its receiver or inputs.
+
+Exact AST and preflight probes cover ordinary property, safe-property, and
+index wrappers after `first()`, plus named and trailing-closure call forms. A
+runtime probe proves the reviewer case mutates only the first returned child
+(`a` to `x`, with the second remaining `b`). Direct property/safe/index
+wrappers rooted in `ESpreadProp` still refuse, as does a new `*.` after the
+method call. A real spread assignment inside a call closure is still caught by
+the separate recursive statement traversal.
+
+The [method-result review gate bundle](../20260820T195656Z-fg-015-spread-assignment-call-boundary)
+seals this incremental correction against exact base `bcfbf9c`.

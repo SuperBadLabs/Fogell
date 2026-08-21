@@ -130,9 +130,55 @@ let grammar =
                       "call arguments, trailing closure reads and index keys are not write receivers"
               | other -> failtestf "spread-read target probes lost their AST shapes: %A" other
 
+              Expect.isFalse
+                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first().name = 'x'\n"))
+                  "a method result starts a fresh ordinary write receiver"
+          }
+
+          test "method-call result boundaries preserve exact property, safe and index AST shapes" {
+              let source =
+                  "rows*.child.first().name = 'x'\n"
+                  + "rows*.child.first()?.name = 'x'\n"
+                  + "rows*.child.first()[0] = 'x'\n"
+                  + "rows*.child.find(index: 0).name = 'x'\n"
+                  + "rows*.child.find { true }.name = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(
+                      EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
+                      _
+                  )
+                  SAssign(
+                      ESafeProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), "name"),
+                      _
+                  )
+                  SAssign(
+                      EIndex(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "first"), [], None), EInt 0L),
+                      _
+                  )
+                  SAssign(
+                      EProp(
+                          ECall(
+                              MethodCall(ESpreadProp(EVar "rows", "child"), "find"),
+                              [ ANamed("index", EInt 0L) ],
+                              None
+                          ),
+                          "name"
+                      ),
+                      _
+                  )
+                  SAssign(EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "find"), [], Some trailing), "name"), _) ] as script ->
+                  Expect.equal trailing.Body [ SExpr(EBool true) ] "trailing closure stays attached to the boundary call"
+                  Expect.isFalse (Ast.containsSpreadAssignment script) "no call-result wrapper is a spread write"
+              | other -> failtestf "method-result write boundaries lost their AST shapes: %A" other
+
               Expect.isTrue
-                  (Ast.containsSpreadAssignment (parseOk "rows*.child.find().name = 'x'\n"))
-                  "spread below a called receiver remains an actual write path"
+                  (Ast.containsSpreadAssignment (parseOk "rows*.child.first()*.name = 'x'\n"))
+                  "a new spread operator after the call remains an actual spread target"
+
+              Expect.isTrue
+                  (Ast.containsSpreadAssignment (parseOk "holder.foo { rows*.name = 'x' }.bar = 1\n"))
+                  "the separate statement traversal still sees a write inside a call closure"
           }
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
@@ -1185,6 +1231,7 @@ let fg015ClosureAudit =
                   + "catch (MissingPropertyException e) { scalarResult = 'caught' }\n"
                   + "def stringResult = 'not-caught'\n"
                   + "try { def stringProjection = 'ab'*.length } "
+
                   + "catch (MissingPropertyException e) { stringResult = 'caught' }\n"
                   + "echo scalarResult\necho stringResult\n"
 
@@ -1226,6 +1273,21 @@ let fg015ClosureAudit =
               | other -> failtestf "expected the defensive spread-assignment refusal, got %A" other
 
               Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
+          }
+
+          test "spread read through first supports an ordinary returned-child write" {
+              let source =
+                  "def rows = [[child: [name: 'a']], [child: [name: 'b']]]\n"
+                  + "rows*.child.first().name = 'x'\n"
+                  + "echo rows[0].child.name\n"
+                  + "echo rows[1].child.name\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the method result is an ordinary map receiver"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "x" ]; "echo", [ "b" ] ]
+                  "only the child returned by first is mutated"
           }
           ]
 

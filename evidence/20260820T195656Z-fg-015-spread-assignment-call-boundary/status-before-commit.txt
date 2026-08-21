@@ -1,0 +1,6 @@
+M  docs/EXECUTION_BOARD.md
+M  evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+M  src/Fogell.Groovy/Ast.fs
+M  tests/Fogell.Differential.Tests/Tests.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260820T195656Z-fg-015-spread-assignment-call-boundary/

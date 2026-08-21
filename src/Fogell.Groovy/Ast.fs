@@ -129,9 +129,10 @@ module Ast =
               | SThrow _ -> 0)
 
     /// True only when spread-property syntax participates in the l-value
-    /// receiver chain. An index key and call arguments (including named and
-    /// trailing-closure arguments) compute values; spread reads inside them are
-    /// not writes through a projection and must remain admitted.
+    /// receiver chain. An index key, call arguments (including named and
+    /// trailing-closure arguments), and the receiver feeding a method call all
+    /// compute a value. The method result is a fresh l-value receiver boundary;
+    /// spread reads below it are not writes through a projection and remain admitted.
     ///
     /// Jenkins 2.568.1 accepts actual spread write paths but raises a catchable
     /// runtime exception without mutating the elements. Fogell does not model
@@ -143,11 +144,7 @@ module Ast =
         | EProp(target, _)
         | ESafeProp(target, _) -> assignmentTargetContainsSpreadProperty target
         | EIndex(target, _) -> assignmentTargetContainsSpreadProperty target
-        | ECall(target, _, _) ->
-            match target with
-            | FreeCall _ -> false
-            | MethodCall(receiver, _)
-            | SafeMethodCall(receiver, _) -> assignmentTargetContainsSpreadProperty receiver
+        | ECall _ -> false
         | ENull
         | EBool _
         | EInt _
