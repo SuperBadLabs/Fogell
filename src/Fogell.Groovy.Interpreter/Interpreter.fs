@@ -37,6 +37,10 @@ type Effect =
 /// block, so a wrapper can set up its context, call it, and tear down.
 type PerformStep =
     { Perform: string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
+      /// Whether a registered hosted step is still reachable. Asked before any
+      /// positional, named, or closure-value argument is evaluated, so a halted
+      /// branch cannot acquire new faults or effects from an unreachable call.
+      CanEvaluate: string -> bool
       /// `env.NAME = value` inside the script. The interpreter updates its own binding
       /// either way; this tells the host so that steps AFTER the block see it too, which
       /// is what Jenkins does and what the batch model could not express.
@@ -77,6 +81,16 @@ type PerformStep =
       /// an EMPTY workspace against fogell=SUCCESS with the file written.
       TakesBlock: string -> bool }
 
+/// The measured runtime class Jenkins raises while binding a hosted step call.
+type BindingExceptionClass =
+    | IllegalArgumentException
+    | NullPointerException
+
+module BindingExceptionClass =
+    let fullName = function
+        | IllegalArgumentException -> "java.lang.IllegalArgumentException"
+        | NullPointerException -> "java.lang.NullPointerException"
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
@@ -84,7 +98,7 @@ type Fault =
     | Thrown of Value
     /// FG-177. Jenkins rejected the call while binding its descriptor. Unlike an
     /// engine refusal, this is ordinary scripted-Groovy control flow and may be caught.
-    | StepBindingFailed of stepName: string * detail: string
+    | StepBindingFailed of stepName: string * exceptionClass: BindingExceptionClass * detail: string
     /// FG-176/FG-186. A SHELL STEP inside a hosted body FAILED — the outcome
     /// Jenkins surfaces as a catchable, retryable AbortException. Distinct from
     /// a refusal on purpose: a refusal says Fogell cannot MODEL the call, and
@@ -531,13 +545,31 @@ module Interpreter =
         if st.Depth >= st.Budget.MaxCallDepth then
             raise (Stop(BudgetExhausted $"call depth exceeded {st.Budget.MaxCallDepth}"))
 
+        // A registered step can become unreachable after an earlier hosted call
+        // halts the branch without throwing back into this interpreter. Ask the
+        // host BEFORE forcing any argument. Only FreeCall can resolve to `Step`;
+        // method/safe-method targets use admitMethod and cannot enter the hosted
+        // step path, so this one predicate covers every hosted call entry.
+        let canEvaluateArguments () =
+            match target, st.Host with
+            | FreeCall name, Some host when st.RegisteredSteps.Contains name -> host.CanEvaluate name
+            | _ -> true
+
         // LAZY: a safe call on a null receiver short-circuits the WHOLE call, its
         // arguments included — `a?.m(sideEffect())` runs nothing when a is null.
         let positionalLazy =
-            lazy (args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None))
+            lazy
+                (args
+                 |> List.choose (function
+                     | APos e when canEvaluateArguments () -> Some(evalExpr st env e)
+                     | _ -> None))
 
         let namedLazy =
-            lazy (args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None))
+            lazy
+                (args
+                 |> List.choose (function
+                     | ANamed(n, e) when canEvaluateArguments () -> Some(n, evalExpr st env e)
+                     | _ -> None))
 
         match target with
         | SafeMethodCall(recv, name) ->
@@ -642,7 +674,8 @@ module Interpreter =
                 // call for the answer to be wrong about.
                 let takesBlock =
                     match st.Host with
-                    | Some h -> h.TakesBlock name
+                    | Some h when canEvaluateArguments () -> h.TakesBlock name
+                    | Some _ -> false
                     | None -> true
 
                 // FG-179. THE CLOSURE'S OWN ENV TRAVELS WITH IT. A closure reaching a
@@ -862,17 +895,20 @@ module Interpreter =
                     // enter JenkinsEnvCells. Refreshing even when the host declined to
                     // run the body only moves the cell TOWARD the live environment,
                     // which is where every hosted read should land.
-                    try
-                        host.Perform s positionalArgs namedLazy.Value runBody
-                    finally
-                        if runBody.IsSome then
-                            match Map.tryFind "env" env.Vars with
-                            | Some cell when st.JenkinsEnvCells.Contains cell ->
-                                let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let freshMap = ref (Map.ofList current)
-                                st.JenkinsEnvMaps.Add freshMap |> ignore
-                                cell.Value <- VMap freshMap
-                            | _ -> ()
+                    if not (canEvaluateArguments ()) then
+                        VNull
+                    else
+                        try
+                            host.Perform s positionalArgs namedLazy.Value runBody
+                        finally
+                            if runBody.IsSome then
+                                match Map.tryFind "env" env.Vars with
+                                | Some cell when st.JenkinsEnvCells.Contains cell ->
+                                    let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
+                                    let freshMap = ref (Map.ofList current)
+                                    st.JenkinsEnvMaps.Add freshMap |> ignore
+                                    cell.Value <- VMap freshMap
+                                | _ -> ()
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     //
@@ -1469,11 +1505,16 @@ module Interpreter =
                 | Some(Some t, _, _) -> [ "Exception"; "Throwable"; "IOException" ] |> List.contains t
                 | None -> false
 
-            let catchesBindingFailure =
+            let catchesBindingFailure exceptionClass =
                 match catch with
                 | Some(None, _, _) -> true
                 | Some(Some t, _, _) ->
-                    [ "Exception"; "Throwable"; "RuntimeException"; "IllegalArgumentException" ]
+                    let concrete =
+                        match exceptionClass with
+                        | IllegalArgumentException -> "IllegalArgumentException"
+                        | NullPointerException -> "NullPointerException"
+
+                    [ "Exception"; "Throwable"; "RuntimeException"; concrete ]
                     |> List.contains t
                 | None -> false
 
@@ -1486,8 +1527,8 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
-                    | Stop(StepBindingFailed(name, detail)) when catchesBindingFailure ->
-                        handle (VStr $"java.lang.IllegalArgumentException: {name}: {detail}")
+                    | Stop(StepBindingFailed(name, exceptionClass, detail)) when catchesBindingFailure exceptionClass ->
+                        handle (VStr $"{BindingExceptionClass.fullName exceptionClass}: {name}: {detail}")
                     | Stop(StepFailed name) when catchesStepFailure ->
                         // FG-176. The step's own ERROR narration already reached the
                         // console at dispatch; what the handler binds is the exception
@@ -1638,8 +1679,8 @@ module Interpreter =
     /// It is distinct from a modelling refusal: scripted try/catch may absorb this,
     /// while it must never absorb a gap in Fogell's implementation.
     [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
-    let raiseStepBindingFailed (stepName: string) (detail: string) : 'a =
-        raise (Stop(StepBindingFailed(stepName, detail)))
+    let raiseStepBindingFailed (stepName: string) (exceptionClass: BindingExceptionClass) (detail: string) : 'a =
+        raise (Stop(StepBindingFailed(stepName, exceptionClass, detail)))
 
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a

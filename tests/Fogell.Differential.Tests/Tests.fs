@@ -1361,6 +1361,29 @@ let stepDescriptorValidation =
                   (Map.find "retry" WalkerRules.stepDescriptors).UnsupportedNamedKeys
                   (set [ "conditions" ])
                   "conditions is measured but remains an explicit unsupported capability"
+
+              let measuredMissingPrimaryClasses =
+                  Map.ofList
+                      [ "sh", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "archiveArtifacts", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "junit", Fogell.Groovy.Interpreter.NullPointerException
+                        "checkout", Fogell.Groovy.Interpreter.NullPointerException
+                        "stash", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "unstable", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "unstash", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "dir", Fogell.Groovy.Interpreter.NullPointerException
+                        "withEnv", Fogell.Groovy.Interpreter.IllegalArgumentException ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  Expect.equal
+                      descriptor.MissingPrimaryException
+                      (Map.tryFind name measuredMissingPrimaryClasses)
+                      $"{name} missing-primary exception class drifted from retained Jenkins evidence"
+
+                  Expect.equal
+                      descriptor.RequiresPrimary
+                      descriptor.MissingPrimaryException.IsSome
+                      $"{name} requiredness and measured exception-class data disagree"
           }
 
           test "unknown-key policy is measured per step" {
@@ -1389,7 +1412,8 @@ let stepDescriptorValidation =
                       []
                       [ "message", v "x"; "fogellProbeUnknown", Fogell.Groovy.Interpreter.VBool true ]
               with
-              | Error(WalkerRules.JenkinsBindingThrow(reason, warnings)) ->
+              | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, reason, warnings)) ->
+                  Expect.equal exceptionClass Fogell.Groovy.Interpreter.IllegalArgumentException "constructor-map binding class"
                   Expect.stringContains reason "fogellProbeUnknown" "the raw unknown survives until classification"
                   Expect.isEmpty warnings "constructor-map throw does not warn first"
               | other -> failtestf "expected a catchable constructor-map throw, got %A" other
@@ -1462,7 +1486,8 @@ let stepDescriptorValidation =
                       []
                       [ "fogellProbeUnknown", Fogell.Groovy.Interpreter.VBool true ]
               with
-              | Error(WalkerRules.JenkinsBindingThrow(_, [ warning ])) ->
+              | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, _, [ warning ])) ->
+                  Expect.equal exceptionClass Fogell.Groovy.Interpreter.IllegalArgumentException "missing sh class is measured"
                   Expect.equal warning.UnknownKeys [ "fogellProbeUnknown" ] "Jenkins warns before the missing script throws"
               | other -> failtestf "warning was lost across missing-primary validation: %A" other
           }

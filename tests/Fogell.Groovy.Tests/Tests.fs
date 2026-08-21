@@ -672,6 +672,7 @@ let hostedSteps =
     // These test the seam, not the walker; the walker side is separate work.
     let hostThat perform setEnv =
         { Perform = perform
+          CanEvaluate = fun _ -> true
           SetEnv = setEnv
           // FG-178. These tests exercise the SEAM, not a walker environment; an empty
           // list keeps the body's bindings exactly as `runHosted` set them.
@@ -789,6 +790,52 @@ let hostedSteps =
                   "a host exception propagates rather than being swallowed"
           }
 
+          test "an unreachable hosted call does not evaluate arguments or enter Perform" {
+              let performed = ref false
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> performed.Value <- true; VNull) (fun _ _ -> ()) with
+                      CanEvaluate = fun _ -> false }
+
+              let missing =
+                  runIt host "sh(script: MISSING)\nreturn 'SURVIVED'"
+
+              Expect.isNone missing.Fault "the unreachable missing property was never forced"
+              Expect.equal missing.Returned (Some(VStr "SURVIVED")) "execution continues without a replacement fault"
+              Expect.isFalse performed.Value "Perform is not entered after reachability says false"
+
+              let sideEffect =
+                  runIt host "def arg() { sh 'nested'; return 'outer' }\nsh(script: arg())\nreturn 'DONE'"
+
+              Expect.isNone sideEffect.Fault "the unreachable helper argument was never invoked"
+              Expect.equal sideEffect.Returned (Some(VStr "DONE")) "the call itself remains a null-valued no-op"
+              Expect.isFalse performed.Value "neither the nested nor outer step was performed"
+          }
+
+          test "a nested argument that halts skips later arguments and the outer step" {
+              let reachable = ref true
+              let performed = ResizeArray<string>()
+
+              let host =
+                  { hostThat
+                        (fun name positional _ _ ->
+                            performed.Add name
+
+                            if name = "sh" && positional = [ VStr "halt" ] then
+                                reachable.Value <- false
+
+                            VNull)
+                        (fun _ _ -> ()) with
+                      CanEvaluate = fun _ -> reachable.Value }
+
+              let outcome =
+                  runIt host "echo(sh('halt'), MISSING)\nreturn 'SURVIVED'"
+
+              Expect.isNone outcome.Fault "MISSING after the halting nested call was not forced"
+              Expect.equal outcome.Returned (Some(VStr "SURVIVED")) "the interpreter reaches the statement after the skipped outer call"
+              Expect.equal (List.ofSeq performed) [ "sh" ] "the outer echo never enters Perform"
+          }
+
           test "a NESTED wrapper still refreshes the Jenkins env binding" {
               // FG-201. The refresh's "ours" check was a per-invocation cell, so a
               // wrapper nested inside another found the OUTER wrapper's cell, failed
@@ -831,6 +878,7 @@ let hostedSteps =
                            | _ -> runBody |> Option.iter (fun run -> run ()))
 
                           VNull
+                    CanEvaluate = fun _ -> true
                     SetEnv = fun _ _ -> ()
                     CurrentEnv = fun () -> overlay.Value
                     TakesBlock = fun name -> Set.contains name (set [ "dir"; "withEnv" ]) }
@@ -1005,6 +1053,7 @@ let mapIdentity =
 
               let host =
                   { Perform = fun _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
+                    CanEvaluate = fun _ -> true
                     SetEnv = fun k v -> sets.Add(k, v)
                     CurrentEnv = fun () -> []
                     TakesBlock = fun _ -> false }

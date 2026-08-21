@@ -1,8 +1,8 @@
-# Differential receipt — fg177-step-schema-halted-unreachable.Jenkinsfile
+# Differential receipt — fg177-step-schema-dir-binding-class.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         e055821fc189a170f091a8f00eddd9708d1f87bfdd0b3596667555338694be24
-case-digest:  574dab52b15f3de2c6a844ffa2a9c12b2c53dbb47df8c671061ceb9b3db0c8d7
+seal:         88be8260ff0b37cc458dec8f1be566b925e084f2c0cf1c7509e1ef59770e6705
+case-digest:  33ecff5485ce7d2370cbaffbf6165ed52f12bcb52613203f38444a5dad9916b8
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -77,11 +77,21 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     minus fenced regions; it is NOT implemented, so this list is what holds today.
 
 ## Jenkins
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  result:         success
+  workspace-hash: 3c2aa3209eae216db75e6b7d357bc0ce34c9892810ea70a9a664344a466dfc5d
+  output (2 lines):
+    | + printf dir
+    | + printf continued
+  workspace:
+    0dec6069d551  continued.txt
+    2b64c6d9afd8  dir-caught.txt
 
 ## Fogell
-  result:         failure
-  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (0 lines):
+  result:         success
+  workspace-hash: 3c2aa3209eae216db75e6b7d357bc0ce34c9892810ea70a9a664344a466dfc5d
+  output (2 lines):
+    | + printf dir
+    | + printf continued
+  workspace:
+    0dec6069d551  continued.txt
+    2b64c6d9afd8  dir-caught.txt

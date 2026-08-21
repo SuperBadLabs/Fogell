@@ -208,6 +208,7 @@ module WalkerRules =
         { MaxPositionals: int
           PrimaryParameter: string option
           RequiresPrimary: bool
+          MissingPrimaryException: Fogell.Groovy.Interpreter.BindingExceptionClass option
           NamedKeys: Set<string>
           UnsupportedNamedKeys: Set<string>
           UnknownNamed: UnknownNamedBinding
@@ -218,10 +219,11 @@ module WalkerRules =
 
     let stepDescriptors: Map<string, StepDescriptor> =
         let open' = Fogell.Groovy.Interpreter.Value.toDisplay
-        let row max primary required named unsupported unknown shape check =
+        let row max primary required missingPrimaryException named unsupported unknown shape check =
             { MaxPositionals = max
               PrimaryParameter = primary
               RequiresPrimary = required
+              MissingPrimaryException = missingPrimaryException
               NamedKeys = Set.ofList named
               UnsupportedNamedKeys = Set.ofList unsupported
               UnknownNamed = unknown
@@ -231,23 +233,23 @@ module WalkerRules =
 
         Map.ofList
             [ "sh",
-              row 1 (Some "script") true
+              row 1 (Some "script") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
                   []
                   (warn "org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep")
                   "takes at most 1 positional argument" noCheck
               "echo",
-              row 1 (Some "message") false [ "message" ] [] ConstructorMapThrow
+              row 1 (Some "message") false None [ "message" ] [] ConstructorMapThrow
                   "takes at most one message argument" noCheck
               "archiveArtifacts",
-              row 1 (Some "artifacts") true
+              row 1 (Some "artifacts") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
                     "excludes"; "fingerprint"; "followSymlinks"; "onlyIfSuccessful" ]
                   []
                   (warn "hudson.tasks.ArtifactArchiver")
                   "takes exactly one artifact pattern" noCheck
               "junit",
-              row 1 (Some "testResults") true
+              row 1 (Some "testResults") true (Some Fogell.Groovy.Interpreter.NullPointerException)
                   [ "testResults"; "allowEmptyResults"; "checksName"; "healthScaleFactor"
                     "keepLongStdio"; "keepProperties"; "keepTestNames"
                     "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"
@@ -257,31 +259,31 @@ module WalkerRules =
                   (warn "hudson.tasks.junit.pipeline.JUnitResultsStep")
                   "takes exactly one test-results pattern" noCheck
               "checkout",
-              row 1 (Some "scm") true [ "scm"; "changelog"; "poll" ] []
+              row 1 (Some "scm") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "scm"; "changelog"; "poll" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep")
                   "takes exactly one SCM argument" noCheck
               "deleteDir",
-              row 0 None false [] []
+              row 0 None false None [] []
                   (warn "org.jenkinsci.plugins.workflow.steps.DeleteDirStep")
                   "takes no positional arguments" noCheck
               "git",
-              row 1 (Some "url") false [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ] []
+              row 1 (Some "url") false None [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ] []
                   (warn "jenkins.plugins.git.GitStep")
                   "takes at most one repository URL" noCheck
               "stash",
-              row 1 (Some "name") true
+              row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "name"; "allowEmpty"; "excludes"; "includes"; "useDefaultExcludes" ]
                   []
                   (warn "org.jenkinsci.plugins.workflow.support.steps.stash.StashStep")
                   "takes exactly one stash name" noCheck
               "unstable",
-              row 1 (Some "message") true [ "message" ] [] ConstructorMapThrow
+              row 1 (Some "message") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "message" ] [] ConstructorMapThrow
                   "takes exactly one message" noCheck
               "unstash",
-              row 1 (Some "name") true [ "name" ] [] ConstructorMapThrow
+              row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "name" ] [] ConstructorMapThrow
                   "takes exactly one stash name" noCheck
               "withEnv",
-              row 1 (Some "overrides") true [ "overrides" ] [] ConstructorMapThrow
+              row 1 (Some "overrides") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "overrides" ] [] ConstructorMapThrow
                   "takes exactly one list argument of NAME=VALUE strings"
                   (fun positional _ ->
                       match positional with
@@ -293,14 +295,14 @@ module WalkerRules =
                               $"withEnv entry {bad} is not NAME=VALUE; Jenkins rejects an override without '='")
                       | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings")
               "dir",
-              row 1 (Some "path") true [ "path" ] [] ConstructorMapThrow
+              row 1 (Some "path") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "path" ] [] ConstructorMapThrow
                   "takes exactly one path argument"
                   (fun positional _ ->
                       match positional with
                       | [ _ ] -> None
                       | _ -> Some "`dir` takes exactly one path argument")
               "retry",
-              row 1 (Some "count") false [ "count" ] [ "conditions" ]
+              row 1 (Some "count") false None [ "count" ] [ "conditions" ]
                   (warn "org.jenkinsci.plugins.workflow.steps.RetryStep")
                   "takes at most one attempt count"
                   (fun positional _ ->
@@ -310,7 +312,7 @@ module WalkerRules =
                       | [ other ] -> Some $"`retry` needs an integer attempt count, not `{open' other}`"
                       | _ -> Some "`retry` takes at most one attempt count")
               "timeout",
-              row 1 (Some "time") false [ "time"; "unit"; "activity" ] []
+              row 1 (Some "time") false None [ "time"; "unit"; "activity" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.TimeoutStep")
                   "takes at most one positional time argument or named time/unit/activity arguments" noCheck ]
 
@@ -337,7 +339,7 @@ module WalkerRules =
 
     type HostedCallFailure =
         | EngineRefusal of string
-        | JenkinsBindingThrow of detail: string * warnings: HostedCallWarning list
+        | JenkinsBindingThrow of exceptionClass: Fogell.Groovy.Interpreter.BindingExceptionClass * detail: string * warnings: HostedCallWarning list
 
     /// The one hosted-call boundary. Unknowns are classified before primary promotion,
     /// so `echo(message: 'x', unknown: true)` can never normalize into a valid echo.
@@ -373,7 +375,13 @@ module WalkerRules =
                 Error(EngineRefusal $"`{name}` named key `{first}:` is recognized by Jenkins but not implemented by Fogell")
             | [], ConstructorMapThrow, first :: _ ->
                 let parameter = defaultArg descriptor.PrimaryParameter "constructor"
-                Error(JenkinsBindingThrow($"`{name}` binds a map containing unknown key `{first}:` to `{parameter}`", []))
+                Error(
+                    JenkinsBindingThrow(
+                        Fogell.Groovy.Interpreter.IllegalArgumentException,
+                        $"`{name}` binds a map containing unknown key `{first}:` to `{parameter}`",
+                        []
+                    )
+                )
             | _ ->
                 let warnings =
                     match descriptor.UnknownNamed, unknown with
@@ -395,7 +403,9 @@ module WalkerRules =
                     Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{shown}]`")
                 elif descriptor.RequiresPrimary && List.isEmpty normalisedPositional then
                     let primary = defaultArg descriptor.PrimaryParameter "its primary parameter"
-                    Error(JenkinsBindingThrow($"`{name}` requires `{primary}`", warnings))
+                    match descriptor.MissingPrimaryException with
+                    | Some exceptionClass -> Error(JenkinsBindingThrow(exceptionClass, $"`{name}` requires `{primary}`", warnings))
+                    | None -> Error(EngineRefusal $"descriptor for `{name}` requires `{primary}` but has no measured binding exception class")
                 else
                     match descriptor.Check normalisedPositional normalisedNamed with
                     | Some reason -> Error(EngineRefusal reason)

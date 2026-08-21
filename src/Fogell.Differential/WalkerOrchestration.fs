@@ -2184,9 +2184,9 @@ module WalkerOrchestration =
                                         | Error(WalkerRules.EngineRefusal why) ->
                                             fail $"script block: {why}"
                                             VNull
-                                        | Error(WalkerRules.JenkinsBindingThrow(why, warnings)) ->
+                                        | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, why, warnings)) ->
                                             emitCallWarnings warnings
-                                            Interpreter.raiseStepBindingFailed name why
+                                            Interpreter.raiseStepBindingFailed name exceptionClass why
                                         | Ok validated ->
                                             let positional = validated.Positional
                                             let named = validated.Named
@@ -2285,6 +2285,10 @@ module WalkerOrchestration =
                                             // Integer, and `VNull` for everything else, which is
                                             // still every step that does not opt in.
                                             slot.Value
+                              // The interpreter asks this before it evaluates a
+                              // registered step's arguments. Perform repeats the
+                              // guard as a hard boundary for direct callers.
+                              CanEvaluate = fun _ -> not (halted (fst hostAt.Value))
                               // FG-178. Read through `hostAt`, which POINTS AT THE
                               // WRAPPER while its body runs — so `withEnv`'s overlay is
                               // what the body evaluates against. Reading `ctx` here would

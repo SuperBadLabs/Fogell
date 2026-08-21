@@ -406,7 +406,13 @@ pipeline {
         stage('Gate') {
             steps {
                 script {
+                    def unreachableArg = {
+                        sh 'printf arg > arg.txt'
+                        return 'ignored'
+                    }
                     sh('invalid', 'extra')
+                    sh(script: MISSING)
+                    sh(script: unreachableArg())
                     sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
                     echo(message: 'must-not-print', fogellProbeUnknown: true)
                     sh 'printf effect > effect.txt'
@@ -431,9 +437,74 @@ grep -q 'must-not-print' "$H_LANE/run.log" && {
   echo "FAIL: an unreachable constructor-map call emitted after halt"; cat "$H_LANE/run.log"; exit 1; }
 grep -q 'StepBindingFailed\|fogellProbeUnknown' "$H_LANE/build.journal" && {
   echo "FAIL: an unreachable binding fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
+grep -q 'UnknownProperty\|MISSING' "$H_LANE/build.journal" && {
+  echo "FAIL: an unreachable argument fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/arg.txt" ] && { echo "FAIL: unreachable argument side effect landed"; exit 1; }
 [ -f "$H_LANE/ws/fg206h/warned.txt" ] && { echo "FAIL: unreachable warning-class effect landed"; exit 1; }
 [ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
 echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"
+
+echo "=== FG-177: binding failures preserve their measured exception class ==="
+B_LANE="$LANE/fg177-binding-class"
+mkdir -p "$B_LANE/ws"
+cat > "$B_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('schema') {
+            steps {
+                script {
+                    try {
+                        junit()
+                    } catch (NullPointerException expected) {
+                        echo "junit-bound:${expected}"
+                        sh 'printf junit > junit-caught.txt'
+                    }
+                    try {
+                        dir() { sh 'printf wrong > wrong.txt' }
+                    } catch (NullPointerException expected) {
+                        echo "dir-bound:${expected}"
+                        sh 'printf dir > dir-caught.txt'
+                    }
+                    try {
+                        try {
+                            junit()
+                        } catch (IllegalArgumentException wrong) {
+                            sh 'printf wrong > wrong-junit-class.txt'
+                        }
+                    } catch (NullPointerException expected) {
+                        sh 'printf junit-class > junit-class.txt'
+                    }
+                    try {
+                        try {
+                            dir() { sh 'printf wrong > wrong.txt' }
+                        } catch (IllegalArgumentException wrong) {
+                            sh 'printf wrong > wrong-dir-class.txt'
+                        }
+                    } catch (NullPointerException expected) {
+                        sh 'printf dir-class > dir-class.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$B_LANE/Jenkinsfile" "$B_LANE/ws" fg177class "$B_LANE/build.journal" > "$B_LANE/run.log" 2>&1
+grep -q 'completed: success' "$B_LANE/run.log" || {
+  echo "FAIL: narrow NullPointerException catches did not recover"; cat "$B_LANE/run.log"; exit 1; }
+grep -q 'junit-bound:java.lang.NullPointerException:' "$B_LANE/run.log" || {
+  echo "FAIL: junit catch variable did not carry the measured exception class"; cat "$B_LANE/run.log"; exit 1; }
+grep -q 'dir-bound:java.lang.NullPointerException:' "$B_LANE/run.log" || {
+  echo "FAIL: dir catch variable did not carry the measured exception class"; cat "$B_LANE/run.log"; exit 1; }
+for f in junit-caught.txt dir-caught.txt junit-class.txt dir-class.txt continued.txt; do
+  [ -f "$B_LANE/ws/fg177class/$f" ] || { echo "FAIL: $f is absent after its narrow catch"; exit 1; }
+done
+[ -f "$B_LANE/ws/fg177class/wrong.txt" ] && { echo "FAIL: missing dir path ran its body"; exit 1; }
+[ -f "$B_LANE/ws/fg177class/wrong-junit-class.txt" ] && { echo "FAIL: IllegalArgumentException caught junit's NullPointerException"; exit 1; }
+[ -f "$B_LANE/ws/fg177class/wrong-dir-class.txt" ] && { echo "FAIL: IllegalArgumentException caught dir's NullPointerException"; exit 1; }
+echo "junit and dir bind failures are caught by their measured NullPointerException class"
 
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"
