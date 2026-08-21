@@ -456,6 +456,130 @@ grep -q 'UnknownProperty\|MISSING' "$H_LANE/build.journal" && {
 [ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
 echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"
 
+echo "=== FG-177: a hosted child halt returns to retry ownership ==="
+RH_LANE="$LANE/fg177-retry-child-halt"
+mkdir -p "$RH_LANE/ws"
+cat > "$RH_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-child-halt') {
+            steps {
+                script {
+                    retry(2) {
+                        dir('nested') {
+                            timeout(time: 30, unit: 'SECONDS') {
+                                withEnv(['INSIDE=yes']) {
+                                    def first = sh(
+                                        script: 'if [ -f ../attempted.txt ]; then exit 0; else touch ../attempted.txt; exit 1; fi',
+                                        returnStatus: true
+                                    )
+                                    if (first != 0) {
+                                        unstash 'missing'
+                                        sh 'printf wrong > wrong.txt'
+                                    }
+                                    sh 'echo recovered >> recovered.txt; printf "$INSIDE" > overlay.txt'
+                                }
+                            }
+                        }
+                    }
+                    sh 'echo continued >> continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$RH_LANE/Jenkinsfile" "$RH_LANE/ws" fg177rh "$RH_LANE/build.journal" > "$RH_LANE/run.log" 2>&1
+grep -q 'completed: success' "$RH_LANE/run.log" || { echo "FAIL: retry did not recover on attempt 2"; cat "$RH_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RH_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: retry did not run exactly two attempts"; cat "$RH_LANE/run.log"; exit 1; }
+[ -f "$RH_LANE/ws/fg177rh/attempted.txt" ] || { echo "FAIL: attempt-1 marker is absent"; exit 1; }
+[ ! -f "$RH_LANE/ws/fg177rh/nested/wrong.txt" ] || { echo "FAIL: attempt 1 continued after its child halt"; exit 1; }
+[ "$(grep -c '^recovered$' "$RH_LANE/ws/fg177rh/nested/recovered.txt" || true)" -eq 1 ] || { echo "FAIL: recovered effect is not exactly once"; exit 1; }
+[ -f "$RH_LANE/ws/fg177rh/nested/overlay.txt" ] || { echo "FAIL: nested overlay evidence is absent"; exit 1; }
+[ "$(cat "$RH_LANE/ws/fg177rh/nested/overlay.txt")" = yes ] || { echo "FAIL: nested withEnv context was not preserved"; exit 1; }
+[ "$(grep -c '^continued$' "$RH_LANE/ws/fg177rh/continued.txt" || true)" -eq 1 ] || { echo "FAIL: outer script did not continue exactly once after recovery"; exit 1; }
+grep -q $'^step-finished\tretry-child-halt\t0\tsuccess$' "$RH_LANE/build.journal" || { echo "FAIL: recovered script unit did not journal success"; exit 1; }
+
+# Durable audit: a terminal replay must not re-enter either attempt or duplicate
+# the recovered/continuation effects owned by the one journaled script unit.
+"${HOST[@]}" "$RH_LANE/Jenkinsfile" "$RH_LANE/ws" fg177rh "$RH_LANE/build.journal" > "$RH_LANE/rerun.log" 2>&1
+grep -q 'already-terminal: success' "$RH_LANE/rerun.log" || { echo "FAIL: recovered terminal journal was not a no-op"; exit 1; }
+[ "$(grep -c '^recovered$' "$RH_LANE/ws/fg177rh/nested/recovered.txt" || true)" -eq 1 ] || { echo "FAIL: terminal replay duplicated recovered effect"; exit 1; }
+[ "$(grep -c '^continued$' "$RH_LANE/ws/fg177rh/continued.txt" || true)" -eq 1 ] || { echo "FAIL: terminal replay duplicated continuation effect"; exit 1; }
+echo "attempt 1 halted inside nested wrappers, attempt 2 recovered, and terminal replay duplicated nothing"
+
+echo "=== FG-177: every retry attempt halting propagates final failure ==="
+RE_LANE="$LANE/fg177-retry-halt-exhausted"
+mkdir -p "$RE_LANE/ws"
+cat > "$RE_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-halt-exhausted') {
+            steps {
+                script {
+                    retry(2) {
+                        unstash 'missing'
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RE_LANE/Jenkinsfile" "$RE_LANE/ws" fg177re "$RE_LANE/build.journal" > "$RE_LANE/run.log" 2>&1
+RE_RC=$?
+set -e
+[ "$RE_RC" -eq 1 ] || { echo "FAIL: exhausted retry reported rc $RE_RC, expected 1"; cat "$RE_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RE_LANE/run.log" || { echo "FAIL: exhausted retry did not fail the build"; cat "$RE_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RE_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: exhausted retry did not run exactly two attempts"; cat "$RE_LANE/run.log"; exit 1; }
+[ ! -f "$RE_LANE/ws/fg177re/wrong.txt" ] || { echo "FAIL: an exhausted attempt continued after halt"; exit 1; }
+[ ! -f "$RE_LANE/ws/fg177re/continued.txt" ] || { echo "FAIL: outer script continued after exhausted retry"; exit 1; }
+grep -q $'^step-finished\tretry-halt-exhausted\t0\tfailure$' "$RE_LANE/build.journal" || { echo "FAIL: exhausted retry journaled no failure"; cat "$RE_LANE/build.journal"; exit 1; }
+echo "two halted attempts, one Retrying boundary, final failure, no continuation"
+
+echo "=== FG-177: retry keeps the final attempt's original refusal reason ==="
+RD_LANE="$LANE/fg177-retry-diagnostic"
+mkdir -p "$RD_LANE/ws"
+cat > "$RD_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-diagnostic') {
+            steps {
+                script {
+                    retry(2) {
+                        sh('invalid', 'extra')
+                        sh(script: MISSING)
+                        sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RD_LANE/Jenkinsfile" "$RD_LANE/ws" fg177rd "$RD_LANE/build.journal" > "$RD_LANE/run.log" 2>&1
+RD_RC=$?
+set -e
+[ "$RD_RC" -eq 1 ] || { echo "FAIL: refusal retry reported rc $RD_RC, expected 1"; cat "$RD_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RD_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: refusal retry did not run exactly two attempts"; cat "$RD_LANE/run.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tretry-diagnostic\t0\t' "$RD_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: final attempt did not journal exactly one reason"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'positional argument' "$RD_LANE/build.journal" || { echo "FAIL: final reason is not the original positional refusal"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'UnknownProperty\|MISSING\|fogellProbeUnknown' "$RD_LANE/build.journal" && { echo "FAIL: unreachable activity replaced the original reason"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'WARNING: Unknown parameter' "$RD_LANE/run.log" && { echo "FAIL: unreachable warning duplicated inside retry"; cat "$RD_LANE/run.log"; exit 1; }
+for f in warned.txt wrong.txt continued.txt; do
+  [ ! -f "$RD_LANE/ws/fg177rd/$f" ] || { echo "FAIL: unreachable $f effect landed"; exit 1; }
+done
+echo "each attempt kept its halt boundary; the final durable reason stayed the original refusal"
+
 echo "=== FG-177: binding failures preserve their measured exception class ==="
 B_LANE="$LANE/fg177-binding-class"
 mkdir -p "$B_LANE/ws"

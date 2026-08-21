@@ -1707,6 +1707,20 @@ module Interpreter =
     let raiseStepBindingFailed (stepName: string) (exceptionClass: BindingExceptionClass) (detail: string) : 'a =
         raise (Stop(StepBindingFailed(stepName, exceptionClass, detail)))
 
+    /// A hosted wrapper owns the context it gives its body. When that child
+    /// context halts, the interpreter signal must return control to the wrapper
+    /// so retry can inspect the attempt and either retry or publish its failure;
+    /// letting it escape to runWith skips that bookkeeping and can turn an
+    /// exhausted retry into success. This is deliberately a narrow CATCH-only
+    /// seam: hosts cannot manufacture interpreter control flow.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let catchHostedHalt (body: unit -> unit) : bool =
+        try
+            body ()
+            false
+        with HostedHaltSignal ->
+            true
+
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a
     /// returned fault the loop treats as attempt failure. A refusal or an

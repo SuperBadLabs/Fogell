@@ -2121,7 +2121,25 @@ module WalkerOrchestration =
                             hostAt.Value <- (inner, wd)
 
                             try
-                                thunk ()
+                                // The wrapper OWNS `inner`. A hosted step can halt that
+                                // child without throwing a catchable Groovy fault (for
+                                // example missing unstash); the interpreter then signals
+                                // that no later Groovy in this body may run. Contain that
+                                // signal HERE so the wrapper regains control and publishes
+                                // the child state. In particular runWithRetry must inspect
+                                // attemptCtx.Failed before deciding whether to retry or
+                                // propagate final failure. Letting the signal escape to
+                                // Interpreter.runWith skipped that whole decision and
+                                // could finish the outer script successfully after one
+                                // failed attempt.
+                                let caught = Interpreter.catchHostedHalt thunk
+
+                                // Defensive fail-closed invariant: the signal is only
+                                // raised after CanContinue observed this exact active
+                                // context halted. If those ever disagree, do not swallow
+                                // an interpreter control-flow defect into success.
+                                if caught && not (halted inner) then
+                                    fail "hosted body stopped without its active child context being halted; refusing rather than losing wrapper failure state"
                             finally
                                 hostAt.Value <- saved
 

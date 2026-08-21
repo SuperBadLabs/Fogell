@@ -38,6 +38,6 @@ What verification does NOT cover: whether each case on disk still matches the di
 
 | Expected | Present | Proven |
 |---|---|---|
-| 204 | 204 | 204 of 204 |
+| 205 | 205 | 205 of 205 |
 
 **These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **1** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
