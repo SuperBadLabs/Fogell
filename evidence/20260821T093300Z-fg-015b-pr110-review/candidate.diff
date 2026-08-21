@@ -1,0 +1,474 @@
+diff --git a/docs/COMPATIBILITY-SCORECARD.md b/docs/COMPATIBILITY-SCORECARD.md
+index 8fe9fa0..577a77f 100644
+--- a/docs/COMPATIBILITY-SCORECARD.md
++++ b/docs/COMPATIBILITY-SCORECARD.md
+@@ -38,6 +38,6 @@ What verification does NOT cover: whether each case on disk still matches the di
+ 
+ | Expected | Present | Proven |
+ |---|---|---|
+-| 220 | 220 | 220 of 220 |
++| 222 | 222 | 222 of 222 |
+ 
+ **These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **1** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index f7c0443..eb24bc5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -637,7 +637,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) **DONE** — `echo` bypassed both credential interpolation and masking. MEASURED and richer than this ticket claimed: Jenkins WARNS in three lines that a secret reached a step argument through GString interpolation, THEN prints the masked value; it also interpolates a GString and leaves a single-quoted argument literal. All four behaviours proven by `echo-credential-masking`. Fogell emits its own one-line warning (wording not compared, as with the other narration) because being quieter than Jenkins on a security matter is not an option. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+ | FG-002f | P1 | **DONE** | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile r… [→ detail](tickets/FG-002f.md) |
+-| FG-015b | P2 | **DONE** | Typed integer list-index mutation and list reference identity in the scripted interpreter | The parser gate had already opened under FG-180; this closure corrects the stale parser title and implements the remaining runtime half. Direct Jenkins 2.568.1 probes measured basic, alias, closure, nested, projection and method-result writes; compound/inc/dec single-evaluation order; negative, empty, append, null-extension and too-negative boundaries; null/scalar/non-integer/map controls; and direct, distinct and mixed cycles. `VList` now carries reference identity, so aliases and selected source lists share mutation while a fresh projection does not. Plain integer `EIndex` writes return the RHS; `SIndexCompoundAssign` and `SIndexPostfixAssign` retain syntax so receiver/key evaluate once and old-value/RHS timing matches Jenkins. Too-negative indexes raise a catchable `ArrayIndexOutOfBoundsException`-class fault; positive extension is budget-bounded. Existing map writes are unchanged. Non-integer list keys remain outside this typed slice and refuse explicitly instead of succeeding without a write. Direct spread-derived indexes are admitted and select temporary versus persistent identities at runtime; actual spread-property l-values remain preflight-refused. Cycle-aware display/equality preserves `(this Collection)` and survives longer cycles without host recursion | [measurement/evidence](../evidence/20260821T083100Z-fg-015b-list-index); three tier-1 differential receipts; focused AST/interpreter/preflight/cycle tests; corpus admission and verdicts unchanged |
++| FG-015b | P2 | **DONE** | Typed integer list-index mutation and list reference identity in the scripted interpreter | The parser gate had already opened under FG-180; this closure corrects the stale parser title and implements the remaining runtime half. Direct Jenkins 2.568.1 probes measured basic, alias, closure, nested, projection and method-result writes; compound/inc/dec single-evaluation order; negative, empty, append, null-extension and too-negative boundaries; null/scalar/non-integer/map controls; and direct, distinct and mixed cycles. `VList` now carries reference identity, so aliases and selected source lists share mutation while a fresh projection does not. Plain integer `EIndex` writes return the RHS; `SIndexCompoundAssign` and `SIndexPostfixAssign` retain syntax so receiver/key evaluate once and old-value/RHS timing matches Jenkins. Too-negative indexes raise a catchable `ArrayIndexOutOfBoundsException`-class fault; positive extension is budget-bounded. Existing map writes are unchanged. Non-integer list keys remain outside this typed slice and refuse explicitly instead of succeeding without a write. Direct spread-derived indexes are admitted and select temporary versus persistent identities at runtime; actual spread-property l-values remain preflight-refused. Cycle-aware display/equality preserves `(this Collection)` and survives longer cycles without host recursion. PR #110 review measurement added ordering and scalar-update boundaries: `sort()` now uses a cycle-aware comparator which preserves top-level alias success and surfaces distinct, nested-alias, and mixed cycles as catchable `StackOverflowError` ancestry instead of entering the host comparer; sandbox-denied `min`/`max` and the unmodelled `unique` path remain explicit safe refusals. Scalar index mutation remains unsupported, but a valid String index reads once and reaches compound/plain RHS before the catchable sandbox write rejection, while positive/too-negative String indexes, non-integer keys, integer/boolean receivers, and null fail during the read before RHS effects. No scalar receiver is mutated | [original measurement/evidence](../evidence/20260821T083100Z-fg-015b-list-index) and [PR #110 review closure](../evidence/20260821T093300Z-fg-015b-pr110-review); five tier-1 differential receipts; focused AST/interpreter/preflight/cycle/timing tests; corpus admission and verdicts unchanged |
+ | FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. [→ detail](tickets/FG-048b.md) |
+ | FG-048c | P2 | **BLOCKED** | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | **Blocked on fg-111.** FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+ | FG-049b | P1 | **DONE** | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds. **Done with FG-110:** the `post-history` sequence replays the ADR 0005 probe as four receipt-backed builds — b1 fail-no-history fires always/changed/failure/cleanup, b2 fires **fixed**, b3 proves `changed` stays **quiet** on a same-result build, b4 fires **regression**. All four PROVEN tier-1; the postRank and ADR admissions became citations (claim audit admitted-UNPROVEN 7 -> 6) |
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index f7ba3cd..3e5eb8e 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -148,6 +148,19 @@ type Fault =
+     /// when the requested operator cannot accept null; unlike a too-negative
+     /// index, compound assignment has already evaluated its RHS at this point.
+     | NullListIndexUpdate of index: int64
++    /// Jenkins' sandbox permits scalar index reads such as String.getAt but
++    /// rejects the eventual putAt, while other scalar getAt shapes are rejected
++    /// before an update RHS. Keep that catchable SecurityException boundary
++    /// separate from a modelling refusal.
++    | RejectedIndexOperation of phase: string
++    /// Positive String indexes beyond the end raise this concrete class. A
++    /// too-negative String index follows Groovy's ArrayIndexOutOfBounds path and
++    /// therefore uses [ListIndexOutOfBounds] instead.
++    | StringIndexOutOfBounds of index: int64 * size: int
++    /// A collection ordering revisited the same pair of reference cells. Jenkins
++    /// raises StackOverflowError; this explicit fault retains its catch ancestry
++    /// without allowing the F# runtime to recurse until the process dies.
++    | CyclicOrderingComparison
+ 
+ type Outcome =
+     { Effects: Effect list
+@@ -199,6 +212,9 @@ module Interpreter =
+     let assignmentTargetRefusal =
+         "unsupported_assignment_target: Fogell cannot model this assignment target; refusing before the RHS instead of reporting success without a write"
+ 
++    let collectionOrderingRefusal =
++        "unsupported_collection_ordering: Fogell cannot safely order this value type; refusing instead of invoking the host runtime comparer"
++
+     exception private Stop of Fault
+     exception private ReturnSignal of Value
+     exception private BreakSignal
+@@ -290,6 +306,19 @@ module Interpreter =
+         else
+             VNull
+ 
++    let private stringIndexRead (value: string) index =
++        let size = value.Length
++
++        if tooNegativeListIndex index size then
++            raise (Stop(ListIndexOutOfBounds(index, size)))
++
++        let normalized = if index < 0L then int64 size + index else index
++
++        if normalized >= int64 size then
++            raise (Stop(StringIndexOutOfBounds(index, size)))
++
++        VStr(string value.[int normalized])
++
+     let private listWrite (st: State) (items: Value list ref) index value =
+         let size = items.Value.Length
+ 
+@@ -1206,7 +1235,26 @@ module Interpreter =
+         | "join", VList xs, [ VStr d ] -> VStr(xs.Value |> List.map scriptDisplay |> String.concat d)
+         | "reverse", VList xs, _ -> VList(ref (List.rev xs.Value))
+         | "reverse", VStr s, _ -> VStr(System.String(s.ToCharArray() |> Array.rev))
+-        | "sort", VList xs, _ -> VList(ref (List.sortWith compare xs.Value))
++        | "sort", VList xs, _ ->
++            let compareSafely left right =
++                match Value.tryCompare left right with
++                | Value.Order order -> order
++                | Value.OrderingCycleDetected -> raise (Stop CyclicOrderingComparison)
++                | Value.Unorderable -> raise (Stop(Unsupported collectionOrderingRefusal))
++
++            let sorted =
++                try
++                    List.sortWith compareSafely xs.Value
++                with
++                // FSharp.Core delegates to Array.Sort, which wraps comparator
++                // exceptions. Unwrap only Fogell's own typed stop; every other
++                // host exception remains visible instead of being misclassified.
++                | :? System.InvalidOperationException as wrapped ->
++                    match wrapped.InnerException with
++                    | :? Stop as stopped -> raise stopped
++                    | _ -> reraise ()
++
++            VList(ref sorted)
+         | "first", VList xs, _ when not xs.Value.IsEmpty -> List.head xs.Value
+         | "last", VList xs, _ when not xs.Value.IsEmpty -> List.last xs.Value
+         | "keySet", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map (fst >> VStr)))
+@@ -1380,7 +1428,8 @@ module Interpreter =
+                 // uncatchable, a false refusal the verifier caught by asking what
+                 // class the fault was, not whether it fired. Assignment cannot
+                 // inherit lax READ semantics: an absent write is never success.
+-                | _, _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
++                | _, _, true -> raise (Stop(RejectedIndexOperation "write"))
++                | _, _, false -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
+ 
+             match recvAndKey with
+             | recv, key, isIndex -> assignInto recv key isIndex
+@@ -1412,8 +1461,12 @@ module Interpreter =
+                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
+                         | _ -> mr.Value <- Map.add key value mr.Value),
+                     None
++                | VStr value, VInt index ->
++                    stringIndexRead value index,
++                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
++                    None
+                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+-                | _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
++                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
+ 
+             let rhsValue = evalExpr st env rhs
+ 
+@@ -1423,6 +1476,8 @@ module Interpreter =
+                 with
+                 | Stop(Unsupported _) when oldValue = VNull && Option.isSome listIndex ->
+                     raise (Stop(NullListIndexUpdate listIndex.Value))
++                | Stop(Unsupported _) when Option.isNone listIndex && (match recv with VStr _ -> true | _ -> false) ->
++                    raise (Stop(RejectedIndexOperation "operator"))
+ 
+             writeBack value
+             st.LastValue <- Some value
+@@ -1450,13 +1505,22 @@ module Interpreter =
+                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
+                         | _ -> mr.Value <- Map.add key value mr.Value),
+                     None
++                | VStr value, VInt index ->
++                    stringIndexRead value index,
++                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
++                    None
+                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+-                | _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
++                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
+ 
+             let value =
+                 match oldValue, listIndex with
+                 | VNull, Some index -> raise (Stop(NullListIndexUpdate index))
+-                | _ -> evalBinaryValues st op oldValue (VInt 1L)
++                | _ ->
++                    try
++                        evalBinaryValues st op oldValue (VInt 1L)
++                    with
++                    | Stop(Unsupported _) when (match recv with VStr _ -> true | _ -> false) ->
++                        raise (Stop(RejectedIndexOperation "operator"))
+             writeBack value
+             st.LastValue <- Some oldValue
+             env
+@@ -1663,6 +1727,38 @@ module Interpreter =
+                     |> List.contains t
+                 | None -> false
+ 
++            let catchesRejectedIndexOperation =
++                match catch with
++                | Some(None, _, _) -> true
++                | Some(Some t, _, _) ->
++                    [ "Exception"
++                      "Throwable"
++                      "RuntimeException"
++                      "SecurityException"
++                      "RejectedAccessException" ]
++                    |> List.contains t
++                | None -> false
++
++            let catchesStringIndexOutOfBounds =
++                match catch with
++                | Some(None, _, _) -> true
++                | Some(Some t, _, _) ->
++                    [ "Exception"
++                      "Throwable"
++                      "RuntimeException"
++                      "IndexOutOfBoundsException"
++                      "StringIndexOutOfBoundsException" ]
++                    |> List.contains t
++                | None -> false
++
++            let catchesCyclicOrdering =
++                match catch with
++                | Some(None, _, _) -> false
++                | Some(Some t, _, _) ->
++                    [ "Throwable"; "Error"; "VirtualMachineError"; "StackOverflowError" ]
++                    |> List.contains t
++                | None -> false
++
+             // Which declared types can intercept a failed shell step. Jenkins
+             // surfaces it as hudson.AbortException < IOException < Exception —
+             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
+@@ -1720,6 +1816,12 @@ module Interpreter =
+                         handle (VStr $"java.lang.ArrayIndexOutOfBoundsException: Negative array index [{index}] too large for array size {size}")
+                     | Stop(NullListIndexUpdate index) when catchesNullReceiverAssignment ->
+                         handle (VStr $"java.lang.NullPointerException: Cannot apply index update to null value at [{index}]")
++                    | Stop(RejectedIndexOperation phase) when catchesRejectedIndexOperation ->
++                        handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
++                    | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
++                        handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
++                    | Stop CyclicOrderingComparison when catchesCyclicOrdering ->
++                        handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
+                 with
+                 | HostedHaltSignal as halted ->
+                     // A hosted failure has already stopped ordinary evaluation, but
+@@ -1933,7 +2035,7 @@ module Interpreter =
+         try
+             body ()
+             None
+-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | StepFailed _ | StepBindingFailed _) as f) ->
++        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | StepFailed _ | StepBindingFailed _) as f) ->
+             Some f
+ 
+     /// FG-186's other half: the FINAL attempt re-raises the held fault so an
+diff --git a/src/Fogell.Groovy.Interpreter/Value.fs b/src/Fogell.Groovy.Interpreter/Value.fs
+index 2482738..9d72797 100644
+--- a/src/Fogell.Groovy.Interpreter/Value.fs
++++ b/src/Fogell.Groovy.Interpreter/Value.fs
+@@ -69,6 +69,15 @@ module Value =
+         | Answer of bool
+         | CycleDetected
+ 
++    /// A total, host-safe answer for the subset of Groovy values which Fogell
++    /// orders. `OrderingCycleDetected` means structural comparison revisited the
++    /// same pair and Jenkins would overflow; `Unorderable` keeps closures and
++    /// functions out of the host runtime's generic comparer.
++    type Ordered =
++        | Order of int
++        | OrderingCycleDetected
++        | Unorderable
++
+     type Displayed =
+         | Text of string
+         | DisplayCycleDetected
+@@ -146,8 +155,8 @@ module Value =
+     ///     outright, and a DISTINCT pair met twice on one path is a cycle —
+     ///     reported, not chased, because Groovy's own AbstractMap.equals chases
+     ///     it into a JVM StackOverflowError there.
+-    ///   - everything else keeps structural equality, which cannot recurse into
+-    ///     a cycle: only a map ref is mutable enough to close one.
++    ///   - lists and maps both compare through reference cells, with repeated
++    ///     distinct pairs reported rather than chased.
+     let tryEq (a: Value) (b: Value) : Compared =
+         let mutable cycle = false
+ 
+@@ -198,6 +207,104 @@ module Value =
+         let answer = go [] a b
+         if cycle then CycleDetected else Answer answer
+ 
++    /// Cycle-aware structural ordering for collection builtins. This preserves
++    /// the old discriminated-union ordering for acyclic values while ensuring
++    /// no runtime `compare` can follow a script-constructed reference cycle.
++    ///
++    /// Jenkins' top-level alias case (`[a, a].sort()`) returns normally, but two
++    /// distinct wrapper lists which both contain the same cyclic `a` overflow.
++    /// Therefore the identity shortcut belongs only at the comparator entry;
++    /// recursive collection comparison must descend and detect the repeated pair.
++    let tryCompare (a: Value) (b: Value) : Ordered =
++        let mutable cycle = false
++        let mutable unorderable = false
++
++        let rank = function
++            | VNull -> 0
++            | VBool _ -> 1
++            | VInt _ -> 2
++            | VStr _ -> 3
++            | VList _ -> 4
++            | VMap _ -> 5
++            | VClosure _ -> 6
++            | VFunc _ -> 7
++
++        let seenPair (seen: (obj * obj) list) left right =
++            seen
++            |> List.exists (fun (priorLeft, priorRight) ->
++                System.Object.ReferenceEquals(priorLeft, left)
++                && System.Object.ReferenceEquals(priorRight, right))
++
++        let rec compareValues seen left right =
++            let leftRank = rank left
++            let rightRank = rank right
++
++            if leftRank <> rightRank then
++                compare leftRank rightRank
++            else
++                match left, right with
++                | VNull, VNull -> 0
++                | VBool x, VBool y -> compare x y
++                | VInt x, VInt y -> compare x y
++                | VStr x, VStr y -> compare x y
++                | VList xs, VList ys ->
++                    if seenPair seen (box xs) (box ys) then
++                        cycle <- true
++                        0
++                    else
++                        compareLists ((box xs, box ys) :: seen) xs.Value ys.Value
++                | VMap xs, VMap ys ->
++                    if seenPair seen (box xs) (box ys) then
++                        cycle <- true
++                        0
++                    else
++                        compareEntries
++                            ((box xs, box ys) :: seen)
++                            (Map.toList xs.Value)
++                            (Map.toList ys.Value)
++                | VClosure _, VClosure _
++                | VFunc _, VFunc _ ->
++                    unorderable <- true
++                    0
++                | _ -> 0
++
++        and compareLists seen left right =
++            match left, right with
++            | [], [] -> 0
++            | [], _ -> -1
++            | _, [] -> 1
++            | x :: xs, y :: ys ->
++                let first = compareValues seen x y
++                if first <> 0 || cycle || unorderable then first else compareLists seen xs ys
++
++        and compareEntries seen left right =
++            match left, right with
++            | [], [] -> 0
++            | [], _ -> -1
++            | _, [] -> 1
++            | (leftKey, leftValue) :: leftTail, (rightKey, rightValue) :: rightTail ->
++                let keyOrder = compare leftKey rightKey
++
++                if keyOrder <> 0 then
++                    keyOrder
++                else
++                    let valueOrder = compareValues seen leftValue rightValue
++
++                    if valueOrder <> 0 || cycle || unorderable then
++                        valueOrder
++                    else
++                        compareEntries seen leftTail rightTail
++
++        let answer =
++            match a, b with
++            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
++            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
++            | _ -> compareValues [] a b
++
++        if cycle then OrderingCycleDetected
++        elif unorderable then Unorderable
++        else Order answer
++
+     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
+     let isTruthy =
+         function
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index 2e6f929..c3761f7 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -1437,6 +1437,57 @@ let cyclicValues =
+               | other -> failtestf "expected mixed-cycle display fault, got %A" other
+           }
+ 
++          test "sorting cyclic lists follows Jenkins' alias and StackOverflow boundaries without host recursion" {
++              let alias = runS "def a = [null]\na[0] = a\ndef sorted = [a, a].sort()\nreturn sorted.size()"
++              Expect.isNone alias.Fault "a top-level alias compares by identity"
++              Expect.equal alias.Returned (Some(VInt 2L)) "both alias entries remain"
++
++              let distinct =
++                  runS (
++                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
++                      + "try { [a, b].sort() } catch (Throwable e) { return 'caught' }\nreturn 'missed'"
++                  )
++
++              Expect.isNone distinct.Fault "StackOverflowError is catchable by Throwable"
++              Expect.equal distinct.Returned (Some(VStr "caught")) "the cycle becomes a survivable scripted fault"
++
++              let nestedAlias =
++                  runS (
++                      "def a = [null]\na[0] = a\ndef left = [a]\ndef right = [a]\n"
++                      + "try { [left, right].sort() } catch (Error e) { return 'caught' }\nreturn 'missed'"
++                  )
++
++              Expect.isNone nestedAlias.Fault "the nested-alias overflow is catchable by Error"
++              Expect.equal nestedAlias.Returned (Some(VStr "caught")) "identity does not over-short-circuit nested comparison"
++
++              let notException =
++                  runS (
++                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
++                      + "try { [a, b].sort() } catch (Exception e) { return 'wrong' }"
++                  )
++
++              match notException.Fault with
++              | Some CyclicOrderingComparison -> ()
++              | other -> failtestf "Exception incorrectly intercepted StackOverflowError: %A" other
++          }
++
++          test "every collection ordering entry point is host-safe" {
++              let sorted = runS "return [3, 1, 2].sort()"
++              Expect.equal sorted.Returned (Some(VList(ref [ VInt 1L; VInt 2L; VInt 3L ]))) "acyclic sort is unchanged"
++
++              for methodCall in [ "min()"; "max()"; "unique(false)" ] do
++                  let outcome =
++                      runS (
++                          "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
++                          + $"return [a, b].{methodCall}"
++                      )
++
++                  match outcome.Fault with
++                  | Some(Denied _) -> ()
++                  | Some(Unsupported _) -> ()
++                  | other -> failtestf "%s escaped its explicit safe refusal: %A" methodCall other
++          }
++
+           test "same-AST closures from two calls are NOT equal — identity, not structure" {
+               // this exact comparison was a process-killing stack overflow
+               let o = runS "def make() {\n    def r\n    r = { r }\n    return r\n}\ndef a = make()\ndef b = make()\nreturn a == b"
+@@ -1870,6 +1921,49 @@ let fg015ClosureAudit =
+                   "compound evaluates RHS before null arithmetic; postfix has no RHS and neither failed update mutates"
+           }
+ 
++          test "scalar String index updates read and evaluate RHS before the catchable write rejection" {
++              let source =
++                  "def events = []\n"
++                  + "def receiver = { events << 'receiver'; 'ab' }\n"
++                  + "def key = { events << 'index'; 0 }\n"
++                  + "def rhs = { events << 'rhs'; 'X' }\n"
++                  + "try { receiver()[key()] += rhs() } catch (SecurityException e) { events << 'plus-caught' }\n"
++                  + "try { receiver()[key()] -= rhs() } catch (SecurityException e) { events << 'minus-caught' }\n"
++                  + "try { receiver()[key()]++ } catch (SecurityException e) { events << 'inc-caught' }\n"
++                  + "try { receiver()[key()]-- } catch (SecurityException e) { events << 'dec-caught' }\n"
++                  + "try { receiver()[key()] = rhs() } catch (SecurityException e) { events << 'plain-caught' }\n"
++                  + "echo events\n"
++
++              let outcome = runStrict source
++              Expect.isNone outcome.Fault "every sandbox rejection is caught by its measured SecurityException ancestry"
++              Expect.equal
++                  (stepArgs outcome)
++                  [ "echo",
++                    [ "[receiver, index, rhs, plus-caught, receiver, index, rhs, minus-caught, receiver, index, inc-caught, receiver, index, dec-caught, receiver, index, rhs, plain-caught]" ] ]
++                  "receiver/index run once; compound and plain RHS effects precede the write fault"
++          }
++
++          test "scalar index read failures precede RHS while negative String indexes retain their split" {
++              let source =
++                  "def events = []\n"
++                  + "try { 'ab'[9] += (events << 'positive-oob-rhs') } catch (StringIndexOutOfBoundsException e) { events << 'positive-oob-caught' }\n"
++                  + "try { 'ab'[-3] += (events << 'negative-oob-rhs') } catch (ArrayIndexOutOfBoundsException e) { events << 'negative-oob-caught' }\n"
++                  + "try { 'ab'['zero'] += (events << 'string-key-rhs') } catch (SecurityException e) { events << 'string-key-caught' }\n"
++                  + "def integer = 7\ntry { integer[0] += (events << 'integer-rhs') } catch (SecurityException e) { events << 'integer-caught' }\n"
++                  + "def booleanValue = true\ntry { booleanValue[0] += (events << 'boolean-rhs') } catch (SecurityException e) { events << 'boolean-caught' }\n"
++                  + "def nullValue = null\ntry { nullValue[0] += (events << 'null-rhs') } catch (NullPointerException e) { events << 'null-caught' }\n"
++                  + "try { 'ab'[-1] += (events << 'negative-valid-rhs') } catch (SecurityException e) { events << 'negative-valid-caught' }\n"
++                  + "echo events\n"
++
++              let outcome = runStrict source
++              Expect.isNone outcome.Fault "all measured read/write faults are caught"
++              Expect.equal
++                  (stepArgs outcome)
++                  [ "echo",
++                    [ "[positive-oob-caught, negative-oob-caught, string-key-caught, integer-caught, boolean-caught, null-caught, negative-valid-rhs, negative-valid-caught]" ] ]
++                  "only an in-range negative String read reaches its RHS; every failed read suppresses it"
++          }
++
+           test "spread index results support bounded property and safe-property writes" {
+               let source =
+                   "def rows = [[child: [name: 'a', count: 1]], [child: [name: 'b', count: 10]]]\n"

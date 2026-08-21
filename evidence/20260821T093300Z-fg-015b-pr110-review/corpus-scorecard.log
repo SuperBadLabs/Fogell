@@ -1,0 +1,4 @@
+corpus verified: 228/228 files match the pinned manifest
+wrote docs/COMPATIBILITY-LEDGER.tsv and docs/COMPATIBILITY-SCORECARD.md
+corpus: tier1=1 admitted(not a tier)=197 tier3=30 of 228
+cases:  222 proven of 222 expected (separate denominator)

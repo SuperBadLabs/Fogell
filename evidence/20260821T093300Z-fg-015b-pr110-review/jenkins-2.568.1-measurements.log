@@ -1,0 +1,32 @@
+===== fg015b-cycle-ordering-review
+RESULT: success
+| acyclic-sort:ok:[1, 2, 3]
+| self-single-sort:ok:done
+| self-alias-sort:ok:done
+| distinct-self-sort:caught:java.lang.StackOverflowError
+| mixed-alias-sort:ok:done
+| mixed-distinct-sort:caught:java.lang.StackOverflowError
+| nested-alias-sort:caught:java.lang.StackOverflowError
+| nested-distinct-sort:caught:java.lang.StackOverflowError
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods min java.util.Collection. Administrators can decide whether to approve or reject this signature.
+| distinct-self-min:caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods max java.util.Collection. Administrators can decide whether to approve or reject this signature.
+| distinct-self-max:caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| distinct-self-unique:caught:java.lang.StackOverflowError
+===== fg015b-scalar-index-timing-review
+RESULT: success
+| string-plain:[receiver, index, rhs, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-compound-plus:[receiver, index, rhs, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-compound-minus:[receiver, index, rhs, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-postfix-inc:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-postfix-dec:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-oob-compound:[receiver, index, caught:java.lang.StringIndexOutOfBoundsException]
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods getAt java.lang.Object java.lang.String. Administrators can decide whether to approve or reject this signature.
+| string-key-compound:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| integer-plain:[receiver, index, rhs, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| integer-compound:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| boolean-compound:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| null-compound:[receiver, index, caught:java.lang.NullPointerException]
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods getAt java.util.Collection java.lang.String. Administrators can decide whether to approve or reject this signature.
+| list-string-key-compound:[receiver, index, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| map-compound:[receiver, index, rhs]:[slot:3]

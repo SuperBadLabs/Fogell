@@ -1,0 +1,7 @@
+===== fg015b-review-catchability
+RESULT: success
+| cycle-exception:caught-java.lang.StackOverflowError
+| cycle-error:caught-java.lang.StackOverflowError
+| scalar-security:caught-org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| string-oob-index:caught-java.lang.StringIndexOutOfBoundsException
+| string-oob-array:escaped-java.lang.StringIndexOutOfBoundsException

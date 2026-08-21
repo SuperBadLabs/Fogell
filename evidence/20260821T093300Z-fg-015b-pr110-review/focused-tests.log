@@ -1,0 +1,5 @@
+[37m[[37m04:47:37 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m04:47:37 [37mINF[37m] [37mEXPECTO! [36m9[37m tests run in [32m00:00:00.0737563[37m for [36mFogell.Groovy.FG-191 cyclic values and closure identity[37m – [36m9[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m04:47:38 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m04:47:38 [37mINF[37m] [37mEXPECTO! [36m26[37m tests run in [32m00:00:00.0763005[37m for [36mFogell.Groovy.FG-015 six-construct closure audit[37m – [36m26[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m

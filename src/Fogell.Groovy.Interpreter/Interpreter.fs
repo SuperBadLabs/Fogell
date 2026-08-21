@@ -148,6 +148,19 @@ type Fault =
     /// when the requested operator cannot accept null; unlike a too-negative
     /// index, compound assignment has already evaluated its RHS at this point.
     | NullListIndexUpdate of index: int64
+    /// Jenkins' sandbox permits scalar index reads such as String.getAt but
+    /// rejects the eventual putAt, while other scalar getAt shapes are rejected
+    /// before an update RHS. Keep that catchable SecurityException boundary
+    /// separate from a modelling refusal.
+    | RejectedIndexOperation of phase: string
+    /// Positive String indexes beyond the end raise this concrete class. A
+    /// too-negative String index follows Groovy's ArrayIndexOutOfBounds path and
+    /// therefore uses [ListIndexOutOfBounds] instead.
+    | StringIndexOutOfBounds of index: int64 * size: int
+    /// A collection ordering revisited the same pair of reference cells. Jenkins
+    /// raises StackOverflowError; this explicit fault retains its catch ancestry
+    /// without allowing the F# runtime to recurse until the process dies.
+    | CyclicOrderingComparison
 
 type Outcome =
     { Effects: Effect list
@@ -198,6 +211,9 @@ module Interpreter =
 
     let assignmentTargetRefusal =
         "unsupported_assignment_target: Fogell cannot model this assignment target; refusing before the RHS instead of reporting success without a write"
+
+    let collectionOrderingRefusal =
+        "unsupported_collection_ordering: Fogell cannot safely order this value type; refusing instead of invoking the host runtime comparer"
 
     exception private Stop of Fault
     exception private ReturnSignal of Value
@@ -289,6 +305,19 @@ module Interpreter =
             items.Value.[int index]
         else
             VNull
+
+    let private stringIndexRead (value: string) index =
+        let size = value.Length
+
+        if tooNegativeListIndex index size then
+            raise (Stop(ListIndexOutOfBounds(index, size)))
+
+        let normalized = if index < 0L then int64 size + index else index
+
+        if normalized >= int64 size then
+            raise (Stop(StringIndexOutOfBounds(index, size)))
+
+        VStr(string value.[int normalized])
 
     let private listWrite (st: State) (items: Value list ref) index value =
         let size = items.Value.Length
@@ -1206,7 +1235,26 @@ module Interpreter =
         | "join", VList xs, [ VStr d ] -> VStr(xs.Value |> List.map scriptDisplay |> String.concat d)
         | "reverse", VList xs, _ -> VList(ref (List.rev xs.Value))
         | "reverse", VStr s, _ -> VStr(System.String(s.ToCharArray() |> Array.rev))
-        | "sort", VList xs, _ -> VList(ref (List.sortWith compare xs.Value))
+        | "sort", VList xs, _ ->
+            let compareSafely left right =
+                match Value.tryCompare left right with
+                | Value.Order order -> order
+                | Value.OrderingCycleDetected -> raise (Stop CyclicOrderingComparison)
+                | Value.Unorderable -> raise (Stop(Unsupported collectionOrderingRefusal))
+
+            let sorted =
+                try
+                    List.sortWith compareSafely xs.Value
+                with
+                // FSharp.Core delegates to Array.Sort, which wraps comparator
+                // exceptions. Unwrap only Fogell's own typed stop; every other
+                // host exception remains visible instead of being misclassified.
+                | :? System.InvalidOperationException as wrapped ->
+                    match wrapped.InnerException with
+                    | :? Stop as stopped -> raise stopped
+                    | _ -> reraise ()
+
+            VList(ref sorted)
         | "first", VList xs, _ when not xs.Value.IsEmpty -> List.head xs.Value
         | "last", VList xs, _ when not xs.Value.IsEmpty -> List.last xs.Value
         | "keySet", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map (fst >> VStr)))
@@ -1380,7 +1428,8 @@ module Interpreter =
                 // uncatchable, a false refusal the verifier caught by asking what
                 // class the fault was, not whether it fired. Assignment cannot
                 // inherit lax READ semantics: an absent write is never success.
-                | _, _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
+                | _, _, true -> raise (Stop(RejectedIndexOperation "write"))
+                | _, _, false -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
 
             match recvAndKey with
             | recv, key, isIndex -> assignInto recv key isIndex
@@ -1412,8 +1461,12 @@ module Interpreter =
                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
                         | _ -> mr.Value <- Map.add key value mr.Value),
                     None
+                | VStr value, VInt index ->
+                    stringIndexRead value index,
+                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
+                    None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
-                | _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
+                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
 
             let rhsValue = evalExpr st env rhs
 
@@ -1423,6 +1476,8 @@ module Interpreter =
                 with
                 | Stop(Unsupported _) when oldValue = VNull && Option.isSome listIndex ->
                     raise (Stop(NullListIndexUpdate listIndex.Value))
+                | Stop(Unsupported _) when Option.isNone listIndex && (match recv with VStr _ -> true | _ -> false) ->
+                    raise (Stop(RejectedIndexOperation "operator"))
 
             writeBack value
             st.LastValue <- Some value
@@ -1450,13 +1505,22 @@ module Interpreter =
                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
                         | _ -> mr.Value <- Map.add key value mr.Value),
                     None
+                | VStr value, VInt index ->
+                    stringIndexRead value index,
+                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
+                    None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
-                | _, _ -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
+                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
 
             let value =
                 match oldValue, listIndex with
                 | VNull, Some index -> raise (Stop(NullListIndexUpdate index))
-                | _ -> evalBinaryValues st op oldValue (VInt 1L)
+                | _ ->
+                    try
+                        evalBinaryValues st op oldValue (VInt 1L)
+                    with
+                    | Stop(Unsupported _) when (match recv with VStr _ -> true | _ -> false) ->
+                        raise (Stop(RejectedIndexOperation "operator"))
             writeBack value
             st.LastValue <- Some oldValue
             env
@@ -1663,6 +1727,38 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            let catchesRejectedIndexOperation =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "SecurityException"
+                      "RejectedAccessException" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesStringIndexOutOfBounds =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "IndexOutOfBoundsException"
+                      "StringIndexOutOfBoundsException" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesCyclicOrdering =
+                match catch with
+                | Some(None, _, _) -> false
+                | Some(Some t, _, _) ->
+                    [ "Throwable"; "Error"; "VirtualMachineError"; "StackOverflowError" ]
+                    |> List.contains t
+                | None -> false
+
             // Which declared types can intercept a failed shell step. Jenkins
             // surfaces it as hudson.AbortException < IOException < Exception —
             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
@@ -1720,6 +1816,12 @@ module Interpreter =
                         handle (VStr $"java.lang.ArrayIndexOutOfBoundsException: Negative array index [{index}] too large for array size {size}")
                     | Stop(NullListIndexUpdate index) when catchesNullReceiverAssignment ->
                         handle (VStr $"java.lang.NullPointerException: Cannot apply index update to null value at [{index}]")
+                    | Stop(RejectedIndexOperation phase) when catchesRejectedIndexOperation ->
+                        handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
+                    | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
+                        handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
+                    | Stop CyclicOrderingComparison when catchesCyclicOrdering ->
+                        handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
                 with
                 | HostedHaltSignal as halted ->
                     // A hosted failure has already stopped ordinary evaluation, but
@@ -1933,7 +2035,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

@@ -1437,6 +1437,57 @@ let cyclicValues =
               | other -> failtestf "expected mixed-cycle display fault, got %A" other
           }
 
+          test "sorting cyclic lists follows Jenkins' alias and StackOverflow boundaries without host recursion" {
+              let alias = runS "def a = [null]\na[0] = a\ndef sorted = [a, a].sort()\nreturn sorted.size()"
+              Expect.isNone alias.Fault "a top-level alias compares by identity"
+              Expect.equal alias.Returned (Some(VInt 2L)) "both alias entries remain"
+
+              let distinct =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { [a, b].sort() } catch (Throwable e) { return 'caught' }\nreturn 'missed'"
+                  )
+
+              Expect.isNone distinct.Fault "StackOverflowError is catchable by Throwable"
+              Expect.equal distinct.Returned (Some(VStr "caught")) "the cycle becomes a survivable scripted fault"
+
+              let nestedAlias =
+                  runS (
+                      "def a = [null]\na[0] = a\ndef left = [a]\ndef right = [a]\n"
+                      + "try { [left, right].sort() } catch (Error e) { return 'caught' }\nreturn 'missed'"
+                  )
+
+              Expect.isNone nestedAlias.Fault "the nested-alias overflow is catchable by Error"
+              Expect.equal nestedAlias.Returned (Some(VStr "caught")) "identity does not over-short-circuit nested comparison"
+
+              let notException =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { [a, b].sort() } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some CyclicOrderingComparison -> ()
+              | other -> failtestf "Exception incorrectly intercepted StackOverflowError: %A" other
+          }
+
+          test "every collection ordering entry point is host-safe" {
+              let sorted = runS "return [3, 1, 2].sort()"
+              Expect.equal sorted.Returned (Some(VList(ref [ VInt 1L; VInt 2L; VInt 3L ]))) "acyclic sort is unchanged"
+
+              for methodCall in [ "min()"; "max()"; "unique(false)" ] do
+                  let outcome =
+                      runS (
+                          "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                          + $"return [a, b].{methodCall}"
+                      )
+
+                  match outcome.Fault with
+                  | Some(Denied _) -> ()
+                  | Some(Unsupported _) -> ()
+                  | other -> failtestf "%s escaped its explicit safe refusal: %A" methodCall other
+          }
+
           test "same-AST closures from two calls are NOT equal — identity, not structure" {
               // this exact comparison was a process-killing stack overflow
               let o = runS "def make() {\n    def r\n    r = { r }\n    return r\n}\ndef a = make()\ndef b = make()\nreturn a == b"
@@ -1868,6 +1919,49 @@ let fg015ClosureAudit =
                     "echo", [ "[]" ]
                     "echo", [ "[compound-rhs, compound-caught, postfix-caught]" ] ]
                   "compound evaluates RHS before null arithmetic; postfix has no RHS and neither failed update mutates"
+          }
+
+          test "scalar String index updates read and evaluate RHS before the catchable write rejection" {
+              let source =
+                  "def events = []\n"
+                  + "def receiver = { events << 'receiver'; 'ab' }\n"
+                  + "def key = { events << 'index'; 0 }\n"
+                  + "def rhs = { events << 'rhs'; 'X' }\n"
+                  + "try { receiver()[key()] += rhs() } catch (SecurityException e) { events << 'plus-caught' }\n"
+                  + "try { receiver()[key()] -= rhs() } catch (SecurityException e) { events << 'minus-caught' }\n"
+                  + "try { receiver()[key()]++ } catch (SecurityException e) { events << 'inc-caught' }\n"
+                  + "try { receiver()[key()]-- } catch (SecurityException e) { events << 'dec-caught' }\n"
+                  + "try { receiver()[key()] = rhs() } catch (SecurityException e) { events << 'plain-caught' }\n"
+                  + "echo events\n"
+
+              let outcome = runStrict source
+              Expect.isNone outcome.Fault "every sandbox rejection is caught by its measured SecurityException ancestry"
+              Expect.equal
+                  (stepArgs outcome)
+                  [ "echo",
+                    [ "[receiver, index, rhs, plus-caught, receiver, index, rhs, minus-caught, receiver, index, inc-caught, receiver, index, dec-caught, receiver, index, rhs, plain-caught]" ] ]
+                  "receiver/index run once; compound and plain RHS effects precede the write fault"
+          }
+
+          test "scalar index read failures precede RHS while negative String indexes retain their split" {
+              let source =
+                  "def events = []\n"
+                  + "try { 'ab'[9] += (events << 'positive-oob-rhs') } catch (StringIndexOutOfBoundsException e) { events << 'positive-oob-caught' }\n"
+                  + "try { 'ab'[-3] += (events << 'negative-oob-rhs') } catch (ArrayIndexOutOfBoundsException e) { events << 'negative-oob-caught' }\n"
+                  + "try { 'ab'['zero'] += (events << 'string-key-rhs') } catch (SecurityException e) { events << 'string-key-caught' }\n"
+                  + "def integer = 7\ntry { integer[0] += (events << 'integer-rhs') } catch (SecurityException e) { events << 'integer-caught' }\n"
+                  + "def booleanValue = true\ntry { booleanValue[0] += (events << 'boolean-rhs') } catch (SecurityException e) { events << 'boolean-caught' }\n"
+                  + "def nullValue = null\ntry { nullValue[0] += (events << 'null-rhs') } catch (NullPointerException e) { events << 'null-caught' }\n"
+                  + "try { 'ab'[-1] += (events << 'negative-valid-rhs') } catch (SecurityException e) { events << 'negative-valid-caught' }\n"
+                  + "echo events\n"
+
+              let outcome = runStrict source
+              Expect.isNone outcome.Fault "all measured read/write faults are caught"
+              Expect.equal
+                  (stepArgs outcome)
+                  [ "echo",
+                    [ "[positive-oob-caught, negative-oob-caught, string-key-caught, integer-caught, boolean-caught, null-caught, negative-valid-rhs, negative-valid-caught]" ] ]
+                  "only an in-range negative String read reaches its RHS; every failed read suppresses it"
           }
 
           test "spread index results support bounded property and safe-property writes" {

@@ -1,0 +1,4 @@
+===== fg015b-string-negative-index-review
+RESULT: success
+| string-minus-one:[receiver, index, rhs, caught:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException]
+| string-too-negative:[receiver, index, caught:java.lang.ArrayIndexOutOfBoundsException]

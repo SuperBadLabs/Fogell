@@ -69,6 +69,15 @@ module Value =
         | Answer of bool
         | CycleDetected
 
+    /// A total, host-safe answer for the subset of Groovy values which Fogell
+    /// orders. `OrderingCycleDetected` means structural comparison revisited the
+    /// same pair and Jenkins would overflow; `Unorderable` keeps closures and
+    /// functions out of the host runtime's generic comparer.
+    type Ordered =
+        | Order of int
+        | OrderingCycleDetected
+        | Unorderable
+
     type Displayed =
         | Text of string
         | DisplayCycleDetected
@@ -146,8 +155,8 @@ module Value =
     ///     outright, and a DISTINCT pair met twice on one path is a cycle —
     ///     reported, not chased, because Groovy's own AbstractMap.equals chases
     ///     it into a JVM StackOverflowError there.
-    ///   - everything else keeps structural equality, which cannot recurse into
-    ///     a cycle: only a map ref is mutable enough to close one.
+    ///   - lists and maps both compare through reference cells, with repeated
+    ///     distinct pairs reported rather than chased.
     let tryEq (a: Value) (b: Value) : Compared =
         let mutable cycle = false
 
@@ -197,6 +206,104 @@ module Value =
 
         let answer = go [] a b
         if cycle then CycleDetected else Answer answer
+
+    /// Cycle-aware structural ordering for collection builtins. This preserves
+    /// the old discriminated-union ordering for acyclic values while ensuring
+    /// no runtime `compare` can follow a script-constructed reference cycle.
+    ///
+    /// Jenkins' top-level alias case (`[a, a].sort()`) returns normally, but two
+    /// distinct wrapper lists which both contain the same cyclic `a` overflow.
+    /// Therefore the identity shortcut belongs only at the comparator entry;
+    /// recursive collection comparison must descend and detect the repeated pair.
+    let tryCompare (a: Value) (b: Value) : Ordered =
+        let mutable cycle = false
+        let mutable unorderable = false
+
+        let rank = function
+            | VNull -> 0
+            | VBool _ -> 1
+            | VInt _ -> 2
+            | VStr _ -> 3
+            | VList _ -> 4
+            | VMap _ -> 5
+            | VClosure _ -> 6
+            | VFunc _ -> 7
+
+        let seenPair (seen: (obj * obj) list) left right =
+            seen
+            |> List.exists (fun (priorLeft, priorRight) ->
+                System.Object.ReferenceEquals(priorLeft, left)
+                && System.Object.ReferenceEquals(priorRight, right))
+
+        let rec compareValues seen left right =
+            let leftRank = rank left
+            let rightRank = rank right
+
+            if leftRank <> rightRank then
+                compare leftRank rightRank
+            else
+                match left, right with
+                | VNull, VNull -> 0
+                | VBool x, VBool y -> compare x y
+                | VInt x, VInt y -> compare x y
+                | VStr x, VStr y -> compare x y
+                | VList xs, VList ys ->
+                    if seenPair seen (box xs) (box ys) then
+                        cycle <- true
+                        0
+                    else
+                        compareLists ((box xs, box ys) :: seen) xs.Value ys.Value
+                | VMap xs, VMap ys ->
+                    if seenPair seen (box xs) (box ys) then
+                        cycle <- true
+                        0
+                    else
+                        compareEntries
+                            ((box xs, box ys) :: seen)
+                            (Map.toList xs.Value)
+                            (Map.toList ys.Value)
+                | VClosure _, VClosure _
+                | VFunc _, VFunc _ ->
+                    unorderable <- true
+                    0
+                | _ -> 0
+
+        and compareLists seen left right =
+            match left, right with
+            | [], [] -> 0
+            | [], _ -> -1
+            | _, [] -> 1
+            | x :: xs, y :: ys ->
+                let first = compareValues seen x y
+                if first <> 0 || cycle || unorderable then first else compareLists seen xs ys
+
+        and compareEntries seen left right =
+            match left, right with
+            | [], [] -> 0
+            | [], _ -> -1
+            | _, [] -> 1
+            | (leftKey, leftValue) :: leftTail, (rightKey, rightValue) :: rightTail ->
+                let keyOrder = compare leftKey rightKey
+
+                if keyOrder <> 0 then
+                    keyOrder
+                else
+                    let valueOrder = compareValues seen leftValue rightValue
+
+                    if valueOrder <> 0 || cycle || unorderable then
+                        valueOrder
+                    else
+                        compareEntries seen leftTail rightTail
+
+        let answer =
+            match a, b with
+            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
+            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
+            | _ -> compareValues [] a b
+
+        if cycle then OrderingCycleDetected
+        elif unorderable then Unorderable
+        else Order answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =
