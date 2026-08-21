@@ -928,6 +928,94 @@ let hostedSteps =
               Expect.equal outcome.Returned (Some(VInt 7L)) "the replacing return value survives"
           }
 
+          test "a new cleanup refusal stops successors but still runs its nested finally" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name positional _ _ ->
+                            performed.Add(phase, name)
+
+                            match name, positional with
+                            | "stage", _ ->
+                                reachable.Value <- false
+                                VNull
+                            | "sh", [ VStr "refuse" ] -> Interpreter.raiseHostedCallRefused "cleanup refused"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { sh 'refuse'; echo 'inner-successor' } "
+                      + "finally { echo 'nested-cleanup' }; "
+                      + "echo 'outer-successor' }"
+                  )
+
+              Expect.equal outcome.Fault (Some(HostedCallRefused "cleanup refused")) "the newer refusal escapes"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage"
+                    FinallyUnwind, "sh"
+                    FinallyUnwind, "echo" ]
+                  "the nested finally runs under inherited permission; both successors stay suppressed"
+          }
+
+          test "a nested finally return replaces both a cleanup refusal and the inherited halt" {
+              let reachable = ref true
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name positional _ _ ->
+                            match name, positional with
+                            | "stage", _ ->
+                                reachable.Value <- false
+                                VNull
+                            | "sh", [ VStr "refuse" ] -> Interpreter.raiseHostedCallRefused "cleanup refused"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { sh 'refuse'; return 7 } finally { return 9 } }"
+                  )
+
+              Expect.isNone outcome.Fault "the nested finally return replaces both pending halts"
+              Expect.equal outcome.Returned (Some(VInt 9L)) "the innermost replacing return wins"
+          }
+
+          test "a hosted call refusal stays opaque to Groovy catch and explicit at wrapper ownership" {
+              let performed = ResizeArray<string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name positional _ _ ->
+                            performed.Add name
+
+                            if name = "sh" && positional = [ VStr "refuse" ] then
+                                Interpreter.raiseHostedCallRefused "call refused"
+
+                            VNull }
+
+              let outcome = runIt host "try { sh 'refuse' } catch (Exception e) { echo 'caught' }; echo 'after'"
+              Expect.equal outcome.Fault (Some(HostedCallRefused "call refused")) "Groovy catch cannot absorb a model refusal"
+              Expect.equal (List.ofSeq performed) [ "sh" ] "catch and successor effects do not run"
+
+              let caught =
+                  Interpreter.catchHostedHalt (fun () -> Interpreter.raiseHostedCallRefused "wrapper reason")
+
+              Expect.equal
+                  caught
+                  (Some(Interpreter.CallRefusalHalt "wrapper reason"))
+                  "the wrapper receives the precise deferred reason"
+          }
+
           test "a nested argument that halts unwinds before later arguments and the outer step" {
               let reachable = ref true
               let performed = ResizeArray<string>()

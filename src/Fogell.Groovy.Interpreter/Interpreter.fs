@@ -115,6 +115,10 @@ type Fault =
     /// the measured shell and missing-unstash paths carry this fault; every other
     /// failure keeps the old fail-loud path until its own measurement moves it.
     | StepFailed of stepName: string * exceptionText: string * diagnosticText: string
+    /// A malformed hosted call which Jenkins stops before dispatch. This remains
+    /// opaque to Groovy catch clauses, but is deferred until it escapes the
+    /// current control-flow scope so `finally` and retry retain ownership.
+    | HostedCallRefused of detail: string
     | BudgetExhausted of what: string
     /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
     /// throws MissingPropertyException here; the default mode's late-binding null
@@ -159,6 +163,10 @@ type Budget =
           MaxCallDepth = 64 }
 
 module Interpreter =
+    type HostedBodyHalt =
+        | BranchHalt
+        | CallRefusalHalt of detail: string
+
 
     let spreadAssignmentRefusal =
         "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
@@ -1737,19 +1745,32 @@ module Interpreter =
     let raiseStepBindingFailed (stepName: string) (exceptionClass: BindingExceptionClass) (detail: string) : 'a =
         raise (Stop(StepBindingFailed(stepName, exceptionClass, detail)))
 
+    /// A call-shape refusal is not a Groovy-catchable Jenkins exception, but it
+    /// cannot commit failure before surrounding `finally` control flow decides
+    /// whether the refusal escapes. The wrapper/top-level owner converts an
+    /// escaping signal into the same durable refusal as before.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseHostedCallRefused (detail: string) : 'a =
+        raise (Stop(HostedCallRefused detail))
+
     /// A hosted wrapper owns the context it gives its body. When that child
     /// context halts, the interpreter signal must return control to the wrapper
     /// so retry can inspect the attempt and either retry or publish its failure;
     /// letting it escape to runWith skips that bookkeeping and can turn an
-    /// exhausted retry into success. This is deliberately a narrow CATCH-only
-    /// seam: hosts cannot manufacture interpreter control flow.
+    /// exhausted retry into success. It also transfers the one deliberately
+    /// deferred, catch-opaque call-refusal signal: wrappers turn that signal
+    /// into their child's durable halt only after surrounding `finally` control
+    /// flow has allowed it to escape.
     [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
-    let catchHostedHalt (body: unit -> unit) : bool =
+    let catchHostedHalt (body: unit -> unit) : HostedBodyHalt option =
         try
             body ()
-            false
-        with HostedHaltSignal ->
-            true
+            None
+        with
+        | HostedHaltSignal ->
+            Some BranchHalt
+        | Stop(HostedCallRefused detail) ->
+            Some(CallRefusalHalt detail)
 
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a

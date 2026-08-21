@@ -2132,14 +2132,23 @@ module WalkerOrchestration =
                                 // Interpreter.runWith skipped that whole decision and
                                 // could finish the outer script successfully after one
                                 // failed attempt.
-                                let caught = Interpreter.catchHostedHalt thunk
-
-                                // Defensive fail-closed invariant: the signal is only
-                                // raised after CanContinue observed this exact active
-                                // context halted. If those ever disagree, do not swallow
-                                // an interpreter control-flow defect into success.
-                                if caught && not (halted inner) then
-                                    fail "hosted body stopped without its active child context being halted; refusing rather than losing wrapper failure state"
+                                match Interpreter.catchHostedHalt thunk with
+                                | None -> ()
+                                | Some Interpreter.BranchHalt ->
+                                    // Defensive fail-closed invariant: this signal is
+                                    // raised only after CanContinue observed this exact
+                                    // active context halted. If those disagree, do not
+                                    // swallow an interpreter control-flow defect into
+                                    // success.
+                                    if not (halted inner) then
+                                        fail "hosted body stopped without its active child context being halted; refusing rather than losing wrapper failure state"
+                                | Some(Interpreter.CallRefusalHalt why) ->
+                                    // Validation refusals are deferred so a surrounding
+                                    // finally return can replace them. Once one escapes
+                                    // the body, the wrapper owns it exactly like the old
+                                    // eager halt: record the reason on THIS child so retry
+                                    // can recover or publish its final attempt.
+                                    fail why
                             finally
                                 hostAt.Value <- saved
 
@@ -2207,8 +2216,7 @@ module WalkerOrchestration =
 
                                         match WalkerRules.validateHostedCall name rawPositional rawNamed with
                                         | Error(WalkerRules.EngineRefusal why) ->
-                                            fail $"script block: {why}"
-                                            VNull
+                                            Interpreter.raiseHostedCallRefused $"script block: {why}"
                                         | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, why, warnings)) ->
                                             emitCallWarnings warnings
                                             Interpreter.raiseStepBindingFailed name exceptionClass why
@@ -2364,6 +2372,8 @@ module WalkerOrchestration =
                             | Denied d when scriptStepsRefusedWithReason.ContainsKey d.Attempted ->
                                 fail
                                     $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
+                            | HostedCallRefused why ->
+                                fail why
                             | StepFailed(_, _, diagnosticText) ->
                                 // FG-176. The failing step already narrated its own ERROR at
                                 // dispatch; an uncaught escape must fail the build exactly as
