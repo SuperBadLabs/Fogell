@@ -84,6 +84,32 @@ module FogellSide =
 
                 Map.ofList entries
 
+    let rec private scriptBodies (steps: Step list) : string list =
+        steps
+        |> List.collect (fun step ->
+            [ match step.ScriptBody with
+              | Some source -> yield source
+              | None -> ()
+              yield! scriptBodies step.Block ])
+
+    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : bool =
+        let bodies =
+            [ yield! scriptBodies (pipeline.Post |> List.collect snd)
+              for stage in Pipeline.flattenStages pipeline.Stages do
+                  yield! scriptBodies stage.Steps
+                  yield! scriptBodies (stage.Post |> List.collect snd) ]
+
+        let sourceContainsAssignment source =
+            match Fogell.Groovy.Parser.Parser.parse source with
+            | Result.Ok script -> Fogell.Groovy.Ast.containsSpreadAssignment script
+            | Result.Error _ -> false
+
+        let preambleContainsAssignment =
+            not (System.String.IsNullOrWhiteSpace pipeline.Preamble)
+            && sourceContainsAssignment pipeline.Preamble
+
+        preambleContainsAssignment || (bodies |> List.exists sourceContainsAssignment)
+
     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
     /// parsed construct must not become an executable no-op. Jenkins resolves every
     /// Declarative tools selection against the agent, installs/translates it, and wraps
@@ -98,6 +124,8 @@ module FogellSide =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e ->
             Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+        | Result.Ok pipeline when containsUnsupportedSpreadAssignment pipeline ->
+            Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
         | Result.Ok pipeline ->
             let scopes =
                 [ if not (List.isEmpty pipeline.Tools) then

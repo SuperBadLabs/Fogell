@@ -1,0 +1,67 @@
+# FG-015 spread-property assignment boundary
+
+Baseline and reviewed head before this follow-on:
+`6f52d12916568ceb05b8c7d586763050cff7778d`.
+
+Oracle: Jenkins core 2.568.1 in the pinned `jenkins-lab` container. The
+fresh controller and image verification is in `oracle-verification.txt`.
+
+## Direct Jenkins boundary
+
+Seven uncaught minimal probes planted `before-assignment.txt`, performed the
+assignment, then planted a result and `after-assignment.txt`. Jenkins accepted
+every assignment target syntactically, ran the before marker, failed at the
+assignment, and never ran the result/after effects.
+
+A separate caught probe proved the unchanged values while retaining the exact
+runtime classes and post-catch state:
+
+| target | Jenkins 2.568.1 behavior |
+|---|---|
+| list of maps, `rows*.name = 'x'` | catchable `MissingPropertyException` on `java.util.ArrayList.name`; values remain `[a, b]` |
+| list of objects | same catchable ArrayList `MissingPropertyException`; values remain `[a, b]` |
+| null element | same catchable ArrayList `MissingPropertyException`; null-element projection remains `[a, b]` |
+| missing-property element | same catchable ArrayList `MissingPropertyException`; the first map remains `a` |
+| null receiver | catchable `NullPointerException`; receiver remains null |
+| nested `groups*.child*.name = 'x'` | catchable ArrayList `MissingPropertyException`; nested values remain `[a, b]` |
+| safe-after-spread `groups*.child?.name = 'x'` | catchable ArrayList `MissingPropertyException`; projected values remain `[a, b]` |
+
+The caught Jenkins pipeline succeeds and writes `after-caught-assignment.txt`.
+Its sealed receipt is
+`catchability-receipts/catchability.receipt.txt`.
+That receipt's top-level `DIVERGED (3)` compares Jenkins with Fogell; it is not
+the Jenkins build result. Its sealed Jenkins side is `success` and contains all
+seven caught output lines plus the post-catch workspace marker.
+
+## Before and after Fogell
+
+The retained preimplementation receipts show the review defect directly. Five
+shapes are `DIVERGED (3)`: Jenkins fails after only the before marker while
+Fogell succeeds and performs the result/after effects. `DIVERGED (3)` means
+three compared difference dimensions (result, output, workspace), not three
+durable runs. The object and missing-element probes happened to fail on both
+engines for unrelated earlier evaluation/parser reasons and do not close the
+silent-fallback class.
+
+Spread-property assignment is a write boundary, not the read-only projection
+slice implemented by FG-015. Fogell now refuses every assignment target whose
+tree contains `ESpreadProp` during public execution preflight, before workspace
+preparation or any stage/post/RHS effect, with the stable reason
+`unsupported_spread_assignment`. A defensive interpreter guard prevents direct
+consumers from reaching the former target-plus-RHS/no-write fallback.
+
+The post-fix receipts are deliberately `NOT COMPARABLE`: Jenkins raises a
+catchable runtime exception after earlier effects, whereas Fogell makes a
+conservative named preflight refusal before all effects. Catchability parity is
+not claimed. Implementing the two measured exception classes and precise
+runtime timing remains separate work; silent success is closed here.
+
+Coverage includes plain `=`, compound assignment, increment/decrement, and
+spread nested below property, safe-property, and index target wrappers, plus
+closures, preamble helpers, nested stages, nested step blocks, stage post, and
+pipeline post. Spread reads and ordinary assignments remain admitted. FG-015b
+list index-assignment semantics, spread method calls, and broader collection
+coercion remain out of scope.
+
+The [final gate bundle](../20260820T185232Z-fg-015-spread-assignment) binds the
+exact incremental candidate to its base, tree, corpus, build, and test results.

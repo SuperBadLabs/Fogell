@@ -132,6 +132,9 @@ type Budget =
 
 module Interpreter =
 
+    let spreadAssignmentRefusal =
+        "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
+
     exception private Stop of Fault
     exception private ReturnSignal of Value
     exception private BreakSignal
@@ -1138,6 +1141,13 @@ module Interpreter =
 
                 st.Binding <- Map.add n value st.Binding
                 env
+        | SAssign(target, _) when Ast.containsSpreadProperty target ->
+            // The generic fallback used to evaluate this target, evaluate the RHS,
+            // and silently perform no write. Jenkins instead throws without mutating.
+            // The public execution seam rejects the whole pipeline before workspace
+            // preparation; this guard keeps direct interpreter consumers from ever
+            // recovering the old RHS-only success.
+            raise (Stop(Unsupported spreadAssignmentRefusal))
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse

@@ -42,3 +42,9 @@ interpreter's collection-iteration budget.
 This closes FG-015's recovered spread-property construct. It does not claim
 spread method calls or broader collection coercion. FG-015b remains separate:
 `xs[index] = value` is mutation and shares no implementation root with this read.
+
+Spread-property assignment is also a separate write boundary. The
+[assignment follow-on](../20260820T235737Z-fg-015-spread-assignment) measures
+Jenkins' catchable runtime exceptions and unchanged values. Fogell deliberately
+refuses that syntax during execution preflight before effects; runtime timing
+and catchability parity are documented limitations, not projection claims.

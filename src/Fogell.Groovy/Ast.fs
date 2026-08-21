@@ -128,6 +128,126 @@ module Ast =
               | SContinue
               | SThrow _ -> 0)
 
+    /// True when an assignment target contains spread-property syntax anywhere
+    /// in its receiver/index tree. Jenkins 2.568.1 accepts these targets but then
+    /// tries to write the named property on the projected ArrayList (or on null),
+    /// raising a catchable runtime exception without mutating the elements.
+    /// Fogell does not model that write boundary yet, so both the execution
+    /// preflight and the interpreter's defensive fallback use this one traversal.
+    let rec containsSpreadProperty (expr: Expr) : bool =
+        match expr with
+        | ESpreadProp _ -> true
+        | EProp(target, _)
+        | ESafeProp(target, _)
+        | EUnary(_, target) -> containsSpreadProperty target
+        | EIndex(target, index) -> containsSpreadProperty target || containsSpreadProperty index
+        | EBinary(_, left, right)
+        | EElvis(left, right) -> containsSpreadProperty left || containsSpreadProperty right
+        | ETernary(cond, ifTrue, ifFalse) ->
+            containsSpreadProperty cond
+            || containsSpreadProperty ifTrue
+            || containsSpreadProperty ifFalse
+        | EGString parts ->
+            parts
+            |> List.exists (function
+                | GLit _ -> false
+                | GExpr value -> containsSpreadProperty value)
+        | EList values -> values |> List.exists containsSpreadProperty
+        | EMap entries -> entries |> List.exists (snd >> containsSpreadProperty)
+        | ECall(target, args, trailing) ->
+            let receiverHasSpread =
+                match target with
+                | FreeCall _ -> false
+                | MethodCall(receiver, _)
+                | SafeMethodCall(receiver, _) -> containsSpreadProperty receiver
+
+            receiverHasSpread
+            || (args
+                |> List.exists (function
+                    | APos value -> containsSpreadProperty value
+                    | ANamed(_, value) -> containsSpreadProperty value))
+            || (trailing
+                |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
+        | EClosure closure -> containsSpreadAssignment closure.Body
+        | ENull
+        | EBool _
+        | EInt _
+        | EStr _
+        | EVar _ -> false
+
+    and containsSpreadAssignment (stmts: Stmt list) : bool =
+        let rec expressionHasNestedAssignment expr =
+            match expr with
+            | EClosure closure -> containsSpreadAssignment closure.Body
+            | EGString parts ->
+                parts
+                |> List.exists (function
+                    | GLit _ -> false
+                    | GExpr value -> expressionHasNestedAssignment value)
+            | EList values -> values |> List.exists expressionHasNestedAssignment
+            | EMap entries -> entries |> List.exists (snd >> expressionHasNestedAssignment)
+            | EProp(target, _)
+            | ESpreadProp(target, _)
+            | ESafeProp(target, _)
+            | EUnary(_, target) -> expressionHasNestedAssignment target
+            | EIndex(target, index)
+            | EBinary(_, target, index)
+            | EElvis(target, index) ->
+                expressionHasNestedAssignment target || expressionHasNestedAssignment index
+            | ETernary(cond, yes, no) ->
+                expressionHasNestedAssignment cond
+                || expressionHasNestedAssignment yes
+                || expressionHasNestedAssignment no
+            | ECall(target, args, trailing) ->
+                let receiverHasAssignment =
+                    match target with
+                    | FreeCall _ -> false
+                    | MethodCall(receiver, _)
+                    | SafeMethodCall(receiver, _) -> expressionHasNestedAssignment receiver
+
+                receiverHasAssignment
+                || (args
+                    |> List.exists (function
+                        | APos value -> expressionHasNestedAssignment value
+                        | ANamed(_, value) -> expressionHasNestedAssignment value))
+                || (trailing |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EVar _ -> false
+
+        stmts
+        |> List.exists (function
+            | SAssign(target, value) ->
+                containsSpreadProperty target
+                || expressionHasNestedAssignment target
+                || expressionHasNestedAssignment value
+            | SExpr expr -> expressionHasNestedAssignment expr
+            | SDef(_, value)
+            | SReturn value -> value |> Option.exists expressionHasNestedAssignment
+            | SIf(cond, yes, no) ->
+                expressionHasNestedAssignment cond
+                || containsSpreadAssignment yes
+                || containsSpreadAssignment no
+            | SForIn(_, source, body)
+            | SWhile(source, body) ->
+                expressionHasNestedAssignment source || containsSpreadAssignment body
+            | SSwitch(subject, arms) ->
+                expressionHasNestedAssignment subject
+                || (arms
+                    |> List.exists (fun (case, body) ->
+                        (case |> Option.exists expressionHasNestedAssignment)
+                        || containsSpreadAssignment body))
+            | SThrow expr -> expressionHasNestedAssignment expr
+            | STry(body, catch, finallyBlock) ->
+                containsSpreadAssignment body
+                || (catch |> Option.exists (fun (_, _, handler) -> containsSpreadAssignment handler))
+                || containsSpreadAssignment finallyBlock
+            | SFunc(_, _, body) -> containsSpreadAssignment body
+            | SBreak
+            | SContinue -> false)
+
     /// Names called as bare functions — the step vocabulary a script needs.
     let rec freeCalls (stmts: Stmt list) : Set<string> =
         let rec ofExpr e =

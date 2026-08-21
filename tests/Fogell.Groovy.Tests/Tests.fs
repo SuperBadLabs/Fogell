@@ -77,6 +77,31 @@ let grammar =
                   SDef("safe", Some(ESafeProp(EVar "rows", "child"))) ] -> ()
               | other -> failtestf "property operators collapsed in the AST: %A" other
           }
+          test "every assignment-like spread target stays visible to the refusal scanner" {
+              let source =
+                  "rows*.name = 'x'\n"
+                  + "rows*.name += 'x'\n"
+                  + "rows*.name++\n"
+                  + "rows*.name--\n"
+                  + "rows*.child.name = 'x'\n"
+                  + "rows*.child?.name = 'x'\n"
+                  + "rows*.child[0] = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(ESpreadProp(EVar "rows", "name"), _)
+                  SAssign(EProp(ESpreadProp(EVar "rows", "child"), "name"), _)
+                  SAssign(ESafeProp(ESpreadProp(EVar "rows", "child"), "name"), _)
+                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _) ] as script ->
+                  Expect.isTrue (Ast.containsSpreadAssignment script) "all target wrappers are detected"
+              | other -> failtestf "assignment target lost its spread node: %A" other
+
+              Expect.isFalse
+                  (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
+                  "ordinary assignment remains outside the refusal"
+          }
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
           test "a duplicate named argument is refused, parenthesised" {
@@ -1151,7 +1176,26 @@ let fg015ClosureAudit =
               match o.Fault with
               | Some(BudgetExhausted message) -> Expect.stringContains message "spread projection" "names the bound"
               | other -> failtestf "expected bounded spread refusal, got %A" other
-          } ]
+          }
+
+
+          test "spread assignment refuses before its RHS and is not claimed catchable" {
+              let source =
+                  "def rows = [[name: 'a'], [name: 'b']]\n"
+                  + "try { rows*.name = sh 'touch rhs.txt' } "
+                  + "catch (Throwable e) { echo 'caught' }\n"
+                  + "echo 'after'\n"
+
+              let o = runStrict source
+
+              match o.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.spreadAssignmentRefusal "stable named boundary"
+              | other -> failtestf "expected the defensive spread-assignment refusal, got %A" other
+
+              Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
+          }
+          ]
 
 [<EntryPoint>]
 let main argv =

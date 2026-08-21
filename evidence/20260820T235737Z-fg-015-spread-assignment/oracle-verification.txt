@@ -1,0 +1,6 @@
+verified-at-utc	2026-08-21T00:17:50Z
+x-jenkins	2.568.1
+jenkins-core	2.568.1
+controller-image-name	localhost/jenkins-rich:local
+controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
+controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332

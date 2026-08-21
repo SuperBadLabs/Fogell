@@ -1,0 +1,2223 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 19ac912..8216dce 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -509,7 +509,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
+ | FG-012 | P0 | **DONE** | Dispatch: declarative vs scripted, stricter than Forge's bare regex | `looksDeclarative` strips comments and string literals before matching. Tests prove `pipeline {` inside a line comment, a block comment, and a string literal all dispatch scripted |
+ | FG-013 | P0 | **DONE** | `Fogell.Groovy.Interpreter` — bounded, capability-limited evaluation (`adr/0002`) | Sandbox is **structural**: the `Value` type has no case wrapping a host object, so there is nothing to reflect over. Deny-by-default on every call; steps become *requested effects*, never direct actions. Budgets stop infinite loops, huge ranges, unbounded recursion, and catastrophic regex. 30 tests. **The tests found a real hole**: `new File(...)` parsed as a variable and slipped past the gate — constructors now route through `admitCall` |
+ | FG-014 | P1 | **PARTIAL** | Rebaseline the 14 historical Forge rejections against current Fogell via **minimal repros** and parser instrumentation, never the reported error position. Baseline: 183 admitted and 44 tier 3. Slice 1 retains command-form Declarative tools entries at pipeline and stage scope, moving six files. Slice 2 accepts one quoted display label on `stages`, `steps` and `post`, moving exactly `maajor`, `metersphere` and `rosineygp` | Current state: parse-only `admitted=192`, `tier3=35`; slice 2 changes only those three verdicts and preserves each structural section body. Broader section arguments remain refused. Non-empty tools still FAIL CLOSED before workspace preparation/effects; full configured-tool runtime remains separate. Seven historical rows remain independently diagnosed: HariSekhon closure/chained-call named values, jjasghar trailing `parallel` comma, maxyermayank map-valued named step arg, mjah inline Kubernetes agent, MrRameshRajendran GString property, SumitKr88 list-valued `choice`, and Jenkins-invalid yashpimple. FG-015 remains separate. The old `>=205` target was impossible because 183 + 12 = 195 |
+-| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment | ten focused FG-015 semantic tests plus exact parser-shape pins; seven tier-1 receipts across the six constructs, including the promoted original spread failure and the bounded adjacent matrix; exact result/output/workspace parity; corpus verdicts unchanged |
++| FG-015 | P1 | **DONE** | The independent [six-construct closure audit](../evidence/20260819T053832Z-fg-015-closure-audit) found five constructs already closed. The [spread-dot follow-on](../evidence/20260820T230832Z-fg-015-spread-dot) directly measured Jenkins 2.568.1 before implementation and closes the sixth: `*.` is preserved as distinct `ESpreadProp`; lists project in order, omit null receivers, retain null property values, and stay iteration-bounded; null and non-list receivers match the measured ordinary boundary; missing properties remain catchable; and `*.child?.name` retains projection. Ordinary `EProp` is unchanged. FG-015b remains separate; this does not absorb list index assignment. The [assignment follow-on](../evidence/20260820T235737Z-fg-015-spread-assignment) records the distinct write boundary: Jenkins raises catchable runtime exceptions without mutation; Fogell now makes a stable `unsupported_spread_assignment` preflight refusal before workspace or effects. Runtime timing and catchability parity are explicitly not claimed | eleven focused FG-015 semantic/refusal tests, two exact AST-shape pins, and five differential preflight tests; seven tier-1 receipts across the six read constructs, including the promoted original spread failure and bounded adjacent matrix; assignment probes sealed with post-fix `NOT COMPARABLE` receipts because the conservative refusal is earlier than Jenkins' runtime exception; corpus verdicts unchanged |
+ | FG-016 | P1 | **PARTIAL** | Error reporting: named code + line/column for every rejection | Codes and positions are carried on every `AdmissionError` and asserted in tests. Source *excerpt* rendering still outstanding — retitled FG-016b |
+ | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
+ | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
+diff --git a/evidence/20260820T230832Z-fg-015-spread-dot/README.md b/evidence/20260820T230832Z-fg-015-spread-dot/README.md
+index 4b3a001..44cb58e 100644
+--- a/evidence/20260820T230832Z-fg-015-spread-dot/README.md
++++ b/evidence/20260820T230832Z-fg-015-spread-dot/README.md
+@@ -42,3 +42,9 @@ interpreter's collection-iteration budget.
+ This closes FG-015's recovered spread-property construct. It does not claim
+ spread method calls or broader collection coercion. FG-015b remains separate:
+ `xs[index] = value` is mutation and shares no implementation root with this read.
++
++Spread-property assignment is also a separate write boundary. The
++[assignment follow-on](../20260820T235737Z-fg-015-spread-assignment) measures
++Jenkins' catchable runtime exceptions and unchanged values. Fogell deliberately
++refuses that syntax during execution preflight before effects; runtime timing
++and catchability parity are documented limitations, not projection claims.
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/README.md b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+new file mode 100644
+index 0000000..efb33dd
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+@@ -0,0 +1,67 @@
++# FG-015 spread-property assignment boundary
++
++Baseline and reviewed head before this follow-on:
++`6f52d12916568ceb05b8c7d586763050cff7778d`.
++
++Oracle: Jenkins core 2.568.1 in the pinned `jenkins-lab` container. The
++fresh controller and image verification is in `oracle-verification.txt`.
++
++## Direct Jenkins boundary
++
++Seven uncaught minimal probes planted `before-assignment.txt`, performed the
++assignment, then planted a result and `after-assignment.txt`. Jenkins accepted
++every assignment target syntactically, ran the before marker, failed at the
++assignment, and never ran the result/after effects.
++
++A separate caught probe proved the unchanged values while retaining the exact
++runtime classes and post-catch state:
++
++| target | Jenkins 2.568.1 behavior |
++|---|---|
++| list of maps, `rows*.name = 'x'` | catchable `MissingPropertyException` on `java.util.ArrayList.name`; values remain `[a, b]` |
++| list of objects | same catchable ArrayList `MissingPropertyException`; values remain `[a, b]` |
++| null element | same catchable ArrayList `MissingPropertyException`; null-element projection remains `[a, b]` |
++| missing-property element | same catchable ArrayList `MissingPropertyException`; the first map remains `a` |
++| null receiver | catchable `NullPointerException`; receiver remains null |
++| nested `groups*.child*.name = 'x'` | catchable ArrayList `MissingPropertyException`; nested values remain `[a, b]` |
++| safe-after-spread `groups*.child?.name = 'x'` | catchable ArrayList `MissingPropertyException`; projected values remain `[a, b]` |
++
++The caught Jenkins pipeline succeeds and writes `after-caught-assignment.txt`.
++Its sealed receipt is
++`catchability-receipts/catchability.receipt.txt`.
++That receipt's top-level `DIVERGED (3)` compares Jenkins with Fogell; it is not
++the Jenkins build result. Its sealed Jenkins side is `success` and contains all
++seven caught output lines plus the post-catch workspace marker.
++
++## Before and after Fogell
++
++The retained preimplementation receipts show the review defect directly. Five
++shapes are `DIVERGED (3)`: Jenkins fails after only the before marker while
++Fogell succeeds and performs the result/after effects. `DIVERGED (3)` means
++three compared difference dimensions (result, output, workspace), not three
++durable runs. The object and missing-element probes happened to fail on both
++engines for unrelated earlier evaluation/parser reasons and do not close the
++silent-fallback class.
++
++Spread-property assignment is a write boundary, not the read-only projection
++slice implemented by FG-015. Fogell now refuses every assignment target whose
++tree contains `ESpreadProp` during public execution preflight, before workspace
++preparation or any stage/post/RHS effect, with the stable reason
++`unsupported_spread_assignment`. A defensive interpreter guard prevents direct
++consumers from reaching the former target-plus-RHS/no-write fallback.
++
++The post-fix receipts are deliberately `NOT COMPARABLE`: Jenkins raises a
++catchable runtime exception after earlier effects, whereas Fogell makes a
++conservative named preflight refusal before all effects. Catchability parity is
++not claimed. Implementing the two measured exception classes and precise
++runtime timing remains separate work; silent success is closed here.
++
++Coverage includes plain `=`, compound assignment, increment/decrement, and
++spread nested below property, safe-property, and index target wrappers, plus
++closures, preamble helpers, nested stages, nested step blocks, stage post, and
++pipeline post. Spread reads and ordinary assignments remain admitted. FG-015b
++list index-assignment semantics, spread method calls, and broader collection
++coercion remain out of scope.
++
++The [final gate bundle](../20260820T185232Z-fg-015-spread-assignment) binds the
++exact incremental candidate to its base, tree, corpus, build, and test results.
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/catchability-receipts/catchability.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/catchability-receipts/catchability.receipt.txt
+new file mode 100644
+index 0000000..77468e6
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/catchability-receipts/catchability.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — catchability.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         2798c42ec3f8742cc4a9532241fe287e1caa7be37a43f740ffe3dc3688cff018
++case-digest:  6e0fce04ababe707c4a1992471e9f08ea2375861021d938c112fe7572b4e346c
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=success fogell=failure
++  - output line 0: jenkins=list:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b] fogell=<absent>
++  - workspace hash: jenkins=b31d3c911cbe fogell=e3b0c44298fc
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         success
++  workspace-hash: b31d3c911cbe36ae245bd6ac8033af90cad329cc35ff19a20d144616fd0db4cd
++  output (8 lines):
++    | list:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b]
++    | object:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b]
++    | null-element:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b]
++    | missing:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:a
++    | null-receiver:java.lang.NullPointerException: Cannot set property 'name' on null object:null
++    | nested:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b]
++    | safe:groovy.lang.MissingPropertyException: No such field found: field java.util.ArrayList name:[a, b]
++    | + touch after-caught-assignment.txt
++  workspace:
++    e3b0c44298fc  after-caught-assignment.txt
++
++## Fogell
++  result:         failure
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (0 lines):
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/catchability.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/catchability.Jenkinsfile
+new file mode 100644
+index 0000000..4f0f438
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/catchability.Jenkinsfile
+@@ -0,0 +1,75 @@
++class FG015CatchBox implements Serializable {
++    String name
++}
++
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                script {
++                    def results = []
++
++                    def listRows = [[name: 'a'], [name: 'b']]
++                    try {
++                        listRows*.name = 'x'
++                        results << "list:assigned:${listRows*.name}"
++                    } catch (Throwable e) {
++                        results << "list:${e.toString()}:${listRows*.name}"
++                    }
++
++                    def boxes = [new FG015CatchBox(name: 'a'), new FG015CatchBox(name: 'b')]
++                    try {
++                        boxes*.name = 'x'
++                        results << "object:assigned:${boxes*.name}"
++                    } catch (Throwable e) {
++                        results << "object:${e.toString()}:${boxes*.name}"
++                    }
++
++                    def nullRows = [[name: 'a'], null, [name: 'b']]
++                    try {
++                        nullRows*.name = 'x'
++                        results << "null-element:assigned:${nullRows*.name}"
++                    } catch (Throwable e) {
++                        results << "null-element:${e.toString()}:${nullRows*.name}"
++                    }
++
++                    def missingRows = [[name: 'a'], 42]
++                    try {
++                        missingRows*.name = 'x'
++                        results << "missing:assigned:${missingRows[0].name}"
++                    } catch (Throwable e) {
++                        results << "missing:${e.toString()}:${missingRows[0].name}"
++                    }
++
++                    def absent = null
++                    try {
++                        absent*.name = 'x'
++                        results << "null-receiver:assigned:${absent}"
++                    } catch (Throwable e) {
++                        results << "null-receiver:${e.toString()}:${absent}"
++                    }
++
++                    def nestedRows = [[child: [name: 'a']], [child: [name: 'b']]]
++                    try {
++                        nestedRows*.child*.name = 'x'
++                        results << "nested:assigned:${nestedRows*.child*.name}"
++                    } catch (Throwable e) {
++                        results << "nested:${e.toString()}:${nestedRows*.child*.name}"
++                    }
++
++                    def safeRows = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]
++                    try {
++                        safeRows*.child?.name = 'x'
++                        results << "safe:assigned:${safeRows*.child*.name}"
++                    } catch (Throwable e) {
++                        results << "safe:${e.toString()}:${safeRows*.child*.name}"
++                    }
++
++                    echo results.join('\n')
++                    sh 'touch after-caught-assignment.txt'
++                }
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/list-map.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/list-map.Jenkinsfile
+new file mode 100644
+index 0000000..168fe68
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/list-map.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def rows = [[name: 'a'], [name: 'b']]
++                    rows*.name = 'x'
++                    sh "printf '%s' '${rows*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/list-object.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/list-object.Jenkinsfile
+new file mode 100644
+index 0000000..4055d11
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/list-object.Jenkinsfile
+@@ -0,0 +1,20 @@
++class FG015Box implements Serializable {
++    String name
++}
++
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def boxes = [new FG015Box(name: 'a'), new FG015Box(name: 'b')]
++                    boxes*.name = 'x'
++                    sh "printf '%s' '${boxes*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/missing-property.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/missing-property.Jenkinsfile
+new file mode 100644
+index 0000000..8b90bbf
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/missing-property.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def rows = [[name: 'a'], 42]
++                    rows*.name = 'x'
++                    sh "printf '%s' '${rows*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/nested.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/nested.Jenkinsfile
+new file mode 100644
+index 0000000..fc99dcf
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/nested.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def groups = [[child: [name: 'a']], [child: [name: 'b']]]
++                    groups*.child*.name = 'x'
++                    sh "printf '%s' '${groups*.child*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/null-element.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/null-element.Jenkinsfile
+new file mode 100644
+index 0000000..11811d1
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/null-element.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def rows = [[name: 'a'], null, [name: 'b']]
++                    rows*.name = 'x'
++                    sh "printf '%s' '${rows*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/null-receiver.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/null-receiver.Jenkinsfile
+new file mode 100644
+index 0000000..6277e57
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/null-receiver.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def rows = null
++                    rows*.name = 'x'
++                    sh "printf '%s' '${rows}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/oracle-verification.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/oracle-verification.txt
+new file mode 100644
+index 0000000..489f455
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/oracle-verification.txt
+@@ -0,0 +1,6 @@
++verified-at-utc	2026-08-21T00:17:50Z
++x-jenkins	2.568.1
++jenkins-core	2.568.1
++controller-image-name	localhost/jenkins-rich:local
++controller-image-id	7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
++controller-image-digest	sha256:8f97ec730facd02d740132bcc494b4bdecef90030ee55b9095b3fd253f1db332
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-map.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-map.receipt.txt
+new file mode 100644
+index 0000000..7862520
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-map.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — list-map.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         5eb3f354cea3c2b1adf45a8497faa2b404b1a836eb7976b420958202a58db2ab
++case-digest:  cac5587a70e5b132d71c77607749c4253961f1ebc254c5dcc2d45bcce1e0dad2
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-object.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-object.receipt.txt
+new file mode 100644
+index 0000000..d54a7fb
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/list-object.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — list-object.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         20f29d07541796873b9c09ad1d964b5f36494e2f81cc3f1cff0afc49c21f0123
++case-digest:  ee4f8aa908a5164338a27a0755d4fcc4bb268754c60b4b9d1f7128f0e7aed75b
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/missing-property.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/missing-property.receipt.txt
+new file mode 100644
+index 0000000..2a2a217
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/missing-property.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — missing-property.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         b7b9515a7fcac9bfe73790199376d9a462a53dadf29f94ba48de62317e33391c
++case-digest:  a4b8253f50de3934d0e2c6ea42a100c950a145a69e1bb2247e1e853c5e8043b9
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/nested.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/nested.receipt.txt
+new file mode 100644
+index 0000000..2022ce0
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/nested.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — nested.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         abf2cfacd0c57e26a69d6e89d7046635fda4e331ac462d7fa049645b5e9ce4bf
++case-digest:  6d752eaf0aeec48bccb5e8c003dbb68d01f4c7ebff50f8977e58a56a75f40753
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-element.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-element.receipt.txt
+new file mode 100644
+index 0000000..a0734aa
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-element.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — null-element.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         3ee4a1be8874267bd3d7550c18d818c4d48112055ca88613bcef67381267dbd0
++case-digest:  efa91e69ccae622f0bfecda7063316610104b5904fd7fce73a8da88417ab7970
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-receiver.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-receiver.receipt.txt
+new file mode 100644
+index 0000000..bd3b235
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/null-receiver.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — null-receiver.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         4706231a1d149cb48eab7cd6df99e7bffa3efccad37df8c49a07fcef742a78b4
++case-digest:  a2a0cef212e9ee5b55c2e2e60589c29678ab95816908a3a349eacc11b8c8c70e
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/safe-after-spread.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/safe-after-spread.receipt.txt
+new file mode 100644
+index 0000000..4b657db
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/postfix-receipts/safe-after-spread.receipt.txt
+@@ -0,0 +1,84 @@
++# Differential receipt — safe-after-spread.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         73d11dee2d039b2f388d5d22a4a86bce6bd39dcdf3738c8e86eae0664ca38d5c
++case-digest:  000028e0c787e9d42c708885784ad64bbaf997577a38b550e222d932af5a4709
++sealed-output: sequence
++
++VERDICT: NOT COMPARABLE
++  - fogell side failed: unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  (did not run)
++
++## Fogell
++  (did not run)
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-map.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-map.receipt.txt
+new file mode 100644
+index 0000000..f43386d
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-map.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — list-map.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         7593bdb8175220e879793dbcc9955d79b9bd94bd05f391e9db98e00579b97ca0
++case-digest:  cac5587a70e5b132d71c77607749c4253961f1ebc254c5dcc2d45bcce1e0dad2
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 1: jenkins=<absent> fogell=+ printf %s [a, b]
++  - workspace hash: jenkins=b925983d9c95 fogell=eaf5f2821991
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         success
++  workspace-hash: eaf5f2821991b67b6cce5e0449e5f4d160a6e4ee6e065ba4cc292e7bf952b5c7
++  output (3 lines):
++    | + touch before-assignment.txt
++    | + printf %s [a, b]
++    | + touch after-assignment.txt
++  workspace:
++    e3b0c44298fc  after-assignment.txt
++    5af6c271183b  assignment-result.txt
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-object.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-object.receipt.txt
+new file mode 100644
+index 0000000..41fa616
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/list-object.receipt.txt
+@@ -0,0 +1,93 @@
++# Differential receipt — list-object.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         d5f0afd87dd726ac8286b4171b245502a48162356865c028f65e0747fb0be604
++case-digest:  ee4f8aa908a5164338a27a0755d4fcc4bb268754c60b4b9d1f7128f0e7aed75b
++sealed-output: sequence
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/missing-property.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/missing-property.receipt.txt
+new file mode 100644
+index 0000000..2be01a7
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/missing-property.receipt.txt
+@@ -0,0 +1,93 @@
++# Differential receipt — missing-property.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         6b36e92c9c0d0e038c62d5faca71893531afb1a63a7ceed02a0f813ace758caf
++case-digest:  a4b8253f50de3934d0e2c6ea42a100c950a145a69e1bb2247e1e853c5e8043b9
++sealed-output: sequence
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/nested.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/nested.receipt.txt
+new file mode 100644
+index 0000000..95b3c2e
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/nested.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — nested.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         b6e2250528d7972553afc012b94d4eadc2956abc7ec606f9a063fffd05e57ca5
++case-digest:  6d752eaf0aeec48bccb5e8c003dbb68d01f4c7ebff50f8977e58a56a75f40753
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 1: jenkins=<absent> fogell=+ printf %s [a, b]
++  - workspace hash: jenkins=b925983d9c95 fogell=eaf5f2821991
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         success
++  workspace-hash: eaf5f2821991b67b6cce5e0449e5f4d160a6e4ee6e065ba4cc292e7bf952b5c7
++  output (3 lines):
++    | + touch before-assignment.txt
++    | + printf %s [a, b]
++    | + touch after-assignment.txt
++  workspace:
++    e3b0c44298fc  after-assignment.txt
++    5af6c271183b  assignment-result.txt
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-element.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-element.receipt.txt
+new file mode 100644
+index 0000000..10f33f0
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-element.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — null-element.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         ca89189a0af78a511f1cbf71f4f5deab14d0cacf2f81d30c67c7887123c63834
++case-digest:  efa91e69ccae622f0bfecda7063316610104b5904fd7fce73a8da88417ab7970
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 1: jenkins=<absent> fogell=+ printf %s [a, b]
++  - workspace hash: jenkins=b925983d9c95 fogell=eaf5f2821991
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         success
++  workspace-hash: eaf5f2821991b67b6cce5e0449e5f4d160a6e4ee6e065ba4cc292e7bf952b5c7
++  output (3 lines):
++    | + touch before-assignment.txt
++    | + printf %s [a, b]
++    | + touch after-assignment.txt
++  workspace:
++    e3b0c44298fc  after-assignment.txt
++    5af6c271183b  assignment-result.txt
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-receiver.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-receiver.receipt.txt
+new file mode 100644
+index 0000000..31c0645
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/null-receiver.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — null-receiver.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         45e25ea45208c1860fa025789f5b869952104aa69bdf854692915513ff4fd090
++case-digest:  a2a0cef212e9ee5b55c2e2e60589c29678ab95816908a3a349eacc11b8c8c70e
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 1: jenkins=<absent> fogell=+ printf %s null
++  - workspace hash: jenkins=b925983d9c95 fogell=d411d3b75931
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         success
++  workspace-hash: d411d3b75931611ce266455cceeb37348911f0906bf64c9140c40073a4661e16
++  output (3 lines):
++    | + touch before-assignment.txt
++    | + printf %s null
++    | + touch after-assignment.txt
++  workspace:
++    e3b0c44298fc  after-assignment.txt
++    74234e98afe7  assignment-result.txt
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/safe-after-spread.receipt.txt b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/safe-after-spread.receipt.txt
+new file mode 100644
+index 0000000..4a6f889
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/preimplementation-receipts/safe-after-spread.receipt.txt
+@@ -0,0 +1,100 @@
++# Differential receipt — safe-after-spread.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         4d39042847d90f6bde1b837503e1752f9494621a6bbf7ea019f308b5d506b143
++case-digest:  000028e0c787e9d42c708885784ad64bbaf997577a38b550e222d932af5a4709
++sealed-output: sequence
++
++VERDICT: DIVERGED (3)
++  - terminal result: jenkins=failure fogell=success
++  - output line 1: jenkins=<absent> fogell=+ printf %s [a, b]
++  - workspace hash: jenkins=b925983d9c95 fogell=eaf5f2821991
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         failure
++  workspace-hash: b925983d9c956330da5986c5b65019b40347bd516a5c92b4e46a7003d77c72b5
++  output (1 lines):
++    | + touch before-assignment.txt
++  workspace:
++    e3b0c44298fc  before-assignment.txt
++
++## Fogell
++  result:         success
++  workspace-hash: eaf5f2821991b67b6cce5e0449e5f4d160a6e4ee6e065ba4cc292e7bf952b5c7
++  output (3 lines):
++    | + touch before-assignment.txt
++    | + printf %s [a, b]
++    | + touch after-assignment.txt
++  workspace:
++    e3b0c44298fc  after-assignment.txt
++    5af6c271183b  assignment-result.txt
++    e3b0c44298fc  before-assignment.txt
+diff --git a/evidence/20260820T235737Z-fg-015-spread-assignment/safe-after-spread.Jenkinsfile b/evidence/20260820T235737Z-fg-015-spread-assignment/safe-after-spread.Jenkinsfile
+new file mode 100644
+index 0000000..98ebaf9
+--- /dev/null
++++ b/evidence/20260820T235737Z-fg-015-spread-assignment/safe-after-spread.Jenkinsfile
+@@ -0,0 +1,16 @@
++pipeline {
++    agent any
++    stages {
++        stage('Probe') {
++            steps {
++                sh 'touch before-assignment.txt'
++                script {
++                    def groups = [[child: [name: 'a']], [child: null], [child: [name: 'b']]]
++                    groups*.child?.name = 'x'
++                    sh "printf '%s' '${groups*.child*.name}' > assignment-result.txt"
++                }
++                sh 'touch after-assignment.txt'
++            }
++        }
++    }
++}
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 9bdc262..c1426c5 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -84,6 +84,32 @@ module FogellSide =
+ 
+                 Map.ofList entries
+ 
++    let rec private scriptBodies (steps: Step list) : string list =
++        steps
++        |> List.collect (fun step ->
++            [ match step.ScriptBody with
++              | Some source -> yield source
++              | None -> ()
++              yield! scriptBodies step.Block ])
++
++    let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : bool =
++        let bodies =
++            [ yield! scriptBodies (pipeline.Post |> List.collect snd)
++              for stage in Pipeline.flattenStages pipeline.Stages do
++                  yield! scriptBodies stage.Steps
++                  yield! scriptBodies (stage.Post |> List.collect snd) ]
++
++        let sourceContainsAssignment source =
++            match Fogell.Groovy.Parser.Parser.parse source with
++            | Result.Ok script -> Fogell.Groovy.Ast.containsSpreadAssignment script
++            | Result.Error _ -> false
++
++        let preambleContainsAssignment =
++            not (System.String.IsNullOrWhiteSpace pipeline.Preamble)
++            && sourceContainsAssignment pipeline.Preamble
++
++        preambleContainsAssignment || (bodies |> List.exists sourceContainsAssignment)
++
+     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
+     /// parsed construct must not become an executable no-op. Jenkins resolves every
+     /// Declarative tools selection against the agent, installs/translates it, and wraps
+@@ -98,6 +124,8 @@ module FogellSide =
+         match Fogell.Pipeline.Parser.Parser.parse script with
+         | Result.Error e ->
+             Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
++        | Result.Ok pipeline when containsUnsupportedSpreadAssignment pipeline ->
++            Result.Error Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+         | Result.Ok pipeline ->
+             let scopes =
+                 [ if not (List.isEmpty pipeline.Tools) then
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 0227f3b..d84bcf1 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -132,6 +132,9 @@ type Budget =
+ 
+ module Interpreter =
+ 
++    let spreadAssignmentRefusal =
++        "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
++
+     exception private Stop of Fault
+     exception private ReturnSignal of Value
+     exception private BreakSignal
+@@ -1138,6 +1141,13 @@ module Interpreter =
+ 
+                 st.Binding <- Map.add n value st.Binding
+                 env
++        | SAssign(target, _) when Ast.containsSpreadProperty target ->
++            // The generic fallback used to evaluate this target, evaluate the RHS,
++            // and silently perform no write. Jenkins instead throws without mutating.
++            // The public execution seam rejects the whole pipeline before workspace
++            // preparation; this guard keeps direct interpreter consumers from ever
++            // recovering the old RHS-only success.
++            raise (Stop(Unsupported spreadAssignmentRefusal))
+         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
+         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
+         // here and left LastValue absent or STALE — reported unevaluable, or worse
+diff --git a/src/Fogell.Groovy/Ast.fs b/src/Fogell.Groovy/Ast.fs
+index 491cf16..e276a03 100644
+--- a/src/Fogell.Groovy/Ast.fs
++++ b/src/Fogell.Groovy/Ast.fs
+@@ -128,6 +128,126 @@ module Ast =
+               | SContinue
+               | SThrow _ -> 0)
+ 
++    /// True when an assignment target contains spread-property syntax anywhere
++    /// in its receiver/index tree. Jenkins 2.568.1 accepts these targets but then
++    /// tries to write the named property on the projected ArrayList (or on null),
++    /// raising a catchable runtime exception without mutating the elements.
++    /// Fogell does not model that write boundary yet, so both the execution
++    /// preflight and the interpreter's defensive fallback use this one traversal.
++    let rec containsSpreadProperty (expr: Expr) : bool =
++        match expr with
++        | ESpreadProp _ -> true
++        | EProp(target, _)
++        | ESafeProp(target, _)
++        | EUnary(_, target) -> containsSpreadProperty target
++        | EIndex(target, index) -> containsSpreadProperty target || containsSpreadProperty index
++        | EBinary(_, left, right)
++        | EElvis(left, right) -> containsSpreadProperty left || containsSpreadProperty right
++        | ETernary(cond, ifTrue, ifFalse) ->
++            containsSpreadProperty cond
++            || containsSpreadProperty ifTrue
++            || containsSpreadProperty ifFalse
++        | EGString parts ->
++            parts
++            |> List.exists (function
++                | GLit _ -> false
++                | GExpr value -> containsSpreadProperty value)
++        | EList values -> values |> List.exists containsSpreadProperty
++        | EMap entries -> entries |> List.exists (snd >> containsSpreadProperty)
++        | ECall(target, args, trailing) ->
++            let receiverHasSpread =
++                match target with
++                | FreeCall _ -> false
++                | MethodCall(receiver, _)
++                | SafeMethodCall(receiver, _) -> containsSpreadProperty receiver
++
++            receiverHasSpread
++            || (args
++                |> List.exists (function
++                    | APos value -> containsSpreadProperty value
++                    | ANamed(_, value) -> containsSpreadProperty value))
++            || (trailing
++                |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
++        | EClosure closure -> containsSpreadAssignment closure.Body
++        | ENull
++        | EBool _
++        | EInt _
++        | EStr _
++        | EVar _ -> false
++
++    and containsSpreadAssignment (stmts: Stmt list) : bool =
++        let rec expressionHasNestedAssignment expr =
++            match expr with
++            | EClosure closure -> containsSpreadAssignment closure.Body
++            | EGString parts ->
++                parts
++                |> List.exists (function
++                    | GLit _ -> false
++                    | GExpr value -> expressionHasNestedAssignment value)
++            | EList values -> values |> List.exists expressionHasNestedAssignment
++            | EMap entries -> entries |> List.exists (snd >> expressionHasNestedAssignment)
++            | EProp(target, _)
++            | ESpreadProp(target, _)
++            | ESafeProp(target, _)
++            | EUnary(_, target) -> expressionHasNestedAssignment target
++            | EIndex(target, index)
++            | EBinary(_, target, index)
++            | EElvis(target, index) ->
++                expressionHasNestedAssignment target || expressionHasNestedAssignment index
++            | ETernary(cond, yes, no) ->
++                expressionHasNestedAssignment cond
++                || expressionHasNestedAssignment yes
++                || expressionHasNestedAssignment no
++            | ECall(target, args, trailing) ->
++                let receiverHasAssignment =
++                    match target with
++                    | FreeCall _ -> false
++                    | MethodCall(receiver, _)
++                    | SafeMethodCall(receiver, _) -> expressionHasNestedAssignment receiver
++
++                receiverHasAssignment
++                || (args
++                    |> List.exists (function
++                        | APos value -> expressionHasNestedAssignment value
++                        | ANamed(_, value) -> expressionHasNestedAssignment value))
++                || (trailing |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
++            | ENull
++            | EBool _
++            | EInt _
++            | EStr _
++            | EVar _ -> false
++
++        stmts
++        |> List.exists (function
++            | SAssign(target, value) ->
++                containsSpreadProperty target
++                || expressionHasNestedAssignment target
++                || expressionHasNestedAssignment value
++            | SExpr expr -> expressionHasNestedAssignment expr
++            | SDef(_, value)
++            | SReturn value -> value |> Option.exists expressionHasNestedAssignment
++            | SIf(cond, yes, no) ->
++                expressionHasNestedAssignment cond
++                || containsSpreadAssignment yes
++                || containsSpreadAssignment no
++            | SForIn(_, source, body)
++            | SWhile(source, body) ->
++                expressionHasNestedAssignment source || containsSpreadAssignment body
++            | SSwitch(subject, arms) ->
++                expressionHasNestedAssignment subject
++                || (arms
++                    |> List.exists (fun (case, body) ->
++                        (case |> Option.exists expressionHasNestedAssignment)
++                        || containsSpreadAssignment body))
++            | SThrow expr -> expressionHasNestedAssignment expr
++            | STry(body, catch, finallyBlock) ->
++                containsSpreadAssignment body
++                || (catch |> Option.exists (fun (_, _, handler) -> containsSpreadAssignment handler))
++                || containsSpreadAssignment finallyBlock
++            | SFunc(_, _, body) -> containsSpreadAssignment body
++            | SBreak
++            | SContinue -> false)
++
+     /// Names called as bare functions — the step vocabulary a script needs.
+     let rec freeCalls (stmts: Stmt list) : Set<string> =
+         let rec ofExpr e =
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 2d474d7..44e1d7a 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -1471,6 +1471,126 @@ let unsupportedDeclarativeTools =
+                       "the control reached its shell effect")
+           } ]
+ 
++let spreadAssignmentPreflight =
++    let pipelineWithBody body =
++        "pipeline { agent any stages { stage('probe') { steps { script { "
++        + "def rows = [[name: 'a'], [name: 'b']]; "
++        + body
++        + " } } } } }"
++
++    let expectNamedRefusal label source =
++        match FogellSide.preflightExecution source with
++        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
++        | Error why ->
++            Expect.equal
++                why
++                Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
++                $"{label}: exact stable reason"
++
++    let withWorkspace (f: string -> string -> unit) =
++        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
++        let job = "job"
++        let workspace = IO.Path.Combine(root, job)
++        IO.Directory.CreateDirectory(workspace) |> ignore
++        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
++        IO.File.WriteAllText(sentinel, "keep")
++
++        try
++            f root workspace
++        finally
++            if IO.Directory.Exists root then
++                IO.Directory.Delete(root, true)
++
++    testList
++        "FG-015 spread assignment fails closed before execution"
++        [ test "plain, compound, increment, decrement and wrapped targets share one refusal" {
++              for label, statement in
++                  [ "plain", "rows*.name = 'x'"
++                    "compound", "rows*.name += 'x'"
++                    "increment", "rows*.name++"
++                    "decrement", "rows*.name--"
++                    "property wrapper", "rows*.child.name = 'x'"
++                    "safe wrapper", "rows*.child?.name = 'x'"
++                    "index wrapper", "rows*.child[0] = 'x'" ] do
++                  expectNamedRefusal label (pipelineWithBody statement)
++          }
++
++          test "nested closure, helper, post and nested-stage locations cannot hide the target" {
++              let closure = pipelineWithBody "def later = { rows*.name = 'x' }; echo 'never'"
++              expectNamedRefusal "closure" closure
++
++              let helper =
++                  "def change(rows) { rows*.name = 'x' }\n"
++                  + "pipeline { agent any stages { stage('probe') { steps { script { "
++                  + "change([[name: 'a']]) } } } } }"
++
++              expectNamedRefusal "preamble helper" helper
++
++              let preambleWithoutScriptBody =
++                  "def rows = [[name: 'a']]; rows*.name = 'x'\n"
++                  + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
++
++              expectNamedRefusal "preamble without script body" preambleWithoutScriptBody
++
++              let locations =
++                  [ "stage post",
++                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } "
++                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }"
++                    "pipeline post",
++                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } "
++                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } }"
++                    "nested stage",
++                    "pipeline { agent any stages { stage('outer') { stages { stage('inner') { steps { "
++                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } } }"
++                    "nested step block",
++                    "pipeline { agent any stages { stage('probe') { steps { timeout(time: 1, unit: 'MINUTES') { "
++                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }" ]
++
++              for label, source in locations do
++                  expectNamedRefusal label source
++          }
++
++          test "workspace preparation, RHS, later steps and post are all blocked" {
++              let source =
++                  "pipeline { agent any stages { "
++                  + "stage('before') { steps { sh 'touch before.txt' } } "
++                  + "stage('bad') { steps { script { def rows = [[name: 'a']]; "
++                  + "rows*.name = sh 'touch rhs.txt' } sh 'touch after.txt' } } "
++                  + "} post { always { sh 'touch post.txt' } } }"
++
++              withWorkspace (fun root workspace ->
++                  match FogellSide.run [] root "job" source with
++                  | Ok trace -> failtestf "spread assignment unexpectedly executed: %A" trace
++                  | Error why ->
++                      Expect.equal
++                          why
++                          Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
++                          "stable named refusal"
++
++                  Expect.isTrue
++                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
++                      "fresh-workspace wipe was not reached"
++
++                  for file in [ "before.txt"; "rhs.txt"; "after.txt"; "post.txt" ] do
++                      Expect.isFalse
++                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
++                          $"{file} effect was not reached")
++          }
++
++          test "catching Jenkins runtime exceptions is an explicit unsupported boundary" {
++              let source =
++                  pipelineWithBody
++                      "try { rows*.name = 'x' } catch (Throwable e) { echo 'caught' }; echo 'after'"
++
++              expectNamedRefusal "caught form" source
++          }
++
++          test "spread reads and ordinary assignments remain executable" {
++              match FogellSide.preflightExecution (pipelineWithBody "def names = rows*.name; rows[0].name = 'x'") with
++              | Error why -> failtestf "read-only spread or ordinary write was over-refused: %s" why
++              | Ok _ -> ()
++          } ]
++
+ let jenkinsBuildDataAttestation =
+     testList
+         "FG-177 Jenkins BuildData attestation"
+@@ -1594,6 +1714,7 @@ let main argv =
+             [ hostedSignatures
+               jenkinsBuildDataAttestation
+               unsupportedDeclarativeTools
++              spreadAssignmentPreflight
+               userOutputSurvives
+               stringModel
+               sealBindsCaseSource
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index a824dbb..842e556 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -77,6 +77,31 @@ let grammar =
+                   SDef("safe", Some(ESafeProp(EVar "rows", "child"))) ] -> ()
+               | other -> failtestf "property operators collapsed in the AST: %A" other
+           }
++          test "every assignment-like spread target stays visible to the refusal scanner" {
++              let source =
++                  "rows*.name = 'x'\n"
++                  + "rows*.name += 'x'\n"
++                  + "rows*.name++\n"
++                  + "rows*.name--\n"
++                  + "rows*.child.name = 'x'\n"
++                  + "rows*.child?.name = 'x'\n"
++                  + "rows*.child[0] = 'x'\n"
++
++              match parseOk source with
++              | [ SAssign(ESpreadProp(EVar "rows", "name"), _)
++                  SAssign(ESpreadProp(EVar "rows", "name"), _)
++                  SAssign(ESpreadProp(EVar "rows", "name"), _)
++                  SAssign(ESpreadProp(EVar "rows", "name"), _)
++                  SAssign(EProp(ESpreadProp(EVar "rows", "child"), "name"), _)
++                  SAssign(ESafeProp(ESpreadProp(EVar "rows", "child"), "name"), _)
++                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _) ] as script ->
++                  Expect.isTrue (Ast.containsSpreadAssignment script) "all target wrappers are detected"
++              | other -> failtestf "assignment target lost its spread node: %A" other
++
++              Expect.isFalse
++                  (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
++                  "ordinary assignment remains outside the refusal"
++          }
+           // FG-174. Both parsers hold this rule, because both produce calls and a rule
+           // held by only one of them is the shape of half the findings on this branch.
+           test "a duplicate named argument is refused, parenthesised" {
+@@ -1151,7 +1176,26 @@ let fg015ClosureAudit =
+               match o.Fault with
+               | Some(BudgetExhausted message) -> Expect.stringContains message "spread projection" "names the bound"
+               | other -> failtestf "expected bounded spread refusal, got %A" other
+-          } ]
++          }
++
++
++          test "spread assignment refuses before its RHS and is not claimed catchable" {
++              let source =
++                  "def rows = [[name: 'a'], [name: 'b']]\n"
++                  + "try { rows*.name = sh 'touch rhs.txt' } "
++                  + "catch (Throwable e) { echo 'caught' }\n"
++                  + "echo 'after'\n"
++
++              let o = runStrict source
++
++              match o.Fault with
++              | Some(Unsupported why) ->
++                  Expect.equal why Interpreter.spreadAssignmentRefusal "stable named boundary"
++              | other -> failtestf "expected the defensive spread-assignment refusal, got %A" other
++
++              Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
++          }
++          ]
+ 
+ [<EntryPoint>]
+ let main argv =

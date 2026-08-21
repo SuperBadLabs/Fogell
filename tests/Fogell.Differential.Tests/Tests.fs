@@ -1471,6 +1471,126 @@ let unsupportedDeclarativeTools =
                       "the control reached its shell effect")
           } ]
 
+let spreadAssignmentPreflight =
+    let pipelineWithBody body =
+        "pipeline { agent any stages { stage('probe') { steps { script { "
+        + "def rows = [[name: 'a'], [name: 'b']]; "
+        + body
+        + " } } } } }"
+
+    let expectNamedRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                $"{label}: exact stable reason"
+
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
+        let job = "job"
+        let workspace = IO.Path.Combine(root, job)
+        IO.Directory.CreateDirectory(workspace) |> ignore
+        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
+        IO.File.WriteAllText(sentinel, "keep")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-015 spread assignment fails closed before execution"
+        [ test "plain, compound, increment, decrement and wrapped targets share one refusal" {
+              for label, statement in
+                  [ "plain", "rows*.name = 'x'"
+                    "compound", "rows*.name += 'x'"
+                    "increment", "rows*.name++"
+                    "decrement", "rows*.name--"
+                    "property wrapper", "rows*.child.name = 'x'"
+                    "safe wrapper", "rows*.child?.name = 'x'"
+                    "index wrapper", "rows*.child[0] = 'x'" ] do
+                  expectNamedRefusal label (pipelineWithBody statement)
+          }
+
+          test "nested closure, helper, post and nested-stage locations cannot hide the target" {
+              let closure = pipelineWithBody "def later = { rows*.name = 'x' }; echo 'never'"
+              expectNamedRefusal "closure" closure
+
+              let helper =
+                  "def change(rows) { rows*.name = 'x' }\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "change([[name: 'a']]) } } } } }"
+
+              expectNamedRefusal "preamble helper" helper
+
+              let preambleWithoutScriptBody =
+                  "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              expectNamedRefusal "preamble without script body" preambleWithoutScriptBody
+
+              let locations =
+                  [ "stage post",
+                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } "
+                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }"
+                    "pipeline post",
+                    "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } "
+                    + "post { always { script { def rows = [[name: 'a']]; rows*.name = 'x' } } } }"
+                    "nested stage",
+                    "pipeline { agent any stages { stage('outer') { stages { stage('inner') { steps { "
+                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } } }"
+                    "nested step block",
+                    "pipeline { agent any stages { stage('probe') { steps { timeout(time: 1, unit: 'MINUTES') { "
+                    + "script { def rows = [[name: 'a']]; rows*.name = 'x' } } } } } }" ]
+
+              for label, source in locations do
+                  expectNamedRefusal label source
+          }
+
+          test "workspace preparation, RHS, later steps and post are all blocked" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before.txt' } } "
+                  + "stage('bad') { steps { script { def rows = [[name: 'a']]; "
+                  + "rows*.name = sh 'touch rhs.txt' } sh 'touch after.txt' } } "
+                  + "} post { always { sh 'touch post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "spread assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "fresh-workspace wipe was not reached"
+
+                  for file in [ "before.txt"; "rhs.txt"; "after.txt"; "post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+          test "catching Jenkins runtime exceptions is an explicit unsupported boundary" {
+              let source =
+                  pipelineWithBody
+                      "try { rows*.name = 'x' } catch (Throwable e) { echo 'caught' }; echo 'after'"
+
+              expectNamedRefusal "caught form" source
+          }
+
+          test "spread reads and ordinary assignments remain executable" {
+              match FogellSide.preflightExecution (pipelineWithBody "def names = rows*.name; rows[0].name = 'x'") with
+              | Error why -> failtestf "read-only spread or ordinary write was over-refused: %s" why
+              | Ok _ -> ()
+          } ]
+
 let jenkinsBuildDataAttestation =
     testList
         "FG-177 Jenkins BuildData attestation"
@@ -1594,6 +1714,7 @@ let main argv =
             [ hostedSignatures
               jenkinsBuildDataAttestation
               unsupportedDeclarativeTools
+              spreadAssignmentPreflight
               userOutputSurvives
               stringModel
               sealBindsCaseSource
