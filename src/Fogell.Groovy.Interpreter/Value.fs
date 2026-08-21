@@ -10,7 +10,10 @@ type Value =
     | VBool of bool
     | VInt of int64
     | VStr of string
-    | VList of Value list
+    /// FG-015b. Groovy lists are reference objects. The ref is list identity:
+    /// aliases, nested selections and method results share mutations, while a
+    /// newly projected/collected list receives a fresh identity.
+    | VList of Value list ref
     /// FG-193. A Groovy map is a REFERENCE object: aliases see each other's
     /// mutations. The ref is the identity, exactly as ref cells are for locals —
     /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
@@ -66,37 +69,69 @@ module Value =
         | Answer of bool
         | CycleDetected
 
-    let rec toDisplay v = displayWith [] v
+    type Displayed =
+        | Text of string
+        | DisplayCycleDetected
 
-    /// FG-191. Display tracks the maps on its own PATH by reference, and a map
-    /// that reaches itself renders as Groovy renders it — `(this Map)`, from
-    /// AbstractMap.toString — instead of recursing to a StackOverflow that kills
-    /// the process. MEASURED (receipt `script-cyclic-map-display`): a
-    /// self-referential map's display died with exit 134 where Jenkins prints
-    /// and succeeds. Lists cannot cycle (they are
-    /// immutable) but they can CONTAIN a cyclic map, so the path threads through
-    /// them too.
-    and private displayWith (seen: obj list) v =
-        match v with
-        | VNull -> "null"
-        | VBool b -> if b then "true" else "false"
-        | VInt i -> string i
-        | VStr s -> s
-        | VList xs -> "[" + (xs |> List.map (displayWith seen) |> String.concat ", ") + "]"
-        | VMap m ->
-            if seen |> List.exists (fun s -> System.Object.ReferenceEquals(s, m)) then
-                "(this Map)"
-            else
-                let inner = box m :: seen
+    /// Direct self entries use Groovy's own `(this Collection)` / `(this Map)`
+    /// markers. A longer reference cycle is different: Jenkins 2.568.1 chases
+    /// list→map→list display into a catchable StackOverflowError. Report that
+    /// boundary to the interpreter instead of recursing in the host process.
+    let tryToDisplay v : Displayed =
+        let mutable cycle = false
 
-                "["
-                + (m.Value
-                   |> Map.toList
-                   |> List.map (fun (k, v) -> $"{k}:{displayWith inner v}")
-                   |> String.concat ", ")
-                + "]"
-        | VClosure _ -> "<closure>"
-        | VFunc(n, _, _) -> $"<function {n}>"
+        let rec displayWith (seen: obj list) value =
+            let seenRef candidate =
+                seen |> List.exists (fun prior -> System.Object.ReferenceEquals(prior, candidate))
+
+            match value with
+            | VNull -> "null"
+            | VBool b -> if b then "true" else "false"
+            | VInt i -> string i
+            | VStr s -> s
+            | VList xs ->
+                if seenRef xs then
+                    cycle <- true
+                    ""
+                else
+                    let inner = box xs :: seen
+
+                    "["
+                    + (xs.Value
+                       |> List.map (function
+                           | VList child when System.Object.ReferenceEquals(child, xs) -> "(this Collection)"
+                           | item -> displayWith inner item)
+                       |> String.concat ", ")
+                    + "]"
+            | VMap m ->
+                if seenRef m then
+                    cycle <- true
+                    ""
+                else
+                    let inner = box m :: seen
+
+                    "["
+                    + (m.Value
+                       |> Map.toList
+                       |> List.map (fun (k, item) ->
+                           let shown =
+                               match item with
+                               | VMap child when System.Object.ReferenceEquals(child, m) -> "(this Map)"
+                               | _ -> displayWith inner item
+
+                           $"{k}:{shown}")
+                       |> String.concat ", ")
+                    + "]"
+            | VClosure _ -> "<closure>"
+            | VFunc(n, _, _) -> $"<function {n}>"
+
+        let rendered = displayWith [] v
+        if cycle then DisplayCycleDetected else Text rendered
+
+    let toDisplay v =
+        match tryToDisplay v with
+        | Text rendered -> rendered
+        | DisplayCycleDetected -> "<cyclic collection>"
 
     /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
     ///
@@ -137,9 +172,21 @@ module Value =
                            match Map.tryFind k mb.Value with
                            | Some w -> go inner v w
                            | None -> false)
+            | VList xa, VList xb ->
+                if System.Object.ReferenceEquals(xa, xb) then
+                    true
+                elif
+                    seen
+                    |> List.exists (fun (x, y) ->
+                        System.Object.ReferenceEquals(x, xa) && System.Object.ReferenceEquals(y, xb))
+                then
+                    cycle <- true
+                    false
+                else
+                    let inner = (box xa, box xb) :: seen
+                    xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
             | VClosure(c1, e1), VClosure(c2, e2) ->
                 System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
-            | VList xs, VList ys -> xs.Length = ys.Length && List.forall2 (go seen) xs ys
             | VClosure _, _
             | _, VClosure _
             | VMap _, _
@@ -158,7 +205,7 @@ module Value =
         | VBool b -> b
         | VInt i -> i <> 0L
         | VStr s -> s <> ""
-        | VList xs -> not (List.isEmpty xs)
+        | VList xs -> not (List.isEmpty xs.Value)
         | VMap m -> not (Map.isEmpty m.Value)
         | VClosure _
         | VFunc _ -> true

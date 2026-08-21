@@ -520,9 +520,13 @@ outer property, safe-property, or method-result write; the selected source map
 mutates and the two focused cases add tier-1 receipts. A direct projected-index
 l-value is different: simple/compound/inc/dec writes change only the temporary
 projection, while another index can reach a referenced source list and persist.
-That remains FG-015b. Fogell gives every such direct target the distinct stable
-`unsupported_spread_index_assignment` preflight refusal before effects instead
-of silently discarding or misdirecting it. Evidence: [spread-index boundary](../evidence/20260821T020910Z-fg-015-spread-index-boundary).
+That distinction is now closed by FG-015b: the interpreter decides from runtime
+list identity. Replacing a slot in the fresh projected list stays temporary;
+selecting a referenced source list through another index or a method result
+persists. Direct projected indexes are no longer statically refused, while an
+actual spread-property l-value retains `unsupported_spread_assignment`.
+Evidence: [spread-index boundary](../evidence/20260821T020910Z-fg-015-spread-index-boundary)
+and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
 
 **FG-015 method-result write addendum.** Review probes on Jenkins 2.568.1
 measured the receiver boundary rather than inferring it: `rows*.child.first()?.name`
@@ -531,19 +535,20 @@ mutates the returned non-null map; a null receiver raises a catchable
 and receiver effects precede RHS effects before either fault. Fogell now routes
 every `ESafeProp` assignment through the ordinary map writer, with a distinct
 typed null fault, instead of evaluating the RHS and reporting success without a
-write. Unsupported list-index receivers and syntactically invalid assignment
-targets likewise refuse explicitly before the RHS.
+write. Syntactically invalid assignment targets still refuse explicitly before
+the RHS; typed integer list-index writes are now the measured FG-015b path.
 
 The same probe proved `rows*.children.first()[0] = value` persistently mutates
 the selected source list, a null receiver throws catchably, and the statically
-indistinguishable map spelling also mutates. Because Fogell cannot decide the
-receiver type before execution without crossing FG-015b, a direct `EIndex`
-l-value retains spread-read provenance across method-call receivers and receives
-the conservative pre-effect `unsupported_spread_index_assignment` refusal in
-both list and map cases. This deliberate map over-refusal is named; outer
+indistinguishable map spelling also mutates. FG-015b now makes that decision at
+runtime: a list receiver accepts only an integer index with Groovy's measured
+mutation rules, and a map receiver keeps the existing map-key writer. The former
+conservative map over-refusal and `unsupported_spread_index_assignment` gate are
+retired. Outer
 property/safe-property writes on call or index results, free-call arguments,
 method arguments, trailing closures, and spread reads used as index keys remain
-admitted. Evidence: [method-result write boundary](../evidence/20260821T025710Z-fg-015-call-write-boundary).
+admitted. Evidence: [method-result write boundary](../evidence/20260821T025710Z-fg-015-call-write-boundary)
+and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
 
 ## Wave 2 — Durable spine (McLoving-inspired)
 
@@ -632,7 +637,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
 | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
 | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) **DONE** — `echo` bypassed both credential interpolation and masking. MEASURED and richer than this ticket claimed: Jenkins WARNS in three lines that a secret reached a step argument through GString interpolation, THEN prints the masked value; it also interpolates a GString and leaves a single-quoted argument literal. All four behaviours proven by `echo-credential-masking`. Fogell emits its own one-line warning (wording not compared, as with the other narration) because being quieter than Jenkins on a security matter is not an option. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
 | FG-002f | P1 | **DONE** | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile r… [→ detail](tickets/FG-002f.md) |
-| FG-015b | P2 | TODO | Index assignment `xs[0] = v` in the scripted parser | Found while testing the round-7 assignment fix: `xs[0] = false` did not PARSE, so the statement form was rejected before any evaluation question arose. Measured **9 corpus files**. The property form (`env.X = v`) does parse and is covered **THE PARSE GATE OPENED 2026-08-18** as a side effect of FG-180's `[` exclusion on command arguments (`builds['a'] = { }` needed the index-assignment reading), caught by the pre-push verifier before this row could go stale silently: `xs[0] = false` now parses as `SAssign(EIndex …)`, and the deferred evaluation question is live with a WRONG answer for list receivers — the assignment arm handles map receivers correctly, and a list receiver faults catchably in strict mode (`UnknownProperty`) where Groovy mutates the element and continues, or silently no-ops in lax mode. This ticket is now the interpreter half only, and the silent lax no-op is the half that bites first |
+| FG-015b | P2 | **DONE** | Typed integer list-index mutation and list reference identity in the scripted interpreter | The parser gate had already opened under FG-180; this closure corrects the stale parser title and implements the remaining runtime half. Direct Jenkins 2.568.1 probes measured basic, alias, closure, nested, projection and method-result writes; compound/inc/dec single-evaluation order; negative, empty, append, null-extension and too-negative boundaries; null/scalar/non-integer/map controls; and direct, distinct and mixed cycles. `VList` now carries reference identity, so aliases and selected source lists share mutation while a fresh projection does not. Plain integer `EIndex` writes return the RHS; `SIndexCompoundAssign` and `SIndexPostfixAssign` retain syntax so receiver/key evaluate once and old-value/RHS timing matches Jenkins. Too-negative indexes raise a catchable `ArrayIndexOutOfBoundsException`-class fault; positive extension is budget-bounded. Existing map writes are unchanged. Non-integer list keys remain outside this typed slice and refuse explicitly instead of succeeding without a write. Direct spread-derived indexes are admitted and select temporary versus persistent identities at runtime; actual spread-property l-values remain preflight-refused. Cycle-aware display/equality preserves `(this Collection)` and survives longer cycles without host recursion | [measurement/evidence](../evidence/20260821T083100Z-fg-015b-list-index); three tier-1 differential receipts; focused AST/interpreter/preflight/cycle tests; corpus admission and verdicts unchanged |
 | FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. [→ detail](tickets/FG-048b.md) |
 | FG-048c | P2 | **BLOCKED** | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | **Blocked on fg-111.** FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
 | FG-049b | P1 | **DONE** | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds. **Done with FG-110:** the `post-history` sequence replays the ADR 0005 probe as four receipt-backed builds — b1 fail-no-history fires always/changed/failure/cleanup, b2 fires **fixed**, b3 proves `changed` stays **quiet** on a same-result build, b4 fires **regression**. All four PROVEN tier-1; the postRank and ADR admissions became citations (claim audit admitted-UNPROVEN 7 -> 6) |

@@ -650,13 +650,19 @@ let private assignOrExpr: P<Stmt> =
     >>= fun lhs ->
             choice
                 [ attempt ((attempt (symbol "++") >>% "+") <|> (attempt (symbol "--") >>% "-")
-                           |>> fun op -> SAssign(lhs, EBinary(op, lhs, EInt 1L)))
+                           |>> fun op ->
+                               match lhs with
+                               | EIndex _ -> SIndexPostfixAssign(lhs, op)
+                               | _ -> SAssign(lhs, EBinary(op, lhs, EInt 1L)))
                   attempt (assignOp >>= fun op ->
                               exprOrCommand
                               |>> fun rhs ->
                                       match op with
                                       | None -> SAssign(lhs, rhs)
-                                      | Some o -> SAssign(lhs, EBinary(o, lhs, rhs)))
+                                      | Some o ->
+                                          match lhs with
+                                          | EIndex _ -> SIndexCompoundAssign(lhs, o, rhs)
+                                          | _ -> SAssign(lhs, EBinary(o, lhs, rhs)))
                   preturn (SExpr lhs) ]
 
 stmtImpl.Value <-

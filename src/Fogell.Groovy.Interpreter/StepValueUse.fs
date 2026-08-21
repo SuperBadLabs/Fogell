@@ -170,6 +170,11 @@ module StepValueUse =
             | SAssign(t, v) ->
                 expr "an assignment target" true t
                 expr "an assignment" true v
+            | SIndexCompoundAssign(t, _, v) ->
+                expr "an assignment target" true t
+                expr "an assignment" true v
+            | SIndexPostfixAssign(t, _) ->
+                expr "an assignment target" true t
             | SIf(c, a, b) ->
                 expr "an if condition" true c
                 stmts a
@@ -302,6 +307,10 @@ module StepValueUse =
             | SAssign(t, v) ->
                 expr t
                 expr v
+            | SIndexCompoundAssign(t, _, v) ->
+                expr t
+                expr v
+            | SIndexPostfixAssign(t, _) -> expr t
             | SIf(c, a, b) ->
                 expr c
                 stmts a

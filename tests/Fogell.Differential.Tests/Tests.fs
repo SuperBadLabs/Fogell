@@ -1313,8 +1313,8 @@ let hostedSignatures =
               Expect.isNone ((s "retry").Check [ Fogell.Groovy.Interpreter.VInt 0L ] []) "retry(0) runs clamped — refusing was the measured false refusal"
               Expect.isSome ((s "retry").Check [ Fogell.Groovy.Interpreter.VStr "nope" ] []) "a non-integer count refuses"
               // withEnv: entry without '=' refused, well-formed passes
-              Expect.isSome ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList [ Fogell.Groovy.Interpreter.VStr "BADENTRY" ] ] []) "an entry without = refuses"
-              Expect.isNone ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList [ Fogell.Groovy.Interpreter.VStr "A=1" ] ] []) "NAME=VALUE passes"
+              Expect.isSome ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList(ref [ Fogell.Groovy.Interpreter.VStr "BADENTRY" ]) ] []) "an entry without = refuses"
+              Expect.isNone ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList(ref [ Fogell.Groovy.Interpreter.VStr "A=1" ]) ] []) "NAME=VALUE passes"
               // dir: exactly one positional
               Expect.isSome ((s "dir").Check [] []) "dir with nothing refuses"
               // timeout: types deliberately unchecked
@@ -1511,7 +1511,7 @@ let stepDescriptorValidation =
               let primaryValue name =
                   match name with
                   | "retry" -> Fogell.Groovy.Interpreter.VInt 2L
-                  | "withEnv" -> Fogell.Groovy.Interpreter.VList [ v "A=1" ]
+                  | "withEnv" -> Fogell.Groovy.Interpreter.VList(ref [ v "A=1" ])
                   | _ -> v $"sample-{name}"
 
               let mutable promoted = 0
@@ -1560,12 +1560,12 @@ let stepDescriptorValidation =
                   WalkerRules.validateHostedCall
                       "withEnv"
                       []
-                      [ "overrides", Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+                      [ "overrides", Fogell.Groovy.Interpreter.VList(ref [ v "A=1" ]) ]
               with
               | Ok validated ->
                   Expect.equal
                       validated.Positional
-                      [ Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+                      [ Fogell.Groovy.Interpreter.VList(ref [ v "A=1" ]) ]
                       "named overrides promoted before its list contract"
               | Error error -> failtestf "valid named withEnv overrides refused: %A" error
 
@@ -1656,7 +1656,7 @@ let stepDescriptorValidation =
                       "retry"
                       []
                       [ "count", Fogell.Groovy.Interpreter.VInt 2L
-                        "conditions", Fogell.Groovy.Interpreter.VList [] ]
+                        "conditions", Fogell.Groovy.Interpreter.VList(ref []) ]
               with
               | Error(WalkerRules.EngineRefusal reason) ->
                   Expect.stringContains reason "conditions" "the unsupported key is named"
@@ -2048,14 +2048,10 @@ let spreadAssignmentPreflight =
                 Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
                 $"{label}: exact stable reason"
 
-    let expectSpreadIndexRefusal label source =
+    let expectSpreadIndexAccepted label source =
         match FogellSide.preflightExecution source with
-        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
-        | Error why ->
-            Expect.equal
-                why
-                Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
-                $"{label}: exact stable projected-index reason"
+        | Ok _ -> ()
+        | Error why -> failtestf "%s unexpectedly failed execution preflight: %s" label why
 
     let expectPreambleAnalysisRefusal label source =
         match FogellSide.preflightExecution source with
@@ -2102,28 +2098,28 @@ let spreadAssignmentPreflight =
                   expectNamedRefusal label (pipelineWithBody statement)
           }
 
-          test "direct projected indexes have a distinct refusal across assignment forms and locations" {
+          test "direct projected indexes pass preflight across assignment forms and executable locations" {
               for label, statement in
                   [ "plain", "rows*.child[0] = 'x'"
                     "compound", "rows*.child[0] += 'x'"
                     "increment", "rows*.count[0]++"
                     "decrement", "rows*.count[0]--"
                     "nested index", "rows*.children[0][1] = 'x'" ] do
-                  expectSpreadIndexRefusal label (pipelineWithBody statement)
+                  expectSpreadIndexAccepted label (pipelineWithBody statement)
 
               let preamble =
                   "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
                   + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
 
-              expectSpreadIndexRefusal "preamble" preamble
+              expectSpreadIndexAccepted "preamble" preamble
 
               let epilogue =
                   "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
                   + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
 
-              expectSpreadIndexRefusal "epilogue" epilogue
+              expectEpilogueRefusal "epilogue remains outside executable source semantics" epilogue
 
-              expectSpreadIndexRefusal
+              expectSpreadIndexAccepted
                   "nested closure"
                   (pipelineWithBody "def later = { rows*.child[0] = [name: 'x'] }; echo 'never'")
 
@@ -2132,36 +2128,32 @@ let spreadAssignmentPreflight =
                   + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']; true } } "
                   + "steps { echo 'never' } } } }"
 
-              expectSpreadIndexRefusal "when expression" whenBody
+              expectSpreadIndexAccepted "when expression" whenBody
           }
 
-          test "direct projected-index refusal blocks workspace, earlier, RHS, later and post effects" {
+          test "direct projected-index execution reaches ordinary earlier, later and post effects" {
               let source =
                   "pipeline { agent any stages { "
                   + "stage('before') { steps { sh 'touch before-index.txt' } } "
                   + "stage('bad') { steps { script { "
                   + "def rows = [[children: [[name: 'a']]]]; "
-                  + "rows*.children.first()[0] = sh 'touch rhs-index.txt' "
+                  + "rows*.children.first()[0] = [name: 'x'] "
                   + "} sh 'touch after-index.txt' } } "
                   + "} post { always { sh 'touch post-index.txt' } } }"
 
               withWorkspace (fun root workspace ->
                   match FogellSide.run [] root "job" source with
-                  | Ok trace -> failtestf "projected-index assignment unexpectedly executed: %A" trace
-                  | Error why ->
-                      Expect.equal
-                          why
-                          Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
-                          "stable named refusal"
+                  | Ok trace -> Expect.equal trace.Result "success" "the projected-index write executes"
+                  | Error why -> failtestf "projected-index assignment unexpectedly failed: %s" why
 
-                  Expect.isTrue
+                  Expect.isFalse
                       (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                      "workspace preparation was not reached"
+                      "ordinary execution reaches workspace preparation"
 
-                  for file in [ "before-index.txt"; "rhs-index.txt"; "after-index.txt"; "post-index.txt" ] do
-                      Expect.isFalse
+                  for file in [ "before-index.txt"; "after-index.txt"; "post-index.txt" ] do
+                      Expect.isTrue
                           (IO.File.Exists(IO.Path.Combine(workspace, file)))
-                          $"{file} effect was not reached")
+                          $"{file} effect was reached exactly through ordinary execution")
           }
 
           test "nested closure, helper, post and nested-stage locations cannot hide the target" {
@@ -2478,7 +2470,7 @@ let spreadAssignmentPreflight =
                     "new spread after method", "rows*.child.first()*.name = 'x'" ] do
                   expectNamedRefusal label (pipelineWithBody statement)
 
-              expectSpreadIndexRefusal "direct index wrapper" (pipelineWithBody "rows*.child[0] = 'x'")
+              expectSpreadIndexAccepted "direct index wrapper" (pipelineWithBody "rows*.child[0] = 'x'")
 
               for label, statement in
                   [ "method-result list index", "rows*.children.first()[0] = [name: 'x']"
@@ -2488,7 +2480,7 @@ let spreadAssignmentPreflight =
                     "method-result list increment", "rows*.counts.first()[0]++"
                     "method-result list decrement", "rows*.counts.first()[0]--"
                     "method-result ambiguous map index", "rows*.holder.first()['slot'] = 'x'" ] do
-                  expectSpreadIndexRefusal label (pipelineWithBody statement)
+                  expectSpreadIndexAccepted label (pipelineWithBody statement)
 
               expectNamedRefusal
                   "actual assignment in method trailing closure"

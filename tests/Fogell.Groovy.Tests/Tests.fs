@@ -100,7 +100,7 @@ let grammar =
                   (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
                   "ordinary assignment remains outside the refusal"
           }
-          test "index results are outer receiver boundaries while direct projected indexes stay visible" {
+          test "index updates retain syntax while index results remain outer receiver boundaries" {
               let outer =
                   parseOk (
                       "rows*.child[0].name = 'x'\n"
@@ -148,16 +148,16 @@ let grammar =
 
               match direct with
               | [ SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SIndexCompoundAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "+", _)
+                  SIndexPostfixAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "+")
+                  SIndexPostfixAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "-")
                   SAssign(EIndex(EIndex(ESpreadProp(EVar "rows", "children"), EInt 0L), EInt 1L), _) ] -> ()
               | other -> failtestf "direct projected-index targets lost their AST shapes: %A" other
 
               Expect.isFalse (Ast.containsSpreadAssignment direct) "index results stop the spread-write traversal"
               Expect.isTrue
                   (Ast.containsSpreadDerivedIndexAssignment direct)
-                  "plain, compound, increment, decrement and nested direct indexes share the bounded refusal"
+                  "the legacy audit scanner still identifies every direct spread-derived index form"
           }
           test "spread reads used to compute a write target are not themselves write paths" {
               let source =
@@ -1189,7 +1189,7 @@ let hostedSteps =
                           (match name, positional with
                            | "withEnv", [ VList entries ] ->
                                let pairs =
-                                   entries
+                                   entries.Value
                                    |> List.choose (function
                                        | VStr s ->
                                            match s.Split([| '=' |], 2) with
@@ -1419,6 +1419,24 @@ let cyclicValues =
               Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
           }
 
+          test "list identity is cycle-safe without erasing Groovy's direct-self marker" {
+              let direct = runS "def xs = [null]\nxs[0] = xs\nreturn \"${xs}:${xs == xs}\""
+              Expect.isNone direct.Fault "direct self display and identity equality survive"
+              Expect.equal direct.Returned (Some(VStr "[(this Collection)]:true")) "Groovy's direct self marker"
+
+              let distinct = runS "def a = [null]\na[0] = a\ndef b = [null]\nb[0] = b\nreturn a == b"
+
+              match distinct.Fault with
+              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "distinct cycles fault safely"
+              | other -> failtestf "expected distinct-cycle comparison fault, got %A" other
+
+              let mixed = runS "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\nreturn \"${xs}\""
+
+              match mixed.Fault with
+              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "mixed display cycle faults safely"
+              | other -> failtestf "expected mixed-cycle display fault, got %A" other
+          }
+
           test "same-AST closures from two calls are NOT equal — identity, not structure" {
               // this exact comparison was a process-killing stack overflow
               let o = runS "def make() {\n    def r\n    r = { r }\n    return r\n}\ndef a = make()\ndef b = make()\nreturn a == b"
@@ -1428,7 +1446,7 @@ let cyclicValues =
 
           test "an aliased closure IS equal; a distinct literal is not" {
               let o = runS "def a = { 1 }\ndef b = { 1 }\ndef c = a\nreturn [a == b, a == c]"
-              Expect.equal o.Returned (Some(VList [ VBool false; VBool true ])) "reference semantics"
+              Expect.equal o.Returned (Some(VList(ref [ VBool false; VBool true ]))) "reference semantics"
           }
 
           test "comparing two distinct cyclic maps FAULTS instead of dying" {
@@ -1647,7 +1665,7 @@ let fg015ClosureAudit =
           test "spread-dot projects one property from every non-null list element" {
               let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows*.name\n"
               Expect.isNone o.Fault "the measured list projection evaluates"
-              Expect.equal o.Returned (Some(VList [ VStr "a"; VStr "b" ])) "source order is preserved"
+              Expect.equal o.Returned (Some(VList(ref [ VStr "a"; VStr "b" ]))) "source order is preserved"
           }
 
           test "spread-dot keeps the measured null and receiver boundaries" {
@@ -1731,26 +1749,125 @@ let fg015ClosureAudit =
               Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
           }
 
-          test "direct projected-index assignment refuses before target, RHS and catch effects" {
-              for label, statement in
-                  [ "plain", "rows*.child[0] = sh 'plain-rhs'"
-                    "compound", "rows*.child[0] += sh 'compound-rhs'"
-                    "increment", "rows*.count[0]++"
-                    "decrement", "rows*.count[0]--"
-                    "nested", "rows*.children[0][1] = sh 'nested-rhs'" ] do
-                  let source =
-                      "def rows = [[child: [name: 'a'], count: 1, children: [[name: 'a0'], [name: 'a1']]]]\n"
-                      + "try { " + statement + " } catch (Throwable e) { echo 'caught' }\n"
-                      + "echo 'after'\n"
+          test "direct projected indexes preserve temporary and source-backed mutation boundaries" {
+              let source =
+                  "def rows = [[child: ['a'], count: 1, children: [['a0', 'a1']]]]\n"
+                  + "def projected = rows*.child\n"
+                  + "rows*.child[0] = 'temporary'\n"
+                  + "rows*.count[0] += 2\n"
+                  + "rows*.count[0]++\n"
+                  + "rows*.count[0]--\n"
+                  + "rows*.children[0][1] = 'nested-direct'\n"
+                  + "rows*.children.first()[0] = 'method-direct'\n"
+                  + "echo rows[0].child\n"
+                  + "echo projected\n"
+                  + "echo rows[0].count\n"
+                  + "echo rows[0].children\n"
 
-                  let o = runStrict source
+              let o = runStrict source
+              Expect.isNone o.Fault "the measured projected-index forms execute"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a]" ]
+                    "echo", [ "[[a]]" ]
+                    "echo", [ "1" ]
+                    "echo", [ "[method-direct, nested-direct]" ] ]
+                  "writes to a fresh projection stay temporary; selected nested lists retain identity"
+          }
 
-                  match o.Fault with
-                  | Some(Unsupported why) ->
-                      Expect.equal why Interpreter.spreadIndexAssignmentRefusal $"{label}: stable named boundary"
-                  | other -> failtestf "%s: expected projected-index refusal, got %A" label other
+          test "list index writes retain aliases, extend, and preserve compound evaluation order" {
+              let source =
+                  "def events = []\n"
+                  + "def target = { xs -> events << 'receiver'; xs }\n"
+                  + "def key = { events << 'index'; 0 }\n"
+                  + "def rhs = { events << 'rhs'; 2 }\n"
+                  + "def xs = [1, 10]\ndef alias = xs\n"
+                  + "target(xs)[key()] += rhs()\n"
+                  + "target(xs)[key()]++\n"
+                  + "target(xs)[key()]--\n"
+                  + "xs[-1] = 11\nxs[4] = 5\n"
+                  + "echo xs\necho alias\necho events\n"
 
-                  Expect.isEmpty o.Effects $"{label}: target, RHS, catch and later effects are blocked"
+              let o = runStrict source
+              Expect.isNone o.Fault "all typed integer writes execute"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[3, 11, null, null, 5]" ]
+                    "echo", [ "[3, 11, null, null, 5]" ]
+                    "echo", [ "[receiver, index, rhs, receiver, index, receiver, index]" ] ]
+                  "receiver/key run once, RHS timing is retained, and aliases share the same list"
+          }
+
+          test "index assignment expressions retain Groovy's new-versus-old result values" {
+              let plain = runStrict "def xs = [1]\nxs[0] = 7\n"
+              Expect.isNone plain.Fault "plain write succeeds"
+              Expect.equal plain.Returned (Some(VInt 7L)) "plain assignment returns the RHS"
+
+              let compound = runStrict "def xs = [1]\nxs[0] += 2\n"
+              Expect.isNone compound.Fault "compound write succeeds"
+              Expect.equal compound.Returned (Some(VInt 3L)) "compound assignment returns the new value"
+
+              let postfix = runStrict "def xs = [3]\nxs[0]++\n"
+              Expect.isNone postfix.Fault "postfix write succeeds"
+              Expect.equal postfix.Returned (Some(VInt 3L)) "postfix assignment returns the old value"
+
+              let mutation = runStrict "def xs = [3]\nxs[0]++\necho xs\n"
+              Expect.equal (stepArgs mutation) [ "echo", [ "[4]" ] ] "the receiver still mutates"
+          }
+
+          test "map index updates remain reference-backed map writes, including after spread reads" {
+              let source =
+                  "def m = [slot: 1]\ndef alias = m\n"
+                  + "m['slot'] += 2\nm['slot']++\nm['slot']--\n"
+                  + "def rows = [[holder: [slot: 'a']]]\n"
+                  + "rows*.holder.first()['slot'] = 'spread-map'\n"
+                  + "echo m\necho alias\necho rows[0].holder.slot\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the existing map writer remains available"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[slot:3]" ]; "echo", [ "[slot:3]" ]; "echo", [ "spread-map" ] ]
+                  "map identity and spread-derived runtime receiver dispatch are preserved"
+          }
+
+          test "too-negative index faults at the measured RHS boundary and is catchable" {
+              let source =
+                  "def events = []\ndef xs = ['a']\n"
+                  + "def rhs = { events << 'plain-rhs'; 'x' }\n"
+                  + "try { xs[-2] = rhs() } catch (ArrayIndexOutOfBoundsException e) { events << 'plain-caught' }\n"
+                  + "try { xs[-2] += (events << 'compound-rhs') } catch (ArrayIndexOutOfBoundsException e) { events << 'compound-caught' }\n"
+                  + "echo xs\necho events\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both runtime exceptions are intercepted"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a]" ]
+                    "echo", [ "[plain-rhs, plain-caught, compound-caught]" ] ]
+                  "plain assignment evaluates RHS first; compound update faults while reading the old value"
+          }
+
+          test "compound and postfix extension indexes preserve null-operation timing" {
+              let source =
+                  "def events = []\n"
+                  + "def rhs = { events << 'compound-rhs'; 2 }\n"
+                  + "def ints = [1]\n"
+                  + "try { ints[1] += rhs() } catch (NullPointerException e) { events << 'compound-caught' }\n"
+                  + "def strings = [1]\nstrings[1] += 'x'\n"
+                  + "def postfix = []\n"
+                  + "try { postfix[0]++ } catch (NullPointerException e) { events << 'postfix-caught' }\n"
+                  + "echo ints\necho strings\necho postfix\necho events\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both NPE-class boundaries are catchable"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[1]" ]
+                    "echo", [ "[1, nullx]" ]
+                    "echo", [ "[]" ]
+                    "echo", [ "[compound-rhs, compound-caught, postfix-caught]" ] ]
+                  "compound evaluates RHS before null arithmetic; postfix has no RHS and neither failed update mutates"
           }
 
           test "spread index results support bounded property and safe-property writes" {
@@ -1867,14 +1984,17 @@ let fg015ClosureAudit =
           }
 
           test "unsupported assignment receivers and targets never degrade to RHS-only success" {
-              let listOutcome = runStrict "def xs = [1]\nxs[0] = sh 'list-rhs'\necho 'after'\n"
+              let listOutcome = runStrict "def xs = [1]\nxs['zero'] = sh 'list-rhs'\necho 'after'\n"
 
               match listOutcome.Fault with
               | Some(Unsupported why) ->
                   Expect.equal why Interpreter.listIndexAssignmentRefusal "stable list-index boundary"
               | other -> failtestf "expected list-index refusal, got %A" other
 
-              Expect.isEmpty listOutcome.Effects "list-index refusal precedes RHS and later effects"
+              Expect.equal
+                  (stepArgs listOutcome)
+                  [ "sh", [ "list-rhs" ] ]
+                  "plain assignment evaluates its RHS before Jenkins rejects the non-integer key; later effects stay blocked"
 
               let invalidTarget =
                   Interpreter.runStrictVars

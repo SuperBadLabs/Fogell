@@ -327,7 +327,7 @@ module WalkerRules =
                   (fun positional _ ->
                       match positional with
                       | [ Fogell.Groovy.Interpreter.VList items ] ->
-                          items
+                          items.Value
                           |> List.map open'
                           |> List.tryFind (fun entry -> entry.IndexOf '=' <= 0)
                           |> Option.map (fun bad ->

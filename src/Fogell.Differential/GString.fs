@@ -58,6 +58,12 @@ module GString =
     /// `deploy null` with the build green.
     exception UnsupportedExpression of detail: string
 
+    let private renderValue value =
+        match Value.tryToDisplay value with
+        | Value.Text rendered -> rendered
+        | Value.DisplayCycleDetected ->
+            raise (UnsupportedExpression "expression threw: StackOverflowError displaying cyclic collection")
+
     let internal interpolateCore
         (strict: bool)
         (known: Map<string, string>)
@@ -90,7 +96,7 @@ module GString =
             let bare = if isEnvPath then name.Substring 4 else name
 
             match (if isEnvPath then None else Map.tryFind bare carried) with
-            | Some v -> Value.toDisplay v
+            | Some v -> renderValue v
             | None ->
 
             match Map.tryFind bare known with
@@ -214,7 +220,7 @@ module GString =
                 match outcome.Fault, outcome.Returned with
                 | None, Some v ->
                     absorb outcome
-                    Some(Value.toDisplay v)
+                    Some(renderValue v)
                 | Some(UnknownProperty name), _ ->
                     absorb outcome
                     raise (MissingProperty name)
@@ -237,7 +243,7 @@ module GString =
 
                     let detail =
                         match fault with
-                        | Thrown v -> $"expression threw: {Value.toDisplay v}"
+                        | Thrown v -> $"expression threw: {renderValue v}"
                         | BudgetExhausted what -> $"evaluation budget exhausted: {what}"
                         | Denied d -> $"sandbox denied: {d}"
                         | f -> string f
