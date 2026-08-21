@@ -1227,7 +1227,7 @@ let returnFlagContract =
 
           // FG-174. THE PAIRING THAT TURNS THE NEXT BYPASS INTO A FAILING TEST.
           //
-          // `hostedSignatureError` ends in a `| _ -> None` catch-all, so a hosted wrapper
+          // `validateHostedCall` once had a schema-less catch-all, so a hosted wrapper
           // admitted WITHOUT a case is validated by nothing and accepts any shape.
           // `timeout` sat in the hosted set with no case and shipped a false success:
           // `script { timeout(1, 2) { … } }` ran its body and reported success where
@@ -1308,6 +1308,322 @@ let hostedSignatures =
               Expect.isSome ((s "dir").Check [] []) "dir with nothing refuses"
               // timeout: types deliberately unchecked
               Expect.isNone ((s "timeout").Check [ Fogell.Groovy.Interpreter.VStr "weird" ] []) "timeout's argument types are deliberately unchecked"
+          } ]
+
+let stepDescriptorValidation =
+    let v text = Fogell.Groovy.Interpreter.VStr text
+
+    testList
+        "FG-177 shared step descriptor and call validator"
+        [ test "the descriptor is exhaustive over the 14-step vocabulary" {
+              Expect.equal
+                  (WalkerRules.stepDescriptors |> Map.keys |> Set.ofSeq)
+                  WalkerRules.scriptStepVocabulary
+                  "one row, no schema-less fallback"
+          }
+
+          test "all 14 descriptor rows match the pinned Jenkins schemas" {
+              // Jenkins 2.568.1 GDSL owns thirteen rows; archiveArtifacts is
+              // pinned by the direct archive-schema measurement receipt.
+              let expected =
+                  Map.ofList
+                      [ "sh", set [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
+                        "echo", set [ "message" ]
+                        "archiveArtifacts",
+                        set
+                            [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
+                              "excludes"; "fingerprint"; "followSymlinks"; "onlyIfSuccessful" ]
+                        "junit",
+                        set
+                            [ "testResults"; "allowEmptyResults"; "checksName"; "healthScaleFactor"
+                              "keepLongStdio"; "keepProperties"; "keepTestNames"
+                              "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"
+                              "skipOldReports"; "skipPublishingChecks"; "stdioRetention"
+                              "testDataPublishers" ]
+                        "checkout", set [ "scm"; "changelog"; "poll" ]
+                        "deleteDir", Set.empty
+                        "git", set [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ]
+                        "stash", set [ "name"; "allowEmpty"; "excludes"; "includes"; "useDefaultExcludes" ]
+                        "unstable", set [ "message" ]
+                        "unstash", set [ "name" ]
+                        "withEnv", set [ "overrides" ]
+                        "dir", set [ "path" ]
+                        "retry", set [ "count"; "conditions" ]
+                        "timeout", set [ "time"; "unit"; "activity" ] ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  Expect.equal
+                      (Set.union descriptor.NamedKeys descriptor.UnsupportedNamedKeys)
+                      (Map.find name expected)
+                      $"{name} keys drifted from the pinned Jenkins schema"
+
+              Expect.equal
+                  (Map.find "retry" WalkerRules.stepDescriptors).UnsupportedNamedKeys
+                  (set [ "conditions" ])
+                  "conditions is measured but remains an explicit unsupported capability"
+
+              let measuredMissingPrimaryClasses =
+                  Map.ofList
+                      [ "sh", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "archiveArtifacts", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "junit", Fogell.Groovy.Interpreter.NullPointerException
+                        "checkout", Fogell.Groovy.Interpreter.NullPointerException
+                        "stash", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "unstable", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "unstash", Fogell.Groovy.Interpreter.IllegalArgumentException
+                        "dir", Fogell.Groovy.Interpreter.NullPointerException
+                        "withEnv", Fogell.Groovy.Interpreter.IllegalArgumentException ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  Expect.equal
+                      descriptor.MissingPrimaryException
+                      (Map.tryFind name measuredMissingPrimaryClasses)
+                      $"{name} missing-primary exception class drifted from retained Jenkins evidence"
+
+                  Expect.equal
+                      descriptor.RequiresPrimary
+                      descriptor.MissingPrimaryException.IsSome
+                      $"{name} requiredness and measured exception-class data disagree"
+          }
+
+          test "unknown-key policy is measured per step" {
+              let warned =
+                  set
+                      [ "sh"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"
+                        "git"; "stash"; "timeout"; "retry" ]
+
+              let thrown = set [ "echo"; "unstable"; "unstash"; "dir"; "withEnv" ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  match descriptor.UnknownNamed with
+                  | WalkerRules.WarnAndContinue bindingClass ->
+                      Expect.isTrue (warned.Contains name) $"{name} is a measured warning row"
+                      Expect.isNonEmpty bindingClass $"{name} warning names its Jenkins binding class"
+                  | WalkerRules.ConstructorMapThrow ->
+                      Expect.isTrue (thrown.Contains name) $"{name} is a measured constructor-map row"
+
+              Expect.equal (Set.union warned thrown) WalkerRules.scriptStepVocabulary "policies partition the vocabulary"
+          }
+
+          test "terminal hosted-status delivery is exhaustive over all 14 descriptors" {
+              let catchable = set [ "sh"; "unstash" ]
+              let deferred = Set.difference WalkerRules.scriptStepVocabulary catchable
+
+              for step in WalkerRules.scriptStepVocabulary do
+                  let expected =
+                      if catchable.Contains step then
+                          Some WalkerRules.CatchableStepFailure
+                      else
+                          Some WalkerRules.DeferredStatusHalt
+
+                  Expect.equal
+                      (WalkerRules.hostedStatusFailureDelivery step)
+                      expected
+                      $"{step} has an explicit measured terminal-status delivery"
+
+              Expect.equal
+                  (Set.union catchable deferred)
+                  (WalkerRules.stepDescriptors |> Map.keys |> Set.ofSeq)
+                  "catchable and deferred status paths cover every descriptor exactly"
+
+              Expect.isNone
+                  (WalkerRules.hostedStatusFailureDelivery "outside-vocabulary")
+                  "an unregistered step never acquires an implicit status policy"
+          }
+
+          test "primary promotion cannot erase a constructor-map unknown" {
+              match
+                  WalkerRules.validateHostedCall
+                      "echo"
+                      []
+                      [ "message", v "x"; "fogellProbeUnknown", Fogell.Groovy.Interpreter.VBool true ]
+              with
+              | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, reason, warnings)) ->
+                  Expect.equal exceptionClass Fogell.Groovy.Interpreter.IllegalArgumentException "constructor-map binding class"
+                  Expect.stringContains reason "fogellProbeUnknown" "the raw unknown survives until classification"
+                  Expect.isEmpty warnings "constructor-map throw does not warn first"
+              | other -> failtestf "expected a catchable constructor-map throw, got %A" other
+          }
+
+          test "warning rows normalize the primary and return warning data" {
+              match
+                  WalkerRules.validateHostedCall
+                      "sh"
+                      []
+                      [ "script", v "printf ok"; "fogellProbeUnknown", Fogell.Groovy.Interpreter.VBool true ]
+              with
+              | Ok validated ->
+                  Expect.equal validated.Positional [ v "printf ok" ] "script: promoted once"
+                  Expect.equal (validated.Named |> List.map fst) [ "fogellProbeUnknown" ] "unknown is retained for dispatch audit"
+                  Expect.equal validated.Warnings.Length 1 "one structured warning"
+                  Expect.equal validated.Warnings.Head.UnknownKeys [ "fogellProbeUnknown" ] "literal measured key"
+              | Error error -> failtestf "warning-and-continue call refused: %A" error
+          }
+
+          test "every descriptor primary promotes through the shared boundary exactly once" {
+              let primaryValue name =
+                  match name with
+                  | "retry" -> Fogell.Groovy.Interpreter.VInt 2L
+                  | "withEnv" -> Fogell.Groovy.Interpreter.VList [ v "A=1" ]
+                  | _ -> v $"sample-{name}"
+
+              let mutable promoted = 0
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  match descriptor.PrimaryParameter with
+                  | None -> ()
+                  | Some primary ->
+                      let supplied = primaryValue name
+
+                      match WalkerRules.validateHostedCall name [] [ primary, supplied ] with
+                      | Ok validated ->
+                          Expect.equal validated.Positional [ supplied ] $"{name}: primary promoted to one positional"
+                          Expect.isEmpty validated.Named $"{name}: promoted key is removed from named arguments"
+                          Expect.isEmpty validated.Warnings $"{name}: a supported primary never warns"
+                          promoted <- promoted + 1
+                      | Error error -> failtestf "%s primary failed shared-boundary promotion: %A" name error
+
+              Expect.equal
+                  promoted
+                  (WalkerRules.stepDescriptors
+                   |> Map.values
+                   |> Seq.filter (fun descriptor -> descriptor.PrimaryParameter.IsSome)
+                   |> Seq.length)
+                  "every advertised primary passed through the shared promotion path"
+          }
+
+          test "typed primary checks run after named promotion" {
+              match
+                  WalkerRules.validateHostedCall
+                      "retry"
+                      []
+                      [ "count", Fogell.Groovy.Interpreter.VInt 2L ]
+              with
+              | Ok validated ->
+                  Expect.equal validated.Positional [ Fogell.Groovy.Interpreter.VInt 2L ] "named count promoted once"
+                  Expect.isEmpty validated.Named "count is not left behind for a second interpretation"
+              | Error error -> failtestf "valid named retry count refused: %A" error
+
+              match WalkerRules.validateHostedCall "retry" [] [ "count", v "two" ] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.equal reason "`retry` needs an integer attempt count, not `two`" "stable retry type refusal"
+              | other -> failtestf "non-integer named retry count escaped its promoted type check: %A" other
+
+              match
+                  WalkerRules.validateHostedCall
+                      "withEnv"
+                      []
+                      [ "overrides", Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+              with
+              | Ok validated ->
+                  Expect.equal
+                      validated.Positional
+                      [ Fogell.Groovy.Interpreter.VList [ v "A=1" ] ]
+                      "named overrides promoted before its list contract"
+              | Error error -> failtestf "valid named withEnv overrides refused: %A" error
+
+              match WalkerRules.validateHostedCall "withEnv" [] [ "overrides", v "A=1" ] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.equal reason "`withEnv` takes exactly one list argument of NAME=VALUE strings" "stable withEnv type refusal"
+              | other -> failtestf "non-list named withEnv overrides escaped its promoted type check: %A" other
+          }
+
+          test "supported named keys never masquerade as unknowns" {
+              match
+                  WalkerRules.validateHostedCall
+                      "archiveArtifacts"
+                      []
+                      [ "artifacts", v "*.txt"; "allowEmptyArchive", Fogell.Groovy.Interpreter.VBool true
+                        "fingerprint", Fogell.Groovy.Interpreter.VBool true ]
+              with
+              | Ok validated -> Expect.isEmpty validated.Warnings "all three keys are descriptor-owned"
+              | Error error -> failtestf "supported archive schema refused: %A" error
+          }
+
+          test "corrected sh and junit keys are accepted, while healthScale stays unknown" {
+              match
+                  WalkerRules.validateHostedCall
+                      "sh"
+                      []
+                      [ "script", v "printf ok"; "encoding", v "UTF-8" ]
+              with
+              | Ok validated -> Expect.isEmpty validated.Warnings "encoding is a supported sh key"
+              | Error error -> failtestf "supported sh encoding refused: %A" error
+
+              let junitKeys =
+                  [ "testResults", v "**/*.xml"
+                    "healthScaleFactor", Fogell.Groovy.Interpreter.VInt 1L
+                    "keepProperties", Fogell.Groovy.Interpreter.VBool true
+                    "keepTestNames", Fogell.Groovy.Interpreter.VBool true
+                    "skipMarkingStageUnstable", Fogell.Groovy.Interpreter.VBool true ]
+
+              match WalkerRules.validateHostedCall "junit" [] junitKeys with
+              | Ok validated -> Expect.isEmpty validated.Warnings "all corrected junit keys are supported"
+              | Error error -> failtestf "supported junit schema refused: %A" error
+
+              match
+                  WalkerRules.validateHostedCall
+                      "junit"
+                      []
+                      [ "testResults", v "**/*.xml"; "healthScale", Fogell.Groovy.Interpreter.VInt 1L ]
+              with
+              | Ok validated ->
+                  Expect.equal validated.Warnings.Length 1 "invalid healthScale follows junit's measured warning policy"
+                  Expect.equal validated.Warnings.Head.UnknownKeys [ "healthScale" ] "invalid spelling is never normalized away"
+              | Error error -> failtestf "junit unknown-key policy changed: %A" error
+          }
+
+          test "warning data survives a later missing-primary binding throw" {
+              match
+                  WalkerRules.validateHostedCall
+                      "sh"
+                      []
+                      [ "fogellProbeUnknown", Fogell.Groovy.Interpreter.VBool true ]
+              with
+              | Error(WalkerRules.JenkinsBindingThrow(exceptionClass, _, [ warning ])) ->
+                  Expect.equal exceptionClass Fogell.Groovy.Interpreter.IllegalArgumentException "missing sh class is measured"
+                  Expect.equal warning.UnknownKeys [ "fogellProbeUnknown" ] "Jenkins warns before the missing script throws"
+              | other -> failtestf "warning was lost across missing-primary validation: %A" other
+          }
+
+          test "requiredness is separate from the primary promotion name" {
+              for name in [ "echo"; "deleteDir"; "retry" ] do
+                  match WalkerRules.validateHostedCall name [] [] with
+                  | Ok _ -> ()
+                  | Error error -> failtestf "%s zero-argument measured call refused: %A" name error
+
+              for name in [ "git"; "timeout" ] do
+                  match WalkerRules.validateHostedCall name [] [] with
+                  | Ok _ -> ()
+                  | Error error -> failtestf "%s binds before its downstream runtime outcome: %A" name error
+
+              for name in [ "sh"; "archiveArtifacts"; "junit"; "checkout"; "stash"; "unstable"; "unstash"; "dir"; "withEnv" ] do
+                  match WalkerRules.validateHostedCall name [] [] with
+                  | Error(WalkerRules.JenkinsBindingThrow _) -> ()
+                  | other -> failtestf "%s missing primary did not produce a binding throw: %A" name other
+          }
+
+          test "recognized but unimplemented named keys remain fail closed" {
+              match
+                  WalkerRules.validateHostedCall
+                      "retry"
+                      []
+                      [ "count", Fogell.Groovy.Interpreter.VInt 2L
+                        "conditions", Fogell.Groovy.Interpreter.VList [] ]
+              with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.stringContains reason "conditions" "the unsupported key is named"
+              | other -> failtestf "retry conditions changed from refusal to silent ignore: %A" other
+          }
+
+          test "engine refusals stay distinct from catchable Jenkins binding throws" {
+              match WalkerRules.validateHostedCall "deleteDir" [ v "ignored" ] [] with
+              | Error(WalkerRules.EngineRefusal _) -> ()
+              | other -> failtestf "deleteDir arity should remain an engine refusal, got %A" other
+
+              match WalkerRules.validateHostedCall "withEnv" [ v "A=1" ] [] with
+              | Error(WalkerRules.EngineRefusal _) -> ()
+              | other -> failtestf "typed shape should remain an engine refusal, got %A" other
           } ]
 
 /// FG-014. Admission may retain tools syntax for the parse-only corpus metric, but
@@ -2065,6 +2381,7 @@ let main argv =
         (testList
             "Fogell.Differential"
             [ hostedSignatures
+              stepDescriptorValidation
               jenkinsBuildDataAttestation
               unsupportedDeclarativeTools
               spreadAssignmentPreflight

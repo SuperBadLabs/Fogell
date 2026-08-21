@@ -671,7 +671,8 @@ let hostedSteps =
     //   the host can hang durability on.
     // These test the seam, not the walker; the walker side is separate work.
     let hostThat perform setEnv =
-        { Perform = perform
+        { Perform = fun _ name positional named runBody -> perform name positional named runBody
+          CanContinue = fun () -> true
           SetEnv = setEnv
           // FG-178. These tests exercise the SEAM, not a walker environment; an empty
           // list keeps the body's bindings exactly as `runHosted` set them.
@@ -763,7 +764,7 @@ let hostedSteps =
               let counting =
                   { host with
                       Perform =
-                        fun name _ _ _ ->
+                        fun _ name _ _ _ ->
                             if name = "sh" then ran.Value <- true
                             VNull }
 
@@ -789,6 +790,380 @@ let hostedSteps =
                   "a host exception propagates rather than being swallowed"
           }
 
+          test "a hosted halt unwinds before later arguments or Perform" {
+              let performed = ref false
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> performed.Value <- true; VNull) (fun _ _ -> ()) with
+                      CanContinue = fun () -> false }
+
+              let missing =
+                  runIt host "sh(script: MISSING)\nreturn 'SURVIVED'"
+
+              Expect.isNone missing.Fault "the unreachable missing property was never forced"
+              Expect.isNone missing.Returned "the halted script unwinds without a replacement return"
+              Expect.isFalse performed.Value "Perform is not entered after reachability says false"
+
+              let sideEffect =
+                  runIt host "def arg() { sh 'nested'; return 'outer' }\nsh(script: arg())\nreturn 'DONE'"
+
+              Expect.isNone sideEffect.Fault "the unreachable helper argument was never invoked"
+              Expect.isNone sideEffect.Returned "the halted script does not resume after the call"
+              Expect.isFalse performed.Value "neither the nested nor outer step was performed"
+          }
+
+          test "finally cleanup calls run in the narrow hosted-halt unwind phase" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string * string list>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name positional _ _ ->
+                            performed.Add(phase, name, positional |> List.map Value.toDisplay)
+
+                            if name = "stage" then
+                                reachable.Value <- false
+
+                            VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "def increment(value) { return value + 1 }\n"
+                      + "def n = 0\n"
+                      + "try { stage 'halt' } finally { n = increment(n); echo \"cleanup:${n}\" }\n"
+                      + "echo 'must-not-run'\n"
+                  )
+
+              Expect.isNone outcome.Fault "the original hosted halt remains control flow, not a replacement fault"
+              Expect.isNone outcome.Returned "normal finally completion preserves the original halt"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage", [ "halt" ]
+                    FinallyUnwind, "echo", [ "cleanup:1" ] ]
+                  "the helper and hosted cleanup execute, but ordinary continuation stays suppressed"
+          }
+
+          test "nested finally blocks unwind inner then outer under a hosted halt" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name _ _ _ ->
+                            performed.Add(phase, name)
+
+                            if name = "stage" then
+                                reachable.Value <- false
+
+                            VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "try { try { stage 'halt' } finally { echo 'inner' } } "
+                      + "finally { echo 'outer' }\n"
+                  )
+
+              Expect.isNone outcome.Fault "the original halt escapes after both cleanup blocks"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage"
+                    FinallyUnwind, "echo"
+                    FinallyUnwind, "echo" ]
+                  "nested cleanup order is inner then outer and both calls are explicitly phased"
+          }
+
+          test "a finally helper still shadows the hosted step with the same name" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string * string list>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name positional _ _ ->
+                            performed.Add(phase, name, positional |> List.map Value.toDisplay)
+
+                            if name = "stage" then
+                                reachable.Value <- false
+
+                            VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "def echo(value) { library \"helper:${value}\"; return value }\n"
+                      + "try { stage 'halt' } finally { echo('cleanup') }\n"
+                  )
+
+              Expect.isNone outcome.Fault "the original hosted halt survives helper cleanup"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage", [ "halt" ]
+                    FinallyUnwind, "library", [ "helper:cleanup" ] ]
+                  "helper resolution wins over the registered echo step during unwind"
+          }
+
+          test "a finally return replaces a hosted halt" {
+              let reachable = ref true
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name _ _ _ ->
+                            if name = "stage" then
+                                reachable.Value <- false
+
+                            VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome = runIt host "try { stage 'halt' } finally { return 7 }"
+
+              Expect.isNone outcome.Fault "the finally return suppresses the hosted halt"
+              Expect.equal outcome.Returned (Some(VInt 7L)) "the replacing return value survives"
+          }
+
+          test "a new cleanup refusal stops successors but still runs its nested finally" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name positional _ _ ->
+                            performed.Add(phase, name)
+
+                            match name, positional with
+                            | "stage", _ ->
+                                reachable.Value <- false
+                                VNull
+                            | "sh", [ VStr "refuse" ] -> Interpreter.raiseHostedCallRefused "cleanup refused"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { sh 'refuse'; echo 'inner-successor' } "
+                      + "finally { echo 'nested-cleanup' }; "
+                      + "echo 'outer-successor' }"
+                  )
+
+              Expect.equal outcome.Fault (Some(HostedCallRefused "cleanup refused")) "the newer refusal escapes"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage"
+                    FinallyUnwind, "sh"
+                    FinallyUnwind, "echo" ]
+                  "the nested finally runs under inherited permission; both successors stay suppressed"
+          }
+
+          test "a nested finally return replaces both a cleanup refusal and the inherited halt" {
+              let reachable = ref true
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name positional _ _ ->
+                            match name, positional with
+                            | "stage", _ ->
+                                reachable.Value <- false
+                                VNull
+                            | "sh", [ VStr "refuse" ] -> Interpreter.raiseHostedCallRefused "cleanup refused"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { sh 'refuse'; return 7 } finally { return 9 } }"
+                  )
+
+              Expect.isNone outcome.Fault "the nested finally return replaces both pending halts"
+              Expect.equal outcome.Returned (Some(VInt 9L)) "the innermost replacing return wins"
+          }
+
+          test "a fresh status-only cleanup halt stops successors and still runs nested finally" {
+              let reachable = ref true
+              let performed = ResizeArray<HostedCallPhase * string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun phase name _ _ _ ->
+                            performed.Add(phase, name)
+
+                            match name with
+                            | "stage" ->
+                                reachable.Value <- false
+                                VNull
+                            | "stash" ->
+                                Interpreter.raiseHostedStepHalted
+                                    "stash"
+                                    HostedFailure
+                                    "hosted step 'stash' failed during finally cleanup"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (Set.add "stash" steps) Env.empty (parseOk (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { stash name: 'cleanup'; echo 'inner-successor' } "
+                      + "finally { echo 'nested-cleanup' }; "
+                      + "echo 'outer-successor' }"
+                  ))
+
+              Expect.equal
+                  outcome.Fault
+                  (Some(HostedStepHalted(
+                      "stash",
+                      HostedFailure,
+                      "hosted step 'stash' failed during finally cleanup"
+                  )))
+                  "the fresh cleanup status owns the escaping halt"
+
+              Expect.equal
+                  (List.ofSeq performed)
+                  [ OrdinaryCall, "stage"
+                    FinallyUnwind, "stash"
+                    FinallyUnwind, "echo" ]
+                  "nested cleanup runs but both successors stay suppressed"
+          }
+
+          test "a nested finally return may replace a fresh status-only cleanup halt" {
+              let reachable = ref true
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name _ _ _ ->
+                            match name with
+                            | "stage" ->
+                                reachable.Value <- false
+                                VNull
+                            | "stash" ->
+                                Interpreter.raiseHostedStepHalted "stash" HostedFailure "cleanup failed"
+                            | _ -> VNull
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (Set.add "stash" steps) Env.empty (parseOk (
+                      "try { stage 'original-halt' } finally { "
+                      + "try { stash name: 'cleanup'; return 7 } finally { return 9 } }"
+                  ))
+
+              Expect.isNone outcome.Fault "the nested return replaces both pending halts"
+              Expect.equal outcome.Returned (Some(VInt 9L)) "the innermost replacing return wins"
+          }
+
+          test "a hosted call refusal stays opaque to Groovy catch and explicit at wrapper ownership" {
+              let performed = ResizeArray<string>()
+
+              let host =
+                  { hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ()) with
+                      Perform =
+                        fun _ name positional _ _ ->
+                            performed.Add name
+
+                            if name = "sh" && positional = [ VStr "refuse" ] then
+                                Interpreter.raiseHostedCallRefused "call refused"
+
+                            VNull }
+
+              let outcome = runIt host "try { sh 'refuse' } catch (Exception e) { echo 'caught' }; echo 'after'"
+              Expect.equal outcome.Fault (Some(HostedCallRefused "call refused")) "Groovy catch cannot absorb a model refusal"
+              Expect.equal (List.ofSeq performed) [ "sh" ] "catch and successor effects do not run"
+
+              let caught =
+                  Interpreter.catchHostedHalt (fun () -> Interpreter.raiseHostedCallRefused "wrapper reason")
+
+              Expect.equal
+                  caught
+                  (Some(Interpreter.CallRefusalHalt "wrapper reason"))
+                  "the wrapper receives the precise deferred reason"
+
+              let statusCaught =
+                  Interpreter.catchHostedHalt (fun () ->
+                      Interpreter.raiseHostedStepHalted "stash" HostedAborted "cleanup aborted")
+
+              Expect.equal
+                  statusCaught
+                  (Some(Interpreter.StepStatusHalt("stash", HostedAborted, "cleanup aborted")))
+                  "wrapper ownership preserves status kind and diagnostic"
+          }
+
+          test "a nested argument that halts unwinds before later arguments and the outer step" {
+              let reachable = ref true
+              let performed = ResizeArray<string>()
+
+              let host =
+                  { hostThat
+                        (fun name positional _ _ ->
+                            performed.Add name
+
+                            if name = "sh" && positional = [ VStr "halt" ] then
+                                reachable.Value <- false
+
+                            VNull)
+                        (fun _ _ -> ()) with
+                      CanContinue = fun () -> reachable.Value }
+
+              let outcome =
+                  runIt host "echo(sh('halt'), MISSING)\nreturn 'SURVIVED'"
+
+              Expect.isNone outcome.Fault "MISSING after the halting nested call was not forced"
+              Expect.isNone outcome.Returned "the interpreter does not resume after the halting nested call"
+              Expect.equal (List.ofSeq performed) [ "sh" ] "the outer echo never enters Perform"
+          }
+
+          test "script helpers shadow hosted step names while the branch is live" {
+              for helper in [ "sh"; "echo"; "node"; "archiveArtifacts" ] do
+                  let performed = ResizeArray<string>()
+
+                  let host =
+                      hostThat
+                          (fun name _ _ _ -> performed.Add name; VNull)
+                          (fun _ _ -> ())
+
+                  let outcome =
+                      runIt host $"def {helper}(value) {{ return value }}\nreturn {helper}('HELPER')"
+
+                  Expect.isNone outcome.Fault $"{helper}: the helper call succeeds"
+                  Expect.equal outcome.Returned (Some(VStr "HELPER")) $"{helper}: helper result wins"
+                  Expect.isEmpty performed $"{helper}: hosted Perform is never entered"
+          }
+
+          test "a hosted halt never invokes a shadowing helper with missing or side-effect arguments" {
+              for helper in [ "sh"; "echo"; "node"; "archiveArtifacts" ] do
+                  let reachable = ref true
+                  let performed = ResizeArray<string>()
+
+                  let host =
+                      { hostThat
+                            (fun name _ _ _ ->
+                                performed.Add name
+
+                                if name = "stage" then
+                                    reachable.Value <- false
+
+                                VNull)
+                            (fun _ _ -> ()) with
+                          CanContinue = fun () -> reachable.Value }
+
+                  let outcome =
+                      runIt host $"def {helper}(value) {{ library 'helper-body'; return value }}\nstage 'halt'\n{helper}(MISSING)\n{helper}(echo('side-effect'))\nreturn 'REPLACED'"
+
+                  Expect.isNone outcome.Fault $"{helper}: the original hosted halt is not replaced"
+                  Expect.isNone outcome.Returned $"{helper}: execution stops at the hosted halt"
+                  Expect.equal (List.ofSeq performed) [ "stage" ] $"{helper}: helper body and argument effects never run"
+          }
+
           test "a NESTED wrapper still refreshes the Jenkins env binding" {
               // FG-201. The refresh's "ours" check was a per-invocation cell, so a
               // wrapper nested inside another found the OUTER wrapper's cell, failed
@@ -804,7 +1179,7 @@ let hostedSteps =
 
               let host =
                   { Perform =
-                      fun name positional _named runBody ->
+                      fun _ name positional _named runBody ->
                           (match name, positional with
                            | "withEnv", [ VList entries ] ->
                                let pairs =
@@ -831,6 +1206,7 @@ let hostedSteps =
                            | _ -> runBody |> Option.iter (fun run -> run ()))
 
                           VNull
+                    CanContinue = fun () -> true
                     SetEnv = fun _ _ -> ()
                     CurrentEnv = fun () -> overlay.Value
                     TakesBlock = fun name -> Set.contains name (set [ "dir"; "withEnv" ]) }
@@ -1004,7 +1380,8 @@ let mapIdentity =
               let sets = ResizeArray<string * string>()
 
               let host =
-                  { Perform = fun _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
+                  { Perform = fun _ _ _ _ runBody -> (runBody |> Option.iter (fun run -> run ())); VNull
+                    CanContinue = fun () -> true
                     SetEnv = fun k v -> sets.Add(k, v)
                     CurrentEnv = fun () -> []
                     TakesBlock = fun _ -> false }

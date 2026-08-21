@@ -400,14 +400,33 @@ echo "an absorbed reason cannot explain a later refusal, and an uncaught one sti
 H_LANE="$LANE/fg206-halted"
 mkdir -p "$H_LANE/ws"
 cat > "$H_LANE/Jenkinsfile" <<'JF'
+def git(value) {
+    sh 'printf helper-body > helper-body.txt'
+    return value
+}
+
 pipeline {
     agent any
     stages {
         stage('Gate') {
             steps {
                 script {
+                    // A script helper wins over the hosted step of the same name.
+                    // After the refusal below halts the branch it must not be called
+                    // with discarded arguments (the old path invoked it with zero),
+                    // and neither its body nor its arguments may run.
+                    def unreachableArg = {
+                        sh 'printf arg > arg.txt'
+                        return 'ignored'
+                    }
                     sh('invalid', 'extra')
-                    sh 'echo after'
+                    git(MISSING)
+                    git(unreachableArg())
+                    sh(script: MISSING)
+                    sh(script: unreachableArg())
+                    sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
+                    echo(message: 'must-not-print', fogellProbeUnknown: true)
+                    sh 'printf effect > effect.txt'
                 }
             }
         }
@@ -423,7 +442,353 @@ grep -q $'^step-reason\tGate\t0\t' "$H_LANE/build.journal" || {
   cat "$H_LANE/build.journal"; exit 1; }
 grep -q "positional argument" "$H_LANE/build.journal" || {
   echo "FAIL: the journaled reason is not the refusal's own"; cat "$H_LANE/build.journal"; exit 1; }
-echo "a refused call with a successor keeps its own reason on the durable record"
+grep -q 'WARNING: Unknown parameter' "$H_LANE/run.log" && {
+  echo "FAIL: an unreachable warning-class call emitted after halt"; cat "$H_LANE/run.log"; exit 1; }
+grep -q 'must-not-print' "$H_LANE/run.log" && {
+  echo "FAIL: an unreachable constructor-map call emitted after halt"; cat "$H_LANE/run.log"; exit 1; }
+grep -q 'StepBindingFailed\|fogellProbeUnknown' "$H_LANE/build.journal" && {
+  echo "FAIL: an unreachable binding fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
+grep -q 'UnknownProperty\|MISSING' "$H_LANE/build.journal" && {
+  echo "FAIL: an unreachable argument fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/arg.txt" ] && { echo "FAIL: unreachable argument side effect landed"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/helper-body.txt" ] && { echo "FAIL: a shadowing helper ran after halt"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/warned.txt" ] && { echo "FAIL: unreachable warning-class effect landed"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
+echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"
+
+echo "=== FG-177: named retry count promotes and controls the attempt budget ==="
+RN_LANE="$LANE/fg177-retry-named-count"
+mkdir -p "$RN_LANE/ws"
+cat > "$RN_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-named-count') {
+            steps {
+                script {
+                    retry(count: 2) {
+                        sh 'n=$(cat attempts.txt 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > attempts.txt; [ "$n" -ge 2 ]'
+                    }
+                    sh 'echo continued >> continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$RN_LANE/Jenkinsfile" "$RN_LANE/ws" fg177rn "$RN_LANE/build.journal" > "$RN_LANE/run.log" 2>&1
+grep -q 'completed: success' "$RN_LANE/run.log" || { echo "FAIL: named retry count did not recover on attempt 2"; cat "$RN_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RN_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: named retry count did not establish exactly two attempts"; cat "$RN_LANE/run.log"; exit 1; }
+[ "$(cat "$RN_LANE/ws/fg177rn/attempts.txt")" = 2 ] || { echo "FAIL: named retry body did not execute exactly twice"; exit 1; }
+[ "$(grep -c '^continued$' "$RN_LANE/ws/fg177rn/continued.txt" || true)" -eq 1 ] || { echo "FAIL: named retry continuation did not execute exactly once"; exit 1; }
+echo "named count promoted to one integer positional and governed exactly two attempts"
+
+echo "=== FG-177: non-integer named retry count refuses before body effects ==="
+RT_LANE="$LANE/fg177-retry-named-count-type"
+mkdir -p "$RT_LANE/ws"
+cat > "$RT_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-named-count-type') {
+            steps {
+                script {
+                    retry(count: 'two') {
+                        sh 'echo body > body.txt'
+                    }
+                    sh 'echo continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RT_LANE/Jenkinsfile" "$RT_LANE/ws" fg177rt "$RT_LANE/build.journal" > "$RT_LANE/run.log" 2>&1
+RT_RC=$?
+set -e
+[ "$RT_RC" -eq 1 ] || { echo "FAIL: non-integer named retry count returned rc $RT_RC, expected 1"; cat "$RT_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RT_LANE/run.log" || { echo "FAIL: non-integer named retry count did not fail"; cat "$RT_LANE/run.log"; exit 1; }
+grep -Fq '`retry` needs an integer attempt count, not `two`' "$RT_LANE/build.journal" || {
+  echo "FAIL: non-integer named retry count lost its stable refusal reason"
+  cat "$RT_LANE/build.journal"
+  exit 1
+}
+[ ! -f "$RT_LANE/ws/fg177rt/body.txt" ] || { echo "FAIL: refused retry executed its body"; exit 1; }
+[ ! -f "$RT_LANE/ws/fg177rt/continued.txt" ] || { echo "FAIL: refused retry executed its successor"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RT_LANE/run.log" || true)" -eq 0 ] || { echo "FAIL: refused retry entered attempt control flow"; cat "$RT_LANE/run.log"; exit 1; }
+echo "non-integer named count refused with a stable reason before body, retry, or successor effects"
+
+echo "=== FG-177: a hosted child halt returns to retry ownership ==="
+RH_LANE="$LANE/fg177-retry-child-halt"
+mkdir -p "$RH_LANE/ws"
+cat > "$RH_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-child-halt') {
+            steps {
+                script {
+                    retry(2) {
+                        dir('nested') {
+                            timeout(time: 30, unit: 'SECONDS') {
+                                withEnv(['INSIDE=yes']) {
+                                    def first = sh(
+                                        script: 'if [ -f ../attempted.txt ]; then exit 0; else touch ../attempted.txt; exit 1; fi',
+                                        returnStatus: true
+                                    )
+                                    if (first != 0) {
+                                        unstash 'missing'
+                                        sh 'printf wrong > wrong.txt'
+                                    }
+                                    sh 'echo recovered >> recovered.txt; printf "$INSIDE" > overlay.txt'
+                                }
+                            }
+                        }
+                    }
+                    sh 'echo continued >> continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$RH_LANE/Jenkinsfile" "$RH_LANE/ws" fg177rh "$RH_LANE/build.journal" > "$RH_LANE/run.log" 2>&1
+grep -q 'completed: success' "$RH_LANE/run.log" || { echo "FAIL: retry did not recover on attempt 2"; cat "$RH_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RH_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: retry did not run exactly two attempts"; cat "$RH_LANE/run.log"; exit 1; }
+[ -f "$RH_LANE/ws/fg177rh/attempted.txt" ] || { echo "FAIL: attempt-1 marker is absent"; exit 1; }
+[ ! -f "$RH_LANE/ws/fg177rh/nested/wrong.txt" ] || { echo "FAIL: attempt 1 continued after its child halt"; exit 1; }
+[ "$(grep -c '^recovered$' "$RH_LANE/ws/fg177rh/nested/recovered.txt" || true)" -eq 1 ] || { echo "FAIL: recovered effect is not exactly once"; exit 1; }
+[ -f "$RH_LANE/ws/fg177rh/nested/overlay.txt" ] || { echo "FAIL: nested overlay evidence is absent"; exit 1; }
+[ "$(cat "$RH_LANE/ws/fg177rh/nested/overlay.txt")" = yes ] || { echo "FAIL: nested withEnv context was not preserved"; exit 1; }
+[ "$(grep -c '^continued$' "$RH_LANE/ws/fg177rh/continued.txt" || true)" -eq 1 ] || { echo "FAIL: outer script did not continue exactly once after recovery"; exit 1; }
+grep -q $'^step-finished\tretry-child-halt\t0\tsuccess$' "$RH_LANE/build.journal" || { echo "FAIL: recovered script unit did not journal success"; exit 1; }
+
+# Durable audit: a terminal replay must not re-enter either attempt or duplicate
+# the recovered/continuation effects owned by the one journaled script unit.
+"${HOST[@]}" "$RH_LANE/Jenkinsfile" "$RH_LANE/ws" fg177rh "$RH_LANE/build.journal" > "$RH_LANE/rerun.log" 2>&1
+grep -q 'already-terminal: success' "$RH_LANE/rerun.log" || { echo "FAIL: recovered terminal journal was not a no-op"; exit 1; }
+[ "$(grep -c '^recovered$' "$RH_LANE/ws/fg177rh/nested/recovered.txt" || true)" -eq 1 ] || { echo "FAIL: terminal replay duplicated recovered effect"; exit 1; }
+[ "$(grep -c '^continued$' "$RH_LANE/ws/fg177rh/continued.txt" || true)" -eq 1 ] || { echo "FAIL: terminal replay duplicated continuation effect"; exit 1; }
+echo "attempt 1 halted inside nested wrappers, attempt 2 recovered, and terminal replay duplicated nothing"
+
+echo "=== FG-177: exhausted retry runs finally cleanup once per attempt ==="
+RF_LANE="$LANE/fg177-retry-finally-exhausted"
+mkdir -p "$RF_LANE/ws"
+cat > "$RF_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-finally-exhausted') {
+            steps {
+                script {
+                    retry(2) {
+                        try {
+                            unstash 'missing'
+                        } finally {
+                            echo 'finally-cleanup'
+                            sh 'echo cleanup >> cleanup-attempts.txt'
+                        }
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RF_LANE/Jenkinsfile" "$RF_LANE/ws" fg177rf "$RF_LANE/build.journal" > "$RF_LANE/run.log" 2>&1
+RF_RC=$?
+set -e
+[ "$RF_RC" -eq 1 ] || { echo "FAIL: finally-exhausted retry returned rc $RF_RC, expected 1"; cat "$RF_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RF_LANE/run.log" || { echo "FAIL: finally-exhausted retry did not fail"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| finally-cleanup$' "$RF_LANE/run.log" || true)" -eq 2 ] || { echo "FAIL: finally cleanup did not run exactly once per attempt"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RF_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: finally-exhausted retry crossed the wrong attempt boundary"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^cleanup$' "$RF_LANE/ws/fg177rf/cleanup-attempts.txt" || true)" -eq 2 ] || { echo "FAIL: finally cleanup side effect count is not two"; exit 1; }
+[ ! -f "$RF_LANE/ws/fg177rf/continued.txt" ] || { echo "FAIL: exhausted retry continued after its final fault"; exit 1; }
+grep -q $'^step-finished\tretry-finally-exhausted\t0\tfailure$' "$RF_LANE/build.journal" || { echo "FAIL: finally-exhausted retry journaled no failure"; cat "$RF_LANE/build.journal"; exit 1; }
+
+"${HOST[@]}" "$RF_LANE/Jenkinsfile" "$RF_LANE/ws" fg177rf "$RF_LANE/build.journal" > "$RF_LANE/rerun.log" 2>&1
+grep -q 'already-terminal: failure' "$RF_LANE/rerun.log" || { echo "FAIL: terminal finally-exhausted journal was not a no-op"; cat "$RF_LANE/rerun.log"; exit 1; }
+[ "$(grep -c '^cleanup$' "$RF_LANE/ws/fg177rf/cleanup-attempts.txt" || true)" -eq 2 ] || { echo "FAIL: terminal replay duplicated finally cleanup"; exit 1; }
+echo "two attempts, two cleanup effects, original final failure, and terminal replay duplicated nothing"
+
+echo "=== FG-177: every retry attempt halting propagates final failure ==="
+RE_LANE="$LANE/fg177-retry-halt-exhausted"
+mkdir -p "$RE_LANE/ws"
+cat > "$RE_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-halt-exhausted') {
+            steps {
+                script {
+                    retry(2) {
+                        unstash 'missing'
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RE_LANE/Jenkinsfile" "$RE_LANE/ws" fg177re "$RE_LANE/build.journal" > "$RE_LANE/run.log" 2>&1
+RE_RC=$?
+set -e
+[ "$RE_RC" -eq 1 ] || { echo "FAIL: exhausted retry reported rc $RE_RC, expected 1"; cat "$RE_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RE_LANE/run.log" || { echo "FAIL: exhausted retry did not fail the build"; cat "$RE_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RE_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: exhausted retry did not run exactly two attempts"; cat "$RE_LANE/run.log"; exit 1; }
+[ ! -f "$RE_LANE/ws/fg177re/wrong.txt" ] || { echo "FAIL: an exhausted attempt continued after halt"; exit 1; }
+[ ! -f "$RE_LANE/ws/fg177re/continued.txt" ] || { echo "FAIL: outer script continued after exhausted retry"; exit 1; }
+grep -q $'^step-finished\tretry-halt-exhausted\t0\tfailure$' "$RE_LANE/build.journal" || { echo "FAIL: exhausted retry journaled no failure"; cat "$RE_LANE/build.journal"; exit 1; }
+echo "two halted attempts, one Retrying boundary, final failure, no continuation"
+
+echo "=== FG-177: retry keeps the final attempt's original refusal reason ==="
+RD_LANE="$LANE/fg177-retry-diagnostic"
+mkdir -p "$RD_LANE/ws"
+cat > "$RD_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-diagnostic') {
+            steps {
+                script {
+                    retry(2) {
+                        sh('invalid', 'extra')
+                        sh(script: MISSING)
+                        sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RD_LANE/Jenkinsfile" "$RD_LANE/ws" fg177rd "$RD_LANE/build.journal" > "$RD_LANE/run.log" 2>&1
+RD_RC=$?
+set -e
+[ "$RD_RC" -eq 1 ] || { echo "FAIL: refusal retry reported rc $RD_RC, expected 1"; cat "$RD_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RD_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: refusal retry did not run exactly two attempts"; cat "$RD_LANE/run.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tretry-diagnostic\t0\t' "$RD_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: final attempt did not journal exactly one reason"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'positional argument' "$RD_LANE/build.journal" || { echo "FAIL: final reason is not the original positional refusal"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'UnknownProperty\|MISSING\|fogellProbeUnknown' "$RD_LANE/build.journal" && { echo "FAIL: unreachable activity replaced the original reason"; cat "$RD_LANE/build.journal"; exit 1; }
+grep -q 'WARNING: Unknown parameter' "$RD_LANE/run.log" && { echo "FAIL: unreachable warning duplicated inside retry"; cat "$RD_LANE/run.log"; exit 1; }
+for f in warned.txt wrong.txt continued.txt; do
+  [ ! -f "$RD_LANE/ws/fg177rd/$f" ] || { echo "FAIL: unreachable $f effect landed"; exit 1; }
+done
+echo "each attempt kept its halt boundary; the final durable reason stayed the original refusal"
+
+echo "=== FG-177: a status-only cleanup halt owns durability and terminal replay ==="
+SH_LANE="$LANE/fg177-status-cleanup-diagnostic"
+mkdir -p "$SH_LANE/ws"
+cat > "$SH_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('status-cleanup-diagnostic') {
+            steps {
+                script {
+                    try {
+                        stash(name: 'original')
+                    } finally {
+                        archiveArtifacts(artifacts: 'missing/**')
+                        sh 'printf wrong > wrong.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$SH_LANE/Jenkinsfile" "$SH_LANE/ws" fg177sh "$SH_LANE/build.journal" > "$SH_LANE/run.log" 2>&1
+SH_RC=$?
+set -e
+[ "$SH_RC" -eq 1 ] || { echo "FAIL: status cleanup reported rc $SH_RC, expected 1"; cat "$SH_LANE/run.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tstatus-cleanup-diagnostic\t0\t' "$SH_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: cleanup status did not journal exactly one reason"; cat "$SH_LANE/build.journal"; exit 1; }
+grep -q 'No artifacts found that match the file pattern "missing/\*\*"' "$SH_LANE/build.journal" || { echo "FAIL: durable reason is not the cleanup step's precise diagnostic"; cat "$SH_LANE/build.journal"; exit 1; }
+grep -q 'No files included in stash' "$SH_LANE/build.journal" && { echo "FAIL: inherited stash reason replaced the newer cleanup diagnostic"; cat "$SH_LANE/build.journal"; exit 1; }
+for f in wrong.txt continued.txt; do
+  [ ! -f "$SH_LANE/ws/fg177sh/$f" ] || { echo "FAIL: status cleanup successor $f landed"; exit 1; }
+done
+set +e
+"${HOST[@]}" "$SH_LANE/Jenkinsfile" "$SH_LANE/ws" fg177sh "$SH_LANE/build.journal" > "$SH_LANE/rerun.log" 2>&1
+SH_REPLAY_RC=$?
+set -e
+[ "$SH_REPLAY_RC" -eq 0 ] || { echo "FAIL: terminal status replay reported rc $SH_REPLAY_RC, expected terminal no-op 0"; cat "$SH_LANE/rerun.log"; exit 1; }
+grep -q 'already-terminal: failure' "$SH_LANE/rerun.log" || { echo "FAIL: terminal status journal was not a no-op"; cat "$SH_LANE/rerun.log"; exit 1; }
+[ "$(grep -c $'^step-reason\tstatus-cleanup-diagnostic\t0\t' "$SH_LANE/build.journal" || true)" -eq 1 ] || { echo "FAIL: replay duplicated the durable cleanup reason"; cat "$SH_LANE/build.journal"; exit 1; }
+echo "fresh cleanup status replaced the inherited halt once; terminal replay duplicated no reason or effect"
+
+echo "=== FG-177: binding failures preserve their measured exception class ==="
+B_LANE="$LANE/fg177-binding-class"
+mkdir -p "$B_LANE/ws"
+cat > "$B_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('schema') {
+            steps {
+                script {
+                    try {
+                        junit()
+                    } catch (NullPointerException expected) {
+                        echo "junit-bound:${expected}"
+                        sh 'printf junit > junit-caught.txt'
+                    }
+                    try {
+                        dir() { sh 'printf wrong > wrong.txt' }
+                    } catch (NullPointerException expected) {
+                        echo "dir-bound:${expected}"
+                        sh 'printf dir > dir-caught.txt'
+                    }
+                    try {
+                        try {
+                            junit()
+                        } catch (IllegalArgumentException wrong) {
+                            sh 'printf wrong > wrong-junit-class.txt'
+                        }
+                    } catch (NullPointerException expected) {
+                        sh 'printf junit-class > junit-class.txt'
+                    }
+                    try {
+                        try {
+                            dir() { sh 'printf wrong > wrong.txt' }
+                        } catch (IllegalArgumentException wrong) {
+                            sh 'printf wrong > wrong-dir-class.txt'
+                        }
+                    } catch (NullPointerException expected) {
+                        sh 'printf dir-class > dir-class.txt'
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$B_LANE/Jenkinsfile" "$B_LANE/ws" fg177class "$B_LANE/build.journal" > "$B_LANE/run.log" 2>&1
+grep -q 'completed: success' "$B_LANE/run.log" || {
+  echo "FAIL: narrow NullPointerException catches did not recover"; cat "$B_LANE/run.log"; exit 1; }
+grep -q 'junit-bound:java.lang.NullPointerException:' "$B_LANE/run.log" || {
+  echo "FAIL: junit catch variable did not carry the measured exception class"; cat "$B_LANE/run.log"; exit 1; }
+grep -q 'dir-bound:java.lang.NullPointerException:' "$B_LANE/run.log" || {
+  echo "FAIL: dir catch variable did not carry the measured exception class"; cat "$B_LANE/run.log"; exit 1; }
+for f in junit-caught.txt dir-caught.txt junit-class.txt dir-class.txt continued.txt; do
+  [ -f "$B_LANE/ws/fg177class/$f" ] || { echo "FAIL: $f is absent after its narrow catch"; exit 1; }
+done
+[ -f "$B_LANE/ws/fg177class/wrong.txt" ] && { echo "FAIL: missing dir path ran its body"; exit 1; }
+[ -f "$B_LANE/ws/fg177class/wrong-junit-class.txt" ] && { echo "FAIL: IllegalArgumentException caught junit's NullPointerException"; exit 1; }
+[ -f "$B_LANE/ws/fg177class/wrong-dir-class.txt" ] && { echo "FAIL: IllegalArgumentException caught dir's NullPointerException"; exit 1; }
+echo "junit and dir bind failures are caught by their measured NullPointerException class"
 
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"

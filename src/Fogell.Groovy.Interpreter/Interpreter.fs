@@ -35,8 +35,27 @@ type Effect =
 ///
 /// [RunBody] is present when the call had a trailing block; invoking it evaluates that
 /// block, so a wrapper can set up its context, call it, and tear down.
+type HostedCallPhase =
+    | OrdinaryCall
+    | FinallyUnwind
+
+/// A fresh terminal status introduced by a hosted call while `finally` is
+/// unwinding an older branch halt. Kept independent of the differential
+/// layer's BuildStatus so the interpreter/host boundary stays acyclic.
+type HostedStepHaltKind =
+    | HostedFailure
+    | HostedAborted
+
 type PerformStep =
-    { Perform: string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
+    { /// The phase is explicit because a hosted branch that has already halted
+      /// still executes calls in a `finally` while its failure unwinds. Hosts
+      /// must not infer this permission from a false CanContinue value.
+      Perform: HostedCallPhase -> string -> Value list -> (string * Value) list -> (unit -> unit) option -> Value
+      /// Whether the hosted branch can continue evaluating Groovy at all. Asked
+      /// before every call and again after a hosted step returns, so a step that
+      /// halts the branch unwinds the script before a later helper, builtin, or
+      /// argument can acquire a replacement fault or effect.
+      CanContinue: unit -> bool
       /// `env.NAME = value` inside the script. The interpreter updates its own binding
       /// either way; this tells the host so that steps AFTER the block see it too, which
       /// is what Jenkins does and what the batch model could not express.
@@ -77,19 +96,41 @@ type PerformStep =
       /// an EMPTY workspace against fogell=SUCCESS with the file written.
       TakesBlock: string -> bool }
 
+/// The measured runtime class Jenkins raises while binding a hosted step call.
+type BindingExceptionClass =
+    | IllegalArgumentException
+    | NullPointerException
+
+module BindingExceptionClass =
+    let fullName = function
+        | IllegalArgumentException -> "java.lang.IllegalArgumentException"
+        | NullPointerException -> "java.lang.NullPointerException"
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
     | Unsupported of construct: string
     | Thrown of Value
+    /// FG-177. Jenkins rejected the call while binding its descriptor. Unlike an
+    /// engine refusal, this is ordinary scripted-Groovy control flow and may be caught.
+    | StepBindingFailed of stepName: string * exceptionClass: BindingExceptionClass * detail: string
     /// FG-176/FG-186. A SHELL STEP inside a hosted body FAILED — the outcome
     /// Jenkins surfaces as a catchable, retryable AbortException. Distinct from
     /// a refusal on purpose: a refusal says Fogell cannot MODEL the call, and
     /// letting a script catch that would let a pipeline recover from a gap in
     /// this engine while Jenkins ran the real step — a silent divergence. Only
-    /// the shell steps carry this fault; every other failure keeps the old
-    /// fail-loud path until its own measurement moves it.
-    | StepFailed of stepName: string
+    /// the measured shell and missing-unstash paths carry this fault; every other
+    /// failure keeps the old fail-loud path until its own measurement moves it.
+    | StepFailed of stepName: string * exceptionText: string * diagnosticText: string
+    /// A malformed hosted call which Jenkins stops before dispatch. This remains
+    /// opaque to Groovy catch clauses, but is deferred until it escapes the
+    /// current control-flow scope so `finally` and retry retain ownership.
+    | HostedCallRefused of detail: string
+    /// A cleanup call returned normally after introducing a new terminal build
+    /// status. This is catch-opaque like the existing hosted halt: it stops
+    /// successor cleanup statements, but still participates in nested `finally`
+    /// and return precedence before the wrapper/top-level owner commits it.
+    | HostedStepHalted of stepName: string * haltKind: HostedStepHaltKind * diagnosticText: string
     | BudgetExhausted of what: string
     /// A bare name bound nowhere, read under [Interpreter.runStrictVars]. Groovy
     /// throws MissingPropertyException here; the default mode's late-binding null
@@ -134,6 +175,11 @@ type Budget =
           MaxCallDepth = 64 }
 
 module Interpreter =
+    type HostedBodyHalt =
+        | BranchHalt
+        | CallRefusalHalt of detail: string
+        | StepStatusHalt of stepName: string * haltKind: HostedStepHaltKind * diagnosticText: string
+
 
     let spreadAssignmentRefusal =
         "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
@@ -151,10 +197,16 @@ module Interpreter =
     exception private ReturnSignal of Value
     exception private BreakSignal
     exception private ContinueSignal
+    exception private HostedHaltSignal
 
     type private State =
         { mutable Steps: int
           mutable Depth: int
+          /// A `finally` entered while HostedHaltSignal is unwinding must execute
+          /// cleanup calls even though the host branch is already halted. This is
+          /// a depth, not a boolean, because nested try/finally blocks unwind inner
+          /// then outer and each must retain the narrow exception to reachability.
+          mutable FinallyUnwindDepth: int
           mutable Effects: Effect list
           Budget: Budget
           RegisteredSteps: Set<string>
@@ -528,13 +580,48 @@ module Interpreter =
         if st.Depth >= st.Budget.MaxCallDepth then
             raise (Stop(BudgetExhausted $"call depth exceeded {st.Budget.MaxCallDepth}"))
 
+        // RESOLVE A FREE CALL BEFORE REACHABILITY IS APPLIED. A script helper wins
+        // over a registered step in Sandbox.admitCall; checking RegisteredSteps here
+        // instead made `def sh(x) { ... }; sh(MISSING)` look like a hosted step after
+        // halt, discarded MISSING, then invoked the helper with ZERO arguments. Keep
+        // the authoritative resolution result and use it again at dispatch.
+        let admittedFreeCall =
+            match target with
+            | FreeCall name -> Some(Sandbox.admitCall st.RegisteredSteps st.Defined name)
+            | _ -> None
+
+        // A hosted halt ends Groovy evaluation; it is not a null-valued call and it
+        // is not an interpreter fault. Unwind before forcing any call argument, and
+        // check again around nested evaluation and after Perform because the call
+        // itself can be what halts the branch.
+        let ensureCanContinue () =
+            match st.Host with
+            | Some host when st.FinallyUnwindDepth = 0 && not (host.CanContinue()) -> raise HostedHaltSignal
+            | _ -> ()
+
+        let evalArgument e =
+            ensureCanContinue ()
+            let value = evalExpr st env e
+            ensureCanContinue ()
+            value
+
+        ensureCanContinue ()
+
         // LAZY: a safe call on a null receiver short-circuits the WHOLE call, its
         // arguments included — `a?.m(sideEffect())` runs nothing when a is null.
         let positionalLazy =
-            lazy (args |> List.choose (function APos e -> Some(evalExpr st env e) | ANamed _ -> None))
+            lazy
+                (args
+                 |> List.choose (function
+                     | APos e -> Some(evalArgument e)
+                     | _ -> None))
 
         let namedLazy =
-            lazy (args |> List.choose (function ANamed(n, e) -> Some(n, evalExpr st env e) | APos _ -> None))
+            lazy
+                (args
+                 |> List.choose (function
+                     | ANamed(n, e) -> Some(n, evalArgument e)
+                     | _ -> None))
 
         match target with
         | SafeMethodCall(recv, name) ->
@@ -605,9 +692,10 @@ module Interpreter =
                 )
             | None ->
 
-            match Sandbox.admitCall st.RegisteredSteps st.Defined name with
-            | Error d -> raise (Stop(Denied d))
-            | Ok(Step s) ->
+            match admittedFreeCall with
+            | None -> failwith "FreeCall must have an admission result"
+            | Some(Error d) -> raise (Stop(Denied d))
+            | Some(Ok(Step s)) ->
                 // ONE NORMALISED BODY, from either representation. A block reaches a call
                 // as `trailing` OR as a FINAL CLOSURE ARGUMENT depending on which parser
                 // path matched — `dir('sub') { … }` versus `dir 'sub', { … }` — and taking
@@ -619,7 +707,7 @@ module Interpreter =
                 // FG-184. ONLY FOR A STEP THAT TAKES A BLOCK, and the restriction is the
                 // fix. Normalising unconditionally REMOVED the closure before the host
                 // could validate the call, so `def body = {}; sh('touch ran.txt', body)`
-                // reached `hostedSignatureError` as a valid one-positional `sh` with a
+                // reached `validateHostedCall` as a valid one-positional `sh` with a
                 // hosted body its dispatcher ignores — and the shell ran. Jenkins rejects
                 // the two-argument call: measured, jenkins=FAILURE with an empty workspace
                 // against fogell=SUCCESS with the file written. A green build doing work
@@ -860,7 +948,11 @@ module Interpreter =
                     // run the body only moves the cell TOWARD the live environment,
                     // which is where every hosted read should land.
                     try
-                        host.Perform s positionalArgs namedLazy.Value runBody
+                        ensureCanContinue ()
+                        let phase = if st.FinallyUnwindDepth > 0 then FinallyUnwind else OrdinaryCall
+                        let value = host.Perform phase s positionalArgs namedLazy.Value runBody
+                        ensureCanContinue ()
+                        value
                     finally
                         if runBody.IsSome then
                             match Map.tryFind "env" env.Vars with
@@ -884,7 +976,7 @@ module Interpreter =
                     st.Effects <- StepCall(s, positionalArgs, namedLazy.Value) :: st.Effects
                     runBody |> Option.iter (fun run -> run ())
                     VNull
-            | Ok(Builtin b) ->
+            | Some(Ok(Builtin b)) ->
                 match Map.tryFind b env.Funcs with
                 | Some candidates ->
                     // FG-195. RESOLUTION IS BY SIGNATURE, as Groovy's is — the model that
@@ -1466,6 +1558,19 @@ module Interpreter =
                 | Some(Some t, _, _) -> [ "Exception"; "Throwable"; "IOException" ] |> List.contains t
                 | None -> false
 
+            let catchesBindingFailure exceptionClass =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    let concrete =
+                        match exceptionClass with
+                        | IllegalArgumentException -> "IllegalArgumentException"
+                        | NullPointerException -> "NullPointerException"
+
+                    [ "Exception"; "Throwable"; "RuntimeException"; concrete ]
+                    |> List.contains t
+                | None -> false
+
             let afterTry =
                 try
                     try
@@ -1475,16 +1580,33 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
-                    | Stop(StepFailed name) when catchesStepFailure ->
+                    | Stop(StepBindingFailed(name, exceptionClass, detail)) when catchesBindingFailure exceptionClass ->
+                        handle (VStr $"{BindingExceptionClass.fullName exceptionClass}: {name}: {detail}")
+                    | Stop(StepFailed(name, exceptionText, _)) when catchesStepFailure ->
                         // FG-176. The step's own ERROR narration already reached the
                         // console at dispatch; what the handler binds is the exception
                         // Jenkins hands a catch.
-                        handle (VStr $"hudson.AbortException: script returned exit code (step '{name}')")
+                        handle (VStr exceptionText)
                     | Stop(UnknownProperty n) when catchesMissingProperty ->
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
                     | Stop(NullReceiverAssignment target) when catchesNullReceiverAssignment ->
                         handle (VStr $"java.lang.NullPointerException: Cannot assign through null {target} receiver")
-                with e ->
+                with
+                | HostedHaltSignal as halted ->
+                    // A hosted failure has already stopped ordinary evaluation, but
+                    // Groovy still executes `finally` while that control flow unwinds.
+                    // Only this dynamic extent bypasses CanContinue. A cleanup fault,
+                    // return, break or continue naturally replaces the original signal;
+                    // a normal cleanup completion rethrows the original halt.
+                    st.FinallyUnwindDepth <- st.FinallyUnwindDepth + 1
+
+                    try
+                        execBlock st cur fin |> ignore
+                    finally
+                        st.FinallyUnwindDepth <- st.FinallyUnwindDepth - 1
+
+                    raise halted
+                | e ->
                     // uncaught: finally still runs, then the fault continues out
                     execBlock st cur fin |> ignore
                     raise e
@@ -1531,6 +1653,7 @@ module Interpreter =
         let st =
             { Steps = 0
               Depth = 0
+              FinallyUnwindDepth = 0
               Effects = []
               Budget = budget
               RegisteredSteps = registeredSteps
@@ -1568,6 +1691,12 @@ module Interpreter =
               // Groovy's last-expression-is-the-value, for any statement block.
               Returned = st.LastValue }
         with
+        | HostedHaltSignal ->
+            { Effects = List.rev st.Effects
+              Fault = None
+              Env = { Env.ofValues st.Binding with Funcs = hoisted.Funcs }
+              NewBindings = List.rev st.NewBindings
+              Returned = None }
         | Stop f ->
             { Effects = List.rev st.Effects
               Fault = Some f
@@ -1619,7 +1748,51 @@ module Interpreter =
     // is not accessible — a MethodAccessException at runtime, found by the
     // first probe of this seam.
     [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
-    let raiseStepFailed (stepName: string) : 'a = raise (Stop(StepFailed stepName))
+    let raiseStepFailed (stepName: string) (exceptionText: string) (diagnosticText: string) : 'a =
+        raise (Stop(StepFailed(stepName, exceptionText, diagnosticText)))
+
+    /// FG-177. The host's narrow channel for one measured Jenkins binding failure.
+    /// It is distinct from a modelling refusal: scripted try/catch may absorb this,
+    /// while it must never absorb a gap in Fogell's implementation.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseStepBindingFailed (stepName: string) (exceptionClass: BindingExceptionClass) (detail: string) : 'a =
+        raise (Stop(StepBindingFailed(stepName, exceptionClass, detail)))
+
+    /// A call-shape refusal is not a Groovy-catchable Jenkins exception, but it
+    /// cannot commit failure before surrounding `finally` control flow decides
+    /// whether the refusal escapes. The wrapper/top-level owner converts an
+    /// escaping signal into the same durable refusal as before.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseHostedCallRefused (detail: string) : 'a =
+        raise (Stop(HostedCallRefused detail))
+
+    /// A status-only cleanup halt is deliberately deferred until it escapes
+    /// surrounding finally control flow. The call has already narrated its own
+    /// failure; the eventual owner only publishes status and durability state.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let raiseHostedStepHalted (stepName: string) (haltKind: HostedStepHaltKind) (diagnosticText: string) : 'a =
+        raise (Stop(HostedStepHalted(stepName, haltKind, diagnosticText)))
+
+    /// A hosted wrapper owns the context it gives its body. When that child
+    /// context halts, the interpreter signal must return control to the wrapper
+    /// so retry can inspect the attempt and either retry or publish its failure;
+    /// letting it escape to runWith skips that bookkeeping and can turn an
+    /// exhausted retry into success. It also transfers the one deliberately
+    /// deferred, catch-opaque call-refusal signal: wrappers turn that signal
+    /// into their child's durable halt only after surrounding `finally` control
+    /// flow has allowed it to escape.
+    [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
+    let catchHostedHalt (body: unit -> unit) : HostedBodyHalt option =
+        try
+            body ()
+            None
+        with
+        | HostedHaltSignal ->
+            Some BranchHalt
+        | Stop(HostedCallRefused detail) ->
+            Some(CallRefusalHalt detail)
+        | Stop(HostedStepHalted(stepName, haltKind, diagnosticText)) ->
+            Some(StepStatusHalt(stepName, haltKind, diagnosticText))
 
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
     /// classes — a throw, a missing property, a failed shell step — into a
@@ -1631,7 +1804,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an
