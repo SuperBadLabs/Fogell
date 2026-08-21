@@ -1487,6 +1487,15 @@ let spreadAssignmentPreflight =
                 Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
                 $"{label}: exact stable reason"
 
+    let expectSpreadIndexRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
+                $"{label}: exact stable projected-index reason"
+
     let expectPreambleAnalysisRefusal label source =
         match FogellSide.preflightExecution source with
         | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
@@ -1528,9 +1537,69 @@ let spreadAssignmentPreflight =
                     "increment", "rows*.name++"
                     "decrement", "rows*.name--"
                     "property wrapper", "rows*.child.name = 'x'"
-                    "safe wrapper", "rows*.child?.name = 'x'"
-                    "index wrapper", "rows*.child[0] = 'x'" ] do
+                    "safe wrapper", "rows*.child?.name = 'x'" ] do
                   expectNamedRefusal label (pipelineWithBody statement)
+          }
+
+          test "direct projected indexes have a distinct refusal across assignment forms and locations" {
+              for label, statement in
+                  [ "plain", "rows*.child[0] = 'x'"
+                    "compound", "rows*.child[0] += 'x'"
+                    "increment", "rows*.count[0]++"
+                    "decrement", "rows*.count[0]--"
+                    "nested index", "rows*.children[0][1] = 'x'" ] do
+                  expectSpreadIndexRefusal label (pipelineWithBody statement)
+
+              let preamble =
+                  "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
+                  + "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              expectSpreadIndexRefusal "preamble" preamble
+
+              let epilogue =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']\n"
+
+              expectSpreadIndexRefusal "epilogue" epilogue
+
+              expectSpreadIndexRefusal
+                  "nested closure"
+                  (pipelineWithBody "def later = { rows*.child[0] = [name: 'x'] }; echo 'never'")
+
+              let whenBody =
+                  "pipeline { agent any stages { stage('probe') { when { expression { "
+                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = [name: 'x']; true } } "
+                  + "steps { echo 'never' } } } }"
+
+              expectSpreadIndexRefusal "when expression" whenBody
+          }
+
+          test "direct projected-index refusal blocks workspace, earlier, RHS, later and post effects" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-index.txt' } } "
+                  + "stage('bad') { steps { script { "
+                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = sh 'touch rhs-index.txt' "
+                  + "} sh 'touch after-index.txt' } } "
+                  + "} post { always { sh 'touch post-index.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "projected-index assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-index.txt"; "rhs-index.txt"; "after-index.txt"; "post-index.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
           }
 
           test "nested closure, helper, post and nested-stage locations cannot hide the target" {
@@ -1806,6 +1875,26 @@ let spreadAssignmentPreflight =
               | Ok _ -> ()
           }
 
+          test "outer writes on spread-index results remain admitted" {
+              for label, statement in
+                  [ "property", "rows*.child[0].name = 'x'"
+                    "safe property", "rows*.child[0]?.name = 'x'"
+                    "compound property", "rows*.child[0].count += 1"
+                    "increment property", "rows*.child[0].count++"
+                    "decrement property", "rows*.child[0].count--"
+                    "nested index then property", "rows*.children[0][1].name = 'x'"
+                    "index then method then property", "rows*.children[0].first().name = 'x'" ] do
+                  let source =
+                      "pipeline { agent any stages { stage('probe') { steps { script { "
+                      + "def rows = [[child: [name: 'a', count: 1], children: [[name: 'a0'], [name: 'a1']]]]; "
+                      + statement
+                      + " } } } } }"
+
+                  match FogellSide.preflightExecution source with
+                  | Error why -> failtestf "%s outer write was over-refused: %s" label why
+                  | Ok _ -> ()
+          }
+
           test "spread reads in call inputs, index keys and method receivers remain outside the write refusal" {
               for label, statement in
                   [ "positional call argument", "foo(rows*.name).bar = 1"
@@ -1824,9 +1913,10 @@ let spreadAssignmentPreflight =
               for label, statement in
                   [ "direct property wrapper", "rows*.child.name = 'x'"
                     "direct safe wrapper", "rows*.child?.name = 'x'"
-                    "direct index wrapper", "rows*.child[0] = 'x'"
                     "new spread after method", "rows*.child.first()*.name = 'x'" ] do
                   expectNamedRefusal label (pipelineWithBody statement)
+
+              expectSpreadIndexRefusal "direct index wrapper" (pipelineWithBody "rows*.child[0] = 'x'")
 
               expectNamedRefusal
                   "actual assignment in method trailing closure"

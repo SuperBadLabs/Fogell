@@ -514,6 +514,16 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
 | FG-016b | P2 | TODO | Render a source excerpt with a caret under the offending column for every rejection | golden-output test per error code |
 | FG-017 | P2 | TODO | Matrix expansion (`matrix` / `axes`), one corpus file uses it | expanded plan matches Jenkins' stage list for that file |
 
+**FG-015 exact-head index-boundary addendum.** Direct Jenkins 2.568.1
+measurement proved an `EIndex` result is an ordinary receiver boundary for an
+outer property, safe-property, or method-result write; the selected source map
+mutates and the two focused cases add tier-1 receipts. A direct projected-index
+l-value is different: simple/compound/inc/dec writes change only the temporary
+projection, while another index can reach a referenced source list and persist.
+That remains FG-015b. Fogell gives every such direct target the distinct stable
+`unsupported_spread_index_assignment` preflight refusal before effects instead
+of silently discarding or misdirecting it. Evidence: [spread-index boundary](../evidence/20260821T020910Z-fg-015-spread-index-boundary).
+
 ## Wave 2 — Durable spine (McLoving-inspired)
 
 | id | pri | status | item | acceptance |

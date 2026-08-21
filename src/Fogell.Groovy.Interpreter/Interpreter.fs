@@ -135,6 +135,9 @@ module Interpreter =
     let spreadAssignmentRefusal =
         "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
 
+    let spreadIndexAssignmentRefusal =
+        "unsupported_spread_index_assignment: a direct index l-value computed from spread projection crosses Fogell's unmodelled list index-assignment boundary; refusing before effects instead of silently discarding or misdirecting the write"
+
     exception private Stop of Fault
     exception private ReturnSignal of Value
     exception private BreakSignal
@@ -1148,6 +1151,14 @@ module Interpreter =
             // preparation; this guard keeps direct interpreter consumers from ever
             // recovering the old RHS-only success.
             raise (Stop(Unsupported spreadAssignmentRefusal))
+        | SAssign(target, _) when Ast.assignmentTargetIsSpreadDerivedIndex target ->
+            // An index RESULT is a valid receiver boundary for an OUTER property
+            // write, but a direct index l-value is FG-015b list mutation. Depending
+            // on the next index, Jenkins either mutates only the temporary projection
+            // or reaches a referenced source list. Refuse both before target/RHS
+            // evaluation until that distinction is modelled instead of reviving the
+            // generic fallback's silent no-op.
+            raise (Stop(Unsupported spreadIndexAssignmentRefusal))
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse
@@ -1162,6 +1173,12 @@ module Interpreter =
             let recvAndKey =
                 match target with
                 | EProp(r, name) -> Some(evalExpr st env r, name)
+                | ESafeProp((EIndex _ as r), name) when Ast.assignmentTargetIsSpreadDerivedIndex r ->
+                    // Bounded measured spelling: after an index result, Jenkins'
+                    // safe-property assignment mutates a non-null map and raises a
+                    // catchable NPE for null. The existing strict assigner provides
+                    // the same mutation/catchability boundary without list writes.
+                    Some(evalExpr st env r, name)
                 | EIndex(r, idx) ->
                     let rv = evalExpr st env r
                     Some(rv, Value.toDisplay (evalExpr st env idx))

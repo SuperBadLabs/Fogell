@@ -149,3 +149,21 @@ new suffix semantics.
 The direct oracle cases, pre/post receipts, focused evidence, and local Qwen
 review are under
 [`20260821T015030Z-fg-015-epilogue`](../20260821T015030Z-fg-015-epilogue).
+
+## Index-result receiver boundary
+
+A later exact-head review found that `EIndex` was still treated unlike the
+method-result boundary: `rows*.child[0].name = 'x'` was refused even though
+indexing selects an ordinary map receiver for the outer property write. Direct
+Jenkins measurement established the full bounded split. Property,
+safe-property, compound/postfix, nested-index-then-property, and
+index-then-method writes persist into the selected source object. A null
+safe-property target raises a catchable NPE rather than skipping the write.
+
+Direct projected-index l-values are FG-015b: some mutate only the temporary
+projection, while an additional index can reach and mutate a referenced source
+list. Fogell does not guess. Those direct plain/compound/inc/dec/nested targets
+use the separate stable `unsupported_spread_index_assignment` refusal before
+effects, while outer writes after the index result are admitted and proven.
+The measurement, two tier-1 receipts, and exact boundary narrative are under
+[`20260821T020910Z-fg-015-spread-index-boundary`](../20260821T020910Z-fg-015-spread-index-boundary).

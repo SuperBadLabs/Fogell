@@ -131,8 +131,8 @@ module Ast =
     /// True only when spread-property syntax participates in the l-value
     /// receiver chain. An index key, call arguments (including named and
     /// trailing-closure arguments), and the receiver feeding a method call all
-    /// compute a value. The method result is a fresh l-value receiver boundary;
-    /// spread reads below it are not writes through a projection and remain admitted.
+    /// compute a value. Method and index results are fresh l-value receiver
+    /// boundaries; spread reads below either are not writes through a projection.
     ///
     /// Jenkins 2.568.1 accepts actual spread write paths but raises a catchable
     /// runtime exception without mutating the elements. Fogell does not model
@@ -143,7 +143,7 @@ module Ast =
         | ESpreadProp _ -> true
         | EProp(target, _)
         | ESafeProp(target, _) -> assignmentTargetContainsSpreadProperty target
-        | EIndex(target, _) -> assignmentTargetContainsSpreadProperty target
+        | EIndex _
         | ECall _ -> false
         | ENull
         | EBool _
@@ -159,10 +159,42 @@ module Ast =
         | EElvis _
         | EClosure _ -> false
 
-    let rec containsSpreadAssignment (stmts: Stmt list) : bool =
+    /// A direct index l-value whose receiver was computed from spread projection
+    /// is distinct from an outer write on the value returned by indexing. Jenkins
+    /// executes both, but the direct form is list-index assignment: simple and
+    /// compound writes can update only the temporary projection, while another
+    /// index can select a referenced source list and persist. That is FG-015b's
+    /// mutation boundary, so this slice gives it a separate fail-closed reason.
+    let assignmentTargetIsSpreadDerivedIndex (expr: Expr) : bool =
+        let rec receiverUsesSpreadBeforeBoundary value =
+            match value with
+            | ESpreadProp _ -> true
+            | EProp(target, _)
+            | ESafeProp(target, _)
+            | EIndex(target, _) -> receiverUsesSpreadBeforeBoundary target
+            | ECall _ -> false
+            | ENull
+            | EBool _
+            | EInt _
+            | EStr _
+            | EGString _
+            | EList _
+            | EMap _
+            | EVar _
+            | EUnary _
+            | EBinary _
+            | ETernary _
+            | EElvis _
+            | EClosure _ -> false
+
+        match expr with
+        | EIndex(target, _) -> receiverUsesSpreadBeforeBoundary target
+        | _ -> false
+
+    let rec private containsAssignmentWhere targetMatches (stmts: Stmt list) : bool =
         let rec expressionHasNestedAssignment expr =
             match expr with
-            | EClosure closure -> containsSpreadAssignment closure.Body
+            | EClosure closure -> containsAssignmentWhere targetMatches closure.Body
             | EGString parts ->
                 parts
                 |> List.exists (function
@@ -194,7 +226,7 @@ module Ast =
                     |> List.exists (function
                         | APos value -> expressionHasNestedAssignment value
                         | ANamed(_, value) -> expressionHasNestedAssignment value))
-                || (trailing |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
+                || (trailing |> Option.exists (fun closure -> containsAssignmentWhere targetMatches closure.Body))
             | ENull
             | EBool _
             | EInt _
@@ -204,7 +236,7 @@ module Ast =
         stmts
         |> List.exists (function
             | SAssign(target, value) ->
-                assignmentTargetContainsSpreadProperty target
+                targetMatches target
                 || expressionHasNestedAssignment target
                 || expressionHasNestedAssignment value
             | SExpr expr -> expressionHasNestedAssignment expr
@@ -212,25 +244,31 @@ module Ast =
             | SReturn value -> value |> Option.exists expressionHasNestedAssignment
             | SIf(cond, yes, no) ->
                 expressionHasNestedAssignment cond
-                || containsSpreadAssignment yes
-                || containsSpreadAssignment no
+                || containsAssignmentWhere targetMatches yes
+                || containsAssignmentWhere targetMatches no
             | SForIn(_, source, body)
             | SWhile(source, body) ->
-                expressionHasNestedAssignment source || containsSpreadAssignment body
+                expressionHasNestedAssignment source || containsAssignmentWhere targetMatches body
             | SSwitch(subject, arms) ->
                 expressionHasNestedAssignment subject
                 || (arms
                     |> List.exists (fun (case, body) ->
                         (case |> Option.exists expressionHasNestedAssignment)
-                        || containsSpreadAssignment body))
+                        || containsAssignmentWhere targetMatches body))
             | SThrow expr -> expressionHasNestedAssignment expr
             | STry(body, catch, finallyBlock) ->
-                containsSpreadAssignment body
-                || (catch |> Option.exists (fun (_, _, handler) -> containsSpreadAssignment handler))
-                || containsSpreadAssignment finallyBlock
-            | SFunc(_, _, body) -> containsSpreadAssignment body
+                containsAssignmentWhere targetMatches body
+                || (catch |> Option.exists (fun (_, _, handler) -> containsAssignmentWhere targetMatches handler))
+                || containsAssignmentWhere targetMatches finallyBlock
+            | SFunc(_, _, body) -> containsAssignmentWhere targetMatches body
             | SBreak
             | SContinue -> false)
+
+    let containsSpreadAssignment stmts =
+        containsAssignmentWhere assignmentTargetContainsSpreadProperty stmts
+
+    let containsSpreadDerivedIndexAssignment stmts =
+        containsAssignmentWhere assignmentTargetIsSpreadDerivedIndex stmts
 
     /// Names called as bare functions — the step vocabulary a script needs.
     let rec freeCalls (stmts: Stmt list) : Set<string> =
