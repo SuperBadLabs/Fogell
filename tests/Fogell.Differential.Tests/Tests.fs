@@ -1487,6 +1487,15 @@ let spreadAssignmentPreflight =
                 Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
                 $"{label}: exact stable reason"
 
+    let expectPreambleAnalysisRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                FogellSide.preambleAnalysisRefusal
+                $"{label}: exact stable preamble-analysis reason"
+
     let withWorkspace (f: string -> string -> unit) =
         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
         let job = "job"
@@ -1548,6 +1557,83 @@ let spreadAssignmentPreflight =
 
               for label, source in locations do
                   expectNamedRefusal label source
+          }
+
+          test "an unparsable nonblank preamble fails closed instead of proving no spread write" {
+              let ordinaryPipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              let defaultHelper = "def helper(x = true) { x }\n"
+
+              let hiddenSpread =
+                  defaultHelper
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "default helper then spread write" hiddenSpread
+              expectPreambleAnalysisRefusal "default helper alone" (defaultHelper + ordinaryPipeline)
+
+              let caught =
+                  defaultHelper
+                  + "try { def rows = [[name: 'a']]; rows*.name = 'x' } catch (Throwable e) { }\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "caught top-level spread write" caught
+
+              let nestedClosure =
+                  "def helper(x = true) { def later = { def rows = [[name: 'a']]; rows*.name = 'x' }; later() }\n"
+                  + ordinaryPipeline
+
+              expectPreambleAnalysisRefusal "spread write nested in default-parameter helper" nestedClosure
+
+              // The diagnostic is a stable capability name, not a reflection of parser
+              // internals or user-controlled preamble text.
+              let alternate = "def secretMarker(value = 'DO_NOT_REFLECT') { value }\n" + ordinaryPipeline
+              expectPreambleAnalysisRefusal "diagnostic nonreflection" alternate
+
+              match FogellSide.preflightExecution alternate with
+              | Ok _ -> failtest "alternate preamble unexpectedly passed"
+              | Error why ->
+                  Expect.isFalse (why.Contains "DO_NOT_REFLECT") "refusal does not echo source text"
+                  Expect.isFalse (why.Contains "secretMarker") "refusal does not echo identifiers"
+          }
+
+          test "unparsable preambles block earlier stages, post blocks and workspace preparation" {
+              let source =
+                  "def helper(x = true) { x }\n"
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+                  + "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-preamble.txt' } } "
+                  + "stage('after') { steps { sh 'touch after-preamble.txt' } } "
+                  + "} post { always { sh 'touch preamble-post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "unparsable preamble unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal why FogellSide.preambleAnalysisRefusal "stable fail-closed reason"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-preamble.txt"; "after-preamble.txt"; "preamble-post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
+          test "blank and fully analyzable preambles remain admitted" {
+              let ordinaryPipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              for label, source in
+                  [ "blank", ordinaryPipeline
+                    "whitespace", "  \n\t" + ordinaryPipeline
+                    "parsed helper", "def helper(x) { x }\n" + ordinaryPipeline ] do
+                  match FogellSide.preflightExecution source with
+                  | Error why -> failtestf "%s preamble was over-refused: %s" label why
+                  | Ok _ -> ()
           }
           test "when expressions in top, nested and parallel stages cannot hide the target" {
               let assignment = "def rows = [[name: 'a']]; rows*.name = 'x'; true"

@@ -106,3 +106,21 @@ the separate recursive statement traversal.
 
 The [method-result review gate bundle](../20260820T195656Z-fg-015-spread-assignment-call-boundary)
 seals this incremental correction against exact base `bcfbf9c`.
+
+## Unanalyzable preamble boundary
+
+The next exact-head review found a fail-open before the spread-write scanner:
+a Jenkins-valid default-parameter helper makes the bounded Groovy analyzer
+reject the complete captured preamble, and the scanner had treated that error
+as proof that no spread assignment existed. A following top-level
+`rows*.name = 'x'` therefore failed Jenkins before the pipeline but allowed
+Fogell to run stage and workspace effects.
+
+The shared execution preflight now refuses any nonblank captured preamble that
+it cannot parse for execution analysis, before workspace preparation or effects,
+with the stable `unsupported_preamble_analysis` reason. This is deliberately
+conservative: Fogell has no complete statement splitter for Groovy, so it does
+not guess around the unsupported declaration. Blank and fully analyzed
+preambles remain admitted. The retained direct Jenkins measurement and the
+incremental gate bundle are under
+[`20260821T012214Z-fg-015-preamble-analysis`](../20260821T012214Z-fg-015-preamble-analysis).

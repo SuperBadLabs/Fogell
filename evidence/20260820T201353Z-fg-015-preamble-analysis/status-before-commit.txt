@@ -1,0 +1,12 @@
+M  docs/EXECUTION_BOARD.md
+M  evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/README.md
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/default-helper-spread.Jenkinsfile
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/oracle-verification.txt
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/postfix-receipts/default-helper-spread.receipt.txt
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/preimplementation-receipts/fg015-default-helper-spread.receipt.txt
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-request.json
+A  evidence/20260821T012214Z-fg-015-preamble-analysis/qwen-response.json
+M  src/Fogell.Differential/Fogell.fs
+M  tests/Fogell.Differential.Tests/Tests.fs
+?? evidence/20260820T201353Z-fg-015-preamble-analysis/
