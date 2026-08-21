@@ -106,6 +106,16 @@ module BindingExceptionClass =
         | IllegalArgumentException -> "java.lang.IllegalArgumentException"
         | NullPointerException -> "java.lang.NullPointerException"
 
+/// The operation whose script-value walk encountered a reference cycle.
+/// Every case maps to Jenkins' StackOverflowError ancestry; the operation is
+/// retained only so diagnostics identify the boundary that faulted.
+type CycleOperation =
+    | Display
+    | Equality
+    | Ordering
+    | HostedArgumentCoercion
+    | HashKey
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
@@ -157,14 +167,10 @@ type Fault =
     /// too-negative String index follows Groovy's ArrayIndexOutOfBounds path and
     /// therefore uses [ListIndexOutOfBounds] instead.
     | StringIndexOutOfBounds of index: int64 * size: int
-    /// A collection ordering revisited the same pair of reference cells. Jenkins
-    /// raises StackOverflowError; this explicit fault retains its catch ancestry
-    /// without allowing the F# runtime to recurse until the process dies.
-    | CyclicOrderingComparison
-    /// Rendering a list/map reference cycle longer than Groovy's direct-self
-    /// marker raises StackOverflowError too. Keep it typed instead of wrapping
-    /// it in [Thrown]: Error bypasses `catch (Exception)` on Jenkins.
-    | CyclicDisplay
+    /// A display, equality, ordering, hosted-argument coercion, or hash-key walk
+    /// met a reference cycle. Jenkins raises StackOverflowError for each measured
+    /// path. Keep one typed fault family so Error ancestry cannot drift again.
+    | CyclicValue of operation: CycleOperation
     /// IntRange implements list reads but not replacement. Jenkins raises a
     /// catchable UnsupportedOperationException at the write phase.
     | RangeMutation
@@ -296,7 +302,13 @@ module Interpreter =
     let private scriptDisplay value =
         match Value.tryToDisplay value with
         | Value.Text rendered -> rendered
-        | Value.DisplayCycleDetected -> raise (Stop CyclicDisplay)
+        | Value.DisplayCycleDetected -> raise (Stop(CyclicValue Display))
+
+    let private scriptHashKey value =
+        if Value.hasReferenceCycle value then
+            raise (Stop(CyclicValue HashKey))
+
+        scriptDisplay value
 
     let private tooNegativeListIndex index size = index < -(int64 size)
 
@@ -456,6 +468,7 @@ module Interpreter =
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
             | ListLike xs, VInt i -> listRead xs i
+            | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
@@ -578,11 +591,11 @@ module Interpreter =
         | "==", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool r
-            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+            | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
         | "!=", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool(not r)
-            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+            | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -1070,7 +1083,20 @@ module Interpreter =
                     try
                         ensureCanContinue ()
                         let phase = if st.FinallyUnwindDepth > 0 then FinallyUnwind else OrdinaryCall
-                        let value = host.Perform phase s positionalArgs namedLazy.Value runBody
+                        let namedArgs = namedLazy.Value
+
+                        // Jenkins hashes/coerces collection arguments before a
+                        // hosted step runs. Even a direct-self collection whose
+                        // ordinary toString uses `(this Collection)` overflows at
+                        // this boundary. Check the typed values themselves: a
+                        // display fallback must never become an executable arg.
+                        if
+                            (positionalArgs |> List.exists Value.hasReferenceCycle)
+                            || (namedArgs |> List.exists (snd >> Value.hasReferenceCycle))
+                        then
+                            raise (Stop(CyclicValue HostedArgumentCoercion))
+
+                        let value = host.Perform phase s positionalArgs namedArgs runBody
                         ensureCanContinue ()
                         value
                     finally
@@ -1267,7 +1293,7 @@ module Interpreter =
                 |> List.exists (fun x ->
                     match Value.tryEq v x with
                     | Value.Answer r -> r
-                    | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison"))))
+                    | Value.CycleDetected -> raise (Stop(CyclicValue Equality)))
             )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
@@ -1284,7 +1310,7 @@ module Interpreter =
             let compareSafely left right =
                 match Value.tryCompare left right with
                 | Value.Order order -> order
-                | Value.OrderingCycleDetected -> raise (Stop CyclicOrderingComparison)
+                | Value.OrderingCycleDetected -> raise (Stop(CyclicValue Ordering))
                 | Value.Unorderable -> raise (Stop(Unsupported collectionOrderingRefusal))
 
             let sorted =
@@ -1481,7 +1507,7 @@ module Interpreter =
                 | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VRange _, _, true -> raise (Stop RangeMutation)
                 | VMap mr, _, _ ->
-                    let key = scriptDisplay keyValue
+                    let key = scriptHashKey keyValue
 
                     match st.Host with
                     | Some host when st.JenkinsEnvMaps.Contains mr ->
@@ -1531,7 +1557,7 @@ module Interpreter =
                     listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
                 | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VMap mr, _ ->
-                    let key = scriptDisplay keyValue
+                    let key = scriptHashKey keyValue
                     let prior = defaultArg (Map.tryFind key mr.Value) VNull
 
                     prior,
@@ -1579,7 +1605,7 @@ module Interpreter =
                     listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
                 | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VMap mr, _ ->
-                    let key = scriptDisplay keyValue
+                    let key = scriptHashKey keyValue
                     let prior = defaultArg (Map.tryFind key mr.Value) VNull
 
                     prior,
@@ -1710,8 +1736,7 @@ module Interpreter =
                     | Some case ->
                         match Value.tryEq v (evalExpr st env case) with
                         | Value.Answer r -> r
-                        | Value.CycleDetected ->
-                            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+                        | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 
@@ -1907,10 +1932,16 @@ module Interpreter =
                         handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
                     | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
                         handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
-                    | Stop CyclicOrderingComparison when catchesStackOverflow ->
-                        handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
-                    | Stop CyclicDisplay when catchesStackOverflow ->
-                        handle (VStr "java.lang.StackOverflowError: cyclic structure in display")
+                    | Stop(CyclicValue operation) when catchesStackOverflow ->
+                        let boundary =
+                            match operation with
+                            | Display -> "display"
+                            | Equality -> "equality comparison"
+                            | Ordering -> "ordering comparison"
+                            | HostedArgumentCoercion -> "hosted argument coercion"
+                            | HashKey -> "hash-key coercion"
+
+                        handle (VStr $"java.lang.StackOverflowError: cyclic structure in {boundary}")
                     | Stop RangeMutation when catchesRangeMutation ->
                         handle (VStr "java.lang.UnsupportedOperationException: IntRange is immutable")
                 with
@@ -2126,7 +2157,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | CyclicDisplay | RangeMutation | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicValue _ | RangeMutation | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

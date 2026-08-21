@@ -1,0 +1,22 @@
+===== fg015b-cycle-coercion-review
+RESULT: success
+| direct-toString:returned:[(this Collection)]
+| direct-interpolation:returned:[(this Collection)]
+| direct-equality-same:returned:true
+| distinct-list-equality:Error:java.lang.StackOverflowError
+| distinct-list-inequality:Error:java.lang.StackOverflowError
+| distinct-list-ordering:Exception:groovy.lang.GroovyRuntimeException
+| contains-same:returned:true
+| contains-distinct:Error:java.lang.StackOverflowError
+| hashCode-cycle:Error:java.lang.StackOverflowError
+| toSet-cycle:Error:java.lang.StackOverflowError
+| unique-cycle:Error:java.lang.StackOverflowError
+| list-map-toString:Error:java.lang.StackOverflowError
+| list-map-interpolation:Error:java.lang.StackOverflowError
+| map-value-toString:Error:java.lang.StackOverflowError
+| map-value-interpolation:Error:java.lang.StackOverflowError
+| map-key-insert:Error:java.lang.StackOverflowError
+| echo-direct-cycle:Error:java.lang.StackOverflowError
+| echo-named-cycle:Error:java.lang.StackOverflowError
+| sh-named-cycle:Error:java.lang.StackOverflowError
+| stash-name-cycle:Error:java.lang.StackOverflowError

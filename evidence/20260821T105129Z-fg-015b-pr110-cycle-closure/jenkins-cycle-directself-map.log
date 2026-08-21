@@ -1,0 +1,17 @@
+===== fg015b-cycle-directself-map-review
+RESULT: success
+| self-list-nested-display:returned:[[(this Collection)]]
+| self-list-echo-direct:Error:java.lang.StackOverflowError
+| self-list-echo-named:Error:java.lang.StackOverflowError
+| self-list-sh:Error:java.lang.StackOverflowError
+| self-list-stash:Error:java.lang.StackOverflowError
+| self-map-toString:returned:[self:(this Map)]
+| self-map-interpolation:returned:[self:(this Map)]
+| self-map-nested-display:returned:[[self:(this Map)]]
+| self-map-equality-same:returned:true
+| self-map-hashCode:Error:java.lang.StackOverflowError
+| self-map-echo:Error:java.lang.StackOverflowError
+| distinct-map-equality:Error:java.lang.StackOverflowError
+| distinct-map-contains:Error:java.lang.StackOverflowError
+| distinct-map-unique:Error:java.lang.StackOverflowError
+| distinct-map-toSet:Error:java.lang.StackOverflowError

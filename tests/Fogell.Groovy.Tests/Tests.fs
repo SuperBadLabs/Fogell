@@ -1427,13 +1427,13 @@ let cyclicValues =
               let distinct = runS "def a = [null]\na[0] = a\ndef b = [null]\nb[0] = b\nreturn a == b"
 
               match distinct.Fault with
-              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "distinct cycles fault safely"
+              | Some(CyclicValue Equality) -> ()
               | other -> failtestf "expected distinct-cycle comparison fault, got %A" other
 
               let mixed = runS "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\nreturn \"${xs}\""
 
               match mixed.Fault with
-              | Some CyclicDisplay -> ()
+              | Some(CyclicValue Display) -> ()
               | other -> failtestf "expected typed mixed-cycle display fault, got %A" other
           }
 
@@ -1445,7 +1445,7 @@ let cyclicValues =
                   )
 
               match notException.Fault with
-              | Some CyclicDisplay -> ()
+              | Some(CyclicValue Display) -> ()
               | other -> failtestf "Exception incorrectly intercepted cyclic display: %A" other
 
               let caughtByError =
@@ -1533,7 +1533,7 @@ let cyclicValues =
                   )
 
               match notException.Fault with
-              | Some CyclicOrderingComparison -> ()
+              | Some(CyclicValue Ordering) -> ()
               | other -> failtestf "Exception incorrectly intercepted StackOverflowError: %A" other
           }
 
@@ -1572,8 +1572,99 @@ let cyclicValues =
               let o = runS "def m = [:]\nm.self = m\ndef n = [:]\nn.self = n\nreturn m == n"
 
               match o.Fault with
-              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "the matching fault"
+              | Some(CyclicValue Equality) -> ()
               | other -> failtestf "expected the cycle fault, got %A" other
+          }
+
+          test "cyclic equality preserves Error ancestry across == and contains" {
+              let notException =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { return a == b } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue Equality) -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic equality: %A" other
+
+              let caught =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { return [a].contains(b) } catch (Error e) { return 'caught' }"
+                  )
+
+              Expect.isNone caught.Fault "Error catches cyclic contains equality"
+              Expect.equal caught.Returned (Some(VStr "caught")) "the Error arm owns recovery"
+          }
+
+          test "hosted collection coercion faults before dispatch while interpolation keeps self markers" {
+              let performed = ResizeArray<string * Value list * (string * Value) list>()
+
+              let host =
+                  { Perform =
+                      fun _ name positional named runBody ->
+                          performed.Add(name, positional, named)
+                          runBody |> Option.iter (fun run -> run ())
+                          VNull
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let displayed =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk "def xs = [null]\nxs[0] = xs\necho \"${xs}\"\nreturn 'done'")
+
+              Expect.isNone displayed.Fault "interpolation is an ordinary display context"
+              Expect.equal displayed.Returned (Some(VStr "done")) "script continued"
+              Expect.equal (List.ofSeq performed) [ "echo", [ VStr "[(this Collection)]" ], [] ] "only the rendered string reached the host"
+
+              performed.Clear()
+
+              let notException =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk (
+                          "def xs = [null]\nxs[0] = xs\n"
+                          + "try { echo xs } catch (Exception e) { return 'wrong' }"
+                      ))
+
+              match notException.Fault with
+              | Some(CyclicValue HostedArgumentCoercion) -> ()
+              | other -> failtestf "Exception incorrectly intercepted hosted coercion: %A" other
+
+              Expect.isEmpty performed "the host was never entered"
+
+              let caught =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk (
+                          "def xs = [null]\nxs[0] = xs\n"
+                          + "try { echo message: xs } catch (Error e) { return 'caught' }"
+                      ))
+
+              Expect.isNone caught.Fault "Error catches the pre-dispatch StackOverflowError"
+              Expect.equal caught.Returned (Some(VStr "caught")) "the handler ran"
+              Expect.isEmpty performed "named coercion also has zero hosted effects"
+          }
+
+          test "cyclic map keys preserve hashing Error ancestry" {
+              let notException =
+                  runS (
+                      "def key = [null]\nkey[0] = key\ndef keyed = [:]\n"
+                      + "try { keyed[key] = 'x' } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue HashKey) -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic hashing: %A" other
+
+              let caught =
+                  runS (
+                      "def key = [null]\nkey[0] = key\ndef keyed = [:]\n"
+                      + "try { keyed[key] = 'x' } catch (Throwable e) { return keyed.size() }"
+                  )
+
+              Expect.isNone caught.Fault "Throwable catches cyclic key hashing"
+              Expect.equal caught.Returned (Some(VInt 0L)) "the map was not mutated"
           }
 
           test "closures minted by ONE literal in a loop are DISTINCT" {

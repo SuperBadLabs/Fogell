@@ -64,6 +64,52 @@ module Value =
 
     let rangeItems values = values |> List.map VInt
 
+    /// Whether a value graph contains a reference cycle of any length. This is
+    /// deliberately stricter than [tryToDisplay]: Groovy's collection renderer
+    /// has direct-self markers, but Jenkins' step argument coercion/hash path
+    /// still overflows for those same values before a hosted call is dispatched.
+    /// Repeated aliases on sibling paths are not cycles, so the active path —
+    /// rather than one global visited set — is the boundary.
+    let hasReferenceCycle value =
+        let mutable pending: (obj list * Value) list = [ [], value ]
+        let mutable cycle = false
+
+        while not cycle && not pending.IsEmpty do
+            let path, current = List.head pending
+            pending <- List.tail pending
+
+            let alreadyActive candidate =
+                path
+                |> List.exists (fun prior -> System.Object.ReferenceEquals(prior, candidate))
+
+            match current with
+            | VList items ->
+                if alreadyActive items then
+                    cycle <- true
+                else
+                    let inner = box items :: path
+                    pending <- (items.Value |> List.map (fun item -> inner, item)) @ pending
+            | VMap entries ->
+                if alreadyActive entries then
+                    cycle <- true
+                else
+                    let inner = box entries :: path
+
+                    pending <-
+                        (entries.Value
+                         |> Map.toList
+                         |> List.map (fun (_, item) -> inner, item))
+                        @ pending
+            | VNull
+            | VBool _
+            | VInt _
+            | VStr _
+            | VRange _
+            | VClosure _
+            | VFunc _ -> ()
+
+        cycle
+
     /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
     /// discovery of a reference cycle that structural recursion would chase
     /// forever. MEASURED (receipt `script-cyclic-map-eq`): two self-referential maps compared with `==` was a
