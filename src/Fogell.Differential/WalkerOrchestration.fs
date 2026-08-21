@@ -2145,7 +2145,7 @@ module WalkerOrchestration =
 
                         let host: PerformStep =
                             { Perform =
-                                fun name rawPositional rawNamed runBody ->
+                                fun phase name rawPositional rawNamed runBody ->
                                     // FG-206. Freshened THROUGH the shared ref at a hosted
                                     // child's entry — the third site of the FG-114
                                     // invariant (per hooked step, per retry attempt, and
@@ -2184,10 +2184,17 @@ module WalkerOrchestration =
                                     // only paths that END in a capturing site.
                                     let atCtx, atCwd = hostAt.Value
 
-                                    if halted atCtx then
+                                    let finallyUnwind = phase = FinallyUnwind
+
+                                    if halted atCtx && not finallyUnwind then
                                         VNull
                                     else
-                                        atCtx.LastDiagnostic.Value <- None
+                                        // A successful cleanup call must not erase the
+                                        // diagnostic whose unwind caused this finally block.
+                                        // A cleanup fault will replace it below, and a cleanup
+                                        // return suppresses the unwind in the interpreter.
+                                        if not finallyUnwind then
+                                            atCtx.LastDiagnostic.Value <- None
                                         // ONE VALIDATION BOUNDARY, then every downstream
                                         // consumer sees the same normalized call. Unknowns are
                                         // classified before promotion, so promotion cannot erase
@@ -2259,7 +2266,7 @@ module WalkerOrchestration =
                                             // looks plausible.
                                             let slot = ref VNull
 
-                                            if not (halted dispatchCtx) then
+                                            if finallyUnwind || not (halted dispatchCtx) then
                                                 // FG-176. OBSERVED, not sunk directly: a SHELL step's
                                                 // failure surfaces to the script as the catchable,
                                                 // retryable fault Jenkins raises (AbortException),
@@ -2286,12 +2293,31 @@ module WalkerOrchestration =
 
                                                 if
                                                     observedStatus.Value = BuildStatus.Failure
-                                                    // `sh` alone: `bat` is outside the script
-                                                    // vocabulary today, so a bat arm here would
-                                                    // be dead code wearing a parity claim
-                                                    && name = "sh"
+                                                    // `sh` and the now-measured missing-unstash
+                                                    // runtime fault. `bat` is outside the script
+                                                    // vocabulary today, so a bat arm here would be
+                                                    // dead code wearing a parity claim. Other hosted
+                                                    // failures keep the fail-loud path until measured.
+                                                    && (name = "sh" || name = "unstash")
                                                 then
-                                                    Interpreter.raiseStepFailed name
+                                                    let diagnosticText, exceptionText =
+                                                        if name = "sh" then
+                                                            let diagnostic =
+                                                                dispatchCtx.LastDiagnostic.Value
+                                                                |> Option.defaultValue $"step '{name}' failed"
+
+                                                            diagnostic, $"hudson.AbortException: {diagnostic}"
+                                                        else
+                                                            let stashName =
+                                                                positional
+                                                                |> List.tryHead
+                                                                |> Option.map Value.toDisplay
+                                                                |> Option.defaultValue "<missing>"
+
+                                                            $"No such saved stash ‘{stashName}’",
+                                                            $"hudson.AbortException: No such saved stash '{stashName}'"
+
+                                                    Interpreter.raiseStepFailed name exceptionText diagnosticText
                                                 else
                                                     dispatchCtx.Sink observedStatus.Value
 
@@ -2338,12 +2364,17 @@ module WalkerOrchestration =
                             | Denied d when scriptStepsRefusedWithReason.ContainsKey d.Attempted ->
                                 fail
                                     $"script block calls `{d.Attempted}`, which Fogell refuses inside a script: {scriptStepsRefusedWithReason.[d.Attempted]}"
-                            | StepFailed _ ->
+                            | StepFailed(_, _, diagnosticText) ->
                                 // FG-176. The failing step already narrated its own ERROR at
                                 // dispatch; an uncaught escape must fail the build exactly as
                                 // the old direct sink did — quietly here, or the console
                                 // carries the failure twice where Jenkins prints it once.
                                 let activeCtx, _ = hostAt.Value
+                                // Calls executed while unwinding a finally block are allowed
+                                // to run and may clear their own transient diagnostic. Restore
+                                // the precise fault which actually escaped (the original fault,
+                                // or the cleanup fault if it replaced it) for durability.
+                                activeCtx.LastDiagnostic.Value <- Some(runCtx.MaskSecrets diagnosticText)
                                 activeCtx.Failed.Value <- true
                                 activeCtx.Sink BuildStatus.Failure
                             | _ -> fail $"script block: {fault}"

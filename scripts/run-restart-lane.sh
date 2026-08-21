@@ -572,6 +572,48 @@ grep -q 'already-terminal: success' "$RH_LANE/rerun.log" || { echo "FAIL: recove
 [ "$(grep -c '^continued$' "$RH_LANE/ws/fg177rh/continued.txt" || true)" -eq 1 ] || { echo "FAIL: terminal replay duplicated continuation effect"; exit 1; }
 echo "attempt 1 halted inside nested wrappers, attempt 2 recovered, and terminal replay duplicated nothing"
 
+echo "=== FG-177: exhausted retry runs finally cleanup once per attempt ==="
+RF_LANE="$LANE/fg177-retry-finally-exhausted"
+mkdir -p "$RF_LANE/ws"
+cat > "$RF_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('retry-finally-exhausted') {
+            steps {
+                script {
+                    retry(2) {
+                        try {
+                            unstash 'missing'
+                        } finally {
+                            echo 'finally-cleanup'
+                            sh 'echo cleanup >> cleanup-attempts.txt'
+                        }
+                    }
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}
+JF
+set +e
+"${HOST[@]}" "$RF_LANE/Jenkinsfile" "$RF_LANE/ws" fg177rf "$RF_LANE/build.journal" > "$RF_LANE/run.log" 2>&1
+RF_RC=$?
+set -e
+[ "$RF_RC" -eq 1 ] || { echo "FAIL: finally-exhausted retry returned rc $RF_RC, expected 1"; cat "$RF_LANE/run.log"; exit 1; }
+grep -q 'completed: failure' "$RF_LANE/run.log" || { echo "FAIL: finally-exhausted retry did not fail"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| finally-cleanup$' "$RF_LANE/run.log" || true)" -eq 2 ] || { echo "FAIL: finally cleanup did not run exactly once per attempt"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^| Retrying$' "$RF_LANE/run.log" || true)" -eq 1 ] || { echo "FAIL: finally-exhausted retry crossed the wrong attempt boundary"; cat "$RF_LANE/run.log"; exit 1; }
+[ "$(grep -c '^cleanup$' "$RF_LANE/ws/fg177rf/cleanup-attempts.txt" || true)" -eq 2 ] || { echo "FAIL: finally cleanup side effect count is not two"; exit 1; }
+[ ! -f "$RF_LANE/ws/fg177rf/continued.txt" ] || { echo "FAIL: exhausted retry continued after its final fault"; exit 1; }
+grep -q $'^step-finished\tretry-finally-exhausted\t0\tfailure$' "$RF_LANE/build.journal" || { echo "FAIL: finally-exhausted retry journaled no failure"; cat "$RF_LANE/build.journal"; exit 1; }
+
+"${HOST[@]}" "$RF_LANE/Jenkinsfile" "$RF_LANE/ws" fg177rf "$RF_LANE/build.journal" > "$RF_LANE/rerun.log" 2>&1
+grep -q 'already-terminal: failure' "$RF_LANE/rerun.log" || { echo "FAIL: terminal finally-exhausted journal was not a no-op"; cat "$RF_LANE/rerun.log"; exit 1; }
+[ "$(grep -c '^cleanup$' "$RF_LANE/ws/fg177rf/cleanup-attempts.txt" || true)" -eq 2 ] || { echo "FAIL: terminal replay duplicated finally cleanup"; exit 1; }
+echo "two attempts, two cleanup effects, original final failure, and terminal replay duplicated nothing"
+
 echo "=== FG-177: every retry attempt halting propagates final failure ==="
 RE_LANE="$LANE/fg177-retry-halt-exhausted"
 mkdir -p "$RE_LANE/ws"
