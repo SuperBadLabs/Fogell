@@ -2025,7 +2025,21 @@ module WalkerOrchestration =
                         // shapes reads as coverage while leaving the rest silent.
                         (StepValueUse.find
                              scriptStepVocabulary.Contains
-                             (fun n so st -> WalkerRules.returnContract n so st <> WalkerRules.NoValue)
+                             (fun n so st ->
+                                 let undecidable flag =
+                                     flag = StepValueUse.Undecidable
+
+                                 if
+                                     WalkerRules.stepsHonouringReturnFlags.Contains n
+                                     && (undecidable so || undecidable st)
+                                 then
+                                     false
+                                 else
+                                     WalkerRules.returnContract
+                                         n
+                                         (so = StepValueUse.LiteralTrue)
+                                         (st = StepValueUse.LiteralTrue)
+                                     |> WalkerRules.returnValueIsModelled)
                              body
                          |> List.map (describe "value"))
                         // DERIVED, not a hand-kept list: a block-taking step is refused
@@ -2240,6 +2254,24 @@ module WalkerOrchestration =
                                             let named = validated.Named
                                             emitCallWarnings validated.Warnings
 
+                                            let returnFlagIsTrue key =
+                                                named
+                                                |> List.exists (fun (k, value) ->
+                                                    k = key
+                                                    && match value with
+                                                       | VBool true -> true
+                                                       | _ -> false)
+
+                                            // One descriptor-owned answer feeds the static gate
+                                            // above and this runtime publisher. Validation has
+                                            // already succeeded, so an unknown constructor key can
+                                            // never acquire a null result by being normalised away.
+                                            let returnContract =
+                                                WalkerRules.returnContract
+                                                    name
+                                                    (returnFlagIsTrue "returnStdout")
+                                                    (returnFlagIsTrue "returnStatus")
+
                                             let called =
                                                 { Name = name
                                                   Positional = positional |> List.map Value.toDisplay
@@ -2283,11 +2315,11 @@ module WalkerOrchestration =
                                                 | Some d -> Some d
                                                 | None -> deadline
 
-                                            // FG-174. A fresh slot PER CALL: reusing one would let a
-                                            // step that returns nothing hand back the previous
-                                            // step's value, which is worse than null because it
-                                            // looks plausible.
-                                            let slot = ref VNull
+                                            // A fresh UNSET slot per call. `VNull` is a real measured
+                                            // answer for seven descriptors; using it as the initial
+                                            // value would make an unimplemented JUnit/SCM/wrapper
+                                            // result indistinguishable from that contract.
+                                            let slot: Value option ref = ref None
 
                                             if finallyUnwind || not (halted dispatchCtx) then
                                                 // FG-176. OBSERVED, not sunk directly: a SHELL step's
@@ -2351,6 +2383,18 @@ module WalkerOrchestration =
                                                         | _ when observedFailed.Value -> Some HostedFailure
                                                         | _ -> None
 
+                                                    // Direct walker arms return unit. Publish null
+                                                    // centrally only for a descriptor which proves it,
+                                                    // and only after a nonterminal completion. WalkerStep
+                                                    // may already have published the same contract for
+                                                    // executor-backed steps.
+                                                    if
+                                                        freshHalt.IsNone
+                                                        && returnContract = WalkerRules.GenuineNull
+                                                        && slot.Value.IsNone
+                                                    then
+                                                        slot.Value <- Some VNull
+
                                                     match finallyUnwind, freshHalt with
                                                     | true, Some haltKind ->
                                                         let diagnosticText =
@@ -2371,11 +2415,20 @@ module WalkerOrchestration =
                                                         if observedFailed.Value then
                                                             dispatchCtx.Failed.Value <- true
 
-                                            // WHAT THE STEP PUT THERE — `sh(returnStdout: true)` its
-                                            // stdout, `sh(returnStatus: true)` its exit code as an
-                                            // Integer, and `VNull` for everything else, which is
-                                            // still every step that does not opt in.
-                                            slot.Value
+                                            match slot.Value, returnContract with
+                                            | Some value, _ -> value
+                                            // A halted call never exposes its return: the
+                                            // interpreter checks CanContinue immediately after
+                                            // Perform and unwinds. This placeholder carries no
+                                            // semantic claim.
+                                            | None, _ when halted dispatchCtx -> VNull
+                                            // These calls are legal as discarded statements. The
+                                            // static gate refuses every value position, so the host
+                                            // must return a transport value which is unobservable.
+                                            | None, WalkerRules.UnsupportedValue _ -> VNull
+                                            | None, _ ->
+                                                Interpreter.raiseHostedCallRefused
+                                                    $"script block: hosted step `{name}` completed without publishing its modelled return contract"
                               // The interpreter asks before every call and again after
                               // Perform. Once a hosted step halts the branch, Groovy
                               // evaluation unwinds before later helper/builtin arguments

@@ -14,7 +14,8 @@ open Fogell.Groovy
 /// value is the call's value.
 ///
 /// The refusal survives the change because of the HOST, not the interpreter: the walker's
-/// dispatch returns unit, so the host has no value to hand back and yields null anyway. So
+/// dispatch publishes only explicitly modelled values. A genuine Jenkins null is safe;
+/// an absent JUnit, SCM-map or wrapper-body model is not. So
 ///
 ///     def out = sh(script: 'git rev-parse HEAD', returnStdout: true)
 ///     if (out.startsWith('abc')) { … }
@@ -30,6 +31,15 @@ open Fogell.Groovy
 /// that refusal into the hazard.
 module StepValueUse =
 
+    /// What the static AST can prove about one return flag. Absent and literal false
+    /// both select a shell step's genuine-null contract; an arbitrary expression must
+    /// remain refused because the preflight cannot know which typed contract it selects.
+    type StaticReturnFlag =
+        | Absent
+        | LiteralFalse
+        | LiteralTrue
+        | Undecidable
+
     /// A step call found in a position where its value is consumed, with the name and a
     /// short description of the position — the receipt and the refusal both name it, so
     /// "why was my file rejected" has an answer more useful than a line number.
@@ -41,8 +51,8 @@ module StepValueUse =
     /// the batch model. It is the nested occurrences that lie — and the ARGUMENTS of a
     /// bare call are themselves value positions, so `echo sh(returnStdout: true, …)` is
     /// caught even though the outer call is a statement.
-    /// `callAnswers name hasReturnStdout hasReturnStatus` decides whether a call can
-    /// supply a value at all. It is a PARAMETER, and it takes the flags rather than just
+    /// `callAnswers name returnStdout returnStatus` decides whether a call can
+    /// supply its modelled value, including a genuine null. It is a PARAMETER, and it takes the flags rather than just
     /// the step name, because the answer depends on the COMBINATION — see
     /// `WalkerRules.returnContract`, which is the single definition both this refusal and
     /// the runtime publisher read. Passing a bare `honoursReturnFlags` predicate was the
@@ -50,7 +60,7 @@ module StepValueUse =
     /// `returnStdout: true, returnStatus: true` differently.
     let find
         (isStep: string -> bool)
-        (callAnswers: string -> bool -> bool -> bool)
+        (callAnswers: string -> StaticReturnFlag -> StaticReturnFlag -> bool)
         (script: Script)
         : Use list =
         let found = ResizeArray<Use>()
@@ -88,9 +98,10 @@ module StepValueUse =
                 expr where true b
             | EClosure c -> stmts c.Body
             | ECall(target, args, trailing) ->
-                // FG-174. A call that OPTS IN to returning a value is no longer refused:
-                // `sh(returnStdout: true)` and `sh(returnStatus: true)` now carry one back
-                // through the host. Everything else still yields null.
+                // A call whose descriptor has a modelled return is no longer refused:
+                // `sh(returnStdout: true)` and `sh(returnStatus: true)` carry typed
+                // answers, while the seven FG-177 rows carry a genuine VNull. JUnit,
+                // SCM maps and wrapper body results remain refused.
                 //
                 // LIFTED, on the third attempt, and the two earlier attempts are why this
                 // is now believable rather than merely plumbed. Both times the refusal
@@ -112,12 +123,15 @@ module StepValueUse =
                 // it stays refused rather than assumed, which is the direction that fails
                 // safe. That is a property of THIS CALL's own arguments, visible without
                 // guessing, unlike the env pre-scan that had to be replaced.
-                let optsIn (flag: string) =
+                let flagState (flag: string) =
                     args
-                    |> List.exists (fun a ->
+                    |> List.tryPick (fun a ->
                         match a with
-                        | ANamed(k, EBool true) -> k = flag
-                        | _ -> false)
+                        | ANamed(k, EBool true) when k = flag -> Some LiteralTrue
+                        | ANamed(k, EBool false) when k = flag -> Some LiteralFalse
+                        | ANamed(k, _) when k = flag -> Some Undecidable
+                        | _ -> None)
+                    |> Option.defaultValue Absent
 
                 // WHETHER THE CALL ANSWERS IS NOT DECIDED HERE. The step and the
                 // COMBINATION of flags decide it together, and that rule lives in one
@@ -126,7 +140,7 @@ module StepValueUse =
                 // returned a value where Jenkins returns null), and they are not
                 // orthogonal (`returnStatus` wins when both are set).
                 let returnsAValue (n: string) =
-                    callAnswers n (optsIn "returnStdout") (optsIn "returnStatus")
+                    callAnswers n (flagState "returnStdout") (flagState "returnStatus")
 
                 // The CALL ITSELF, only when its own value is consumed.
                 (match target with
