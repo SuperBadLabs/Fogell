@@ -600,12 +600,21 @@ let private toolsSection: P<(string * string) list> =
 // command still needs the newline/semicolon boundary enforced by [toolEntryEnd].
 
 let private agentSpec: P<AgentSpec> =
+    let inlineAgentGap =
+        // Jenkins requires the first argument to remain on the kind's physical
+        // line, but permits block comments (including multiline comments) inside
+        // that gap. A line comment or an ordinary newline commits to no inline
+        // argument. Keep this parser inside [withSkippedString]: its bytes are
+        // argument provenance, not disposable lexer trivia.
+        skipMany1 (anyOf " \t")
+        >>. skipMany (attempt (blockComment >>. skipMany (anyOf " \t")))
+
     let unmodelledInline =
         attempt (
             identifierBare
             .>>. withSkippedString
                     (fun skipped args -> skipped, args)
-                    (skipMany1 (anyOf " \t") >>. argList)
+                    (inlineAgentGap >>. argList)
             >>= fun (kind, (source, (_named, positional, _, _, _, _, order))) ->
                     if List.isEmpty order then
                         fail "an inline agent requires at least one named argument"
@@ -615,7 +624,7 @@ let private agentSpec: P<AgentSpec> =
                         // Keep spelling, quote kind, interpolation source and order.
                         // The decoded [named] values are used only to prove that every
                         // argument took the shared named-argument grammar.
-                        preturn (AgentUnmodelled(kind, Some(source.Trim()))))
+                        preturn (AgentUnmodelled(kind, Some source)))
 
     let inner includeInline =
         choice

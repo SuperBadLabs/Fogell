@@ -251,21 +251,42 @@ let structure =
               Expect.equal (ok (mk "    stage('a') { steps { echo 'x' } }")).Agent AgentAny "agent any"
           }
 
-          test "FG-014 inline plugin agents retain exact named argument source at pipeline and stage scope" {
+          test "FG-014 inline plugin agents retain exact bytes at pipeline, stage and nested scope" {
               // DIRECTLY PROBED on Jenkins 2.568.1 at both scopes. The plugin owns
               // interpretation; the Declarative IR retains exact source and execution
               // refuses it until provisioning semantics exist.
-              let args = "label: 'docker', yaml: \"${DOCKER_POD}\""
+              let pipelineArgs =
+                  "   /* lead\n       still lead */ label: 'docker',\n      // between\n      yaml: \"${DOCKER_POD}\" /* tail */  \n  "
+
+              let stageArgs =
+                  "\t/* stage lead */ label: 'stage-pod', yaml: \"${DOCKER_POD}\"\n      /* stage tail */   "
+
+              let nestedArgs = "  bogus: 'kept' /* nested tail */   "
+
               let source =
-                  $"def DOCKER_POD = 'apiVersion: v1'\npipeline {{\n  agent {{ kubernetes {args} }}\n  stages {{\n    stage('outer') {{\n      agent {{ kubernetes {args} }}\n      stages {{\n        stage('inner') {{ agent {{ kubernetes bogus: 'kept' }} steps {{ echo 'x' }} }}\n      }}\n    }}\n  }}\n}}"
+                  "def DOCKER_POD = 'apiVersion: v1'\npipeline {\n  agent {\n    kubernetes"
+                  + pipelineArgs
+                  + "}\n  stages {\n    stage('outer') {\n      agent { kubernetes"
+                  + stageArgs
+                  + "}\n      stages {\n        stage('inner') { agent { kubernetes"
+                  + nestedArgs
+                  + "} steps { echo 'x' } }\n      }\n    }\n  }\n}"
 
               let pipeline = ok source
-              Expect.equal pipeline.Agent (AgentUnmodelled("kubernetes", Some args)) "pipeline provenance"
-              Expect.equal pipeline.Stages.[0].Agent (Some(AgentUnmodelled("kubernetes", Some args))) "stage provenance"
+              Expect.equal
+                  pipeline.Agent
+                  (AgentUnmodelled("kubernetes", Some pipelineArgs))
+                  "pipeline provenance includes every boundary byte"
+
+              Expect.equal
+                  pipeline.Stages.[0].Agent
+                  (Some(AgentUnmodelled("kubernetes", Some stageArgs)))
+                  "stage provenance includes tabs, comments, GString source and trailing trivia"
+
               Expect.equal
                   pipeline.Stages.[0].Nested.[0].Agent
-                  (Some(AgentUnmodelled("kubernetes", Some "bogus: 'kept'")))
-                  "unknown plugin-owned named keys are retained because Jenkins accepts them"
+                  (Some(AgentUnmodelled("kubernetes", Some nestedArgs)))
+                  "nested provenance is byte-exact and unknown plugin-owned keys remain accepted"
           }
 
           test "FG-014 block plugin agent remains admitted without inline provenance" {
@@ -285,6 +306,8 @@ let structure =
               for label, args in
                   [ "same-line missing comma", "label: 'docker' yaml: 'apiVersion: v1'"
                     "newline missing comma", "label: 'docker'\n yaml: 'apiVersion: v1'"
+                    "newline after kind", "\n label: 'docker', yaml: 'apiVersion: v1'"
+                    "line comment after kind", "// before\n label: 'docker', yaml: 'apiVersion: v1'"
                     "duplicate key", "label: 'one', label: 'two'"
                     "positional extra", "label: 'docker', yaml: 'apiVersion: v1', 'extra'" ] do
                   let error = err (stageAgent args)

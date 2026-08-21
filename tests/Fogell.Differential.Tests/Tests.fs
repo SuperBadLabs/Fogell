@@ -1883,7 +1883,7 @@ let unsupportedNamedCollections =
 /// Kubernetes provisioning, workspace placement or environment semantics. Every run
 /// entry converges on the same preflight before WalkerCtx and workspace preparation.
 let unsupportedDeclarativeAgents =
-    let args = "label: 'docker', yaml: 'apiVersion: v1'"
+    let args = "   /* retained leading trivia */ label: 'docker', yaml: 'apiVersion: v1' /* retained tail */  "
 
     let cases =
         [ "pipeline", $"pipeline {{ agent {{ kubernetes {args} }} stages {{ stage('a') {{ steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "pipeline (`kubernetes`)"
