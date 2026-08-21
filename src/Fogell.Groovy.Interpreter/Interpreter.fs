@@ -161,6 +161,10 @@ type Fault =
     /// raises StackOverflowError; this explicit fault retains its catch ancestry
     /// without allowing the F# runtime to recurse until the process dies.
     | CyclicOrderingComparison
+    /// Rendering a list/map reference cycle longer than Groovy's direct-self
+    /// marker raises StackOverflowError too. Keep it typed instead of wrapping
+    /// it in [Thrown]: Error bypasses `catch (Exception)` on Jenkins.
+    | CyclicDisplay
 
 type Outcome =
     { Effects: Effect list
@@ -289,8 +293,7 @@ module Interpreter =
     let private scriptDisplay value =
         match Value.tryToDisplay value with
         | Value.Text rendered -> rendered
-        | Value.DisplayCycleDetected ->
-            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in display")))
+        | Value.DisplayCycleDetected -> raise (Stop CyclicDisplay)
 
     let private tooNegativeListIndex index size = index < -(int64 size)
 
@@ -336,6 +339,25 @@ module Interpreter =
             items.Value <- items.Value |> List.mapi (fun i prior -> if i = position then value else prior)
         else
             items.Value <- items.Value @ List.replicate (position - size) VNull @ [ value ]
+
+    /// Jenkins 2.568.1's CPS collection traversal is live and index-based. The
+    /// value at the current slot is captured before the closure runs; later
+    /// slots are read from the ref cell after earlier mutations. Appends and
+    /// positive-index extension are visited, while shrinkage shortens the walk.
+    /// Count actual visits so a closure that appends forever still hits budget.
+    let private iterateLiveList (st: State) operation (items: Value list ref) keepGoing visit =
+        let mutable index = 0
+        let mutable iterations = 0
+
+        while keepGoing () && index < items.Value.Length do
+            iterations <- iterations + 1
+
+            if iterations > st.Budget.MaxLoopIterations then
+                raise (Stop(BudgetExhausted $"{operation} exceeds the loop-iteration budget"))
+
+            let current = items.Value.[index]
+            index <- index + 1
+            visit current
 
     /// Method names the table dispatches WITHOUT reading `args` — zero-argument in
     /// Groovy too. Strict mode rejects a call that passes any: `'abc'.length(1)` has
@@ -1262,29 +1284,57 @@ module Interpreter =
         | "each", VList xs, _ ->
             match trailing with
             | Some c ->
-                if xs.Value.Length > st.Budget.MaxLoopIterations then
-                    raise (Stop(BudgetExhausted "each exceeds the loop-iteration budget"))
-
-                xs.Value |> List.iter (fun x -> applyClosure c env x |> ignore)
+                iterateLiveList st "each" xs (fun () -> true) (fun x -> applyClosure c env x |> ignore)
                 recv
             | None -> recv
         | "collect", VList xs, _ ->
             match trailing with
-            | Some c -> VList(ref (xs.Value |> List.map (applyClosure c env)))
+            | Some c ->
+                let collected = ResizeArray<Value>()
+                iterateLiveList st "collect" xs (fun () -> true) (fun x -> collected.Add(applyClosure c env x))
+                VList(ref (List.ofSeq collected))
             | None -> recv
-        | ("find" | "findAll"), VList xs, _ ->
+        | "find", VList xs, _ ->
             match trailing with
             | Some c ->
-                let matches = xs.Value |> List.filter (fun x -> Value.isTruthy (applyClosure c env x))
-                if name = "find" then (match matches with [] -> VNull | h :: _ -> h) else VList(ref matches)
+                let mutable found = None
+
+                iterateLiveList
+                    st
+                    "find"
+                    xs
+                    (fun () -> Option.isNone found)
+                    (fun x -> if Value.isTruthy (applyClosure c env x) then found <- Some x)
+
+                Option.defaultValue VNull found
+            | None -> recv
+        | "findAll", VList xs, _ ->
+            match trailing with
+            | Some c ->
+                let matches = ResizeArray<Value>()
+
+                iterateLiveList
+                    st
+                    "findAll"
+                    xs
+                    (fun () -> true)
+                    (fun x -> if Value.isTruthy (applyClosure c env x) then matches.Add x)
+
+                VList(ref (List.ofSeq matches))
             | None -> recv
         | "any", VList xs, _ ->
             match trailing with
-            | Some c -> VBool(xs.Value |> List.exists (fun x -> Value.isTruthy (applyClosure c env x)))
+            | Some c ->
+                let mutable matched = false
+                iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- Value.isTruthy (applyClosure c env x))
+                VBool matched
             | None -> VBool false
         | "every", VList xs, _ ->
             match trailing with
-            | Some c -> VBool(xs.Value |> List.forall (fun x -> Value.isTruthy (applyClosure c env x)))
+            | Some c ->
+                let mutable allMatched = true
+                iterateLiveList st "every" xs (fun () -> allMatched) (fun x -> allMatched <- Value.isTruthy (applyClosure c env x))
+                VBool allMatched
             | None -> VBool true
         | _ when st.StrictVars ->
             // Fail CLOSED on a method this interpreter does not model. Groovy would
@@ -1544,9 +1594,6 @@ module Interpreter =
 
             match evalExpr st env src with
             | VList xs ->
-                if xs.Value.Length > st.Budget.MaxLoopIterations then
-                    raise (Stop(BudgetExhausted "loop exceeds the iteration budget"))
-
                 // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
                 // and carried on with the next element, so `for (x in xs) { … break }` ran
                 // the body for every element — `SWhile` one arm below has always stopped
@@ -1559,24 +1606,23 @@ module Interpreter =
                 // visibility — an assignment made before the break now survives, so the
                 // wrong number reaches a step instead of being discarded with the
                 // environment. Raised in review on PR #54.
-                // WALKED, NOT INDEXED. `xs` is an F# linked list, so `xs[i]` is a linear
-                // lookup and indexing it per iteration made the loop QUADRATIC — within the
-                // 10,000-iteration budget, so nothing refuses it and a long `for` just gets
-                // slow. Introduced by my own break fix and caught in review on PR #54;
-                // holding the tail costs nothing and restores the original traversal.
+                // The ref cell makes this a mutable ArrayList analogue. Jenkins CPS
+                // re-reads each not-yet-visited index, including appended/extended
+                // elements, so retaining an immutable F# tail is observably stale.
                 let mutable cur = env
                 let mutable running = true
-                let mutable rest = xs.Value
 
-                while running && not (List.isEmpty rest) do
-                    let x = List.head rest
-                    rest <- List.tail rest
-
-                    try
-                        cur <- execBlock st (Env.withVar v x cur) body
-                    with
-                    | ContinueSignal -> ()
-                    | BreakSignal -> running <- false
+                iterateLiveList
+                    st
+                    "loop"
+                    xs
+                    (fun () -> running)
+                    (fun x ->
+                        try
+                            cur <- execBlock st (Env.withVar v x cur) body
+                        with
+                        | ContinueSignal -> ()
+                        | BreakSignal -> running <- false)
 
                 cur
             | _ -> env
@@ -1751,7 +1797,7 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
-            let catchesCyclicOrdering =
+            let catchesStackOverflow =
                 match catch with
                 | Some(None, _, _) -> false
                 | Some(Some t, _, _) ->
@@ -1820,8 +1866,10 @@ module Interpreter =
                         handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
                     | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
                         handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
-                    | Stop CyclicOrderingComparison when catchesCyclicOrdering ->
+                    | Stop CyclicOrderingComparison when catchesStackOverflow ->
                         handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
+                    | Stop CyclicDisplay when catchesStackOverflow ->
+                        handle (VStr "java.lang.StackOverflowError: cyclic structure in display")
                 with
                 | HostedHaltSignal as halted ->
                     // A hosted failure has already stopped ordinary evaluation, but
@@ -2035,7 +2083,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | CyclicDisplay | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

@@ -1433,8 +1433,74 @@ let cyclicValues =
               let mixed = runS "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\nreturn \"${xs}\""
 
               match mixed.Fault with
-              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "mixed display cycle faults safely"
-              | other -> failtestf "expected mixed-cycle display fault, got %A" other
+              | Some CyclicDisplay -> ()
+              | other -> failtestf "expected typed mixed-cycle display fault, got %A" other
+          }
+
+          test "cyclic display retains StackOverflowError ancestry for interpolation and toString" {
+              let notException =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return \"${xs}\" } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some CyclicDisplay -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic display: %A" other
+
+              let caughtByError =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return xs.toString() } catch (Error e) { return 'caught-error' }"
+                  )
+
+              Expect.isNone caughtByError.Fault "Error intercepts StackOverflowError"
+              Expect.equal caughtByError.Returned (Some(VStr "caught-error")) "explicit toString uses typed display fault"
+
+              let caughtByThrowable =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return 'value=' + xs } catch (Throwable e) { return 'caught-throwable' }"
+                  )
+
+              Expect.isNone caughtByThrowable.Fault "Throwable intercepts StackOverflowError"
+              Expect.equal caughtByThrowable.Returned (Some(VStr "caught-throwable")) "string concatenation shares the boundary"
+          }
+
+          test "list closure methods and for-in observe live index writes and extensions" {
+              let o =
+                  runS (
+                      "def eachXs = [1, 2]\ndef eachSeen = []\n"
+                      + "eachXs.each { eachSeen << it; if (it == 1) { eachXs[0] = 8; eachXs[1] = 9; eachXs << 3 }; if (it == 9) { eachXs[0] = 7 } }\n"
+                      + "echo \"each:${eachSeen}:${eachXs}\"\n"
+                      + "def collectXs = [1, 2]\ndef collected = collectXs.collect { if (it == 1) { collectXs[1] = 9; collectXs << 3 }; it * 10 }\n"
+                      + "echo \"collect:${collected}:${collectXs}\"\n"
+                      + "def filterXs = [1, 2]\ndef filtered = filterXs.findAll { if (it == 1) { filterXs[1] = 9; filterXs << 3 }; it > 1 }\n"
+                      + "echo \"findAll:${filtered}:${filterXs}\"\n"
+                      + "def findXs = [1, 2]\ndef found = findXs.find { if (it == 1) { findXs[1] = 9; findXs << 3 }; it > 5 }\n"
+                      + "echo \"find:${found}:${findXs}\"\n"
+                      + "def anyXs = [1, 2]\ndef anyResult = anyXs.any { if (it == 1) { anyXs[1] = 9; anyXs << 3 }; it == 9 }\n"
+                      + "echo \"any:${anyResult}:${anyXs}\"\n"
+                      + "def everyXs = [1, 2]\ndef everySeen = []\n"
+                      + "def everyResult = everyXs.every { everySeen << it; if (it == 1) { everyXs[1] = 9; everyXs << 3 }; it < 10 }\n"
+                      + "echo \"every:${everyResult}:${everySeen}:${everyXs}\"\n"
+                      + "def forXs = [1, 2]\ndef forSeen = []\n"
+                      + "for (v in forXs) { forSeen << v; if (v == 1) { forXs[1] = 9; forXs[3] = 4 } }\n"
+                      + "echo \"for:${forSeen}:${forXs}\""
+                  )
+
+              Expect.isNone o.Fault "all measured live traversals execute"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "each:[1, 9, 3]:[7, 9, 3]" ]
+                    "echo", [ "collect:[10, 90, 30]:[1, 9, 3]" ]
+                    "echo", [ "findAll:[9, 3]:[1, 9, 3]" ]
+                    "echo", [ "find:9:[1, 9, 3]" ]
+                    "echo", [ "any:true:[1, 9, 3]" ]
+                    "echo", [ "every:true:[1, 9, 3]:[1, 9, 3]" ]
+                    "echo", [ "for:[1, 9, null, 4]:[1, 9, null, 4]" ] ]
+                  "current is captured, unvisited writes are observed, and appended/extended slots are visited"
           }
 
           test "sorting cyclic lists follows Jenkins' alias and StackOverflow boundaries without host recursion" {

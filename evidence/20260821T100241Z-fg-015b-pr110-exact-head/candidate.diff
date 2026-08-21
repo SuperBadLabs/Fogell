@@ -1,0 +1,619 @@
+diff --git a/differential/cases/fg015b-cycle-display-ancestry.Jenkinsfile b/differential/cases/fg015b-cycle-display-ancestry.Jenkinsfile
+new file mode 100644
+index 0000000..7280cfb
+--- /dev/null
++++ b/differential/cases/fg015b-cycle-display-ancestry.Jenkinsfile
+@@ -0,0 +1,48 @@
++// PR #110 exact-head review closure. Longer reference cycles raise the same
++// Error-ancestry StackOverflowError through interpolation and explicit display;
++// direct self-cycles retain Groovy's ordinary marker rendering.
++pipeline {
++    agent any
++    stages {
++        stage('P') {
++            steps {
++                script {
++                    def events = []
++
++                    def interpolation = [null]
++                    def interpolationMap = [back: interpolation]
++                    interpolation[0] = interpolationMap
++                    try {
++                        try {
++                            echo "value=${interpolation}"
++                            events << 'interpolation-unexpected'
++                        } catch (Exception ignored) {
++                            events << 'interpolation-overcaught'
++                        }
++                    } catch (Throwable ignored) {
++                        events << 'interpolation-escaped-exception'
++                    }
++
++                    def explicit = [null]
++                    def explicitMap = [back: explicit]
++                    explicit[0] = explicitMap
++                    try {
++                        explicit.toString()
++                        events << 'tostring-unexpected'
++                    } catch (Error ignored) {
++                        events << 'tostring-caught-error'
++                    }
++
++                    def directList = [null]
++                    directList[0] = directList
++                    def directMap = [:]
++                    directMap.self = directMap
++                    events << "direct-list=${directList}"
++                    events << "direct-map=${directMap}"
++
++                    echo "display:${events}"
++                }
++            }
++        }
++    }
++}
+diff --git a/differential/cases/fg015b-live-list-iteration.Jenkinsfile b/differential/cases/fg015b-live-list-iteration.Jenkinsfile
+new file mode 100644
+index 0000000..551d608
+--- /dev/null
++++ b/differential/cases/fg015b-live-list-iteration.Jenkinsfile
+@@ -0,0 +1,59 @@
++// PR #110 exact-head review closure. Jenkins CPS traversal re-reads unvisited
++// indexes and its live bound: current values stay captured, visited writes do
++// not rewrite history, and appends/null-extension become later iterations.
++pipeline {
++    agent any
++    stages {
++        stage('P') {
++            steps {
++                script {
++                    def eachXs = [1, 2]
++                    def eachSeen = []
++                    eachXs.each {
++                        eachSeen << it
++                        if (it == 1) {
++                            eachXs[0] = 8
++                            eachXs[1] = 9
++                            eachXs << 3
++                        }
++                        if (it == 9) {
++                            eachXs[0] = 7
++                        }
++                    }
++                    echo "each:${eachSeen}:${eachXs}"
++
++                    def collectXs = [1, 2]
++                    def collected = collectXs.collect {
++                        if (it == 1) {
++                            collectXs[1] = 9
++                            collectXs << 3
++                        }
++                        it * 10
++                    }
++                    echo "collect:${collected}:${collectXs}"
++
++                    def filterXs = [1, 2]
++                    def filtered = filterXs.findAll {
++                        if (it == 1) {
++                            filterXs[1] = 9
++                            filterXs << 3
++                        }
++                        it > 1
++                    }
++                    echo "findAll:${filtered}:${filterXs}"
++
++                    def forXs = [1, 2]
++                    def forSeen = []
++                    for (v in forXs) {
++                        forSeen << v
++                        if (v == 1) {
++                            forXs[1] = 9
++                            forXs[3] = 4
++                        }
++                    }
++                    echo "for:${forSeen}:${forXs}"
++                }
++            }
++        }
++    }
++}
+diff --git a/differential/receipts/fg015b-cycle-display-ancestry.receipt.txt b/differential/receipts/fg015b-cycle-display-ancestry.receipt.txt
+new file mode 100644
+index 0000000..913f44e
+--- /dev/null
++++ b/differential/receipts/fg015b-cycle-display-ancestry.receipt.txt
+@@ -0,0 +1,89 @@
++# Differential receipt — fg015b-cycle-display-ancestry.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         23c4599f242df5f36a05c0195cf421cf017591370dfce367f646d1cb16d1b907
++case-digest:  71457b85c4891c7530bf260161ef9135d4546a48f497099af0ea7d2419d35358
++sealed-output: sequence
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (1 lines):
++    | display:[interpolation-escaped-exception, tostring-caught-error, direct-list=[(this Collection)], direct-map=[self:(this Map)]]
++
++## Fogell
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (1 lines):
++    | display:[interpolation-escaped-exception, tostring-caught-error, direct-list=[(this Collection)], direct-map=[self:(this Map)]]
+diff --git a/differential/receipts/fg015b-live-list-iteration.receipt.txt b/differential/receipts/fg015b-live-list-iteration.receipt.txt
+new file mode 100644
+index 0000000..2037cf5
+--- /dev/null
++++ b/differential/receipts/fg015b-live-list-iteration.receipt.txt
+@@ -0,0 +1,95 @@
++# Differential receipt — fg015b-live-list-iteration.Jenkinsfile
++
++jenkins-core: 2.568.1
++seal:         3ab7bf61f26586cb676b3210e2dee66aef546dbe47605335c0d62cd52166cd45
++case-digest:  4a94f7ed5a3d62815b80059c93831630d9c7f57153d90feb2545b4730bf90d7b
++sealed-output: sequence
++
++VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
++
++## Comparison contract
++  compared: terminal result
++  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
++    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
++  compared: canonical workspace hash over sorted (path, content-hash) pairs
++  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
++  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
++    timestamps() coverage. Two engines read two clocks, so the instants can never
++    agree; an engine that IGNORED the option, or honoured it for only some lines,
++    would otherwise compare equal to one that honoured it fully. Line COUNTS are
++    printed but never compared — the engines do not emit the same number of lines.
++    LIMIT: the numerator counts stamped RAW lines while the denominator is the
++    compared-output length, so a stamped-but-suppressed line can offset an
++    unstamped compared one. Catches a total miss and an ordinary partial
++    implementation (both planted); not a per-line proof. FG-118 makes it exact.
++    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
++    the option, and read as true only because none did.
++  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
++  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
++    trace is identical emitted output, continuations included (retires FG-002c)
++  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
++    its first physical line only (measured; no re-quoting, no record terminator),
++    so a mismatching line pair that becomes equal under the SAME inherited-env
++    replacement list applied to BOTH sides compares as that canonical form.
++    Literals cancel; receipt lines stay literal; the rule can only turn a
++    divergence into an equality, never hide one direction only. EVERY pair the
++    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
++    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
++    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
++    multiplicity instead of pair records. FG-158: this said EVERY pair while the
++    concurrent path emitted occurrences, which is a promise the mode cannot keep.
++    A canonical
++    comparison is always visible in the case it decided — ordinary output that
++    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
++    declared environment-of-necessity class the ${WORKSPACE} fold already is
++  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
++  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
++  compared as a BOOLEAN, not text: whether a failure reason was reported
++    (applies to failure/aborted only — an unstable build is explained by its test report)
++    (Jenkins' wording comes from whichever plugin implements the step;
++     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
++  excluded: credential-masking narration — both engines announce it, wording differs
++  engine notes: printed in the receipt, never compared — the engine reporting
++    on its own checks (e.g. an unavailable /proc scan), not on the build
++  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
++    context-gated, emitted identically by both engines, or an exact measured
++    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
++    text is COMPARED, and tests carry look-alike rows proving it.
++  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
++    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
++    the same workspace, and comparing a compiler's error layout is over-fitting
++  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
++    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
++    sentences ALSO count as the abort's reported reason
++  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
++    the reported reason; the wording comes from whichever plugin implements the step
++  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
++  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
++    (the workspace HASH is sealed, the listing under it is not); any engine notes;
++    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
++    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
++    RECOVERED provenance block, which can be added, removed or fabricated without
++    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
++    is unsealed too — see the PARALLEL lines below. Everything else printed here is
++    bound.
++    So `--verify-seals` passing does NOT mean this document is unaltered — it means
++    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
++    minus fenced regions; it is NOT implemented, so this list is what holds today.
++
++## Jenkins
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (4 lines):
++    | each:[1, 9, 3]:[7, 9, 3]
++    | collect:[10, 90, 30]:[1, 9, 3]
++    | findAll:[9, 3]:[1, 9, 3]
++    | for:[1, 9, null, 4]:[1, 9, null, 4]
++
++## Fogell
++  result:         success
++  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
++  output (4 lines):
++    | each:[1, 9, 3]:[7, 9, 3]
++    | collect:[10, 90, 30]:[1, 9, 3]
++    | findAll:[9, 3]:[1, 9, 3]
++    | for:[1, 9, null, 4]:[1, 9, null, 4]
+diff --git a/docs/COMPATIBILITY-SCORECARD.md b/docs/COMPATIBILITY-SCORECARD.md
+index 577a77f..b6dc129 100644
+--- a/docs/COMPATIBILITY-SCORECARD.md
++++ b/docs/COMPATIBILITY-SCORECARD.md
+@@ -38,6 +38,6 @@ What verification does NOT cover: whether each case on disk still matches the di
+ 
+ | Expected | Present | Proven |
+ |---|---|---|
+-| 222 | 222 | 222 of 222 |
++| 224 | 224 | 224 of 224 |
+ 
+ **These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **1** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index eb24bc5..fc53edf 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -637,7 +637,7 @@ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ | FG-010b | P0 | **DONE** | Zero-argument step calls silently swallowed the NEXT step | Found by the `stash-unstash` receipt: `before.txt` was missing from Fogell's workspace and nothing else was wrong. `deleteDir()` consumed `()`, then looked for inline arguments starting with `ws` — which crossed the NEWLINE and ate the entire following step as a positional argument, which was then DISCARDED because parenthesised args take precedence. So the build skipped a step and reported success. Affected every zero-arg call form (`deleteDir()`, `cleanWs()`, …). A step is now either `name(args)` or `name args`, never both, and the inline form must begin on the same line |
+ | FG-044b | P1 | TODO | Four findings landed on PR #15 review 7, after the merge | Ticketed rather than lost, per the merge-and-ticket decision. (a) **DONE** — `echo` bypassed both credential interpolation and masking. MEASURED and richer than this ticket claimed: Jenkins WARNS in three lines that a secret reached a step argument through GString interpolation, THEN prints the masked value; it also interpolates a GString and leaves a single-quoted argument literal. All four behaviours proven by `echo-credential-masking`. Fogell emits its own one-line warning (wording not compared, as with the other narration) because being quieter than Jenkins on a security matter is not an option. (b) A companion `X_FILE` can still overwrite an `X_FILE` bound by an OUTER `withCredentials`, because the collision check only sees the current call's names, not `ctx.EnvOverlay`. (c) The credential-argument regexes are unbounded, so `string(notcredentialsId: 'x', notvariable: 'T')` still binds — Jenkins rejects it, so the fail-closed gate is defeated by a name that merely ENDS with the key. (d) `stash` ignores Ant's default excludes (`.git/**` and friends), which Jenkins applies |
+ | FG-002f | P1 | **DONE** | Audit every `isDiagnosticLine` pattern for user-reproducibility | The SAME defect has now been found three times: `Terminated` matched unconditionally, then the changelog warning by prefix, then a Groovy compile r… [→ detail](tickets/FG-002f.md) |
+-| FG-015b | P2 | **DONE** | Typed integer list-index mutation and list reference identity in the scripted interpreter | The parser gate had already opened under FG-180; this closure corrects the stale parser title and implements the remaining runtime half. Direct Jenkins 2.568.1 probes measured basic, alias, closure, nested, projection and method-result writes; compound/inc/dec single-evaluation order; negative, empty, append, null-extension and too-negative boundaries; null/scalar/non-integer/map controls; and direct, distinct and mixed cycles. `VList` now carries reference identity, so aliases and selected source lists share mutation while a fresh projection does not. Plain integer `EIndex` writes return the RHS; `SIndexCompoundAssign` and `SIndexPostfixAssign` retain syntax so receiver/key evaluate once and old-value/RHS timing matches Jenkins. Too-negative indexes raise a catchable `ArrayIndexOutOfBoundsException`-class fault; positive extension is budget-bounded. Existing map writes are unchanged. Non-integer list keys remain outside this typed slice and refuse explicitly instead of succeeding without a write. Direct spread-derived indexes are admitted and select temporary versus persistent identities at runtime; actual spread-property l-values remain preflight-refused. Cycle-aware display/equality preserves `(this Collection)` and survives longer cycles without host recursion. PR #110 review measurement added ordering and scalar-update boundaries: `sort()` now uses a cycle-aware comparator which preserves top-level alias success and surfaces distinct, nested-alias, and mixed cycles as catchable `StackOverflowError` ancestry instead of entering the host comparer; sandbox-denied `min`/`max` and the unmodelled `unique` path remain explicit safe refusals. Scalar index mutation remains unsupported, but a valid String index reads once and reaches compound/plain RHS before the catchable sandbox write rejection, while positive/too-negative String indexes, non-integer keys, integer/boolean receivers, and null fail during the read before RHS effects. No scalar receiver is mutated | [original measurement/evidence](../evidence/20260821T083100Z-fg-015b-list-index) and [PR #110 review closure](../evidence/20260821T093300Z-fg-015b-pr110-review); five tier-1 differential receipts; focused AST/interpreter/preflight/cycle/timing tests; corpus admission and verdicts unchanged |
++| FG-015b | P2 | **DONE** | Typed integer list-index mutation and list reference identity in the scripted interpreter | The parser gate had already opened under FG-180; this closure corrects the stale parser title and implements the remaining runtime half. Direct Jenkins 2.568.1 probes measured basic, alias, closure, nested, projection and method-result writes; compound/inc/dec single-evaluation order; negative, empty, append, null-extension and too-negative boundaries; null/scalar/non-integer/map controls; and direct, distinct and mixed cycles. `VList` now carries reference identity, so aliases and selected source lists share mutation while a fresh projection does not. Plain integer `EIndex` writes return the RHS; `SIndexCompoundAssign` and `SIndexPostfixAssign` retain syntax so receiver/key evaluate once and old-value/RHS timing matches Jenkins. Too-negative indexes raise a catchable `ArrayIndexOutOfBoundsException`-class fault; positive extension is budget-bounded. Existing map writes are unchanged. Non-integer list keys remain outside this typed slice and refuse explicitly instead of succeeding without a write. Direct spread-derived indexes are admitted and select temporary versus persistent identities at runtime; actual spread-property l-values remain preflight-refused. Cycle-aware display/equality preserves `(this Collection)` and survives longer cycles without host recursion. PR #110 review measurement added ordering and scalar-update boundaries: `sort()` now uses a cycle-aware comparator which preserves top-level alias success and surfaces distinct, nested-alias, and mixed cycles as catchable `StackOverflowError` ancestry instead of entering the host comparer; sandbox-denied `min`/`max` and the unmodelled `unique` path remain explicit safe refusals. Scalar index mutation remains unsupported, but a valid String index reads once and reaches compound/plain RHS before the catchable sandbox write rejection, while positive/too-negative String indexes, non-integer keys, integer/boolean receivers, and null fail during the read before RHS effects. No scalar receiver is mutated. Exact-head follow-up measurement made cyclic display a typed `StackOverflowError`-ancestry fault: `Exception` cannot catch it, while `Error`/`Throwable` can. Jenkins CPS traversal is live and index-based for `each`, `collect`, `findAll` and `for`: it captures the current value, observes later index writes, and visits appended or null-extension slots. Fogell now shares that bounded traversal across those operations and the sibling short-circuit consumers `find`, `any` and `every`, instead of retaining immutable snapshots | [original measurement/evidence](../evidence/20260821T083100Z-fg-015b-list-index), [first PR #110 review closure](../evidence/20260821T093300Z-fg-015b-pr110-review), and [exact-head review closure](../evidence/20260821T100241Z-fg-015b-pr110-exact-head); seven tier-1 differential receipts; focused AST/interpreter/preflight/cycle/timing/live-iteration tests; corpus admission and verdicts unchanged |
+ | FG-048b | P1 | **DONE** | Remaining `when` conditions: `buildingTag`, `changeset`, `changelog`, `triggeredBy`, `changeRequest`, `isRestartedRun` | 33 corpus files use `when`; up to 15 mention one of these. [→ detail](tickets/FG-048b.md) |
+ | FG-048c | P2 | **BLOCKED** | Receipts for `when` context conditions when the context is PRESENT, incl. `changeRequest(target:)` filters and real build causes | **Blocked on fg-111.** FG-048b proved only the absent case (no SCM, no multibranch, first build, user-triggered), because that is all this harness can produce. The positive paths — a real `CHANGE_ID`, a populated changelog, a timer-triggered build, a restarted run — use the variable when present and are implemented but unproven. Needs a multibranch job and an SCM in the lab |
+ | FG-049b | P1 | **DONE** | Multi-build receipts for `changed` / `fixed` / `regression` | The differential harness deletes the job around every run, so build history never exists and `previous` is always `None`. Those three conditions are implemented from a **four-build measurement** (recorded in `adr/0005`) but are NOT receipt-proven. Needs a harness mode that keeps a job across several builds. **Done with FG-110:** the `post-history` sequence replays the ADR 0005 probe as four receipt-backed builds — b1 fail-no-history fires always/changed/failure/cleanup, b2 fires **fixed**, b3 proves `changed` stays **quiet** on a same-result build, b4 fires **regression**. All four PROVEN tier-1; the postRank and ADR admissions became citations (claim audit admitted-UNPROVEN 7 -> 6) |
+diff --git a/src/Fogell.Groovy.Interpreter/Interpreter.fs b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+index 3e5eb8e..32e7ecf 100644
+--- a/src/Fogell.Groovy.Interpreter/Interpreter.fs
++++ b/src/Fogell.Groovy.Interpreter/Interpreter.fs
+@@ -161,6 +161,10 @@ type Fault =
+     /// raises StackOverflowError; this explicit fault retains its catch ancestry
+     /// without allowing the F# runtime to recurse until the process dies.
+     | CyclicOrderingComparison
++    /// Rendering a list/map reference cycle longer than Groovy's direct-self
++    /// marker raises StackOverflowError too. Keep it typed instead of wrapping
++    /// it in [Thrown]: Error bypasses `catch (Exception)` on Jenkins.
++    | CyclicDisplay
+ 
+ type Outcome =
+     { Effects: Effect list
+@@ -289,8 +293,7 @@ module Interpreter =
+     let private scriptDisplay value =
+         match Value.tryToDisplay value with
+         | Value.Text rendered -> rendered
+-        | Value.DisplayCycleDetected ->
+-            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in display")))
++        | Value.DisplayCycleDetected -> raise (Stop CyclicDisplay)
+ 
+     let private tooNegativeListIndex index size = index < -(int64 size)
+ 
+@@ -337,6 +340,25 @@ module Interpreter =
+         else
+             items.Value <- items.Value @ List.replicate (position - size) VNull @ [ value ]
+ 
++    /// Jenkins 2.568.1's CPS collection traversal is live and index-based. The
++    /// value at the current slot is captured before the closure runs; later
++    /// slots are read from the ref cell after earlier mutations. Appends and
++    /// positive-index extension are visited, while shrinkage shortens the walk.
++    /// Count actual visits so a closure that appends forever still hits budget.
++    let private iterateLiveList (st: State) operation (items: Value list ref) keepGoing visit =
++        let mutable index = 0
++        let mutable iterations = 0
++
++        while keepGoing () && index < items.Value.Length do
++            iterations <- iterations + 1
++
++            if iterations > st.Budget.MaxLoopIterations then
++                raise (Stop(BudgetExhausted $"{operation} exceeds the loop-iteration budget"))
++
++            let current = items.Value.[index]
++            index <- index + 1
++            visit current
++
+     /// Method names the table dispatches WITHOUT reading `args` — zero-argument in
+     /// Groovy too. Strict mode rejects a call that passes any: `'abc'.length(1)` has
+     /// no such signature and Groovy throws, while a table that ignores args returned
+@@ -1262,29 +1284,57 @@ module Interpreter =
+         | "each", VList xs, _ ->
+             match trailing with
+             | Some c ->
+-                if xs.Value.Length > st.Budget.MaxLoopIterations then
+-                    raise (Stop(BudgetExhausted "each exceeds the loop-iteration budget"))
+-
+-                xs.Value |> List.iter (fun x -> applyClosure c env x |> ignore)
++                iterateLiveList st "each" xs (fun () -> true) (fun x -> applyClosure c env x |> ignore)
+                 recv
+             | None -> recv
+         | "collect", VList xs, _ ->
+             match trailing with
+-            | Some c -> VList(ref (xs.Value |> List.map (applyClosure c env)))
++            | Some c ->
++                let collected = ResizeArray<Value>()
++                iterateLiveList st "collect" xs (fun () -> true) (fun x -> collected.Add(applyClosure c env x))
++                VList(ref (List.ofSeq collected))
+             | None -> recv
+-        | ("find" | "findAll"), VList xs, _ ->
++        | "find", VList xs, _ ->
+             match trailing with
+             | Some c ->
+-                let matches = xs.Value |> List.filter (fun x -> Value.isTruthy (applyClosure c env x))
+-                if name = "find" then (match matches with [] -> VNull | h :: _ -> h) else VList(ref matches)
++                let mutable found = None
++
++                iterateLiveList
++                    st
++                    "find"
++                    xs
++                    (fun () -> Option.isNone found)
++                    (fun x -> if Value.isTruthy (applyClosure c env x) then found <- Some x)
++
++                Option.defaultValue VNull found
++            | None -> recv
++        | "findAll", VList xs, _ ->
++            match trailing with
++            | Some c ->
++                let matches = ResizeArray<Value>()
++
++                iterateLiveList
++                    st
++                    "findAll"
++                    xs
++                    (fun () -> true)
++                    (fun x -> if Value.isTruthy (applyClosure c env x) then matches.Add x)
++
++                VList(ref (List.ofSeq matches))
+             | None -> recv
+         | "any", VList xs, _ ->
+             match trailing with
+-            | Some c -> VBool(xs.Value |> List.exists (fun x -> Value.isTruthy (applyClosure c env x)))
++            | Some c ->
++                let mutable matched = false
++                iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- Value.isTruthy (applyClosure c env x))
++                VBool matched
+             | None -> VBool false
+         | "every", VList xs, _ ->
+             match trailing with
+-            | Some c -> VBool(xs.Value |> List.forall (fun x -> Value.isTruthy (applyClosure c env x)))
++            | Some c ->
++                let mutable allMatched = true
++                iterateLiveList st "every" xs (fun () -> allMatched) (fun x -> allMatched <- Value.isTruthy (applyClosure c env x))
++                VBool allMatched
+             | None -> VBool true
+         | _ when st.StrictVars ->
+             // Fail CLOSED on a method this interpreter does not model. Groovy would
+@@ -1544,9 +1594,6 @@ module Interpreter =
+ 
+             match evalExpr st env src with
+             | VList xs ->
+-                if xs.Value.Length > st.Budget.MaxLoopIterations then
+-                    raise (Stop(BudgetExhausted "loop exceeds the iteration budget"))
+-
+                 // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
+                 // and carried on with the next element, so `for (x in xs) { … break }` ran
+                 // the body for every element — `SWhile` one arm below has always stopped
+@@ -1559,24 +1606,23 @@ module Interpreter =
+                 // visibility — an assignment made before the break now survives, so the
+                 // wrong number reaches a step instead of being discarded with the
+                 // environment. Raised in review on PR #54.
+-                // WALKED, NOT INDEXED. `xs` is an F# linked list, so `xs[i]` is a linear
+-                // lookup and indexing it per iteration made the loop QUADRATIC — within the
+-                // 10,000-iteration budget, so nothing refuses it and a long `for` just gets
+-                // slow. Introduced by my own break fix and caught in review on PR #54;
+-                // holding the tail costs nothing and restores the original traversal.
++                // The ref cell makes this a mutable ArrayList analogue. Jenkins CPS
++                // re-reads each not-yet-visited index, including appended/extended
++                // elements, so retaining an immutable F# tail is observably stale.
+                 let mutable cur = env
+                 let mutable running = true
+-                let mutable rest = xs.Value
+ 
+-                while running && not (List.isEmpty rest) do
+-                    let x = List.head rest
+-                    rest <- List.tail rest
+-
+-                    try
+-                        cur <- execBlock st (Env.withVar v x cur) body
+-                    with
+-                    | ContinueSignal -> ()
+-                    | BreakSignal -> running <- false
++                iterateLiveList
++                    st
++                    "loop"
++                    xs
++                    (fun () -> running)
++                    (fun x ->
++                        try
++                            cur <- execBlock st (Env.withVar v x cur) body
++                        with
++                        | ContinueSignal -> ()
++                        | BreakSignal -> running <- false)
+ 
+                 cur
+             | _ -> env
+@@ -1751,7 +1797,7 @@ module Interpreter =
+                     |> List.contains t
+                 | None -> false
+ 
+-            let catchesCyclicOrdering =
++            let catchesStackOverflow =
+                 match catch with
+                 | Some(None, _, _) -> false
+                 | Some(Some t, _, _) ->
+@@ -1820,8 +1866,10 @@ module Interpreter =
+                         handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
+                     | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
+                         handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
+-                    | Stop CyclicOrderingComparison when catchesCyclicOrdering ->
++                    | Stop CyclicOrderingComparison when catchesStackOverflow ->
+                         handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
++                    | Stop CyclicDisplay when catchesStackOverflow ->
++                        handle (VStr "java.lang.StackOverflowError: cyclic structure in display")
+                 with
+                 | HostedHaltSignal as halted ->
+                     // A hosted failure has already stopped ordinary evaluation, but
+@@ -2035,7 +2083,7 @@ module Interpreter =
+         try
+             body ()
+             None
+-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | StepFailed _ | StepBindingFailed _) as f) ->
++        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | CyclicDisplay | StepFailed _ | StepBindingFailed _) as f) ->
+             Some f
+ 
+     /// FG-186's other half: the FINAL attempt re-raises the held fault so an
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index c3761f7..93283cd 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -1433,8 +1433,74 @@ let cyclicValues =
+               let mixed = runS "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\nreturn \"${xs}\""
+ 
+               match mixed.Fault with
+-              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "mixed display cycle faults safely"
+-              | other -> failtestf "expected mixed-cycle display fault, got %A" other
++              | Some CyclicDisplay -> ()
++              | other -> failtestf "expected typed mixed-cycle display fault, got %A" other
++          }
++
++          test "cyclic display retains StackOverflowError ancestry for interpolation and toString" {
++              let notException =
++                  runS (
++                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
++                      + "try { return \"${xs}\" } catch (Exception e) { return 'wrong' }"
++                  )
++
++              match notException.Fault with
++              | Some CyclicDisplay -> ()
++              | other -> failtestf "Exception incorrectly intercepted cyclic display: %A" other
++
++              let caughtByError =
++                  runS (
++                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
++                      + "try { return xs.toString() } catch (Error e) { return 'caught-error' }"
++                  )
++
++              Expect.isNone caughtByError.Fault "Error intercepts StackOverflowError"
++              Expect.equal caughtByError.Returned (Some(VStr "caught-error")) "explicit toString uses typed display fault"
++
++              let caughtByThrowable =
++                  runS (
++                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
++                      + "try { return 'value=' + xs } catch (Throwable e) { return 'caught-throwable' }"
++                  )
++
++              Expect.isNone caughtByThrowable.Fault "Throwable intercepts StackOverflowError"
++              Expect.equal caughtByThrowable.Returned (Some(VStr "caught-throwable")) "string concatenation shares the boundary"
++          }
++
++          test "list closure methods and for-in observe live index writes and extensions" {
++              let o =
++                  runS (
++                      "def eachXs = [1, 2]\ndef eachSeen = []\n"
++                      + "eachXs.each { eachSeen << it; if (it == 1) { eachXs[0] = 8; eachXs[1] = 9; eachXs << 3 }; if (it == 9) { eachXs[0] = 7 } }\n"
++                      + "echo \"each:${eachSeen}:${eachXs}\"\n"
++                      + "def collectXs = [1, 2]\ndef collected = collectXs.collect { if (it == 1) { collectXs[1] = 9; collectXs << 3 }; it * 10 }\n"
++                      + "echo \"collect:${collected}:${collectXs}\"\n"
++                      + "def filterXs = [1, 2]\ndef filtered = filterXs.findAll { if (it == 1) { filterXs[1] = 9; filterXs << 3 }; it > 1 }\n"
++                      + "echo \"findAll:${filtered}:${filterXs}\"\n"
++                      + "def findXs = [1, 2]\ndef found = findXs.find { if (it == 1) { findXs[1] = 9; findXs << 3 }; it > 5 }\n"
++                      + "echo \"find:${found}:${findXs}\"\n"
++                      + "def anyXs = [1, 2]\ndef anyResult = anyXs.any { if (it == 1) { anyXs[1] = 9; anyXs << 3 }; it == 9 }\n"
++                      + "echo \"any:${anyResult}:${anyXs}\"\n"
++                      + "def everyXs = [1, 2]\ndef everySeen = []\n"
++                      + "def everyResult = everyXs.every { everySeen << it; if (it == 1) { everyXs[1] = 9; everyXs << 3 }; it < 10 }\n"
++                      + "echo \"every:${everyResult}:${everySeen}:${everyXs}\"\n"
++                      + "def forXs = [1, 2]\ndef forSeen = []\n"
++                      + "for (v in forXs) { forSeen << v; if (v == 1) { forXs[1] = 9; forXs[3] = 4 } }\n"
++                      + "echo \"for:${forSeen}:${forXs}\""
++                  )
++
++              Expect.isNone o.Fault "all measured live traversals execute"
++
++              Expect.equal
++                  (stepArgs o)
++                  [ "echo", [ "each:[1, 9, 3]:[7, 9, 3]" ]
++                    "echo", [ "collect:[10, 90, 30]:[1, 9, 3]" ]
++                    "echo", [ "findAll:[9, 3]:[1, 9, 3]" ]
++                    "echo", [ "find:9:[1, 9, 3]" ]
++                    "echo", [ "any:true:[1, 9, 3]" ]
++                    "echo", [ "every:true:[1, 9, 3]:[1, 9, 3]" ]
++                    "echo", [ "for:[1, 9, null, 4]:[1, 9, null, 4]" ] ]
++                  "current is captured, unvisited writes are observed, and appended/extended slots are visited"
+           }
+ 
+           test "sorting cyclic lists follows Jenkins' alias and StackOverflow boundaries without host recursion" {

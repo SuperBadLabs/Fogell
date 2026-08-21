@@ -1,0 +1,9 @@
+A  differential/cases/fg015b-cycle-display-ancestry.Jenkinsfile
+A  differential/cases/fg015b-live-list-iteration.Jenkinsfile
+A  differential/receipts/fg015b-cycle-display-ancestry.receipt.txt
+A  differential/receipts/fg015b-live-list-iteration.receipt.txt
+M  docs/COMPATIBILITY-SCORECARD.md
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Groovy.Interpreter/Interpreter.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260821T100241Z-fg-015b-pr110-exact-head/
