@@ -102,6 +102,38 @@ let grammar =
                   (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
                   "ordinary assignment remains outside the refusal"
           }
+          test "spread reads used to compute a write target are not themselves write paths" {
+              let source =
+                  "foo(rows*.name).bar = 1\n"
+                  + "foo(values: rows*.name).bar = 1\n"
+                  + "holder.foo { rows*.name }.bar = 1\n"
+                  + "xs[rows*.name[0]] = 'x'\n"
+
+              match parseOk source with
+              | [ SAssign(
+                      EProp(ECall(FreeCall "foo", [ APos(ESpreadProp(EVar "rows", "name")) ], None), "bar"),
+                      _
+                  )
+                  SAssign(
+                      EProp(ECall(FreeCall "foo", [ ANamed("values", ESpreadProp(EVar "rows", "name")) ], None), "bar"),
+                      _
+                  )
+                  SAssign(EProp(ECall(MethodCall(EVar "holder", "foo"), [], Some trailing), "bar"), _)
+                  SAssign(EIndex(EVar "xs", EIndex(ESpreadProp(EVar "rows", "name"), EInt 0L)), _) ] as script ->
+                  Expect.equal
+                      trailing.Body
+                      [ SExpr(ESpreadProp(EVar "rows", "name")) ]
+                      "trailing closure keeps the spread read visible"
+
+                  Expect.isFalse
+                      (Ast.containsSpreadAssignment script)
+                      "call arguments, trailing closure reads and index keys are not write receivers"
+              | other -> failtestf "spread-read target probes lost their AST shapes: %A" other
+
+              Expect.isTrue
+                  (Ast.containsSpreadAssignment (parseOk "rows*.child.find().name = 'x'\n"))
+                  "spread below a called receiver remains an actual write path"
+          }
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
           test "a duplicate named argument is refused, parenthesised" {

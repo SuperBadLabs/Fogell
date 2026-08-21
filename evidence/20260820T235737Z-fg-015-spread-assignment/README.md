@@ -65,3 +65,24 @@ coercion remain out of scope.
 
 The [final gate bundle](../20260820T185232Z-fg-015-spread-assignment) binds the
 exact incremental candidate to its base, tree, corpus, build, and test results.
+
+## Exact-head review closure
+
+The exact-head review found that the first preflight enumeration omitted
+`when { expression { ... } }` source. The execution seam now collects every
+such body recursively through `allOf`, `anyOf`, and `not` for every stage from
+`Pipeline.flattenStages`, which includes top-level, sequentially nested, and
+parallel stages. A planted `allOf` false sibling proves it cannot hide the
+unsupported assignment or allow an earlier stage, guarded stage, post block,
+or workspace preparation to run.
+
+The same pass narrows the assignment predicate to the l-value receiver chain.
+Parser-shape and preflight probes admit spread reads used only in positional or
+named call arguments, a trailing closure, and an index key — including the
+reviewer examples `foo(rows*.name).bar = 1` and
+`xs[rows*.name[0]] = 'x'`. A spread below a called receiver remains refused.
+Nested closures containing an actual spread assignment remain visible through
+the separate statement traversal. No Jenkins boundary receipt changed.
+
+The [exact-head review gate bundle](../20260820T193817Z-fg-015-spread-assignment-review)
+seals this incremental correction against its published base.

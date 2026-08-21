@@ -128,54 +128,41 @@ module Ast =
               | SContinue
               | SThrow _ -> 0)
 
-    /// True when an assignment target contains spread-property syntax anywhere
-    /// in its receiver/index tree. Jenkins 2.568.1 accepts these targets but then
-    /// tries to write the named property on the projected ArrayList (or on null),
-    /// raising a catchable runtime exception without mutating the elements.
-    /// Fogell does not model that write boundary yet, so both the execution
-    /// preflight and the interpreter's defensive fallback use this one traversal.
-    let rec containsSpreadProperty (expr: Expr) : bool =
+    /// True only when spread-property syntax participates in the l-value
+    /// receiver chain. An index key and call arguments (including named and
+    /// trailing-closure arguments) compute values; spread reads inside them are
+    /// not writes through a projection and must remain admitted.
+    ///
+    /// Jenkins 2.568.1 accepts actual spread write paths but raises a catchable
+    /// runtime exception without mutating the elements. Fogell does not model
+    /// that write boundary yet, so execution preflight and the interpreter's
+    /// defensive fallback share this deliberately directional traversal.
+    let rec assignmentTargetContainsSpreadProperty (expr: Expr) : bool =
         match expr with
         | ESpreadProp _ -> true
         | EProp(target, _)
-        | ESafeProp(target, _)
-        | EUnary(_, target) -> containsSpreadProperty target
-        | EIndex(target, index) -> containsSpreadProperty target || containsSpreadProperty index
-        | EBinary(_, left, right)
-        | EElvis(left, right) -> containsSpreadProperty left || containsSpreadProperty right
-        | ETernary(cond, ifTrue, ifFalse) ->
-            containsSpreadProperty cond
-            || containsSpreadProperty ifTrue
-            || containsSpreadProperty ifFalse
-        | EGString parts ->
-            parts
-            |> List.exists (function
-                | GLit _ -> false
-                | GExpr value -> containsSpreadProperty value)
-        | EList values -> values |> List.exists containsSpreadProperty
-        | EMap entries -> entries |> List.exists (snd >> containsSpreadProperty)
-        | ECall(target, args, trailing) ->
-            let receiverHasSpread =
-                match target with
-                | FreeCall _ -> false
-                | MethodCall(receiver, _)
-                | SafeMethodCall(receiver, _) -> containsSpreadProperty receiver
-
-            receiverHasSpread
-            || (args
-                |> List.exists (function
-                    | APos value -> containsSpreadProperty value
-                    | ANamed(_, value) -> containsSpreadProperty value))
-            || (trailing
-                |> Option.exists (fun closure -> containsSpreadAssignment closure.Body))
-        | EClosure closure -> containsSpreadAssignment closure.Body
+        | ESafeProp(target, _) -> assignmentTargetContainsSpreadProperty target
+        | EIndex(target, _) -> assignmentTargetContainsSpreadProperty target
+        | ECall(target, _, _) ->
+            match target with
+            | FreeCall _ -> false
+            | MethodCall(receiver, _)
+            | SafeMethodCall(receiver, _) -> assignmentTargetContainsSpreadProperty receiver
         | ENull
         | EBool _
         | EInt _
         | EStr _
-        | EVar _ -> false
+        | EGString _
+        | EList _
+        | EMap _
+        | EVar _
+        | EUnary _
+        | EBinary _
+        | ETernary _
+        | EElvis _
+        | EClosure _ -> false
 
-    and containsSpreadAssignment (stmts: Stmt list) : bool =
+    let rec containsSpreadAssignment (stmts: Stmt list) : bool =
         let rec expressionHasNestedAssignment expr =
             match expr with
             | EClosure closure -> containsSpreadAssignment closure.Body
@@ -220,7 +207,7 @@ module Ast =
         stmts
         |> List.exists (function
             | SAssign(target, value) ->
-                containsSpreadProperty target
+                assignmentTargetContainsSpreadProperty target
                 || expressionHasNestedAssignment target
                 || expressionHasNestedAssignment value
             | SExpr expr -> expressionHasNestedAssignment expr

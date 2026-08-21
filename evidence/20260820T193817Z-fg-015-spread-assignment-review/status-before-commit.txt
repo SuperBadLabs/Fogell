@@ -1,0 +1,8 @@
+M  docs/EXECUTION_BOARD.md
+M  evidence/20260820T235737Z-fg-015-spread-assignment/README.md
+M  src/Fogell.Differential/Fogell.fs
+M  src/Fogell.Groovy.Interpreter/Interpreter.fs
+M  src/Fogell.Groovy/Ast.fs
+M  tests/Fogell.Differential.Tests/Tests.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260820T193817Z-fg-015-spread-assignment-review/

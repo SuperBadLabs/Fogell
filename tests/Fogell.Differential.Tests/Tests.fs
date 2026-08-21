@@ -1549,6 +1549,56 @@ let spreadAssignmentPreflight =
               for label, source in locations do
                   expectNamedRefusal label source
           }
+          test "when expressions in top, nested and parallel stages cannot hide the target" {
+              let assignment = "def rows = [[name: 'a']]; rows*.name = 'x'; true"
+
+              let sources =
+                  [ "top allOf false sibling",
+                    "pipeline { agent any stages { stage('probe') { when { allOf { "
+                    + "expression { false } expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } }"
+                    "nested anyOf",
+                    "pipeline { agent any stages { stage('outer') { stages { stage('inner') { "
+                    + "when { anyOf { branch 'never'; expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } } } }"
+                    "parallel not",
+                    "pipeline { agent any stages { stage('fanout') { parallel { "
+                    + "stage('left') { steps { echo 'ordinary' } } "
+                    + "stage('right') { when { not { expression { " + assignment + " } } } "
+                    + "steps { echo 'never' } } } } } }" ]
+
+              for label, source in sources do
+                  expectNamedRefusal label source
+          }
+
+          test "a false when sibling cannot hide the refusal or permit earlier effects" {
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-when.txt' } } "
+                  + "stage('guarded') { when { allOf { expression { false } expression { "
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'; true } } } "
+                  + "steps { sh 'touch guarded.txt' } } "
+                  + "} post { always { sh 'touch when-post.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "when spread assignment unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.equal
+                          why
+                          Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                          "stable named refusal"
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "workspace preparation was not reached"
+
+                  for file in [ "before-when.txt"; "guarded.txt"; "when-post.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file} effect was not reached")
+          }
+
 
           test "workspace preparation, RHS, later steps and post are all blocked" {
               let source =
@@ -1589,6 +1639,21 @@ let spreadAssignmentPreflight =
               match FogellSide.preflightExecution (pipelineWithBody "def names = rows*.name; rows[0].name = 'x'") with
               | Error why -> failtestf "read-only spread or ordinary write was over-refused: %s" why
               | Ok _ -> ()
+          }
+
+          test "spread reads in call inputs and index keys remain outside the write refusal" {
+              for label, statement in
+                  [ "positional call argument", "foo(rows*.name).bar = 1"
+                    "named call argument", "foo(values: rows*.name).bar = 1"
+                    "trailing closure read", "holder.foo { rows*.name }.bar = 1"
+                    "index key", "xs[rows*.name[0]] = 'x'" ] do
+                  match FogellSide.preflightExecution (pipelineWithBody statement) with
+                  | Error why -> failtestf "%s spread read was over-refused: %s" label why
+                  | Ok _ -> ()
+
+              expectNamedRefusal
+                  "spread in called receiver write path"
+                  (pipelineWithBody "rows*.child.find().name = 'x'")
           } ]
 
 let jenkinsBuildDataAttestation =

@@ -92,12 +92,23 @@ module FogellSide =
               | None -> ()
               yield! scriptBodies step.Block ])
 
+    let rec private whenExpressionBodies (condition: WhenCondition) : string list =
+        match condition with
+        | WhenExpression source -> [ source ]
+        | WhenAllOf conditions
+        | WhenAnyOf conditions -> conditions |> List.collect whenExpressionBodies
+        | WhenNot inner -> whenExpressionBodies inner
+        | _ -> []
+
     let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : bool =
         let bodies =
             [ yield! scriptBodies (pipeline.Post |> List.collect snd)
               for stage in Pipeline.flattenStages pipeline.Stages do
                   yield! scriptBodies stage.Steps
-                  yield! scriptBodies (stage.Post |> List.collect snd) ]
+                  yield! scriptBodies (stage.Post |> List.collect snd)
+                  match stage.When with
+                  | Some condition -> yield! whenExpressionBodies condition
+                  | None -> () ]
 
         let sourceContainsAssignment source =
             match Fogell.Groovy.Parser.Parser.parse source with

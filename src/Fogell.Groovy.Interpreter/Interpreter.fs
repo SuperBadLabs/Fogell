@@ -1141,7 +1141,7 @@ module Interpreter =
 
                 st.Binding <- Map.add n value st.Binding
                 env
-        | SAssign(target, _) when Ast.containsSpreadProperty target ->
+        | SAssign(target, _) when Ast.assignmentTargetContainsSpreadProperty target ->
             // The generic fallback used to evaluate this target, evaluate the RHS,
             // and silently perform no write. Jenkins instead throws without mutating.
             // The public execution seam rejects the whole pipeline before workspace
