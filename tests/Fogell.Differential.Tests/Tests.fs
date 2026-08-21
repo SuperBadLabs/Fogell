@@ -1161,8 +1161,8 @@ let returnFlagContract =
 
     testList
         "FG-174 the return-flag contract"
-        [ test "no flags means no value" {
-              Expect.equal (contract "sh" false false) WalkerRules.NoValue "a plain sh answers nothing"
+        [ test "no flags means genuine null" {
+              Expect.equal (contract "sh" false false) WalkerRules.GenuineNull "a plain sh returns null"
           }
 
           test "returnStdout alone captures stdout" {
@@ -1187,8 +1187,18 @@ let returnFlagContract =
           test "the flags belong to the shell steps only" {
               // `echo(message: 'hello', returnStdout: true)` returned "hello\n" where
               // Jenkins' echo returns null, so a `got == null` branch was skipped.
-              for step in [ "echo"; "error"; "dir"; "withEnv" ] do
-                  Expect.equal (contract step true true) WalkerRules.NoValue $"{step} answers nothing"
+              Expect.equal (contract "echo" true true) WalkerRules.GenuineNull "echo stays null"
+
+              for step in [ "dir"; "withEnv" ] do
+                  Expect.equal
+                      (contract step true true)
+                      (WalkerRules.UnsupportedValue WalkerRules.WrapperBodyResult)
+                      $"{step} needs body propagation"
+
+              Expect.equal
+                  (contract "error" true true)
+                  (WalkerRules.UnsupportedValue WalkerRules.OutsideHostedVocabulary)
+                  "an outside step acquires no implicit return model"
           }
 
           // FG-174. THE VALUE'S TYPE, not its rendered text. `returnStatus: true` and
@@ -1279,6 +1289,7 @@ let returnFlagContract =
               // claims — see WalkerRules for why that is not coverage.
               Expect.equal (contract "bat" true true) WalkerRules.ExitStatus "same durable-task options"
               Expect.equal (contract "bat" true false) WalkerRules.CapturedStdout "same durable-task options"
+              Expect.equal (contract "bat" false false) WalkerRules.GenuineNull "plain durable-task null"
           } ]
 
 /// FG-177. The schema table is load-bearing: every hosted wrapper must carry a
@@ -1320,6 +1331,42 @@ let stepDescriptorValidation =
                   (WalkerRules.stepDescriptors |> Map.keys |> Set.ofSeq)
                   WalkerRules.scriptStepVocabulary
                   "one row, no schema-less fallback"
+          }
+
+          test "return shapes exhaust the seven genuine-null rows and four deferred slices" {
+              let genuineNull =
+                  set [ "sh"; "echo"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
+
+              let expectedUnsupported =
+                  Map.ofList
+                      [ "junit", WalkerRules.JUnitTestResultSummary
+                        "git", WalkerRules.ScmMap
+                        "checkout", WalkerRules.ScmMap
+                        "dir", WalkerRules.WrapperBodyResult
+                        "timeout", WalkerRules.WrapperBodyResult
+                        "retry", WalkerRules.WrapperBodyResult
+                        "withEnv", WalkerRules.WrapperBodyResult ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  if genuineNull.Contains name then
+                      Expect.equal descriptor.ReturnValue WalkerRules.GenuineNull $"{name} returns measured null"
+                      Expect.isTrue
+                          (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
+                          $"{name} is safe in a value position"
+                  else
+                      let unsupported = Map.find name expectedUnsupported
+                      Expect.equal
+                          descriptor.ReturnValue
+                          (WalkerRules.UnsupportedValue unsupported)
+                          $"{name} remains in its explicit later slice"
+                      Expect.isFalse
+                          (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
+                          $"{name} value use stays refused"
+
+              Expect.equal
+                  (Set.union genuineNull (expectedUnsupported |> Map.keys |> Set.ofSeq))
+                  WalkerRules.scriptStepVocabulary
+                  "the classifications partition all 14 descriptors"
           }
 
           test "all 14 descriptor rows match the pinned Jenkins schemas" {
@@ -1624,6 +1671,119 @@ let stepDescriptorValidation =
               match WalkerRules.validateHostedCall "withEnv" [ v "A=1" ] [] with
               | Error(WalkerRules.EngineRefusal _) -> ()
               | other -> failtestf "typed shape should remain an engine refusal, got %A" other
+          } ]
+
+/// FG-177 slice 2. These cross the real hosted boundary: validation, walker dispatch,
+/// the option result slot, and Groovy's ordinary null comparisons all participate.
+let genuineNullRuntime =
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-genuine-null-" + Guid.NewGuid().ToString("N"))
+        let workspace = IO.Path.Combine(root, "job")
+        IO.Directory.CreateDirectory(workspace) |> ignore
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline body =
+        "pipeline { agent any stages { stage('probe') { steps { script { "
+        + body
+        + " } } } } }"
+
+    let run body check =
+        withWorkspace (fun root workspace ->
+            match FogellSide.run [] root "job" (pipeline body) with
+            | Error why -> failtestf "genuine-null pipeline refused: %s" why
+            | Ok trace -> check workspace trace)
+
+    testList
+        "FG-177 genuine-null runtime publication"
+        [ test "plain and false-flag sh, echo and successful unstable publish VNull" {
+              let body =
+                  "def plain = sh(script: 'true'); "
+                  + "def falseFlags = sh(script: 'true', returnStdout: false, returnStatus: false); "
+                  + "def echoed = echo(); "
+                  + "def unstableValue = unstable(message: 'measured-null'); "
+                  + "if (plain == null && falseFlags == null && echoed == null && unstableValue == null) { "
+                  + "sh 'printf pass > basic-null.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "unstable remains nonterminal and controls the build result"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "basic-null.txt")))
+                      "pass"
+                      "all four callback results were real Groovy null")
+          }
+
+          test "archive, stash, deleteDir and unstash publish VNull after their stateful effects" {
+              let body =
+                  "sh 'printf seed > seed.txt'; "
+                  + "def archived = archiveArtifacts(artifacts: 'seed.txt'); "
+                  + "def stashed = stash(name: 'fg177-null', includes: 'seed.txt'); "
+                  + "def deleted = deleteDir(); "
+                  + "def restored = unstash(name: 'fg177-null'); "
+                  + "if (archived == null && stashed == null && deleted == null && restored == null) { "
+                  + "sh 'printf pass > stateful-null.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "success" "all stateful steps completed"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "seed.txt")))
+                      "seed"
+                      "delete happened before unstash restored the seed"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "stateful-null.txt")))
+                      "pass"
+                      "all four successful stateful calls published null")
+          }
+
+          test "validation and catchability happen before genuine-null publication" {
+              let body =
+                  "def warned = sh(script: 'true', fogellProbeUnknown: true); "
+                  + "if (warned == null) { sh 'printf warn > warning-null.txt' }; "
+                  + "try { def bad = echo(message: 'never', fogellProbeUnknown: true); sh 'touch escaped-constructor.txt' } "
+                  + "catch (IllegalArgumentException e) { sh 'printf constructor > constructor-caught.txt' }; "
+                  + "try { def missing = stash(); sh 'touch escaped-required.txt' } "
+                  + "catch (IllegalArgumentException e) { sh 'printf required > required-caught.txt' }; "
+                  + "try { def failed = sh(script: 'exit 3'); sh 'touch escaped-shell.txt' } "
+                  + "catch (Exception e) { sh 'printf shell > shell-caught.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "success" "all measured catchable paths were absorbed"
+
+                  for file in
+                      [ "warning-null.txt"; "constructor-caught.txt"; "required-caught.txt"; "shell-caught.txt" ] do
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file}: the expected branch ran"
+
+                  for file in [ "escaped-constructor.txt"; "escaped-required.txt"; "escaped-shell.txt" ] do
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                          $"{file}: a fault never became a null result")
+          }
+
+          test "JUnit, SCM maps and wrapper body values remain refused before execution" {
+              let unsupported =
+                  [ "junit", "def got = junit(testResults: 'reports/*.xml')"
+                    "git", "def got = git(url: 'file:///tmp/repo.git')"
+                    "checkout", "def got = checkout(scm)"
+                    "dir", "def got = dir('child') { return 'body' }"
+                    "timeout", "def got = timeout(time: 1, unit: 'MINUTES') { return 'body' }"
+                    "retry", "def got = retry(count: 1) { return 'body' }"
+                    "withEnv", "def got = withEnv(['A=1']) { return 'body' }" ]
+
+              for step, body in unsupported do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" (pipeline (body + "; sh 'touch escaped.txt'")) with
+                      | Error why -> failtestf "%s pipeline failed before the walker: %s" step why
+                      | Ok trace ->
+                          Expect.equal trace.Result "failure" $"{step}: unsupported return fails closed"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
+                              $"{step}: the script never began executing")
           } ]
 
 /// FG-014 residual slice. Balanced named collections are admitted as source expressions,
@@ -2457,6 +2617,7 @@ let main argv =
             "Fogell.Differential"
             [ hostedSignatures
               stepDescriptorValidation
+              genuineNullRuntime
               jenkinsBuildDataAttestation
               unsupportedNamedCollections
               unsupportedDeclarativeTools

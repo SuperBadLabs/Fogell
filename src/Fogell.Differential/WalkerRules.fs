@@ -104,10 +104,14 @@ type BranchCtx =
       /// one caller is the invasive change, and this is the same shape `HostedBody` already
       /// uses. `None` outside a script block, where nothing is listening.
       ///
+      /// The inner option is deliberately UNSET until a modelled producer publishes.
+      /// `VNull` is a genuine measured answer, so it cannot also be the initial marker
+      /// for JUnit, SCM maps and wrapper-body values which remain unsupported.
+      ///
       /// TYPED, not text: `returnStatus` must yield a Groovy INTEGER or `if (code == 0)`
       /// compares an Integer to a String and is quietly false — a wrong answer of exactly
       /// the kind this ticket exists to prevent.
-      HostedResult: Value ref option
+      HostedResult: Value option ref option
       /// FG-046b. The (stage, top-level step index) this branch is currently
       /// executing — the key durability records are written under. Carried on
       /// the BRANCH, not in run-scoped state, because parallel branches execute
@@ -175,14 +179,23 @@ module WalkerRules =
     /// So `returnStatus` WINS. Stating it as a total function over (step, flags) is the
     /// point: a boolean at each call site cannot express precedence, and the two readers
     /// were free to resolve the combination differently — which is exactly what they did.
+    type UnsupportedReturn =
+        | JUnitTestResultSummary
+        | ScmMap
+        | WrapperBodyResult
+        | OutsideHostedVocabulary
+
     type ReturnContract =
-        /// The call evaluates to null, and a VALUE USE of it must be refused.
-        | NoValue
+        /// The callback really returns Groovy null. This is a modelled value, not the
+        /// absence of a model.
+        | GenuineNull
         /// A Groovy Integer. `if (code == 0)` must compare Integer to Integer, or the
         /// branch is quietly false.
         | ExitStatus
         /// stdout, byte-verbatim, trailing newline included.
         | CapturedStdout
+        /// Jenkins returns a value, but Fogell does not yet carry a closed model for it.
+        | UnsupportedValue of UnsupportedReturn
 
     /// FG-172. Block-taking steps whose walker arm can run a HOSTED body — Groovy from a
     /// `script { }` rather than a `Step list`. Everything else block-taking is refused.
@@ -228,6 +241,7 @@ module WalkerRules =
           NamedKeys: Set<string>
           UnsupportedNamedKeys: Set<string>
           UnknownNamed: UnknownNamedBinding
+          ReturnValue: ReturnContract
           ShapeText: string
           Check: (Fogell.Groovy.Interpreter.Value list -> (string * Fogell.Groovy.Interpreter.Value) list -> string option) }
 
@@ -235,7 +249,7 @@ module WalkerRules =
 
     let stepDescriptors: Map<string, StepDescriptor> =
         let open' = Fogell.Groovy.Interpreter.Value.toDisplay
-        let row max primary required missingPrimaryException named unsupported unknown shape check =
+        let row max primary required missingPrimaryException named unsupported unknown returnValue shape check =
             { MaxPositionals = max
               PrimaryParameter = primary
               RequiresPrimary = required
@@ -243,6 +257,7 @@ module WalkerRules =
               NamedKeys = Set.ofList named
               UnsupportedNamedKeys = Set.ofList unsupported
               UnknownNamed = unknown
+              ReturnValue = returnValue
               ShapeText = shape
               Check = check }
         let warn className = WarnAndContinue className
@@ -253,9 +268,10 @@ module WalkerRules =
                   [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
                   []
                   (warn "org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep")
+                  GenuineNull
                   "takes at most 1 positional argument" noCheck
               "echo",
-              row 1 (Some "message") false None [ "message" ] [] ConstructorMapThrow
+              row 1 (Some "message") false None [ "message" ] [] ConstructorMapThrow GenuineNull
                   "takes at most one message argument" noCheck
               "archiveArtifacts",
               row 1 (Some "artifacts") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
@@ -263,6 +279,7 @@ module WalkerRules =
                     "excludes"; "fingerprint"; "followSymlinks"; "onlyIfSuccessful" ]
                   []
                   (warn "hudson.tasks.ArtifactArchiver")
+                  GenuineNull
                   "takes exactly one artifact pattern" noCheck
               "junit",
               row 1 (Some "testResults") true (Some Fogell.Groovy.Interpreter.NullPointerException)
@@ -273,33 +290,39 @@ module WalkerRules =
                     "testDataPublishers" ]
                   []
                   (warn "hudson.tasks.junit.pipeline.JUnitResultsStep")
+                  (UnsupportedValue JUnitTestResultSummary)
                   "takes exactly one test-results pattern" noCheck
               "checkout",
               row 1 (Some "scm") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "scm"; "changelog"; "poll" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep")
+                  (UnsupportedValue ScmMap)
                   "takes exactly one SCM argument" noCheck
               "deleteDir",
               row 0 None false None [] []
                   (warn "org.jenkinsci.plugins.workflow.steps.DeleteDirStep")
+                  GenuineNull
                   "takes no positional arguments" noCheck
               "git",
               row 1 (Some "url") false None [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ] []
                   (warn "jenkins.plugins.git.GitStep")
+                  (UnsupportedValue ScmMap)
                   "takes at most one repository URL" noCheck
               "stash",
               row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "name"; "allowEmpty"; "excludes"; "includes"; "useDefaultExcludes" ]
                   []
                   (warn "org.jenkinsci.plugins.workflow.support.steps.stash.StashStep")
+                  GenuineNull
                   "takes exactly one stash name" noCheck
               "unstable",
-              row 1 (Some "message") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "message" ] [] ConstructorMapThrow
+              row 1 (Some "message") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "message" ] [] ConstructorMapThrow GenuineNull
                   "takes exactly one message" noCheck
               "unstash",
-              row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "name" ] [] ConstructorMapThrow
+              row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "name" ] [] ConstructorMapThrow GenuineNull
                   "takes exactly one stash name" noCheck
               "withEnv",
               row 1 (Some "overrides") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "overrides" ] [] ConstructorMapThrow
+                  (UnsupportedValue WrapperBodyResult)
                   "takes exactly one list argument of NAME=VALUE strings"
                   (fun positional _ ->
                       match positional with
@@ -312,6 +335,7 @@ module WalkerRules =
                       | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings")
               "dir",
               row 1 (Some "path") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "path" ] [] ConstructorMapThrow
+                  (UnsupportedValue WrapperBodyResult)
                   "takes exactly one path argument"
                   (fun positional _ ->
                       match positional with
@@ -320,6 +344,7 @@ module WalkerRules =
               "retry",
               row 1 (Some "count") false None [ "count" ] [ "conditions" ]
                   (warn "org.jenkinsci.plugins.workflow.steps.RetryStep")
+                  (UnsupportedValue WrapperBodyResult)
                   "takes at most one attempt count"
                   (fun positional _ ->
                       match positional with
@@ -330,6 +355,7 @@ module WalkerRules =
               "timeout",
               row 1 (Some "time") false None [ "time"; "unit"; "activity" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.TimeoutStep")
+                  (UnsupportedValue WrapperBodyResult)
                   "takes at most one positional time argument or named time/unit/activity arguments" noCheck ]
 
     /// Compatibility views are derived from the descriptor, never independently kept.
@@ -482,12 +508,25 @@ module WalkerRules =
                 $"expects a boolean literal and got the text `{other}`; Fogell refuses rather than reproduce Jenkins' string coercion, which treats `' true '` as FALSE"
 
     /// `returnStdout`/`returnStatus` are LITERAL-true here; a non-literal flag cannot be
-    /// decided statically and its caller must treat it as absent, which fails safe.
+    /// decided statically and its caller must refuse the value use, which fails safe.
+    /// Every hosted default comes from its descriptor. `bat` is outside that vocabulary
+    /// and keeps the durable-task parity contract documented above.
     let returnContract (stepName: string) (returnStdout: bool) (returnStatus: bool) : ReturnContract =
-        if not (stepsHonouringReturnFlags.Contains stepName) then NoValue
-        elif returnStatus then ExitStatus
-        elif returnStdout then CapturedStdout
-        else NoValue
+        if stepsHonouringReturnFlags.Contains stepName then
+            if returnStatus then ExitStatus
+            elif returnStdout then CapturedStdout
+            else GenuineNull
+        else
+            stepDescriptors
+            |> Map.tryFind stepName
+            |> Option.map (fun descriptor -> descriptor.ReturnValue)
+            |> Option.defaultValue (UnsupportedValue OutsideHostedVocabulary)
+
+    let returnValueIsModelled = function
+        | GenuineNull
+        | ExitStatus
+        | CapturedStdout -> true
+        | UnsupportedValue _ -> false
 
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
     /// the top unit and its immediate neighbour — `3 sec`, `2 min 0 sec`,

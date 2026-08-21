@@ -263,7 +263,7 @@ module WalkerStep =
             // the false-success shape ADR 0001 calls worse than an explicit rejection.
             // The build fails here anyway; publishing null keeps the two consistent
             // rather than relying on that.
-            | WalkerRules.ExitStatus when statusAvailable -> slot.Value <- VInt(int64 result.ExitCode.Value)
+            | WalkerRules.ExitStatus when statusAvailable -> slot.Value <- Some(VInt(int64 result.ExitCode.Value))
             // THE RAW CAPTURE, not the masked `Stdout`. A pipeline that captures a
             // credential must receive the credential; masking belongs to what PRINTS.
             // Measured: Jenkins returns a 12-character token where this returned `****`.
@@ -271,8 +271,10 @@ module WalkerStep =
             // step — it exists so a future non-shell producer cannot silently publish
             // nothing.
             | WalkerRules.CapturedStdout ->
-                slot.Value <- VStr(defaultArg result.CapturedStdoutRaw result.Stdout)
-            | _ -> slot.Value <- VNull)
+                slot.Value <- Some(VStr(defaultArg result.CapturedStdoutRaw result.Stdout))
+            | WalkerRules.GenuineNull -> slot.Value <- Some VNull
+            | WalkerRules.UnsupportedValue _
+            | WalkerRules.ExitStatus -> ())
 
         result.EngineNote
         |> Option.iter (fun n -> runCtx.NoteEngine $"step '{step.Name}': {n}")
