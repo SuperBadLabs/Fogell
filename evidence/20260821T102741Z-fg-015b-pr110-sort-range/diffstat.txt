@@ -1,0 +1,11 @@
+ .../cases/fg015b-intrange-readonly.Jenkinsfile     | 40 +++++++++
+ .../fg015b-sort-receiver-identity.Jenkinsfile      | 30 +++++++
+ .../receipts/fg015b-intrange-readonly.receipt.txt  | 95 ++++++++++++++++++++++
+ .../fg015b-sort-receiver-identity.receipt.txt      | 91 +++++++++++++++++++++
+ docs/COMPATIBILITY-SCORECARD.md                    |  2 +-
+ docs/EXECUTION_BOARD.md                            |  2 +-
+ src/Fogell.Differential/GString.fs                 |  1 +
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       | 91 +++++++++++++++------
+ src/Fogell.Groovy.Interpreter/Value.fs             | 24 +++++-
+ tests/Fogell.Groovy.Tests/Tests.fs                 | 87 +++++++++++++++++++-
+ 10 files changed, 435 insertions(+), 28 deletions(-)

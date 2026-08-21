@@ -430,6 +430,7 @@ module GString =
         | VInt _ -> "Integer"
         | VBool _ -> "Boolean"
         | VList _ -> "ArrayList"
+        | VRange _ -> "IntRange"
         | VMap _ -> "LinkedHashMap"
         | VNull -> "null"
         | _ -> "Object" 

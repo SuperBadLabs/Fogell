@@ -1594,6 +1594,91 @@ let cyclicValues =
               Expect.equal o.Returned (Some(VBool true)) "same ref, no walk"
           } ]
 
+let fg015bSortAndRangeReview =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-015b sort identity and immutable IntRange"
+        [ test "no-argument sort mutates and returns the same list identity" {
+              let o =
+                  runS (
+                      "def xs = [2, 1, 2]\ndef alias = xs\ndef sorted = xs.sort()\n"
+                      + "sorted[0] = 9\necho xs\necho alias\necho sorted"
+                  )
+
+              Expect.isNone o.Fault "the measured no-copy overload runs"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[9, 2, 2]" ]; "echo", [ "[9, 2, 2]" ]; "echo", [ "[9, 2, 2]" ] ]
+                  "receiver, alias, and return share one ref cell"
+
+              let closureSort = runS "def xs = [2, 1]\nreturn xs.sort { -it }"
+
+              match closureSort.Fault with
+              | Some(Unsupported why) -> Expect.stringContains why "comparator/key closure" "named overload boundary"
+              | other -> failtestf "sort closure was silently accepted: %A" other
+          }
+
+          test "a cyclic sort faults before replacing the receiver contents" {
+              let o =
+                  runS (
+                      "def left = [null]\ndef right = [null]\nleft[0] = left\nright[0] = right\n"
+                      + "def xs = [left, right, 1]\n"
+                      + "try { xs.sort() } catch (Throwable ignored) { echo \"state:${xs[0] == left}:${xs[1] == right}:${xs[2] == 1}\" }"
+                  )
+
+              Expect.isNone o.Fault "the typed StackOverflowError is caught"
+              Expect.equal (stepArgs o) [ "echo", [ "state:true:true:true" ] ] "no partial receiver replacement"
+          }
+
+          test "IntRange stays list-like for reads, equality, iteration, reverse and collect" {
+              let o =
+                  runS (
+                      "def r = 1..3\ndef eachSeen = []\nr.each { eachSeen << it }\n"
+                      + "def forSeen = []\nfor (v in 3..1) { forSeen << v }\n"
+                      + "def reversed = r.reverse()\nreversed[0] = 9\n"
+                      + "def collected = r.collect { it * 10 }\ncollected[0] = 8\n"
+                      + "echo \"range:${r}:${r[0]}:${r[-1]}:${r[5]}:${r == [1, 2, 3]}\"\n"
+                      + "echo \"iteration:${eachSeen}:${forSeen}\"\n"
+                      + "echo \"fresh:${reversed}:${collected}:${r}\""
+                  )
+
+              Expect.isNone o.Fault "all read-only/fresh-result range operations execute"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "range:[1, 2, 3]:1:3:null:true" ]
+                    "echo", [ "iteration:[1, 2, 3]:[3, 2, 1]" ]
+                    "echo", [ "fresh:[9, 2, 1]:[8, 20, 30]:[1, 2, 3]" ] ]
+                  "range itself remains immutable while fresh results mutate"
+          }
+
+          test "every IntRange replacement form faults at Jenkins' measured write phase" {
+              let o =
+                  runS (
+                      "def r = 1..3\ndef alias = r\ndef events = []\n"
+                      + "def rhs = { events << 'plain-rhs'; 9 }\n"
+                      + "def compoundRhs = { events << 'compound-rhs'; 2 }\n"
+                      + "try { r[0] = rhs() } catch (UnsupportedOperationException ignored) { events << 'plain-caught' }\n"
+                      + "try { r[0] += compoundRhs() } catch (UnsupportedOperationException ignored) { events << 'compound-caught' }\n"
+                      + "try { r[0]++ } catch (UnsupportedOperationException ignored) { events << 'postfix-caught' }\n"
+                      + "try { alias[-1] = 7 } catch (UnsupportedOperationException ignored) { events << 'alias-caught' }\n"
+                      + "try { r.sort() } catch (UnsupportedOperationException ignored) { events << 'sort-caught' }\n"
+                      + "echo events\necho r\necho alias"
+                  )
+
+              Expect.isNone o.Fault "all typed faults are caught"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[plain-rhs, plain-caught, compound-rhs, compound-caught, postfix-caught, alias-caught, sort-caught]" ]
+                    "echo", [ "[1, 2, 3]" ]
+                    "echo", [ "[1, 2, 3]" ] ]
+                  "plain and compound RHS run before the failed write; no form mutates the range"
+          } ]
+
 /// FG-180. Command-form calls in EXPRESSION position, and the constructs the
 /// same corpus sweep recovered. The first test pins the defect that made this
 /// P1: the positional form ADMITTED with a wrong AST — two statements, the
@@ -2174,4 +2259,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])

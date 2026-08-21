@@ -1,0 +1,12 @@
+## agent/fg-015b...origin/agent/fg-015b
+A  differential/cases/fg015b-intrange-readonly.Jenkinsfile
+A  differential/cases/fg015b-sort-receiver-identity.Jenkinsfile
+A  differential/receipts/fg015b-intrange-readonly.receipt.txt
+A  differential/receipts/fg015b-sort-receiver-identity.receipt.txt
+M  docs/COMPATIBILITY-SCORECARD.md
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Differential/GString.fs
+M  src/Fogell.Groovy.Interpreter/Interpreter.fs
+M  src/Fogell.Groovy.Interpreter/Value.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260821T102741Z-fg-015b-pr110-sort-range/

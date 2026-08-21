@@ -165,6 +165,9 @@ type Fault =
     /// marker raises StackOverflowError too. Keep it typed instead of wrapping
     /// it in [Thrown]: Error bypasses `catch (Exception)` on Jenkins.
     | CyclicDisplay
+    /// IntRange implements list reads but not replacement. Jenkins raises a
+    /// catchable UnsupportedOperationException at the write phase.
+    | RangeMutation
 
 type Outcome =
     { Effects: Effect list
@@ -340,6 +343,12 @@ module Interpreter =
         else
             items.Value <- items.Value @ List.replicate (position - size) VNull @ [ value ]
 
+    let private (|ListLike|_|) value =
+        match value with
+        | VList items -> Some items
+        | VRange values -> Some(ref (Value.rangeItems values))
+        | _ -> None
+
     /// Jenkins 2.568.1's CPS collection traversal is live and index-based. The
     /// value at the current slot is captured before the closure runs; later
     /// slots are read from the ref cell after earlier mutations. Appends and
@@ -446,7 +455,7 @@ module Interpreter =
         | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
-            | VList xs, VInt i -> listRead xs i
+            | ListLike xs, VInt i -> listRead xs i
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
@@ -491,7 +500,7 @@ module Interpreter =
         // "No such field found: field java.lang.String length" and the build
         // FAILS; only the METHOD form `.length()` returns the count. The lenient
         // convenience below is therefore confined to non-strict consumers.
-        | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Value.Length)
+        | ListLike xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Value.Length)
         | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
         | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
         | _ -> VNull
@@ -499,7 +508,7 @@ module Interpreter =
     and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VNull -> VNull
-        | VList xs ->
+        | ListLike xs ->
             if xs.Value.Length > st.Budget.MaxLoopIterations then
                 raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
 
@@ -542,7 +551,7 @@ module Interpreter =
         | "+", VInt x, VInt y -> VInt(x + y)
         | "+", VStr x, _ -> VStr(x + scriptDisplay b)
         | "+", _, VStr y -> VStr(scriptDisplay a + y)
-        | "+", VList x, VList y -> VList(ref (x.Value @ y.Value))
+        | "+", ListLike x, ListLike y -> VList(ref (x.Value @ y.Value))
         | "-", VInt x, VInt y -> VInt(x - y)
         | "*", VInt x, VInt y -> VInt(x * y)
         | "/", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
@@ -597,12 +606,23 @@ module Interpreter =
                 | VStr _, "String" -> true
                 | VInt _, ("Integer" | "Long" | "Number") -> true
                 | VList _, ("List" | "Collection" | "ArrayList") -> true
+                | VRange _, ("List" | "Collection" | "Range" | "IntRange") -> true
                 | VMap _, ("Map" | "HashMap" | "LinkedHashMap") -> true
                 | VBool _, "Boolean" -> true
                 | _ -> false)
-        | "..", VInt x, VInt y when y - x <= int64 st.Budget.MaxLoopIterations ->
-            VList(ref [ for i in x..y -> VInt i ])
-        | "..", VInt _, VInt _ -> raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+        | "..", VInt x, VInt y ->
+            let distance = System.Numerics.BigInteger.Abs(bigint y - bigint x)
+
+            if distance > bigint st.Budget.MaxLoopIterations then
+                raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+
+            let step = if x <= y then 1L else -1L
+
+            let rec valuesFrom current acc =
+                if current = y then List.rev (current :: acc)
+                else valuesFrom (current + step) (current :: acc)
+
+            VRange(valuesFrom x [])
         | _ when st.StrictVars ->
             // An operator on operand types this interpreter does not model. Groovy
             // THROWS for `1 - 'x'`; inventing null instead ran `deploy null` on a
@@ -1217,12 +1237,12 @@ module Interpreter =
         // through the same one place that forms every callable's argument list.
         | "call", VClosure(c, closureEnv), _ ->
             invokeClosureValue st "call" c closureEnv (effectiveArgList env args namedArgs trailing)
-        | "size", VList xs, _
-        | "length", VList xs, _ -> VInt(int64 xs.Value.Length)
+        | "size", ListLike xs, _
+        | "length", ListLike xs, _ -> VInt(int64 xs.Value.Length)
         | "size", VStr s, _
         | "length", VStr s, _ -> VInt(int64 s.Length)
         | "size", VMap m, _ -> VInt(int64 m.Value.Count)
-        | "isEmpty", VList xs, _ -> VBool(List.isEmpty xs.Value)
+        | "isEmpty", ListLike xs, _ -> VBool(List.isEmpty xs.Value)
         | "isEmpty", VStr s, _ -> VBool(s = "")
         | "toString", v, _ -> VStr(scriptDisplay v)
         | "toInteger", VStr s, _ ->
@@ -1239,7 +1259,7 @@ module Interpreter =
         | "startsWith", VStr s, [ VStr p ] -> VBool(s.StartsWith p)
         | "endsWith", VStr s, [ VStr p ] -> VBool(s.EndsWith p)
         | "contains", VStr s, [ VStr p ] -> VBool(s.Contains p)
-        | "contains", VList xs, [ v ] ->
+        | "contains", ListLike xs, [ v ] ->
             // FG-191: through the cycle-aware equality, like `==` — a cyclic
             // element reports rather than recurses
             VBool(
@@ -1254,9 +1274,12 @@ module Interpreter =
             VList(ref (s.Split(d) |> Array.toList |> List.map VStr))
         | "readLines", VStr s, _ ->
             VList(ref (s.Replace("\r\n", "\n").Split('\n') |> Array.toList |> List.map VStr))
-        | "join", VList xs, [ VStr d ] -> VStr(xs.Value |> List.map scriptDisplay |> String.concat d)
-        | "reverse", VList xs, _ -> VList(ref (List.rev xs.Value))
+        | "join", ListLike xs, [ VStr d ] -> VStr(xs.Value |> List.map scriptDisplay |> String.concat d)
+        | "reverse", ListLike xs, _ -> VList(ref (List.rev xs.Value))
         | "reverse", VStr s, _ -> VStr(System.String(s.ToCharArray() |> Array.rev))
+        | "sort", _, _ when Option.isSome trailing ->
+            raise (Stop(Unsupported "method 'sort' with a comparator/key closure is not modelled; Jenkins CPS/sandbox behavior is not ordinary list sorting"))
+        | "sort", VRange _, _ -> raise (Stop RangeMutation)
         | "sort", VList xs, _ ->
             let compareSafely left right =
                 match Value.tryCompare left right with
@@ -1276,25 +1299,26 @@ module Interpreter =
                     | :? Stop as stopped -> raise stopped
                     | _ -> reraise ()
 
-            VList(ref sorted)
-        | "first", VList xs, _ when not xs.Value.IsEmpty -> List.head xs.Value
-        | "last", VList xs, _ when not xs.Value.IsEmpty -> List.last xs.Value
+            xs.Value <- sorted
+            VList xs
+        | "first", ListLike xs, _ when not xs.Value.IsEmpty -> List.head xs.Value
+        | "last", ListLike xs, _ when not xs.Value.IsEmpty -> List.last xs.Value
         | "keySet", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map (fst >> VStr)))
         | "values", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map snd))
-        | "each", VList xs, _ ->
+        | "each", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 iterateLiveList st "each" xs (fun () -> true) (fun x -> applyClosure c env x |> ignore)
                 recv
             | None -> recv
-        | "collect", VList xs, _ ->
+        | "collect", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let collected = ResizeArray<Value>()
                 iterateLiveList st "collect" xs (fun () -> true) (fun x -> collected.Add(applyClosure c env x))
                 VList(ref (List.ofSeq collected))
             | None -> recv
-        | "find", VList xs, _ ->
+        | "find", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let mutable found = None
@@ -1308,7 +1332,7 @@ module Interpreter =
 
                 Option.defaultValue VNull found
             | None -> recv
-        | "findAll", VList xs, _ ->
+        | "findAll", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let matches = ResizeArray<Value>()
@@ -1322,14 +1346,14 @@ module Interpreter =
 
                 VList(ref (List.ofSeq matches))
             | None -> recv
-        | "any", VList xs, _ ->
+        | "any", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let mutable matched = false
                 iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- Value.isTruthy (applyClosure c env x))
                 VBool matched
             | None -> VBool false
-        | "every", VList xs, _ ->
+        | "every", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let mutable allMatched = true
@@ -1455,6 +1479,7 @@ module Interpreter =
                 match recv, keyValue, isIndex with
                 | VList items, VInt index, true -> listWrite st items index value
                 | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange _, _, true -> raise (Stop RangeMutation)
                 | VMap mr, _, _ ->
                     let key = scriptDisplay keyValue
 
@@ -1501,6 +1526,10 @@ module Interpreter =
                 | VList items, VInt index ->
                     listRead items index, (fun value -> listWrite st items index value), Some index
                 | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange values, VInt index ->
+                    let items = ref (Value.rangeItems values)
+                    listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
+                | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VMap mr, _ ->
                     let key = scriptDisplay keyValue
                     let prior = defaultArg (Map.tryFind key mr.Value) VNull
@@ -1545,6 +1574,10 @@ module Interpreter =
                 | VList items, VInt index ->
                     listRead items index, (fun value -> listWrite st items index value), Some index
                 | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange values, VInt index ->
+                    let items = ref (Value.rangeItems values)
+                    listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
+                | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VMap mr, _ ->
                     let key = scriptDisplay keyValue
                     let prior = defaultArg (Map.tryFind key mr.Value) VNull
@@ -1593,7 +1626,7 @@ module Interpreter =
             st.LastValue <- None
 
             match evalExpr st env src with
-            | VList xs ->
+            | ListLike xs ->
                 // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
                 // and carried on with the next element, so `for (x in xs) { … break }` ran
                 // the body for every element — `SWhile` one arm below has always stopped
@@ -1805,6 +1838,14 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            let catchesRangeMutation =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "UnsupportedOperationException" ]
+                    |> List.contains t
+                | None -> false
+
             // Which declared types can intercept a failed shell step. Jenkins
             // surfaces it as hudson.AbortException < IOException < Exception —
             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
@@ -1870,6 +1911,8 @@ module Interpreter =
                         handle (VStr "java.lang.StackOverflowError: cyclic structure in ordering comparison")
                     | Stop CyclicDisplay when catchesStackOverflow ->
                         handle (VStr "java.lang.StackOverflowError: cyclic structure in display")
+                    | Stop RangeMutation when catchesRangeMutation ->
+                        handle (VStr "java.lang.UnsupportedOperationException: IntRange is immutable")
                 with
                 | HostedHaltSignal as halted ->
                     // A hosted failure has already stopped ordinary evaluation, but
@@ -2083,7 +2126,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | CyclicDisplay | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicOrderingComparison | CyclicDisplay | RangeMutation | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

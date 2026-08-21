@@ -1,0 +1,16 @@
+===== fg015b-sort-identity-review
+RESULT: success
+| sort-noarg:source=[9, 2, 2];alias=[9, 2, 2];result=[9, 2, 2]
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods sort java.util.Collection boolean. Administrators can decide whether to approve or reject this signature.
+| sort-false:fault:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods sort java.util.Collection boolean. Administrators can decide whether to approve or reject this signature.
+| sort-true:fault:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| expected to call java.util.ArrayList.sort but wound up catching org.jenkinsci.plugins.workflow.cps.CpsClosure2.call; see: https://jenkins.io/redirect/pipeline-cps-method-mismatches/
+| sort-comparator:fault:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| expected to call java.util.ArrayList.sort but wound up catching org.jenkinsci.plugins.workflow.cps.CpsClosure2.call; see: https://jenkins.io/redirect/pipeline-cps-method-mismatches/
+| sort-key:fault:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| reverse:source=[1, 2, 3];result=[9, 2, 1]
+| collect:source=[1, 2, 3];result=[9, 20, 30]
+| cycle-default-timing:caught=java.lang.StackOverflowError;size=3;firstLeft=true;secondRight=true;lastOne=true
+| expected to call java.util.ArrayList.sort but wound up catching org.jenkinsci.plugins.workflow.cps.CpsClosure2.call; see: https://jenkins.io/redirect/pipeline-cps-method-mismatches/
+| cycle-key-bypass:same=false;size=2

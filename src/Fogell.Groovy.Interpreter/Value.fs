@@ -14,6 +14,10 @@ type Value =
     /// aliases, nested selections and method results share mutations, while a
     /// newly projected/collected list receives a fresh identity.
     | VList of Value list ref
+    /// Groovy IntRange is list-like for reads, equality and iteration, but it is
+    /// not an ArrayList and rejects replacement. Keep its immutable provenance
+    /// distinct so FG-015b list writes can never silently mutate a range.
+    | VRange of int64 list
     /// FG-193. A Groovy map is a REFERENCE object: aliases see each other's
     /// mutations. The ref is the identity, exactly as ref cells are for locals —
     /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
@@ -57,6 +61,8 @@ and Env =
       Funcs: Map<string, (string list * Stmt list) list> }
 
 module Value =
+
+    let rangeItems values = values |> List.map VInt
 
     /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
     /// discovery of a reference cycle that structural recursion would chase
@@ -112,6 +118,8 @@ module Value =
                            | item -> displayWith inner item)
                        |> String.concat ", ")
                     + "]"
+            | VRange values ->
+                "[" + (values |> List.map string |> String.concat ", ") + "]"
             | VMap m ->
                 if seenRef m then
                     cycle <- true
@@ -194,6 +202,13 @@ module Value =
                 else
                     let inner = (box xa, box xb) :: seen
                     xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
+            | VRange xa, VRange xb -> xa = xb
+            | VRange xa, VList xb ->
+                let left = rangeItems xa
+                left.Length = xb.Value.Length && List.forall2 (go seen) left xb.Value
+            | VList xa, VRange xb ->
+                let right = rangeItems xb
+                xa.Value.Length = right.Length && List.forall2 (go seen) xa.Value right
             | VClosure(c1, e1), VClosure(c2, e2) ->
                 System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
             | VClosure _, _
@@ -201,7 +216,9 @@ module Value =
             | VMap _, _
             | _, VMap _
             | VList _, _
-            | _, VList _ -> false
+            | _, VList _
+            | VRange _, _
+            | _, VRange _ -> false
             | _ -> a = b
 
         let answer = go [] a b
@@ -225,6 +242,7 @@ module Value =
             | VInt _ -> 2
             | VStr _ -> 3
             | VList _ -> 4
+            | VRange _ -> 4
             | VMap _ -> 5
             | VClosure _ -> 6
             | VFunc _ -> 7
@@ -253,6 +271,9 @@ module Value =
                         0
                     else
                         compareLists ((box xs, box ys) :: seen) xs.Value ys.Value
+                | VRange xs, VRange ys -> compareLists seen (rangeItems xs) (rangeItems ys)
+                | VRange xs, VList ys -> compareLists seen (rangeItems xs) ys.Value
+                | VList xs, VRange ys -> compareLists seen xs.Value (rangeItems ys)
                 | VMap xs, VMap ys ->
                     if seenPair seen (box xs) (box ys) then
                         cycle <- true
@@ -313,6 +334,7 @@ module Value =
         | VInt i -> i <> 0L
         | VStr s -> s <> ""
         | VList xs -> not (List.isEmpty xs.Value)
+        | VRange values -> not (List.isEmpty values)
         | VMap m -> not (Map.isEmpty m.Value)
         | VClosure _
         | VFunc _ -> true
