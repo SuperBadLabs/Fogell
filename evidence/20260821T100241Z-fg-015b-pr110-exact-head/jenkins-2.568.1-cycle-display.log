@@ -1,0 +1,9 @@
+===== fg015b-cycle-display-review
+RESULT: success
+| println-mixed:escaped-exception:java.lang.StackOverflowError
+| interpolation-mixed:escaped-exception:java.lang.StackOverflowError
+| tostring-mixed:escaped-exception:java.lang.StackOverflowError
+| error-catch:caught:java.lang.StackOverflowError
+| throwable-catch:caught:java.lang.StackOverflowError
+| direct-list:[(this Collection)]
+| direct-map:[self:(this Map)]

@@ -1256,6 +1256,8 @@ module private LoopControl =
             | SExpr e -> expr e
             | SDef(_, v) -> v |> Option.map expr |> Option.defaultValue []
             | SAssign(t, v) -> expr t @ expr v
+            | SIndexCompoundAssign(t, _, v) -> expr t @ expr v
+            | SIndexPostfixAssign(t, _) -> expr t
             | SReturn v -> v |> Option.map expr |> Option.defaultValue []
             | SThrow e -> expr e
 
@@ -1436,4 +1438,3 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                 Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
-

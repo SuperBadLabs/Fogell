@@ -106,6 +106,16 @@ module BindingExceptionClass =
         | IllegalArgumentException -> "java.lang.IllegalArgumentException"
         | NullPointerException -> "java.lang.NullPointerException"
 
+/// The operation whose script-value walk encountered a reference cycle.
+/// Every case maps to Jenkins' StackOverflowError ancestry; the operation is
+/// retained only so diagnostics identify the boundary that faulted.
+type CycleOperation =
+    | Display
+    | Equality
+    | Ordering
+    | HostedArgumentCoercion
+    | HashKey
+
 /// Why evaluation stopped.
 type Fault =
     | Denied of Denial
@@ -139,6 +149,31 @@ type Fault =
     /// A write attempted to assign through a null receiver. Jenkins raises a
     /// catchable NullPointerException here even for safe-navigation syntax.
     | NullReceiverAssignment of target: string
+    /// FG-015b. Groovy's too-negative list subscript is an ordinary, catchable
+    /// ArrayIndexOutOfBoundsException. Keep it distinct so typed catches retain
+    /// the measured ancestry and unsupported list-key shapes remain refusals.
+    | ListIndexOutOfBounds of index: int64 * size: int
+    /// A compound/postfix list update read null (an explicit null element or a
+    /// positive index outside the current size). Jenkins raises a catchable NPE
+    /// when the requested operator cannot accept null; unlike a too-negative
+    /// index, compound assignment has already evaluated its RHS at this point.
+    | NullListIndexUpdate of index: int64
+    /// Jenkins' sandbox permits scalar index reads such as String.getAt but
+    /// rejects the eventual putAt, while other scalar getAt shapes are rejected
+    /// before an update RHS. Keep that catchable SecurityException boundary
+    /// separate from a modelling refusal.
+    | RejectedIndexOperation of phase: string
+    /// Positive String indexes beyond the end raise this concrete class. A
+    /// too-negative String index follows Groovy's ArrayIndexOutOfBounds path and
+    /// therefore uses [ListIndexOutOfBounds] instead.
+    | StringIndexOutOfBounds of index: int64 * size: int
+    /// A display, equality, ordering, hosted-argument coercion, or hash-key walk
+    /// met a reference cycle. Jenkins raises StackOverflowError for each measured
+    /// path. Keep one typed fault family so Error ancestry cannot drift again.
+    | CyclicValue of operation: CycleOperation
+    /// IntRange implements list reads but not replacement. Jenkins raises a
+    /// catchable UnsupportedOperationException at the write phase.
+    | RangeMutation
 
 type Outcome =
     { Effects: Effect list
@@ -184,14 +219,14 @@ module Interpreter =
     let spreadAssignmentRefusal =
         "unsupported_spread_assignment: Jenkins 2.568.1 raises a catchable runtime exception when an assignment target contains spread-property syntax; Fogell does not model writes through a projected value. Refusing before effects instead of silently discarding the write"
 
-    let spreadIndexAssignmentRefusal =
-        "unsupported_spread_index_assignment: a direct index l-value computed from spread projection crosses Fogell's unmodelled list index-assignment boundary; refusing before effects instead of silently discarding or misdirecting the write"
-
     let listIndexAssignmentRefusal =
-        "unsupported_list_index_assignment: Fogell does not model mutation through a list index; refusing instead of evaluating the RHS and silently discarding the write"
+        "unsupported_list_index_assignment: list index writes require an integer key; refusing the unmeasured key shape instead of silently discarding or misdirecting the write"
 
     let assignmentTargetRefusal =
         "unsupported_assignment_target: Fogell cannot model this assignment target; refusing before the RHS instead of reporting success without a write"
+
+    let collectionOrderingRefusal =
+        "unsupported_collection_ordering: Fogell cannot safely order this value type; refusing instead of invoking the host runtime comparer"
 
     exception private Stop of Fault
     exception private ReturnSignal of Value
@@ -264,6 +299,87 @@ module Interpreter =
         if st.Steps > st.Budget.MaxSteps then
             raise (Stop(BudgetExhausted $"evaluation exceeded {st.Budget.MaxSteps} steps"))
 
+    let private scriptDisplay value =
+        match Value.tryToDisplay value with
+        | Value.Text rendered -> rendered
+        | Value.DisplayCycleDetected -> raise (Stop(CyclicValue Display))
+
+    let private scriptHashKey value =
+        if Value.hasReferenceCycle value then
+            raise (Stop(CyclicValue HashKey))
+
+        scriptDisplay value
+
+    let private tooNegativeListIndex index size = index < -(int64 size)
+
+    let private listRead (items: Value list ref) index =
+        let size = items.Value.Length
+
+        if tooNegativeListIndex index size then
+            raise (Stop(ListIndexOutOfBounds(index, size)))
+        elif index < 0L then
+            items.Value.[size + int index]
+        elif index < int64 size then
+            items.Value.[int index]
+        else
+            VNull
+
+    let private stringIndexRead (value: string) index =
+        let size = value.Length
+
+        if tooNegativeListIndex index size then
+            raise (Stop(ListIndexOutOfBounds(index, size)))
+
+        let normalized = if index < 0L then int64 size + index else index
+
+        if normalized >= int64 size then
+            raise (Stop(StringIndexOutOfBounds(index, size)))
+
+        VStr(string value.[int normalized])
+
+    let private listWrite (st: State) (items: Value list ref) index value =
+        let size = items.Value.Length
+
+        if tooNegativeListIndex index size then
+            raise (Stop(ListIndexOutOfBounds(index, size)))
+
+        let normalized = if index < 0L then int64 size + index else index
+
+        if normalized > int64 st.Budget.MaxLoopIterations then
+            raise (Stop(BudgetExhausted "list index extension exceeds the iteration budget"))
+
+        let position = int normalized
+
+        if position < size then
+            items.Value <- items.Value |> List.mapi (fun i prior -> if i = position then value else prior)
+        else
+            items.Value <- items.Value @ List.replicate (position - size) VNull @ [ value ]
+
+    let private (|ListLike|_|) value =
+        match value with
+        | VList items -> Some items
+        | VRange values -> Some(ref (Value.rangeItems values))
+        | _ -> None
+
+    /// Jenkins 2.568.1's CPS collection traversal is live and index-based. The
+    /// value at the current slot is captured before the closure runs; later
+    /// slots are read from the ref cell after earlier mutations. Appends and
+    /// positive-index extension are visited, while shrinkage shortens the walk.
+    /// Count actual visits so a closure that appends forever still hits budget.
+    let private iterateLiveList (st: State) operation (items: Value list ref) keepGoing visit =
+        let mutable index = 0
+        let mutable iterations = 0
+
+        while keepGoing () && index < items.Value.Length do
+            iterations <- iterations + 1
+
+            if iterations > st.Budget.MaxLoopIterations then
+                raise (Stop(BudgetExhausted $"{operation} exceeds the loop-iteration budget"))
+
+            let current = items.Value.[index]
+            index <- index + 1
+            visit current
+
     /// Method names the table dispatches WITHOUT reading `args` — zero-argument in
     /// Groovy too. Strict mode rejects a call that passes any: `'abc'.length(1)` has
     /// no such signature and Groovy throws, while a table that ignores args returned
@@ -304,10 +420,10 @@ module Interpreter =
             parts
             |> List.map (function
                 | GLit s -> s
-                | GExpr x -> Value.toDisplay (evalExpr st env x))
+                | GExpr x -> scriptDisplay (evalExpr st env x))
             |> String.concat ""
             |> VStr
-        | EList xs -> VList(xs |> List.map (evalExpr st env))
+        | EList xs -> VList(ref (xs |> List.map (evalExpr st env)))
         | EMap kvs -> VMap(ref (kvs |> List.map (fun (k, v) -> k, evalExpr st env v) |> Map.ofList))
         | EVar n ->
             // locals shadow the binding; the binding shadows declared functions
@@ -351,7 +467,8 @@ module Interpreter =
         | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
-            | VList xs, VInt i when i >= 0L && int i < xs.Length -> xs.[int i]
+            | ListLike xs, VInt i -> listRead xs i
+            | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
@@ -396,7 +513,7 @@ module Interpreter =
         // "No such field found: field java.lang.String length" and the build
         // FAILS; only the METHOD form `.length()` returns the count. The lenient
         // convenience below is therefore confined to non-strict consumers.
-        | VList xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Length)
+        | ListLike xs when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 xs.Value.Length)
         | VStr s when not st.StrictVars && (name = "size" || name = "length") -> VInt(int64 s.Length)
         | _ when st.StrictVars -> raise (Stop(UnknownProperty name))
         | _ -> VNull
@@ -404,11 +521,11 @@ module Interpreter =
     and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VNull -> VNull
-        | VList xs ->
-            if xs.Length > st.Budget.MaxLoopIterations then
+        | ListLike xs ->
+            if xs.Value.Length > st.Budget.MaxLoopIterations then
                 raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
 
-            xs
+            xs.Value
             |> List.choose (fun item ->
                 tick st
 
@@ -417,6 +534,7 @@ module Interpreter =
                 // receiver whose property value is null stays in the result.
                 | VNull -> None
                 | value -> Some(evalProp st value name))
+            |> ref
             |> VList
         // Jenkins applies the ordinary property rule to non-list receivers:
         // map key lookup stays map lookup, and unsupported scalar properties fault.
@@ -439,12 +557,14 @@ module Interpreter =
 
         let a = evalExpr st env l
         let b = evalExpr st env r
+        evalBinaryValues st op a b
 
+    and private evalBinaryValues (st: State) op a b : Value =
         match op, a, b with
         | "+", VInt x, VInt y -> VInt(x + y)
-        | "+", VStr x, _ -> VStr(x + Value.toDisplay b)
-        | "+", _, VStr y -> VStr(Value.toDisplay a + y)
-        | "+", VList x, VList y -> VList(x @ y)
+        | "+", VStr x, _ -> VStr(x + scriptDisplay b)
+        | "+", _, VStr y -> VStr(scriptDisplay a + y)
+        | "+", ListLike x, ListLike y -> VList(ref (x.Value @ y.Value))
         | "-", VInt x, VInt y -> VInt(x - y)
         | "*", VInt x, VInt y -> VInt(x * y)
         | "/", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
@@ -457,8 +577,10 @@ module Interpreter =
         | "/", VInt x, VInt y -> VInt(x / y)
         | "%", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
         | "%", VInt x, VInt y -> VInt(x % y)
-        | "<<", VList x, _ -> VList(x @ [ b ])
-        | "<<", VStr x, _ -> VStr(x + Value.toDisplay b)
+        | "<<", VList x, _ ->
+            x.Value <- x.Value @ [ b ]
+            VList x
+        | "<<", VStr x, _ -> VStr(x + scriptDisplay b)
         // FG-191. THROUGH the cycle-aware equality, never bare structural `=`:
         // two self-referential maps compared here KILLED THE PROCESS (measured,
         // exit 134), which no catch, receipt or budget can see. A detected cycle
@@ -469,11 +591,11 @@ module Interpreter =
         | "==", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool r
-            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+            | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
         | "!=", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool(not r)
-            | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+            | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -497,12 +619,23 @@ module Interpreter =
                 | VStr _, "String" -> true
                 | VInt _, ("Integer" | "Long" | "Number") -> true
                 | VList _, ("List" | "Collection" | "ArrayList") -> true
+                | VRange _, ("List" | "Collection" | "Range" | "IntRange") -> true
                 | VMap _, ("Map" | "HashMap" | "LinkedHashMap") -> true
                 | VBool _, "Boolean" -> true
                 | _ -> false)
-        | "..", VInt x, VInt y when y - x <= int64 st.Budget.MaxLoopIterations ->
-            VList [ for i in x..y -> VInt i ]
-        | "..", VInt _, VInt _ -> raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+        | "..", VInt x, VInt y ->
+            let distance = System.Numerics.BigInteger.Abs(bigint y - bigint x)
+
+            if distance > bigint st.Budget.MaxLoopIterations then
+                raise (Stop(BudgetExhausted "range exceeds the loop-iteration budget"))
+
+            let step = if x <= y then 1L else -1L
+
+            let rec valuesFrom current acc =
+                if current = y then List.rev (current :: acc)
+                else valuesFrom (current + step) (current :: acc)
+
+            VRange(valuesFrom x [])
         | _ when st.StrictVars ->
             // An operator on operand types this interpreter does not model. Groovy
             // THROWS for `1 - 'x'`; inventing null instead ran `deploy null` on a
@@ -950,7 +1083,20 @@ module Interpreter =
                     try
                         ensureCanContinue ()
                         let phase = if st.FinallyUnwindDepth > 0 then FinallyUnwind else OrdinaryCall
-                        let value = host.Perform phase s positionalArgs namedLazy.Value runBody
+                        let namedArgs = namedLazy.Value
+
+                        // Jenkins hashes/coerces collection arguments before a
+                        // hosted step runs. Even a direct-self collection whose
+                        // ordinary toString uses `(this Collection)` overflows at
+                        // this boundary. Check the typed values themselves: a
+                        // display fallback must never become an executable arg.
+                        if
+                            (positionalArgs |> List.exists Value.hasReferenceCycle)
+                            || (namedArgs |> List.exists (snd >> Value.hasReferenceCycle))
+                        then
+                            raise (Stop(CyclicValue HostedArgumentCoercion))
+
+                        let value = host.Perform phase s positionalArgs namedArgs runBody
                         ensureCanContinue ()
                         value
                     finally
@@ -1117,14 +1263,14 @@ module Interpreter =
         // through the same one place that forms every callable's argument list.
         | "call", VClosure(c, closureEnv), _ ->
             invokeClosureValue st "call" c closureEnv (effectiveArgList env args namedArgs trailing)
-        | "size", VList xs, _
-        | "length", VList xs, _ -> VInt(int64 xs.Length)
+        | "size", ListLike xs, _
+        | "length", ListLike xs, _ -> VInt(int64 xs.Value.Length)
         | "size", VStr s, _
         | "length", VStr s, _ -> VInt(int64 s.Length)
         | "size", VMap m, _ -> VInt(int64 m.Value.Count)
-        | "isEmpty", VList xs, _ -> VBool(List.isEmpty xs)
+        | "isEmpty", ListLike xs, _ -> VBool(List.isEmpty xs.Value)
         | "isEmpty", VStr s, _ -> VBool(s = "")
-        | "toString", v, _ -> VStr(Value.toDisplay v)
+        | "toString", v, _ -> VStr(scriptDisplay v)
         | "toInteger", VStr s, _ ->
             match System.Int64.TryParse s with
             | true, i -> VInt i
@@ -1139,55 +1285,106 @@ module Interpreter =
         | "startsWith", VStr s, [ VStr p ] -> VBool(s.StartsWith p)
         | "endsWith", VStr s, [ VStr p ] -> VBool(s.EndsWith p)
         | "contains", VStr s, [ VStr p ] -> VBool(s.Contains p)
-        | "contains", VList xs, [ v ] ->
+        | "contains", ListLike xs, [ v ] ->
             // FG-191: through the cycle-aware equality, like `==` — a cyclic
             // element reports rather than recurses
             VBool(
-                xs
+                xs.Value
                 |> List.exists (fun x ->
                     match Value.tryEq v x with
                     | Value.Answer r -> r
-                    | Value.CycleDetected -> raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison"))))
+                    | Value.CycleDetected -> raise (Stop(CyclicValue Equality)))
             )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
-            VList(s.Split(d) |> Array.toList |> List.map VStr)
+            VList(ref (s.Split(d) |> Array.toList |> List.map VStr))
         | "readLines", VStr s, _ ->
-            VList(s.Replace("\r\n", "\n").Split('\n') |> Array.toList |> List.map VStr)
-        | "join", VList xs, [ VStr d ] -> VStr(xs |> List.map Value.toDisplay |> String.concat d)
-        | "reverse", VList xs, _ -> VList(List.rev xs)
+            VList(ref (s.Replace("\r\n", "\n").Split('\n') |> Array.toList |> List.map VStr))
+        | "join", ListLike xs, [ VStr d ] -> VStr(xs.Value |> List.map scriptDisplay |> String.concat d)
+        | "reverse", ListLike xs, _ -> VList(ref (List.rev xs.Value))
         | "reverse", VStr s, _ -> VStr(System.String(s.ToCharArray() |> Array.rev))
-        | "sort", VList xs, _ -> VList(List.sortWith compare xs)
-        | "first", VList(x :: _), _ -> x
-        | "last", VList xs, _ when not xs.IsEmpty -> List.last xs
-        | "keySet", VMap m, _ -> VList(m.Value |> Map.toList |> List.map (fst >> VStr))
-        | "values", VMap m, _ -> VList(m.Value |> Map.toList |> List.map snd)
-        | "each", VList xs, _ ->
+        | "sort", _, _ when Option.isSome trailing ->
+            raise (Stop(Unsupported "method 'sort' with a comparator/key closure is not modelled; Jenkins CPS/sandbox behavior is not ordinary list sorting"))
+        | "sort", VRange _, _ -> raise (Stop RangeMutation)
+        | "sort", VList xs, _ ->
+            let compareSafely left right =
+                match Value.tryCompare left right with
+                | Value.Order order -> order
+                | Value.OrderingCycleDetected -> raise (Stop(CyclicValue Ordering))
+                | Value.Unorderable -> raise (Stop(Unsupported collectionOrderingRefusal))
+
+            let sorted =
+                try
+                    List.sortWith compareSafely xs.Value
+                with
+                // FSharp.Core delegates to Array.Sort, which wraps comparator
+                // exceptions. Unwrap only Fogell's own typed stop; every other
+                // host exception remains visible instead of being misclassified.
+                | :? System.InvalidOperationException as wrapped ->
+                    match wrapped.InnerException with
+                    | :? Stop as stopped -> raise stopped
+                    | _ -> reraise ()
+
+            xs.Value <- sorted
+            VList xs
+        | "first", ListLike xs, _ when not xs.Value.IsEmpty -> List.head xs.Value
+        | "last", ListLike xs, _ when not xs.Value.IsEmpty -> List.last xs.Value
+        | "keySet", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map (fst >> VStr)))
+        | "values", VMap m, _ -> VList(ref (m.Value |> Map.toList |> List.map snd))
+        | "each", ListLike xs, _ ->
             match trailing with
             | Some c ->
-                if xs.Length > st.Budget.MaxLoopIterations then
-                    raise (Stop(BudgetExhausted "each exceeds the loop-iteration budget"))
-
-                xs |> List.iter (fun x -> applyClosure c env x |> ignore)
+                iterateLiveList st "each" xs (fun () -> true) (fun x -> applyClosure c env x |> ignore)
                 recv
             | None -> recv
-        | "collect", VList xs, _ ->
-            match trailing with
-            | Some c -> VList(xs |> List.map (applyClosure c env))
-            | None -> recv
-        | ("find" | "findAll"), VList xs, _ ->
+        | "collect", ListLike xs, _ ->
             match trailing with
             | Some c ->
-                let matches = xs |> List.filter (fun x -> Value.isTruthy (applyClosure c env x))
-                if name = "find" then (match matches with [] -> VNull | h :: _ -> h) else VList matches
+                let collected = ResizeArray<Value>()
+                iterateLiveList st "collect" xs (fun () -> true) (fun x -> collected.Add(applyClosure c env x))
+                VList(ref (List.ofSeq collected))
             | None -> recv
-        | "any", VList xs, _ ->
+        | "find", ListLike xs, _ ->
             match trailing with
-            | Some c -> VBool(xs |> List.exists (fun x -> Value.isTruthy (applyClosure c env x)))
+            | Some c ->
+                let mutable found = None
+
+                iterateLiveList
+                    st
+                    "find"
+                    xs
+                    (fun () -> Option.isNone found)
+                    (fun x -> if Value.isTruthy (applyClosure c env x) then found <- Some x)
+
+                Option.defaultValue VNull found
+            | None -> recv
+        | "findAll", ListLike xs, _ ->
+            match trailing with
+            | Some c ->
+                let matches = ResizeArray<Value>()
+
+                iterateLiveList
+                    st
+                    "findAll"
+                    xs
+                    (fun () -> true)
+                    (fun x -> if Value.isTruthy (applyClosure c env x) then matches.Add x)
+
+                VList(ref (List.ofSeq matches))
+            | None -> recv
+        | "any", ListLike xs, _ ->
+            match trailing with
+            | Some c ->
+                let mutable matched = false
+                iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- Value.isTruthy (applyClosure c env x))
+                VBool matched
             | None -> VBool false
-        | "every", VList xs, _ ->
+        | "every", ListLike xs, _ ->
             match trailing with
-            | Some c -> VBool(xs |> List.forall (fun x -> Value.isTruthy (applyClosure c env x)))
+            | Some c ->
+                let mutable allMatched = true
+                iterateLiveList st "every" xs (fun () -> allMatched) (fun x -> allMatched <- Value.isTruthy (applyClosure c env x))
+                VBool allMatched
             | None -> VBool true
         | _ when st.StrictVars ->
             // Fail CLOSED on a method this interpreter does not model. Groovy would
@@ -1252,14 +1449,6 @@ module Interpreter =
             // preparation; this guard keeps direct interpreter consumers from ever
             // recovering the old RHS-only success.
             raise (Stop(Unsupported spreadAssignmentRefusal))
-        | SAssign(target, _) when Ast.assignmentTargetIsSpreadDerivedIndex target ->
-            // An index RESULT is a valid receiver boundary for an OUTER property
-            // write, but a direct index l-value is FG-015b list mutation. Depending
-            // on the next index, Jenkins either mutates only the temporary projection
-            // or reaches a referenced source list. Refuse both before target/RHS
-            // evaluation until that distinction is modelled instead of reviving the
-            // generic fallback's silent no-op.
-            raise (Stop(Unsupported spreadIndexAssignmentRefusal))
         // REVIEW FIX (Codex, PR #14 round 7): only the EVar form recorded a value, so
         // a predicate ending in `env.DEPLOY = false` or `values[0] = false` reached
         // here and left LastValue absent or STALE — reported unevaluable, or worse
@@ -1273,24 +1462,17 @@ module Interpreter =
             // WRITE is the thing being decided below.
             let recvAndKey =
                 match target with
-                | EProp(r, name) -> evalExpr st env r, name, false
+                | EProp(r, name) -> evalExpr st env r, VStr name, false
                 | ESafeProp(r, name) ->
                     // Assignment is not a safe READ. Jenkins 2.568.1 mutates a
                     // non-null map exactly as ordinary property assignment does,
                     // and raises a catchable NPE for null — including after an
                     // index or method-call result. Never short-circuit the write.
-                    evalExpr st env r, name, false
+                    evalExpr st env r, VStr name, false
                 | EIndex(r, idx) ->
                     let rv = evalExpr st env r
-                    rv, Value.toDisplay (evalExpr st env idx), true
+                    rv, evalExpr st env idx, true
                 | _ -> raise (Stop(Unsupported assignmentTargetRefusal))
-
-            // List mutation is an unmodelled write boundary, not lax lookup.
-            // Once the receiver and key are known, refuse before the RHS so an
-            // unsupported assignment cannot run effects and then pretend success.
-            match recvAndKey with
-            | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
-            | _ -> ()
 
             let value = evalExpr st env v
             st.LastValue <- Some value
@@ -1319,19 +1501,25 @@ module Interpreter =
             // shell and vanished here; the aliased map write printed alias:x there
             // and alias:null here — this arm's old name-keyed match dropped every
             // non-`env`-named target at `| _ -> ()`.
-            let assignInto (recv: Value) (key: string) (isIndex: bool) =
-                match recv with
-                | VMap mr ->
+            let assignInto (recv: Value) (keyValue: Value) (isIndex: bool) =
+                match recv, keyValue, isIndex with
+                | VList items, VInt index, true -> listWrite st items index value
+                | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange _, _, true -> raise (Stop RangeMutation)
+                | VMap mr, _, _ ->
+                    let key = scriptHashKey keyValue
+
                     match st.Host with
                     | Some host when st.JenkinsEnvMaps.Contains mr ->
                         // the Jenkins environment, however many rebinds away: the
                         // host decides, and today it refuses — the same named
                         // refusal as the direct spelling, instead of a silent local
                         // write the shell never sees
-                        host.SetEnv key (Value.toDisplay value)
+                        host.SetEnv key (scriptDisplay value)
                     | _ -> mr.Value <- Map.add key value mr.Value
-                | VNull -> raise (Stop(NullReceiverAssignment(if isIndex then "index" else key)))
-                | VList _ when isIndex -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VNull, _, _ ->
+                    let targetName = if isIndex then "index" else scriptDisplay keyValue
+                    raise (Stop(NullReceiverAssignment targetName))
                 // Not a supported receiver: Groovy REJECTS the write
                 // (MissingPropertyException on a String) and a script-level catch INTERCEPTS it —
                 // measured: `try { s.FOO = 'x' } catch (Exception e)` runs on and
@@ -1341,11 +1529,109 @@ module Interpreter =
                 // uncatchable, a false refusal the verifier caught by asking what
                 // class the fault was, not whether it fired. Assignment cannot
                 // inherit lax READ semantics: an absent write is never success.
-                | _ -> raise (Stop(UnknownProperty key))
+                | _, _, true -> raise (Stop(RejectedIndexOperation "write"))
+                | _, _, false -> raise (Stop(UnknownProperty(scriptDisplay keyValue)))
 
             match recvAndKey with
             | recv, key, isIndex -> assignInto recv key isIndex
 
+            env
+        | SIndexCompoundAssign(target, op, rhs) ->
+            let recv, keyValue =
+                match target with
+                | EIndex(r, idx) ->
+                    let receiver = evalExpr st env r
+                    receiver, evalExpr st env idx
+                | _ -> raise (Stop(Unsupported assignmentTargetRefusal))
+
+            // Read the old value before the RHS. Jenkins faults here for a
+            // too-negative index, null receiver, or non-integer list key, so RHS
+            // effects must not run for those compound-update failures.
+            let oldValue, writeBack, listIndex =
+                match recv, keyValue with
+                | VList items, VInt index ->
+                    listRead items index, (fun value -> listWrite st items index value), Some index
+                | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange values, VInt index ->
+                    let items = ref (Value.rangeItems values)
+                    listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
+                | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VMap mr, _ ->
+                    let key = scriptHashKey keyValue
+                    let prior = defaultArg (Map.tryFind key mr.Value) VNull
+
+                    prior,
+                    (fun value ->
+                        match st.Host with
+                        | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
+                        | _ -> mr.Value <- Map.add key value mr.Value),
+                    None
+                | VStr value, VInt index ->
+                    stringIndexRead value index,
+                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
+                    None
+                | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
+
+            let rhsValue = evalExpr st env rhs
+
+            let value =
+                try
+                    evalBinaryValues st op oldValue rhsValue
+                with
+                | Stop(Unsupported _) when oldValue = VNull && Option.isSome listIndex ->
+                    raise (Stop(NullListIndexUpdate listIndex.Value))
+                | Stop(Unsupported _) when Option.isNone listIndex && (match recv with VStr _ -> true | _ -> false) ->
+                    raise (Stop(RejectedIndexOperation "operator"))
+
+            writeBack value
+            st.LastValue <- Some value
+            env
+        | SIndexPostfixAssign(target, op) ->
+            let recv, keyValue =
+                match target with
+                | EIndex(r, idx) ->
+                    let receiver = evalExpr st env r
+                    receiver, evalExpr st env idx
+                | _ -> raise (Stop(Unsupported assignmentTargetRefusal))
+
+            let oldValue, writeBack, listIndex =
+                match recv, keyValue with
+                | VList items, VInt index ->
+                    listRead items index, (fun value -> listWrite st items index value), Some index
+                | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VRange values, VInt index ->
+                    let items = ref (Value.rangeItems values)
+                    listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
+                | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                | VMap mr, _ ->
+                    let key = scriptHashKey keyValue
+                    let prior = defaultArg (Map.tryFind key mr.Value) VNull
+
+                    prior,
+                    (fun value ->
+                        match st.Host with
+                        | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
+                        | _ -> mr.Value <- Map.add key value mr.Value),
+                    None
+                | VStr value, VInt index ->
+                    stringIndexRead value index,
+                    (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
+                    None
+                | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | _, _ -> raise (Stop(RejectedIndexOperation "read"))
+
+            let value =
+                match oldValue, listIndex with
+                | VNull, Some index -> raise (Stop(NullListIndexUpdate index))
+                | _ ->
+                    try
+                        evalBinaryValues st op oldValue (VInt 1L)
+                    with
+                    | Stop(Unsupported _) when (match recv with VStr _ -> true | _ -> false) ->
+                        raise (Stop(RejectedIndexOperation "operator"))
+            writeBack value
+            st.LastValue <- Some oldValue
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
         // returned TRUE, because `true` set the trailing value and the untaken `if`
@@ -1366,10 +1652,7 @@ module Interpreter =
             st.LastValue <- None
 
             match evalExpr st env src with
-            | VList xs ->
-                if xs.Length > st.Budget.MaxLoopIterations then
-                    raise (Stop(BudgetExhausted "loop exceeds the iteration budget"))
-
+            | ListLike xs ->
                 // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
                 // and carried on with the next element, so `for (x in xs) { … break }` ran
                 // the body for every element — `SWhile` one arm below has always stopped
@@ -1382,24 +1665,23 @@ module Interpreter =
                 // visibility — an assignment made before the break now survives, so the
                 // wrong number reaches a step instead of being discarded with the
                 // environment. Raised in review on PR #54.
-                // WALKED, NOT INDEXED. `xs` is an F# linked list, so `xs[i]` is a linear
-                // lookup and indexing it per iteration made the loop QUADRATIC — within the
-                // 10,000-iteration budget, so nothing refuses it and a long `for` just gets
-                // slow. Introduced by my own break fix and caught in review on PR #54;
-                // holding the tail costs nothing and restores the original traversal.
+                // The ref cell makes this a mutable ArrayList analogue. Jenkins CPS
+                // re-reads each not-yet-visited index, including appended/extended
+                // elements, so retaining an immutable F# tail is observably stale.
                 let mutable cur = env
                 let mutable running = true
-                let mutable rest = xs
 
-                while running && not (List.isEmpty rest) do
-                    let x = List.head rest
-                    rest <- List.tail rest
-
-                    try
-                        cur <- execBlock st (Env.withVar v x cur) body
-                    with
-                    | ContinueSignal -> ()
-                    | BreakSignal -> running <- false
+                iterateLiveList
+                    st
+                    "loop"
+                    xs
+                    (fun () -> running)
+                    (fun x ->
+                        try
+                            cur <- execBlock st (Env.withVar v x cur) body
+                        with
+                        | ContinueSignal -> ()
+                        | BreakSignal -> running <- false)
 
                 cur
             | _ -> env
@@ -1454,8 +1736,7 @@ module Interpreter =
                     | Some case ->
                         match Value.tryEq v (evalExpr st env case) with
                         | Value.Answer r -> r
-                        | Value.CycleDetected ->
-                            raise (Stop(Thrown(VStr "StackOverflowError: cyclic structure in comparison")))
+                        | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 
@@ -1538,6 +1819,58 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            let catchesListIndexOutOfBounds =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "IndexOutOfBoundsException"
+                      "ArrayIndexOutOfBoundsException" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesRejectedIndexOperation =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "SecurityException"
+                      "RejectedAccessException" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesStringIndexOutOfBounds =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "IndexOutOfBoundsException"
+                      "StringIndexOutOfBoundsException" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesStackOverflow =
+                match catch with
+                | Some(None, _, _) -> false
+                | Some(Some t, _, _) ->
+                    [ "Throwable"; "Error"; "VirtualMachineError"; "StackOverflowError" ]
+                    |> List.contains t
+                | None -> false
+
+            let catchesRangeMutation =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "UnsupportedOperationException" ]
+                    |> List.contains t
+                | None -> false
+
             // Which declared types can intercept a failed shell step. Jenkins
             // surfaces it as hudson.AbortException < IOException < Exception —
             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
@@ -1591,6 +1924,26 @@ module Interpreter =
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
                     | Stop(NullReceiverAssignment target) when catchesNullReceiverAssignment ->
                         handle (VStr $"java.lang.NullPointerException: Cannot assign through null {target} receiver")
+                    | Stop(ListIndexOutOfBounds(index, size)) when catchesListIndexOutOfBounds ->
+                        handle (VStr $"java.lang.ArrayIndexOutOfBoundsException: Negative array index [{index}] too large for array size {size}")
+                    | Stop(NullListIndexUpdate index) when catchesNullReceiverAssignment ->
+                        handle (VStr $"java.lang.NullPointerException: Cannot apply index update to null value at [{index}]")
+                    | Stop(RejectedIndexOperation phase) when catchesRejectedIndexOperation ->
+                        handle (VStr $"org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException: scalar index {phase} rejected")
+                    | Stop(StringIndexOutOfBounds(index, size)) when catchesStringIndexOutOfBounds ->
+                        handle (VStr $"java.lang.StringIndexOutOfBoundsException: String index out of range: {index}; size {size}")
+                    | Stop(CyclicValue operation) when catchesStackOverflow ->
+                        let boundary =
+                            match operation with
+                            | Display -> "display"
+                            | Equality -> "equality comparison"
+                            | Ordering -> "ordering comparison"
+                            | HostedArgumentCoercion -> "hosted argument coercion"
+                            | HashKey -> "hash-key coercion"
+
+                        handle (VStr $"java.lang.StackOverflowError: cyclic structure in {boundary}")
+                    | Stop RangeMutation when catchesRangeMutation ->
+                        handle (VStr "java.lang.UnsupportedOperationException: IntRange is immutable")
                 with
                 | HostedHaltSignal as halted ->
                     // A hosted failure has already stopped ordinary evaluation, but
@@ -1804,7 +2157,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicValue _ | RangeMutation | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

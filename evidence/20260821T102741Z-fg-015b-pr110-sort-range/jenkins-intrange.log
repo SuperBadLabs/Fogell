@@ -1,0 +1,16 @@
+===== fg015b-intrange-review
+RESULT: success
+| display-equality:r=[1, 2, 3];listEq=true;rangeEq=true;aliasEq=true
+| reads:zero=1;negative=3;positiveOob=null
+| negative-oob:fault:java.lang.ArrayIndexOutOfBoundsException
+| plain-write:caught=java.lang.UnsupportedOperationException;events=[rhs];range=[1, 2, 3]
+| compound-write:caught=java.lang.UnsupportedOperationException;events=[rhs];range=[1, 2, 3]
+| postfix-write:caught=java.lang.UnsupportedOperationException;range=[1, 2, 3]
+| alias-write:caught=java.lang.UnsupportedOperationException;range=[1, 2, 3];alias=[1, 2, 3]
+| iteration:each=[1, 2, 3];for=[1, 2, 3]
+| reverse:source=[1, 2, 3];result=[9, 2, 1]
+| sort-noarg:fault:java.lang.UnsupportedOperationException
+| Scripts not permitted to use staticMethod org.codehaus.groovy.runtime.DefaultGroovyMethods sort java.util.Collection boolean. Administrators can decide whether to approve or reject this signature.
+| sort-false:fault:org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException
+| collect:source=[1, 2, 3];result=[9, 20, 30]
+| descending:display=[3, 2, 1];zero=3;negative=1;seen=[3, 2, 1];equal=true

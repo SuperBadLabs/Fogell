@@ -1,0 +1,10 @@
+ .../cases/fg015b-cyclic-equality-hash.Jenkinsfile  |  53 +++++++++++
+ .../fg015b-cyclic-hosted-coercion.Jenkinsfile      |  48 ++++++++++
+ .../fg015b-cyclic-equality-hash.receipt.txt        |  97 ++++++++++++++++++++
+ .../fg015b-cyclic-hosted-coercion.receipt.txt      |  97 ++++++++++++++++++++
+ docs/COMPATIBILITY-SCORECARD.md                    |   2 +-
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       |  79 +++++++++++-----
+ src/Fogell.Groovy.Interpreter/Value.fs             |  46 ++++++++++
+ tests/Fogell.Groovy.Tests/Tests.fs                 | 101 ++++++++++++++++++++-
+ 9 files changed, 494 insertions(+), 31 deletions(-)

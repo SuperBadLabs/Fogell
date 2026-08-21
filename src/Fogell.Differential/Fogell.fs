@@ -109,8 +109,6 @@ module FogellSide =
     let private assignmentRefusal (script: Fogell.Groovy.Stmt list) =
         if Fogell.Groovy.Ast.containsSpreadAssignment script then
             Some Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
-        elif Fogell.Groovy.Ast.containsSpreadDerivedIndexAssignment script then
-            Some Fogell.Groovy.Interpreter.Interpreter.spreadIndexAssignmentRefusal
         else
             None
 

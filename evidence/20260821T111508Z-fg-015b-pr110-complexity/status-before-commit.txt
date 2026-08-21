@@ -1,0 +1,7 @@
+## agent/fg-015b...origin/agent/fg-015b
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Differential/WalkerRules.fs
+M  src/Fogell.Groovy.Interpreter/Value.fs
+M  tests/Fogell.Differential.Tests/Tests.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260821T111508Z-fg-015b-pr110-complexity/

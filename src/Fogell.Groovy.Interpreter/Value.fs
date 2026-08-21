@@ -10,7 +10,14 @@ type Value =
     | VBool of bool
     | VInt of int64
     | VStr of string
-    | VList of Value list
+    /// FG-015b. Groovy lists are reference objects. The ref is list identity:
+    /// aliases, nested selections and method results share mutations, while a
+    /// newly projected/collected list receives a fresh identity.
+    | VList of Value list ref
+    /// Groovy IntRange is list-like for reads, equality and iteration, but it is
+    /// not an ArrayList and rejects replacement. Keep its immutable provenance
+    /// distinct so FG-015b list writes can never silently mutate a range.
+    | VRange of int64 list
     /// FG-193. A Groovy map is a REFERENCE object: aliases see each other's
     /// mutations. The ref is the identity, exactly as ref cells are for locals —
     /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
@@ -53,7 +60,91 @@ and Env =
     { Vars: Map<string, Value ref>
       Funcs: Map<string, (string list * Stmt list) list> }
 
+type private ReferencePairComparer() =
+    interface System.Collections.Generic.IEqualityComparer<obj * obj> with
+        member _.Equals((leftA, leftB), (rightA, rightB)) =
+            System.Object.ReferenceEquals(leftA, rightA)
+            && System.Object.ReferenceEquals(leftB, rightB)
+
+        member _.GetHashCode((left, right)) =
+            let leftHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode left
+            let rightHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode right
+            (leftHash * 397) ^^^ rightHash
+
 module Value =
+
+    let rangeItems values = values |> List.map VInt
+
+    type ReferenceCycleScan =
+        { HasCycle: bool
+          ReferencesVisited: int
+          EdgesVisited: int }
+
+    type private ReferenceCycleFrame =
+        | InspectReference of Value
+        | CompleteReference of obj
+
+    /// Whether a value graph contains a reference cycle of any length. This is
+    /// deliberately stricter than [tryToDisplay]: Groovy's collection renderer
+    /// has direct-self markers, but Jenkins' step argument coercion/hash path
+    /// still overflows for those same values before a hosted call is dispatched.
+    /// Repeated aliases on sibling paths are not cycles, so [active] is the
+    /// ancestry boundary. [completed] is separately memoized: once one acyclic
+    /// reference and all of its descendants have been discharged, a sibling
+    /// alias cannot disclose a new back edge and is skipped in O(1).
+    let scanReferenceCycles value =
+        let active = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+        let completed = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+        let pending = System.Collections.Generic.List<ReferenceCycleFrame>()
+        let mutable cycle = false
+        let mutable referencesVisited = 0
+        let mutable edgesVisited = 0
+
+        pending.Add(InspectReference value)
+
+        let enter identity children =
+            if completed.Contains identity then
+                ()
+            elif active.Contains identity then
+                cycle <- true
+            else
+                active.Add identity |> ignore
+                referencesVisited <- referencesVisited + 1
+                edgesVisited <- edgesVisited + List.length children
+                pending.Add(CompleteReference identity)
+
+                // LIFO: the completion marker stays below every child, so
+                // [active] is exactly the current DFS ancestry. A later alias
+                // reaches [completed] in O(1) rather than expanding again.
+                for child in List.rev children do
+                    pending.Add(InspectReference child)
+
+        while not cycle && pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+
+            match frame with
+            | InspectReference current ->
+                match current with
+                | VList items -> enter (box items) items.Value
+                | VMap entries -> enter (box entries) (entries.Value |> Map.toList |> List.map snd)
+                | VNull
+                | VBool _
+                | VInt _
+                | VStr _
+                | VRange _
+                | VClosure _
+                | VFunc _ -> ()
+            | CompleteReference identity ->
+                active.Remove identity |> ignore
+                completed.Add identity |> ignore
+
+        { HasCycle = cycle
+          ReferencesVisited = referencesVisited
+          EdgesVisited = edgesVisited }
+
+    let hasReferenceCycle value = (scanReferenceCycles value).HasCycle
 
     /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
     /// discovery of a reference cycle that structural recursion would chase
@@ -66,37 +157,80 @@ module Value =
         | Answer of bool
         | CycleDetected
 
-    let rec toDisplay v = displayWith [] v
+    /// A total, host-safe answer for the subset of Groovy values which Fogell
+    /// orders. `OrderingCycleDetected` means structural comparison revisited the
+    /// same pair and Jenkins would overflow; `Unorderable` keeps closures and
+    /// functions out of the host runtime's generic comparer.
+    type Ordered =
+        | Order of int
+        | OrderingCycleDetected
+        | Unorderable
 
-    /// FG-191. Display tracks the maps on its own PATH by reference, and a map
-    /// that reaches itself renders as Groovy renders it — `(this Map)`, from
-    /// AbstractMap.toString — instead of recursing to a StackOverflow that kills
-    /// the process. MEASURED (receipt `script-cyclic-map-display`): a
-    /// self-referential map's display died with exit 134 where Jenkins prints
-    /// and succeeds. Lists cannot cycle (they are
-    /// immutable) but they can CONTAIN a cyclic map, so the path threads through
-    /// them too.
-    and private displayWith (seen: obj list) v =
-        match v with
-        | VNull -> "null"
-        | VBool b -> if b then "true" else "false"
-        | VInt i -> string i
-        | VStr s -> s
-        | VList xs -> "[" + (xs |> List.map (displayWith seen) |> String.concat ", ") + "]"
-        | VMap m ->
-            if seen |> List.exists (fun s -> System.Object.ReferenceEquals(s, m)) then
-                "(this Map)"
-            else
-                let inner = box m :: seen
+    type Displayed =
+        | Text of string
+        | DisplayCycleDetected
 
-                "["
-                + (m.Value
-                   |> Map.toList
-                   |> List.map (fun (k, v) -> $"{k}:{displayWith inner v}")
-                   |> String.concat ", ")
-                + "]"
-        | VClosure _ -> "<closure>"
-        | VFunc(n, _, _) -> $"<function {n}>"
+    /// Direct self entries use Groovy's own `(this Collection)` / `(this Map)`
+    /// markers. A longer reference cycle is different: Jenkins 2.568.1 chases
+    /// list→map→list display into a catchable StackOverflowError. Report that
+    /// boundary to the interpreter instead of recursing in the host process.
+    let tryToDisplay v : Displayed =
+        let mutable cycle = false
+
+        let rec displayWith (seen: obj list) value =
+            let seenRef candidate =
+                seen |> List.exists (fun prior -> System.Object.ReferenceEquals(prior, candidate))
+
+            match value with
+            | VNull -> "null"
+            | VBool b -> if b then "true" else "false"
+            | VInt i -> string i
+            | VStr s -> s
+            | VList xs ->
+                if seenRef xs then
+                    cycle <- true
+                    ""
+                else
+                    let inner = box xs :: seen
+
+                    "["
+                    + (xs.Value
+                       |> List.map (function
+                           | VList child when System.Object.ReferenceEquals(child, xs) -> "(this Collection)"
+                           | item -> displayWith inner item)
+                       |> String.concat ", ")
+                    + "]"
+            | VRange values ->
+                "[" + (values |> List.map string |> String.concat ", ") + "]"
+            | VMap m ->
+                if seenRef m then
+                    cycle <- true
+                    ""
+                else
+                    let inner = box m :: seen
+
+                    "["
+                    + (m.Value
+                       |> Map.toList
+                       |> List.map (fun (k, item) ->
+                           let shown =
+                               match item with
+                               | VMap child when System.Object.ReferenceEquals(child, m) -> "(this Map)"
+                               | _ -> displayWith inner item
+
+                           $"{k}:{shown}")
+                       |> String.concat ", ")
+                    + "]"
+            | VClosure _ -> "<closure>"
+            | VFunc(n, _, _) -> $"<function {n}>"
+
+        let rendered = displayWith [] v
+        if cycle then DisplayCycleDetected else Text rendered
+
+    let toDisplay v =
+        match tryToDisplay v with
+        | Text rendered -> rendered
+        | DisplayCycleDetected -> "<cyclic collection>"
 
     /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
     ///
@@ -111,15 +245,20 @@ module Value =
     ///     outright, and a DISTINCT pair met twice on one path is a cycle —
     ///     reported, not chased, because Groovy's own AbstractMap.equals chases
     ///     it into a JVM StackOverflowError there.
-    ///   - everything else keeps structural equality, which cannot recurse into
-    ///     a cycle: only a map ref is mutable enough to close one.
+    ///   - lists and maps both compare through reference cells, with repeated
+    ///     distinct pairs reported rather than chased.
     let tryEq (a: Value) (b: Value) : Compared =
         let mutable cycle = false
+        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
 
         let rec go (seen: (obj * obj) list) a b =
             match a, b with
             | VMap ma, VMap mb ->
+                let pair = box ma, box mb
+
                 if System.Object.ReferenceEquals(ma, mb) then
+                    true
+                elif completed.Contains pair then
                     true
                 elif
                     seen
@@ -129,27 +268,170 @@ module Value =
                     cycle <- true
                     false
                 else
-                    let inner = (box ma, box mb) :: seen
+                    let inner = pair :: seen
 
-                    ma.Value.Count = mb.Value.Count
-                    && ma.Value
-                       |> Map.forall (fun k v ->
-                           match Map.tryFind k mb.Value with
-                           | Some w -> go inner v w
-                           | None -> false)
+                    let equal =
+                        ma.Value.Count = mb.Value.Count
+                        && ma.Value
+                           |> Map.forall (fun k v ->
+                               match Map.tryFind k mb.Value with
+                               | Some w -> go inner v w
+                               | None -> false)
+
+                    if equal && not cycle then completed.Add pair |> ignore
+                    equal
+            | VList xa, VList xb ->
+                let pair = box xa, box xb
+
+                if System.Object.ReferenceEquals(xa, xb) then
+                    true
+                elif completed.Contains pair then
+                    true
+                elif
+                    seen
+                    |> List.exists (fun (x, y) ->
+                        System.Object.ReferenceEquals(x, xa) && System.Object.ReferenceEquals(y, xb))
+                then
+                    cycle <- true
+                    false
+                else
+                    let inner = pair :: seen
+                    let equal = xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
+                    if equal && not cycle then completed.Add pair |> ignore
+                    equal
+            | VRange xa, VRange xb -> xa = xb
+            | VRange xa, VList xb ->
+                let left = rangeItems xa
+                left.Length = xb.Value.Length && List.forall2 (go seen) left xb.Value
+            | VList xa, VRange xb ->
+                let right = rangeItems xb
+                xa.Value.Length = right.Length && List.forall2 (go seen) xa.Value right
             | VClosure(c1, e1), VClosure(c2, e2) ->
                 System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
-            | VList xs, VList ys -> xs.Length = ys.Length && List.forall2 (go seen) xs ys
             | VClosure _, _
             | _, VClosure _
             | VMap _, _
             | _, VMap _
             | VList _, _
-            | _, VList _ -> false
+            | _, VList _
+            | VRange _, _
+            | _, VRange _ -> false
             | _ -> a = b
 
         let answer = go [] a b
         if cycle then CycleDetected else Answer answer
+
+    /// Cycle-aware structural ordering for collection builtins. This preserves
+    /// the old discriminated-union ordering for acyclic values while ensuring
+    /// no runtime `compare` can follow a script-constructed reference cycle.
+    ///
+    /// Jenkins' top-level alias case (`[a, a].sort()`) returns normally, but two
+    /// distinct wrapper lists which both contain the same cyclic `a` overflow.
+    /// Therefore the identity shortcut belongs only at the comparator entry;
+    /// recursive collection comparison must descend and detect the repeated pair.
+    let tryCompare (a: Value) (b: Value) : Ordered =
+        let mutable cycle = false
+        let mutable unorderable = false
+        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
+
+        let rank = function
+            | VNull -> 0
+            | VBool _ -> 1
+            | VInt _ -> 2
+            | VStr _ -> 3
+            | VList _ -> 4
+            | VRange _ -> 4
+            | VMap _ -> 5
+            | VClosure _ -> 6
+            | VFunc _ -> 7
+
+        let seenPair (seen: (obj * obj) list) left right =
+            seen
+            |> List.exists (fun (priorLeft, priorRight) ->
+                System.Object.ReferenceEquals(priorLeft, left)
+                && System.Object.ReferenceEquals(priorRight, right))
+
+        let rec compareValues seen left right =
+            let leftRank = rank left
+            let rightRank = rank right
+
+            if leftRank <> rightRank then
+                compare leftRank rightRank
+            else
+                match left, right with
+                | VNull, VNull -> 0
+                | VBool x, VBool y -> compare x y
+                | VInt x, VInt y -> compare x y
+                | VStr x, VStr y -> compare x y
+                | VList xs, VList ys ->
+                    let pair = box xs, box ys
+
+                    if completed.Contains pair then
+                        0
+                    elif seenPair seen (box xs) (box ys) then
+                        cycle <- true
+                        0
+                    else
+                        let answer = compareLists (pair :: seen) xs.Value ys.Value
+                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
+                        answer
+                | VRange xs, VRange ys -> compareLists seen (rangeItems xs) (rangeItems ys)
+                | VRange xs, VList ys -> compareLists seen (rangeItems xs) ys.Value
+                | VList xs, VRange ys -> compareLists seen xs.Value (rangeItems ys)
+                | VMap xs, VMap ys ->
+                    let pair = box xs, box ys
+
+                    if completed.Contains pair then
+                        0
+                    elif seenPair seen (box xs) (box ys) then
+                        cycle <- true
+                        0
+                    else
+                        let answer = compareEntries (pair :: seen) (Map.toList xs.Value) (Map.toList ys.Value)
+                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
+                        answer
+                | VClosure _, VClosure _
+                | VFunc _, VFunc _ ->
+                    unorderable <- true
+                    0
+                | _ -> 0
+
+        and compareLists seen left right =
+            match left, right with
+            | [], [] -> 0
+            | [], _ -> -1
+            | _, [] -> 1
+            | x :: xs, y :: ys ->
+                let first = compareValues seen x y
+                if first <> 0 || cycle || unorderable then first else compareLists seen xs ys
+
+        and compareEntries seen left right =
+            match left, right with
+            | [], [] -> 0
+            | [], _ -> -1
+            | _, [] -> 1
+            | (leftKey, leftValue) :: leftTail, (rightKey, rightValue) :: rightTail ->
+                let keyOrder = compare leftKey rightKey
+
+                if keyOrder <> 0 then
+                    keyOrder
+                else
+                    let valueOrder = compareValues seen leftValue rightValue
+
+                    if valueOrder <> 0 || cycle || unorderable then
+                        valueOrder
+                    else
+                        compareEntries seen leftTail rightTail
+
+        let answer =
+            match a, b with
+            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
+            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
+            | _ -> compareValues [] a b
+
+        if cycle then OrderingCycleDetected
+        elif unorderable then Unorderable
+        else Order answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =
@@ -158,7 +440,8 @@ module Value =
         | VBool b -> b
         | VInt i -> i <> 0L
         | VStr s -> s <> ""
-        | VList xs -> not (List.isEmpty xs)
+        | VList xs -> not (List.isEmpty xs.Value)
+        | VRange values -> not (List.isEmpty values)
         | VMap m -> not (Map.isEmpty m.Value)
         | VClosure _
         | VFunc _ -> true

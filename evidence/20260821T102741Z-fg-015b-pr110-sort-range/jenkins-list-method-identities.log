@@ -1,0 +1,7 @@
+===== fg015b-list-method-identities
+RESULT: success
+| each:source=[9, 2];result=[9, 2]
+| findAll:source=[1, 2, 3];result=[9, 3]
+| reverse:source=[1, 2, 3];result=[9, 2, 1]
+| collect:source=[1, 2];result=[9, 20]
+| scalar:find=2;any=true;every=true;first=1;last=3

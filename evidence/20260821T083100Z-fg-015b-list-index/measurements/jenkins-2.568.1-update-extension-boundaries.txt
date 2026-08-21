@@ -1,0 +1,9 @@
+===== fg015b-update-extension-boundaries
+RESULT: success
+| at-size-compound:caught:NullPointerException:[1]
+| beyond-compound:caught:NullPointerException:[1]
+| empty-inc:caught:NullPointerException:[]
+| at-size-inc:caught:NullPointerException:[1]
+| beyond-dec:caught:NullPointerException:[1]
+| at-size-string:success:[1, nullx]
+| extension-update-events:[at-size-compound-rhs, beyond-compound-rhs]

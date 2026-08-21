@@ -1023,7 +1023,7 @@ module WalkerOrchestration =
                 let hostedBindings =
                     match ctx.HostedArgs with
                     | Some(VList items :: _, _) ->
-                        items
+                        items.Value
                         |> List.choose (fun v ->
                             let entry = Value.toDisplay v
 
@@ -1052,7 +1052,7 @@ module WalkerOrchestration =
 
                 let hostedMalformed =
                     match ctx.HostedArgs with
-                    | Some(VList items :: _, _) -> items |> List.map Value.toDisplay |> List.filter malformed
+                    | Some(VList items :: _, _) -> items.Value |> List.map Value.toDisplay |> List.filter malformed
                     | _ -> []
 
                 let rawMalformed =

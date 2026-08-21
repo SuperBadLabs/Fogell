@@ -1,0 +1,482 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index d3731fd..1c29730 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -622,6 +622,13 @@ harness that can…". Doing them together is one push instead of five stalls.
+ 
+ Ranked by corpus set-cover among the 119 Jenkins-ready files, not popularity.
+ 
++FG-015b's PR #110 complexity closure is retained in
++[evidence](../evidence/20260821T111508Z-fg-015b-pr110-complexity): reference-cycle
++scanning is iterative O(V+E) over identity-memoized completed nodes, sibling
++aliases remain legal, equality/ordering no longer re-expand completed shared-DAG
++pairs, and invalid hosted calls no longer force expanded collection display
++before their no-effect validation refusal. Compatibility counts are unchanged.
++
+ | id | pri | status | item | demand |
+ |---|---|---|---|---:|
+ | FG-040 | P0 | **DONE** | `sh` / `bat` with real subprocess, streaming log, exit-code propagation | Exit 0 → Success, exit 7 → Failure with the code named in the diagnostic; stdout/stderr separated; output streams line-by-line during the run; env passed through; unimplemented steps fail closed by name |
+diff --git a/src/Fogell.Differential/WalkerRules.fs b/src/Fogell.Differential/WalkerRules.fs
+index 6fa9380..6bfc58c 100644
+--- a/src/Fogell.Differential/WalkerRules.fs
++++ b/src/Fogell.Differential/WalkerRules.fs
+@@ -247,8 +247,21 @@ module WalkerRules =
+ 
+     let private noCheck = fun (_: Fogell.Groovy.Interpreter.Value list) (_: (string * Fogell.Groovy.Interpreter.Value) list) -> None
+ 
++    /// Validation diagnostics must be bounded independently of a value graph's
++    /// expanded textual size. Scalars retain their useful spelling; collections
++    /// use a type marker so an invalid hosted call cannot spend exponential time
++    /// rendering a small, heavily aliased DAG before it reports the shape error.
++    let private diagnosticValue =
++        function
++        | Fogell.Groovy.Interpreter.VList _ -> "<list>"
++        | Fogell.Groovy.Interpreter.VMap _ -> "<map>"
++        | Fogell.Groovy.Interpreter.VRange _ -> "<range>"
++        | Fogell.Groovy.Interpreter.VClosure _ -> "<closure>"
++        | Fogell.Groovy.Interpreter.VFunc(name, _, _) -> $"<function {name}>"
++        | value -> Fogell.Groovy.Interpreter.Value.toDisplay value
++
+     let stepDescriptors: Map<string, StepDescriptor> =
+-        let open' = Fogell.Groovy.Interpreter.Value.toDisplay
++        let open' = diagnosticValue
+         let row max primary required missingPrimaryException named unsupported unknown returnValue shape check =
+             { MaxPositionals = max
+               PrimaryParameter = primary
+@@ -390,14 +403,18 @@ module WalkerRules =
+         (positional: Fogell.Groovy.Interpreter.Value list)
+         (named: (string * Fogell.Groovy.Interpreter.Value) list)
+         : Result<ValidatedHostedCall, HostedCallFailure> =
+-        let shown = positional |> List.map Fogell.Groovy.Interpreter.Value.toDisplay |> String.concat ", "
++        // Kept lazy because descriptor lookup and several binding failures do
++        // not need values at all. When a shape diagnostic does, its rendering is
++        // bounded by argument count rather than recursively expanded aliases.
++        let shown () = positional |> List.map diagnosticValue |> String.concat ", "
+ 
+         match Map.tryFind name stepDescriptors with
+         | None -> Error(EngineRefusal $"hosted step `{name}` has no descriptor")
+         | Some _ when not (List.isEmpty positional) && not (List.isEmpty named) ->
++            let displayed = shown ()
+             Error(
+                 EngineRefusal
+-                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
++                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{displayed}]` with 'Expected named arguments'"
+             )
+         | Some descriptor ->
+             let unsupported =
+@@ -442,7 +459,8 @@ module WalkerRules =
+                     | _ -> positional, named
+ 
+                 if List.length normalisedPositional > descriptor.MaxPositionals then
+-                    Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{shown}]`")
++                    let displayed = shown ()
++                    Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{displayed}]`")
+                 elif descriptor.RequiresPrimary && List.isEmpty normalisedPositional then
+                     let primary = defaultArg descriptor.PrimaryParameter "its primary parameter"
+                     match descriptor.MissingPrimaryException with
+diff --git a/src/Fogell.Groovy.Interpreter/Value.fs b/src/Fogell.Groovy.Interpreter/Value.fs
+index 8189e19..1d33404 100644
+--- a/src/Fogell.Groovy.Interpreter/Value.fs
++++ b/src/Fogell.Groovy.Interpreter/Value.fs
+@@ -60,55 +60,91 @@ and Env =
+     { Vars: Map<string, Value ref>
+       Funcs: Map<string, (string list * Stmt list) list> }
+ 
++type private ReferencePairComparer() =
++    interface System.Collections.Generic.IEqualityComparer<obj * obj> with
++        member _.Equals((leftA, leftB), (rightA, rightB)) =
++            System.Object.ReferenceEquals(leftA, rightA)
++            && System.Object.ReferenceEquals(leftB, rightB)
++
++        member _.GetHashCode((left, right)) =
++            let leftHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode left
++            let rightHash = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode right
++            (leftHash * 397) ^^^ rightHash
++
+ module Value =
+ 
+     let rangeItems values = values |> List.map VInt
+ 
++    type ReferenceCycleScan =
++        { HasCycle: bool
++          ReferencesVisited: int
++          EdgesVisited: int }
++
++    type private ReferenceCycleFrame =
++        | InspectReference of Value
++        | CompleteReference of obj
++
+     /// Whether a value graph contains a reference cycle of any length. This is
+     /// deliberately stricter than [tryToDisplay]: Groovy's collection renderer
+     /// has direct-self markers, but Jenkins' step argument coercion/hash path
+     /// still overflows for those same values before a hosted call is dispatched.
+-    /// Repeated aliases on sibling paths are not cycles, so the active path —
+-    /// rather than one global visited set — is the boundary.
+-    let hasReferenceCycle value =
+-        let mutable pending: (obj list * Value) list = [ [], value ]
++    /// Repeated aliases on sibling paths are not cycles, so [active] is the
++    /// ancestry boundary. [completed] is separately memoized: once one acyclic
++    /// reference and all of its descendants have been discharged, a sibling
++    /// alias cannot disclose a new back edge and is skipped in O(1).
++    let scanReferenceCycles value =
++        let active = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
++        let completed = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
++        let pending = System.Collections.Generic.List<ReferenceCycleFrame>()
+         let mutable cycle = false
++        let mutable referencesVisited = 0
++        let mutable edgesVisited = 0
+ 
+-        while not cycle && not pending.IsEmpty do
+-            let path, current = List.head pending
+-            pending <- List.tail pending
++        pending.Add(InspectReference value)
+ 
+-            let alreadyActive candidate =
+-                path
+-                |> List.exists (fun prior -> System.Object.ReferenceEquals(prior, candidate))
++        let enter identity children =
++            if completed.Contains identity then
++                ()
++            elif active.Contains identity then
++                cycle <- true
++            else
++                active.Add identity |> ignore
++                referencesVisited <- referencesVisited + 1
++                edgesVisited <- edgesVisited + List.length children
++                pending.Add(CompleteReference identity)
+ 
+-            match current with
+-            | VList items ->
+-                if alreadyActive items then
+-                    cycle <- true
+-                else
+-                    let inner = box items :: path
+-                    pending <- (items.Value |> List.map (fun item -> inner, item)) @ pending
+-            | VMap entries ->
+-                if alreadyActive entries then
+-                    cycle <- true
+-                else
+-                    let inner = box entries :: path
++                // LIFO: the completion marker stays below every child, so
++                // [active] is exactly the current DFS ancestry. A later alias
++                // reaches [completed] in O(1) rather than expanding again.
++                for child in List.rev children do
++                    pending.Add(InspectReference child)
+ 
+-                    pending <-
+-                        (entries.Value
+-                         |> Map.toList
+-                         |> List.map (fun (_, item) -> inner, item))
+-                        @ pending
+-            | VNull
+-            | VBool _
+-            | VInt _
+-            | VStr _
+-            | VRange _
+-            | VClosure _
+-            | VFunc _ -> ()
++        while not cycle && pending.Count > 0 do
++            let last = pending.Count - 1
++            let frame = pending.[last]
++            pending.RemoveAt last
+ 
+-        cycle
++            match frame with
++            | InspectReference current ->
++                match current with
++                | VList items -> enter (box items) items.Value
++                | VMap entries -> enter (box entries) (entries.Value |> Map.toList |> List.map snd)
++                | VNull
++                | VBool _
++                | VInt _
++                | VStr _
++                | VRange _
++                | VClosure _
++                | VFunc _ -> ()
++            | CompleteReference identity ->
++                active.Remove identity |> ignore
++                completed.Add identity |> ignore
++
++        { HasCycle = cycle
++          ReferencesVisited = referencesVisited
++          EdgesVisited = edgesVisited }
++
++    let hasReferenceCycle value = (scanReferenceCycles value).HasCycle
+ 
+     /// FG-191. What a comparison of two values CAME TO — a plain bool, or the
+     /// discovery of a reference cycle that structural recursion would chase
+@@ -213,12 +249,17 @@ module Value =
+     ///     distinct pairs reported rather than chased.
+     let tryEq (a: Value) (b: Value) : Compared =
+         let mutable cycle = false
++        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
+ 
+         let rec go (seen: (obj * obj) list) a b =
+             match a, b with
+             | VMap ma, VMap mb ->
++                let pair = box ma, box mb
++
+                 if System.Object.ReferenceEquals(ma, mb) then
+                     true
++                elif completed.Contains pair then
++                    true
+                 elif
+                     seen
+                     |> List.exists (fun (x, y) ->
+@@ -227,17 +268,25 @@ module Value =
+                     cycle <- true
+                     false
+                 else
+-                    let inner = (box ma, box mb) :: seen
++                    let inner = pair :: seen
+ 
+-                    ma.Value.Count = mb.Value.Count
+-                    && ma.Value
+-                       |> Map.forall (fun k v ->
+-                           match Map.tryFind k mb.Value with
+-                           | Some w -> go inner v w
+-                           | None -> false)
++                    let equal =
++                        ma.Value.Count = mb.Value.Count
++                        && ma.Value
++                           |> Map.forall (fun k v ->
++                               match Map.tryFind k mb.Value with
++                               | Some w -> go inner v w
++                               | None -> false)
++
++                    if equal && not cycle then completed.Add pair |> ignore
++                    equal
+             | VList xa, VList xb ->
++                let pair = box xa, box xb
++
+                 if System.Object.ReferenceEquals(xa, xb) then
+                     true
++                elif completed.Contains pair then
++                    true
+                 elif
+                     seen
+                     |> List.exists (fun (x, y) ->
+@@ -246,8 +295,10 @@ module Value =
+                     cycle <- true
+                     false
+                 else
+-                    let inner = (box xa, box xb) :: seen
+-                    xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
++                    let inner = pair :: seen
++                    let equal = xa.Value.Length = xb.Value.Length && List.forall2 (go inner) xa.Value xb.Value
++                    if equal && not cycle then completed.Add pair |> ignore
++                    equal
+             | VRange xa, VRange xb -> xa = xb
+             | VRange xa, VList xb ->
+                 let left = rangeItems xa
+@@ -281,6 +332,7 @@ module Value =
+     let tryCompare (a: Value) (b: Value) : Ordered =
+         let mutable cycle = false
+         let mutable unorderable = false
++        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
+ 
+         let rank = function
+             | VNull -> 0
+@@ -312,23 +364,32 @@ module Value =
+                 | VInt x, VInt y -> compare x y
+                 | VStr x, VStr y -> compare x y
+                 | VList xs, VList ys ->
+-                    if seenPair seen (box xs) (box ys) then
++                    let pair = box xs, box ys
++
++                    if completed.Contains pair then
++                        0
++                    elif seenPair seen (box xs) (box ys) then
+                         cycle <- true
+                         0
+                     else
+-                        compareLists ((box xs, box ys) :: seen) xs.Value ys.Value
++                        let answer = compareLists (pair :: seen) xs.Value ys.Value
++                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
++                        answer
+                 | VRange xs, VRange ys -> compareLists seen (rangeItems xs) (rangeItems ys)
+                 | VRange xs, VList ys -> compareLists seen (rangeItems xs) ys.Value
+                 | VList xs, VRange ys -> compareLists seen xs.Value (rangeItems ys)
+                 | VMap xs, VMap ys ->
+-                    if seenPair seen (box xs) (box ys) then
++                    let pair = box xs, box ys
++
++                    if completed.Contains pair then
++                        0
++                    elif seenPair seen (box xs) (box ys) then
+                         cycle <- true
+                         0
+                     else
+-                        compareEntries
+-                            ((box xs, box ys) :: seen)
+-                            (Map.toList xs.Value)
+-                            (Map.toList ys.Value)
++                        let answer = compareEntries (pair :: seen) (Map.toList xs.Value) (Map.toList ys.Value)
++                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
++                        answer
+                 | VClosure _, VClosure _
+                 | VFunc _, VFunc _ ->
+                     unorderable <- true
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 3752d23..e94a1fa 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -1671,6 +1671,24 @@ let stepDescriptorValidation =
+               match WalkerRules.validateHostedCall "withEnv" [ v "A=1" ] [] with
+               | Error(WalkerRules.EngineRefusal _) -> ()
+               | other -> failtestf "typed shape should remain an engine refusal, got %A" other
++          }
++
++          test "invalid hosted calls diagnose a shared DAG promptly without rendering it" {
++              let mutable dag =
++                  Fogell.Groovy.Interpreter.VList(ref [ Fogell.Groovy.Interpreter.VInt 1L ])
++
++              for _ in 1..30 do
++                  dag <- Fogell.Groovy.Interpreter.VList(ref [ dag; dag ])
++
++              let stopwatch = Diagnostics.Stopwatch.StartNew()
++
++              match WalkerRules.validateHostedCall "deleteDir" [ dag ] [] with
++              | Error(WalkerRules.EngineRefusal reason) ->
++                  stopwatch.Stop()
++                  Expect.stringContains reason "<list>" "the bounded marker still identifies the rejected value type"
++                  Expect.isLessThan reason.Length 200 "the refusal cannot contain an exponentially expanded value"
++                  Expect.isLessThan stopwatch.ElapsedMilliseconds 5000L "validation reaches the refusal promptly"
++              | other -> failtestf "invalid deleteDir call escaped its no-effect validation boundary: %A" other
+           } ]
+ 
+ /// FG-177 slice 2. These cross the real hosted boundary: validation, walker dispatch,
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index 63bde2b..da38354 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -1411,9 +1411,90 @@ let cyclicValues =
+     let runS src =
+         Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+ 
++    let sharedDag leaf depth =
++        let mutable value = VList(ref [ leaf ])
++
++        for _ in 1..depth do
++            value <- VList(ref [ value; value ])
++
++        value
++
+     testList
+         "FG-191 cyclic values and closure identity"
+-        [ test "displaying a self-referential map renders (this Map), as Groovy does" {
++        [ test "reference-cycle scan visits a shared DAG once and remains stack-safe" {
++              let depth = 30
++              let dag = sharedDag (VInt 1L) depth
++              let scan = Value.scanReferenceCycles dag
++
++              Expect.isFalse scan.HasCycle "sibling aliases are not ancestry cycles"
++              Expect.equal scan.ReferencesVisited (depth + 1) "every distinct list ref is entered once"
++              Expect.equal scan.EdgesVisited (1 + (2 * depth)) "edges are charged once per completed node"
++
++              let mutable deep = VNull
++              let deepLength = 50000
++
++              for _ in 1..deepLength do
++                  deep <- VList(ref [ deep ])
++
++              let deepScan = Value.scanReferenceCycles deep
++              Expect.isFalse deepScan.HasCycle "a deep acyclic chain is not a cycle"
++              Expect.equal deepScan.ReferencesVisited deepLength "iterative traversal reaches every ref without stack recursion"
++              Expect.equal deepScan.EdgesVisited deepLength "one edge per chain node"
++
++              let direct = ref [ VNull ]
++              direct.Value <- [ VList direct ]
++              Expect.isTrue (Value.scanReferenceCycles (VList direct)).HasCycle "a direct list cycle remains visible"
++
++              let mixedList = ref [ VNull ]
++              let mixedMap = ref (Map.ofList [ "back", VList mixedList ])
++              mixedList.Value <- [ VMap mixedMap ]
++              Expect.isTrue (Value.scanReferenceCycles (VList mixedList)).HasCycle "a mixed list/map cycle remains visible"
++          }
++
++          test "equality and ordering memoize completed shared pairs" {
++              let left = sharedDag (VInt 1L) 26
++              let right = sharedDag (VInt 1L) 26
++              let unequal = sharedDag (VInt 2L) 26
++
++              Expect.equal (Value.tryEq left right) (Value.Answer true) "equal shared DAGs terminate without re-expansion"
++              Expect.equal (Value.tryCompare left right) (Value.Order 0) "ordering shared DAGs terminates without re-expansion"
++              Expect.equal (Value.tryEq left unequal) (Value.Answer false) "memoization cannot turn a leaf mismatch into equality"
++              Expect.equal (Value.tryCompare left unequal) (Value.Order -1) "memoization retains the first nonzero leaf order"
++
++              let directLeft = ref [ VNull ]
++              let directRight = ref [ VNull ]
++              directLeft.Value <- [ VList directLeft ]
++              directRight.Value <- [ VList directRight ]
++
++              Expect.equal
++                  (Value.tryEq (VList directLeft) (VList directRight))
++                  Value.CycleDetected
++                  "completed pairs never mask a direct equality cycle"
++
++              Expect.equal
++                  (Value.tryCompare (VList directLeft) (VList directRight))
++                  Value.OrderingCycleDetected
++                  "completed pairs never mask a direct ordering cycle"
++
++              let mixedListLeft = ref [ VNull ]
++              let mixedListRight = ref [ VNull ]
++              let mixedMapLeft = ref (Map.ofList [ "back", VList mixedListLeft ])
++              let mixedMapRight = ref (Map.ofList [ "back", VList mixedListRight ])
++              mixedListLeft.Value <- [ VMap mixedMapLeft ]
++              mixedListRight.Value <- [ VMap mixedMapRight ]
++
++              Expect.equal
++                  (Value.tryEq (VList mixedListLeft) (VList mixedListRight))
++                  Value.CycleDetected
++                  "a list/map equality cycle crosses both memoized pair kinds"
++
++              Expect.equal
++                  (Value.tryCompare (VList mixedListLeft) (VList mixedListRight))
++                  Value.OrderingCycleDetected
++                  "a list/map ordering cycle crosses both memoized pair kinds"
++          }
++
++          test "displaying a self-referential map renders (this Map), as Groovy does" {
+               let o = runS "def m = [:]\nm.self = m\nreturn \"${m}\""
+               Expect.isNone o.Fault "survives"
+               Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
+@@ -1646,6 +1727,37 @@ let cyclicValues =
+               Expect.isEmpty performed "named coercion also has zero hosted effects"
+           }
+ 
++          test "a shared DAG reaches hosted validation promptly without an effect" {
++              let mutable validations = 0
++              let effects = ResizeArray<string>()
++
++              let host =
++                  { Perform =
++                      fun _ _ _ _ _ ->
++                          validations <- validations + 1
++                          Interpreter.raiseHostedCallRefused "deleteDir takes no arguments"
++                    CanContinue = fun () -> true
++                    SetEnv = fun _ _ -> ()
++                    CurrentEnv = fun () -> []
++                    TakesBlock = fun _ -> false }
++
++              let stopwatch = System.Diagnostics.Stopwatch.StartNew()
++
++              let outcome =
++                  Interpreter.runHosted host Budget.defaults (set [ "deleteDir" ]) Env.empty
++                      (parseOk (
++                          "def dag = [1]\ndef i = 0\n"
++                          + "while (i < 30) { dag = [dag, dag]; i++ }\n"
++                          + "deleteDir dag"
++                      ))
++
++              stopwatch.Stop()
++              Expect.equal outcome.Fault (Some(HostedCallRefused "deleteDir takes no arguments")) "validation refusal is returned"
++              Expect.equal validations 1 "the small shared graph crosses cycle coercion once"
++              Expect.isEmpty effects "validation refusal records no hosted effect"
++              Expect.isLessThan stopwatch.ElapsedMilliseconds 5000L "completed-reference memoization avoids exponential alias expansion"
++          }
++
+           test "cyclic map keys preserve hashing Error ancestry" {
+               let notException =
+                   runS (

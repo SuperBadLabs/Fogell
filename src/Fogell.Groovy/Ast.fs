@@ -64,6 +64,14 @@ and Stmt =
     | SExpr of Expr
     | SDef of name: string * value: Expr option
     | SAssign of target: Expr * value: Expr
+    /// FG-015b. Computed index updates must retain their syntax: Groovy
+    /// evaluates a receiver and key once for `+=`, while the old lowering to
+    /// `lhs = lhs + rhs` duplicated both. Kept index-specific so ordinary
+    /// property assignment semantics do not move with this ticket.
+    | SIndexCompoundAssign of target: Expr * op: string * value: Expr
+    /// Postfix index update returns the old value and also evaluates its l-value
+    /// once; neither fact survives lowering to an ordinary assignment.
+    | SIndexPostfixAssign of target: Expr * op: string
     | SIf of cond: Expr * thenBranch: Stmt list * elseBranch: Stmt list
     | SForIn of var: string * source: Expr * body: Stmt list
     | SWhile of cond: Expr * body: Stmt list
@@ -123,6 +131,8 @@ module Ast =
               | SExpr _
               | SDef _
               | SAssign _
+              | SIndexCompoundAssign _
+              | SIndexPostfixAssign _
               | SReturn _
               | SBreak
               | SContinue
@@ -244,6 +254,12 @@ module Ast =
                 targetMatches target
                 || expressionHasNestedAssignment target
                 || expressionHasNestedAssignment value
+            | SIndexCompoundAssign(target, _, value) ->
+                targetMatches target
+                || expressionHasNestedAssignment target
+                || expressionHasNestedAssignment value
+            | SIndexPostfixAssign(target, _) ->
+                targetMatches target || expressionHasNestedAssignment target
             | SExpr expr -> expressionHasNestedAssignment expr
             | SDef(_, value)
             | SReturn value -> value |> Option.exists expressionHasNestedAssignment
@@ -328,6 +344,8 @@ module Ast =
             | SDef(_, Some e) -> ofExpr e
             | SDef(_, None) -> Set.empty
             | SAssign(t, v) -> Set.union (ofExpr t) (ofExpr v)
+            | SIndexCompoundAssign(t, _, v) -> Set.union (ofExpr t) (ofExpr v)
+            | SIndexPostfixAssign(t, _) -> ofExpr t
             | SIf(c, a, b) -> Set.unionMany [ ofExpr c; freeCalls a; freeCalls b ]
             | SForIn(_, src, b) -> Set.union (ofExpr src) (freeCalls b)
             | SWhile(c, b) -> Set.union (ofExpr c) (freeCalls b)
@@ -371,6 +389,8 @@ module Ast =
             | SExpr _
             | SDef _
             | SAssign _
+            | SIndexCompoundAssign _
+            | SIndexPostfixAssign _
             | SReturn _
             | SBreak
             | SContinue

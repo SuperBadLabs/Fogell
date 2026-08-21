@@ -1,0 +1,11 @@
+## agent/fg-015b...origin/agent/fg-015b
+A  differential/cases/fg015b-cyclic-equality-hash.Jenkinsfile
+A  differential/cases/fg015b-cyclic-hosted-coercion.Jenkinsfile
+A  differential/receipts/fg015b-cyclic-equality-hash.receipt.txt
+A  differential/receipts/fg015b-cyclic-hosted-coercion.receipt.txt
+M  docs/COMPATIBILITY-SCORECARD.md
+M  docs/EXECUTION_BOARD.md
+M  src/Fogell.Groovy.Interpreter/Interpreter.fs
+M  src/Fogell.Groovy.Interpreter/Value.fs
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/20260821T105129Z-fg-015b-pr110-cycle-closure/

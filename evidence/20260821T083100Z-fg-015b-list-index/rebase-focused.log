@@ -1,0 +1,24 @@
+FG-015b post-rebase focused verification
+base: 11ca7b315cdb0ec5b5ca962f0bab3eec28fee946
+
+Unit suites (Release, --no-build after rebuilding both test projects):
+  Fogell.Groovy / FG-015: 24 passed, 0 failed
+  Fogell.Groovy / FG-191: 7 passed, 0 failed
+  Fogell.Groovy / FG-011: 17 passed, 0 failed
+  Fogell.Differential / FG-015: 18 passed, 0 failed
+  Fogell.Differential / FG-174 return-flag contract: 13 passed, 0 failed
+  Fogell.Differential / FG-177 genuine-null runtime publication: 4 passed, 0 failed
+
+Pinned Jenkins 2.568.1 direct differential replay after rebuilding the CLI:
+  fg015b-list-index-identity: PROVEN
+  fg015b-list-index-boundaries: PROVEN
+  fg015b-list-index-self-cycle: PROVEN
+  fg177-genuine-null-basic: PROVEN
+  fg177-genuine-null-binding: PROVEN
+  fg177-genuine-null-stateful: PROVEN
+
+Audit note: an initial FG-177 replay was intentionally discarded after it exposed
+that --no-build had selected the pre-rebase CLI output directory. The CLI project
+was rebuilt from the rebased tree before the three PROVEN results above. The
+FG-015b cases had already passed in that initial run and were covered again by
+the final full gate and their unchanged sealed receipts.

@@ -1,0 +1,9 @@
+ .../fg015b-cycle-display-ancestry.Jenkinsfile      |  48 +++++++++
+ .../cases/fg015b-live-list-iteration.Jenkinsfile   |  59 +++++++++++
+ .../fg015b-cycle-display-ancestry.receipt.txt      |  89 ++++++++++++++++
+ .../fg015b-live-list-iteration.receipt.txt         |  95 +++++++++++++++++
+ docs/COMPATIBILITY-SCORECARD.md                    |   2 +-
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ src/Fogell.Groovy.Interpreter/Interpreter.fs       | 114 +++++++++++++++------
+ tests/Fogell.Groovy.Tests/Tests.fs                 |  70 ++++++++++++-
+ 8 files changed, 442 insertions(+), 37 deletions(-)

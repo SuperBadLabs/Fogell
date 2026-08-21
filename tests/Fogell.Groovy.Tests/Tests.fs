@@ -100,7 +100,7 @@ let grammar =
                   (Ast.containsSpreadAssignment (parseOk "rows.name = 'x'\n"))
                   "ordinary assignment remains outside the refusal"
           }
-          test "index results are outer receiver boundaries while direct projected indexes stay visible" {
+          test "index updates retain syntax while index results remain outer receiver boundaries" {
               let outer =
                   parseOk (
                       "rows*.child[0].name = 'x'\n"
@@ -148,16 +148,16 @@ let grammar =
 
               match direct with
               | [ SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
-                  SAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), _)
+                  SIndexCompoundAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "+", _)
+                  SIndexPostfixAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "+")
+                  SIndexPostfixAssign(EIndex(ESpreadProp(EVar "rows", "child"), EInt 0L), "-")
                   SAssign(EIndex(EIndex(ESpreadProp(EVar "rows", "children"), EInt 0L), EInt 1L), _) ] -> ()
               | other -> failtestf "direct projected-index targets lost their AST shapes: %A" other
 
               Expect.isFalse (Ast.containsSpreadAssignment direct) "index results stop the spread-write traversal"
               Expect.isTrue
                   (Ast.containsSpreadDerivedIndexAssignment direct)
-                  "plain, compound, increment, decrement and nested direct indexes share the bounded refusal"
+                  "the legacy audit scanner still identifies every direct spread-derived index form"
           }
           test "spread reads used to compute a write target are not themselves write paths" {
               let source =
@@ -1189,7 +1189,7 @@ let hostedSteps =
                           (match name, positional with
                            | "withEnv", [ VList entries ] ->
                                let pairs =
-                                   entries
+                                   entries.Value
                                    |> List.choose (function
                                        | VStr s ->
                                            match s.Split([| '=' |], 2) with
@@ -1411,12 +1411,228 @@ let cyclicValues =
     let runS src =
         Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
 
+    let sharedDag leaf depth =
+        let mutable value = VList(ref [ leaf ])
+
+        for _ in 1..depth do
+            value <- VList(ref [ value; value ])
+
+        value
+
     testList
         "FG-191 cyclic values and closure identity"
-        [ test "displaying a self-referential map renders (this Map), as Groovy does" {
+        [ test "reference-cycle scan visits a shared DAG once and remains stack-safe" {
+              let depth = 30
+              let dag = sharedDag (VInt 1L) depth
+              let scan = Value.scanReferenceCycles dag
+
+              Expect.isFalse scan.HasCycle "sibling aliases are not ancestry cycles"
+              Expect.equal scan.ReferencesVisited (depth + 1) "every distinct list ref is entered once"
+              Expect.equal scan.EdgesVisited (1 + (2 * depth)) "edges are charged once per completed node"
+
+              let mutable deep = VNull
+              let deepLength = 50000
+
+              for _ in 1..deepLength do
+                  deep <- VList(ref [ deep ])
+
+              let deepScan = Value.scanReferenceCycles deep
+              Expect.isFalse deepScan.HasCycle "a deep acyclic chain is not a cycle"
+              Expect.equal deepScan.ReferencesVisited deepLength "iterative traversal reaches every ref without stack recursion"
+              Expect.equal deepScan.EdgesVisited deepLength "one edge per chain node"
+
+              let direct = ref [ VNull ]
+              direct.Value <- [ VList direct ]
+              Expect.isTrue (Value.scanReferenceCycles (VList direct)).HasCycle "a direct list cycle remains visible"
+
+              let mixedList = ref [ VNull ]
+              let mixedMap = ref (Map.ofList [ "back", VList mixedList ])
+              mixedList.Value <- [ VMap mixedMap ]
+              Expect.isTrue (Value.scanReferenceCycles (VList mixedList)).HasCycle "a mixed list/map cycle remains visible"
+          }
+
+          test "equality and ordering memoize completed shared pairs" {
+              let left = sharedDag (VInt 1L) 26
+              let right = sharedDag (VInt 1L) 26
+              let unequal = sharedDag (VInt 2L) 26
+
+              Expect.equal (Value.tryEq left right) (Value.Answer true) "equal shared DAGs terminate without re-expansion"
+              Expect.equal (Value.tryCompare left right) (Value.Order 0) "ordering shared DAGs terminates without re-expansion"
+              Expect.equal (Value.tryEq left unequal) (Value.Answer false) "memoization cannot turn a leaf mismatch into equality"
+              Expect.equal (Value.tryCompare left unequal) (Value.Order -1) "memoization retains the first nonzero leaf order"
+
+              let directLeft = ref [ VNull ]
+              let directRight = ref [ VNull ]
+              directLeft.Value <- [ VList directLeft ]
+              directRight.Value <- [ VList directRight ]
+
+              Expect.equal
+                  (Value.tryEq (VList directLeft) (VList directRight))
+                  Value.CycleDetected
+                  "completed pairs never mask a direct equality cycle"
+
+              Expect.equal
+                  (Value.tryCompare (VList directLeft) (VList directRight))
+                  Value.OrderingCycleDetected
+                  "completed pairs never mask a direct ordering cycle"
+
+              let mixedListLeft = ref [ VNull ]
+              let mixedListRight = ref [ VNull ]
+              let mixedMapLeft = ref (Map.ofList [ "back", VList mixedListLeft ])
+              let mixedMapRight = ref (Map.ofList [ "back", VList mixedListRight ])
+              mixedListLeft.Value <- [ VMap mixedMapLeft ]
+              mixedListRight.Value <- [ VMap mixedMapRight ]
+
+              Expect.equal
+                  (Value.tryEq (VList mixedListLeft) (VList mixedListRight))
+                  Value.CycleDetected
+                  "a list/map equality cycle crosses both memoized pair kinds"
+
+              Expect.equal
+                  (Value.tryCompare (VList mixedListLeft) (VList mixedListRight))
+                  Value.OrderingCycleDetected
+                  "a list/map ordering cycle crosses both memoized pair kinds"
+          }
+
+          test "displaying a self-referential map renders (this Map), as Groovy does" {
               let o = runS "def m = [:]\nm.self = m\nreturn \"${m}\""
               Expect.isNone o.Fault "survives"
               Expect.equal o.Returned (Some(VStr "[self:(this Map)]")) "Groovy's own rendering"
+          }
+
+          test "list identity is cycle-safe without erasing Groovy's direct-self marker" {
+              let direct = runS "def xs = [null]\nxs[0] = xs\nreturn \"${xs}:${xs == xs}\""
+              Expect.isNone direct.Fault "direct self display and identity equality survive"
+              Expect.equal direct.Returned (Some(VStr "[(this Collection)]:true")) "Groovy's direct self marker"
+
+              let distinct = runS "def a = [null]\na[0] = a\ndef b = [null]\nb[0] = b\nreturn a == b"
+
+              match distinct.Fault with
+              | Some(CyclicValue Equality) -> ()
+              | other -> failtestf "expected distinct-cycle comparison fault, got %A" other
+
+              let mixed = runS "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\nreturn \"${xs}\""
+
+              match mixed.Fault with
+              | Some(CyclicValue Display) -> ()
+              | other -> failtestf "expected typed mixed-cycle display fault, got %A" other
+          }
+
+          test "cyclic display retains StackOverflowError ancestry for interpolation and toString" {
+              let notException =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return \"${xs}\" } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue Display) -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic display: %A" other
+
+              let caughtByError =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return xs.toString() } catch (Error e) { return 'caught-error' }"
+                  )
+
+              Expect.isNone caughtByError.Fault "Error intercepts StackOverflowError"
+              Expect.equal caughtByError.Returned (Some(VStr "caught-error")) "explicit toString uses typed display fault"
+
+              let caughtByThrowable =
+                  runS (
+                      "def xs = [null]\ndef m = [back: xs]\nxs[0] = m\n"
+                      + "try { return 'value=' + xs } catch (Throwable e) { return 'caught-throwable' }"
+                  )
+
+              Expect.isNone caughtByThrowable.Fault "Throwable intercepts StackOverflowError"
+              Expect.equal caughtByThrowable.Returned (Some(VStr "caught-throwable")) "string concatenation shares the boundary"
+          }
+
+          test "list closure methods and for-in observe live index writes and extensions" {
+              let o =
+                  runS (
+                      "def eachXs = [1, 2]\ndef eachSeen = []\n"
+                      + "eachXs.each { eachSeen << it; if (it == 1) { eachXs[0] = 8; eachXs[1] = 9; eachXs << 3 }; if (it == 9) { eachXs[0] = 7 } }\n"
+                      + "echo \"each:${eachSeen}:${eachXs}\"\n"
+                      + "def collectXs = [1, 2]\ndef collected = collectXs.collect { if (it == 1) { collectXs[1] = 9; collectXs << 3 }; it * 10 }\n"
+                      + "echo \"collect:${collected}:${collectXs}\"\n"
+                      + "def filterXs = [1, 2]\ndef filtered = filterXs.findAll { if (it == 1) { filterXs[1] = 9; filterXs << 3 }; it > 1 }\n"
+                      + "echo \"findAll:${filtered}:${filterXs}\"\n"
+                      + "def findXs = [1, 2]\ndef found = findXs.find { if (it == 1) { findXs[1] = 9; findXs << 3 }; it > 5 }\n"
+                      + "echo \"find:${found}:${findXs}\"\n"
+                      + "def anyXs = [1, 2]\ndef anyResult = anyXs.any { if (it == 1) { anyXs[1] = 9; anyXs << 3 }; it == 9 }\n"
+                      + "echo \"any:${anyResult}:${anyXs}\"\n"
+                      + "def everyXs = [1, 2]\ndef everySeen = []\n"
+                      + "def everyResult = everyXs.every { everySeen << it; if (it == 1) { everyXs[1] = 9; everyXs << 3 }; it < 10 }\n"
+                      + "echo \"every:${everyResult}:${everySeen}:${everyXs}\"\n"
+                      + "def forXs = [1, 2]\ndef forSeen = []\n"
+                      + "for (v in forXs) { forSeen << v; if (v == 1) { forXs[1] = 9; forXs[3] = 4 } }\n"
+                      + "echo \"for:${forSeen}:${forXs}\""
+                  )
+
+              Expect.isNone o.Fault "all measured live traversals execute"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "each:[1, 9, 3]:[7, 9, 3]" ]
+                    "echo", [ "collect:[10, 90, 30]:[1, 9, 3]" ]
+                    "echo", [ "findAll:[9, 3]:[1, 9, 3]" ]
+                    "echo", [ "find:9:[1, 9, 3]" ]
+                    "echo", [ "any:true:[1, 9, 3]" ]
+                    "echo", [ "every:true:[1, 9, 3]:[1, 9, 3]" ]
+                    "echo", [ "for:[1, 9, null, 4]:[1, 9, null, 4]" ] ]
+                  "current is captured, unvisited writes are observed, and appended/extended slots are visited"
+          }
+
+          test "sorting cyclic lists follows Jenkins' alias and StackOverflow boundaries without host recursion" {
+              let alias = runS "def a = [null]\na[0] = a\ndef sorted = [a, a].sort()\nreturn sorted.size()"
+              Expect.isNone alias.Fault "a top-level alias compares by identity"
+              Expect.equal alias.Returned (Some(VInt 2L)) "both alias entries remain"
+
+              let distinct =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { [a, b].sort() } catch (Throwable e) { return 'caught' }\nreturn 'missed'"
+                  )
+
+              Expect.isNone distinct.Fault "StackOverflowError is catchable by Throwable"
+              Expect.equal distinct.Returned (Some(VStr "caught")) "the cycle becomes a survivable scripted fault"
+
+              let nestedAlias =
+                  runS (
+                      "def a = [null]\na[0] = a\ndef left = [a]\ndef right = [a]\n"
+                      + "try { [left, right].sort() } catch (Error e) { return 'caught' }\nreturn 'missed'"
+                  )
+
+              Expect.isNone nestedAlias.Fault "the nested-alias overflow is catchable by Error"
+              Expect.equal nestedAlias.Returned (Some(VStr "caught")) "identity does not over-short-circuit nested comparison"
+
+              let notException =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { [a, b].sort() } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue Ordering) -> ()
+              | other -> failtestf "Exception incorrectly intercepted StackOverflowError: %A" other
+          }
+
+          test "every collection ordering entry point is host-safe" {
+              let sorted = runS "return [3, 1, 2].sort()"
+              Expect.equal sorted.Returned (Some(VList(ref [ VInt 1L; VInt 2L; VInt 3L ]))) "acyclic sort is unchanged"
+
+              for methodCall in [ "min()"; "max()"; "unique(false)" ] do
+                  let outcome =
+                      runS (
+                          "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                          + $"return [a, b].{methodCall}"
+                      )
+
+                  match outcome.Fault with
+                  | Some(Denied _) -> ()
+                  | Some(Unsupported _) -> ()
+                  | other -> failtestf "%s escaped its explicit safe refusal: %A" methodCall other
           }
 
           test "same-AST closures from two calls are NOT equal — identity, not structure" {
@@ -1428,7 +1644,7 @@ let cyclicValues =
 
           test "an aliased closure IS equal; a distinct literal is not" {
               let o = runS "def a = { 1 }\ndef b = { 1 }\ndef c = a\nreturn [a == b, a == c]"
-              Expect.equal o.Returned (Some(VList [ VBool false; VBool true ])) "reference semantics"
+              Expect.equal o.Returned (Some(VList(ref [ VBool false; VBool true ]))) "reference semantics"
           }
 
           test "comparing two distinct cyclic maps FAULTS instead of dying" {
@@ -1437,8 +1653,130 @@ let cyclicValues =
               let o = runS "def m = [:]\nm.self = m\ndef n = [:]\nn.self = n\nreturn m == n"
 
               match o.Fault with
-              | Some(Thrown(VStr s)) -> Expect.stringContains s "StackOverflowError" "the matching fault"
+              | Some(CyclicValue Equality) -> ()
               | other -> failtestf "expected the cycle fault, got %A" other
+          }
+
+          test "cyclic equality preserves Error ancestry across == and contains" {
+              let notException =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { return a == b } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue Equality) -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic equality: %A" other
+
+              let caught =
+                  runS (
+                      "def a = [null]\ndef b = [null]\na[0] = a\nb[0] = b\n"
+                      + "try { return [a].contains(b) } catch (Error e) { return 'caught' }"
+                  )
+
+              Expect.isNone caught.Fault "Error catches cyclic contains equality"
+              Expect.equal caught.Returned (Some(VStr "caught")) "the Error arm owns recovery"
+          }
+
+          test "hosted collection coercion faults before dispatch while interpolation keeps self markers" {
+              let performed = ResizeArray<string * Value list * (string * Value) list>()
+
+              let host =
+                  { Perform =
+                      fun _ name positional named runBody ->
+                          performed.Add(name, positional, named)
+                          runBody |> Option.iter (fun run -> run ())
+                          VNull
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let displayed =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk "def xs = [null]\nxs[0] = xs\necho \"${xs}\"\nreturn 'done'")
+
+              Expect.isNone displayed.Fault "interpolation is an ordinary display context"
+              Expect.equal displayed.Returned (Some(VStr "done")) "script continued"
+              Expect.equal (List.ofSeq performed) [ "echo", [ VStr "[(this Collection)]" ], [] ] "only the rendered string reached the host"
+
+              performed.Clear()
+
+              let notException =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk (
+                          "def xs = [null]\nxs[0] = xs\n"
+                          + "try { echo xs } catch (Exception e) { return 'wrong' }"
+                      ))
+
+              match notException.Fault with
+              | Some(CyclicValue HostedArgumentCoercion) -> ()
+              | other -> failtestf "Exception incorrectly intercepted hosted coercion: %A" other
+
+              Expect.isEmpty performed "the host was never entered"
+
+              let caught =
+                  Interpreter.runHosted host Budget.defaults steps Env.empty
+                      (parseOk (
+                          "def xs = [null]\nxs[0] = xs\n"
+                          + "try { echo message: xs } catch (Error e) { return 'caught' }"
+                      ))
+
+              Expect.isNone caught.Fault "Error catches the pre-dispatch StackOverflowError"
+              Expect.equal caught.Returned (Some(VStr "caught")) "the handler ran"
+              Expect.isEmpty performed "named coercion also has zero hosted effects"
+          }
+
+          test "a shared DAG reaches hosted validation promptly without an effect" {
+              let mutable validations = 0
+              let effects = ResizeArray<string>()
+
+              let host =
+                  { Perform =
+                      fun _ _ _ _ _ ->
+                          validations <- validations + 1
+                          Interpreter.raiseHostedCallRefused "deleteDir takes no arguments"
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> []
+                    TakesBlock = fun _ -> false }
+
+              let stopwatch = System.Diagnostics.Stopwatch.StartNew()
+
+              let outcome =
+                  Interpreter.runHosted host Budget.defaults (set [ "deleteDir" ]) Env.empty
+                      (parseOk (
+                          "def dag = [1]\ndef i = 0\n"
+                          + "while (i < 30) { dag = [dag, dag]; i++ }\n"
+                          + "deleteDir dag"
+                      ))
+
+              stopwatch.Stop()
+              Expect.equal outcome.Fault (Some(HostedCallRefused "deleteDir takes no arguments")) "validation refusal is returned"
+              Expect.equal validations 1 "the small shared graph crosses cycle coercion once"
+              Expect.isEmpty effects "validation refusal records no hosted effect"
+              Expect.isLessThan stopwatch.ElapsedMilliseconds 5000L "completed-reference memoization avoids exponential alias expansion"
+          }
+
+          test "cyclic map keys preserve hashing Error ancestry" {
+              let notException =
+                  runS (
+                      "def key = [null]\nkey[0] = key\ndef keyed = [:]\n"
+                      + "try { keyed[key] = 'x' } catch (Exception e) { return 'wrong' }"
+                  )
+
+              match notException.Fault with
+              | Some(CyclicValue HashKey) -> ()
+              | other -> failtestf "Exception incorrectly intercepted cyclic hashing: %A" other
+
+              let caught =
+                  runS (
+                      "def key = [null]\nkey[0] = key\ndef keyed = [:]\n"
+                      + "try { keyed[key] = 'x' } catch (Throwable e) { return keyed.size() }"
+                  )
+
+              Expect.isNone caught.Fault "Throwable catches cyclic key hashing"
+              Expect.equal caught.Returned (Some(VInt 0L)) "the map was not mutated"
           }
 
           test "closures minted by ONE literal in a loop are DISTINCT" {
@@ -1457,6 +1795,91 @@ let cyclicValues =
           test "a map compared WITH ITSELF is simply equal — identity short-circuits" {
               let o = runS "def m = [:]\nm.self = m\nreturn m == m"
               Expect.equal o.Returned (Some(VBool true)) "same ref, no walk"
+          } ]
+
+let fg015bSortAndRangeReview =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-015b sort identity and immutable IntRange"
+        [ test "no-argument sort mutates and returns the same list identity" {
+              let o =
+                  runS (
+                      "def xs = [2, 1, 2]\ndef alias = xs\ndef sorted = xs.sort()\n"
+                      + "sorted[0] = 9\necho xs\necho alias\necho sorted"
+                  )
+
+              Expect.isNone o.Fault "the measured no-copy overload runs"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[9, 2, 2]" ]; "echo", [ "[9, 2, 2]" ]; "echo", [ "[9, 2, 2]" ] ]
+                  "receiver, alias, and return share one ref cell"
+
+              let closureSort = runS "def xs = [2, 1]\nreturn xs.sort { -it }"
+
+              match closureSort.Fault with
+              | Some(Unsupported why) -> Expect.stringContains why "comparator/key closure" "named overload boundary"
+              | other -> failtestf "sort closure was silently accepted: %A" other
+          }
+
+          test "a cyclic sort faults before replacing the receiver contents" {
+              let o =
+                  runS (
+                      "def left = [null]\ndef right = [null]\nleft[0] = left\nright[0] = right\n"
+                      + "def xs = [left, right, 1]\n"
+                      + "try { xs.sort() } catch (Throwable ignored) { echo \"state:${xs[0] == left}:${xs[1] == right}:${xs[2] == 1}\" }"
+                  )
+
+              Expect.isNone o.Fault "the typed StackOverflowError is caught"
+              Expect.equal (stepArgs o) [ "echo", [ "state:true:true:true" ] ] "no partial receiver replacement"
+          }
+
+          test "IntRange stays list-like for reads, equality, iteration, reverse and collect" {
+              let o =
+                  runS (
+                      "def r = 1..3\ndef eachSeen = []\nr.each { eachSeen << it }\n"
+                      + "def forSeen = []\nfor (v in 3..1) { forSeen << v }\n"
+                      + "def reversed = r.reverse()\nreversed[0] = 9\n"
+                      + "def collected = r.collect { it * 10 }\ncollected[0] = 8\n"
+                      + "echo \"range:${r}:${r[0]}:${r[-1]}:${r[5]}:${r == [1, 2, 3]}\"\n"
+                      + "echo \"iteration:${eachSeen}:${forSeen}\"\n"
+                      + "echo \"fresh:${reversed}:${collected}:${r}\""
+                  )
+
+              Expect.isNone o.Fault "all read-only/fresh-result range operations execute"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "range:[1, 2, 3]:1:3:null:true" ]
+                    "echo", [ "iteration:[1, 2, 3]:[3, 2, 1]" ]
+                    "echo", [ "fresh:[9, 2, 1]:[8, 20, 30]:[1, 2, 3]" ] ]
+                  "range itself remains immutable while fresh results mutate"
+          }
+
+          test "every IntRange replacement form faults at Jenkins' measured write phase" {
+              let o =
+                  runS (
+                      "def r = 1..3\ndef alias = r\ndef events = []\n"
+                      + "def rhs = { events << 'plain-rhs'; 9 }\n"
+                      + "def compoundRhs = { events << 'compound-rhs'; 2 }\n"
+                      + "try { r[0] = rhs() } catch (UnsupportedOperationException ignored) { events << 'plain-caught' }\n"
+                      + "try { r[0] += compoundRhs() } catch (UnsupportedOperationException ignored) { events << 'compound-caught' }\n"
+                      + "try { r[0]++ } catch (UnsupportedOperationException ignored) { events << 'postfix-caught' }\n"
+                      + "try { alias[-1] = 7 } catch (UnsupportedOperationException ignored) { events << 'alias-caught' }\n"
+                      + "try { r.sort() } catch (UnsupportedOperationException ignored) { events << 'sort-caught' }\n"
+                      + "echo events\necho r\necho alias"
+                  )
+
+              Expect.isNone o.Fault "all typed faults are caught"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[plain-rhs, plain-caught, compound-rhs, compound-caught, postfix-caught, alias-caught, sort-caught]" ]
+                    "echo", [ "[1, 2, 3]" ]
+                    "echo", [ "[1, 2, 3]" ] ]
+                  "plain and compound RHS run before the failed write; no form mutates the range"
           } ]
 
 /// FG-180. Command-form calls in EXPRESSION position, and the constructs the
@@ -1647,7 +2070,7 @@ let fg015ClosureAudit =
           test "spread-dot projects one property from every non-null list element" {
               let o = runStrict "def rows = [[name: 'a'], [name: 'b']]\nreturn rows*.name\n"
               Expect.isNone o.Fault "the measured list projection evaluates"
-              Expect.equal o.Returned (Some(VList [ VStr "a"; VStr "b" ])) "source order is preserved"
+              Expect.equal o.Returned (Some(VList(ref [ VStr "a"; VStr "b" ]))) "source order is preserved"
           }
 
           test "spread-dot keeps the measured null and receiver boundaries" {
@@ -1731,26 +2154,168 @@ let fg015ClosureAudit =
               Expect.isEmpty o.Effects "target, RHS, catch and later statements produce no effects"
           }
 
-          test "direct projected-index assignment refuses before target, RHS and catch effects" {
-              for label, statement in
-                  [ "plain", "rows*.child[0] = sh 'plain-rhs'"
-                    "compound", "rows*.child[0] += sh 'compound-rhs'"
-                    "increment", "rows*.count[0]++"
-                    "decrement", "rows*.count[0]--"
-                    "nested", "rows*.children[0][1] = sh 'nested-rhs'" ] do
-                  let source =
-                      "def rows = [[child: [name: 'a'], count: 1, children: [[name: 'a0'], [name: 'a1']]]]\n"
-                      + "try { " + statement + " } catch (Throwable e) { echo 'caught' }\n"
-                      + "echo 'after'\n"
+          test "direct projected indexes preserve temporary and source-backed mutation boundaries" {
+              let source =
+                  "def rows = [[child: ['a'], count: 1, children: [['a0', 'a1']]]]\n"
+                  + "def projected = rows*.child\n"
+                  + "rows*.child[0] = 'temporary'\n"
+                  + "rows*.count[0] += 2\n"
+                  + "rows*.count[0]++\n"
+                  + "rows*.count[0]--\n"
+                  + "rows*.children[0][1] = 'nested-direct'\n"
+                  + "rows*.children.first()[0] = 'method-direct'\n"
+                  + "echo rows[0].child\n"
+                  + "echo projected\n"
+                  + "echo rows[0].count\n"
+                  + "echo rows[0].children\n"
 
-                  let o = runStrict source
+              let o = runStrict source
+              Expect.isNone o.Fault "the measured projected-index forms execute"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a]" ]
+                    "echo", [ "[[a]]" ]
+                    "echo", [ "1" ]
+                    "echo", [ "[method-direct, nested-direct]" ] ]
+                  "writes to a fresh projection stay temporary; selected nested lists retain identity"
+          }
 
-                  match o.Fault with
-                  | Some(Unsupported why) ->
-                      Expect.equal why Interpreter.spreadIndexAssignmentRefusal $"{label}: stable named boundary"
-                  | other -> failtestf "%s: expected projected-index refusal, got %A" label other
+          test "list index writes retain aliases, extend, and preserve compound evaluation order" {
+              let source =
+                  "def events = []\n"
+                  + "def target = { xs -> events << 'receiver'; xs }\n"
+                  + "def key = { events << 'index'; 0 }\n"
+                  + "def rhs = { events << 'rhs'; 2 }\n"
+                  + "def xs = [1, 10]\ndef alias = xs\n"
+                  + "target(xs)[key()] += rhs()\n"
+                  + "target(xs)[key()]++\n"
+                  + "target(xs)[key()]--\n"
+                  + "xs[-1] = 11\nxs[4] = 5\n"
+                  + "echo xs\necho alias\necho events\n"
 
-                  Expect.isEmpty o.Effects $"{label}: target, RHS, catch and later effects are blocked"
+              let o = runStrict source
+              Expect.isNone o.Fault "all typed integer writes execute"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[3, 11, null, null, 5]" ]
+                    "echo", [ "[3, 11, null, null, 5]" ]
+                    "echo", [ "[receiver, index, rhs, receiver, index, receiver, index]" ] ]
+                  "receiver/key run once, RHS timing is retained, and aliases share the same list"
+          }
+
+          test "index assignment expressions retain Groovy's new-versus-old result values" {
+              let plain = runStrict "def xs = [1]\nxs[0] = 7\n"
+              Expect.isNone plain.Fault "plain write succeeds"
+              Expect.equal plain.Returned (Some(VInt 7L)) "plain assignment returns the RHS"
+
+              let compound = runStrict "def xs = [1]\nxs[0] += 2\n"
+              Expect.isNone compound.Fault "compound write succeeds"
+              Expect.equal compound.Returned (Some(VInt 3L)) "compound assignment returns the new value"
+
+              let postfix = runStrict "def xs = [3]\nxs[0]++\n"
+              Expect.isNone postfix.Fault "postfix write succeeds"
+              Expect.equal postfix.Returned (Some(VInt 3L)) "postfix assignment returns the old value"
+
+              let mutation = runStrict "def xs = [3]\nxs[0]++\necho xs\n"
+              Expect.equal (stepArgs mutation) [ "echo", [ "[4]" ] ] "the receiver still mutates"
+          }
+
+          test "map index updates remain reference-backed map writes, including after spread reads" {
+              let source =
+                  "def m = [slot: 1]\ndef alias = m\n"
+                  + "m['slot'] += 2\nm['slot']++\nm['slot']--\n"
+                  + "def rows = [[holder: [slot: 'a']]]\n"
+                  + "rows*.holder.first()['slot'] = 'spread-map'\n"
+                  + "echo m\necho alias\necho rows[0].holder.slot\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "the existing map writer remains available"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[slot:3]" ]; "echo", [ "[slot:3]" ]; "echo", [ "spread-map" ] ]
+                  "map identity and spread-derived runtime receiver dispatch are preserved"
+          }
+
+          test "too-negative index faults at the measured RHS boundary and is catchable" {
+              let source =
+                  "def events = []\ndef xs = ['a']\n"
+                  + "def rhs = { events << 'plain-rhs'; 'x' }\n"
+                  + "try { xs[-2] = rhs() } catch (ArrayIndexOutOfBoundsException e) { events << 'plain-caught' }\n"
+                  + "try { xs[-2] += (events << 'compound-rhs') } catch (ArrayIndexOutOfBoundsException e) { events << 'compound-caught' }\n"
+                  + "echo xs\necho events\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both runtime exceptions are intercepted"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[a]" ]
+                    "echo", [ "[plain-rhs, plain-caught, compound-caught]" ] ]
+                  "plain assignment evaluates RHS first; compound update faults while reading the old value"
+          }
+
+          test "compound and postfix extension indexes preserve null-operation timing" {
+              let source =
+                  "def events = []\n"
+                  + "def rhs = { events << 'compound-rhs'; 2 }\n"
+                  + "def ints = [1]\n"
+                  + "try { ints[1] += rhs() } catch (NullPointerException e) { events << 'compound-caught' }\n"
+                  + "def strings = [1]\nstrings[1] += 'x'\n"
+                  + "def postfix = []\n"
+                  + "try { postfix[0]++ } catch (NullPointerException e) { events << 'postfix-caught' }\n"
+                  + "echo ints\necho strings\necho postfix\necho events\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both NPE-class boundaries are catchable"
+              Expect.equal
+                  (stepArgs o)
+                  [ "echo", [ "[1]" ]
+                    "echo", [ "[1, nullx]" ]
+                    "echo", [ "[]" ]
+                    "echo", [ "[compound-rhs, compound-caught, postfix-caught]" ] ]
+                  "compound evaluates RHS before null arithmetic; postfix has no RHS and neither failed update mutates"
+          }
+
+          test "scalar String index updates read and evaluate RHS before the catchable write rejection" {
+              let source =
+                  "def events = []\n"
+                  + "def receiver = { events << 'receiver'; 'ab' }\n"
+                  + "def key = { events << 'index'; 0 }\n"
+                  + "def rhs = { events << 'rhs'; 'X' }\n"
+                  + "try { receiver()[key()] += rhs() } catch (SecurityException e) { events << 'plus-caught' }\n"
+                  + "try { receiver()[key()] -= rhs() } catch (SecurityException e) { events << 'minus-caught' }\n"
+                  + "try { receiver()[key()]++ } catch (SecurityException e) { events << 'inc-caught' }\n"
+                  + "try { receiver()[key()]-- } catch (SecurityException e) { events << 'dec-caught' }\n"
+                  + "try { receiver()[key()] = rhs() } catch (SecurityException e) { events << 'plain-caught' }\n"
+                  + "echo events\n"
+
+              let outcome = runStrict source
+              Expect.isNone outcome.Fault "every sandbox rejection is caught by its measured SecurityException ancestry"
+              Expect.equal
+                  (stepArgs outcome)
+                  [ "echo",
+                    [ "[receiver, index, rhs, plus-caught, receiver, index, rhs, minus-caught, receiver, index, inc-caught, receiver, index, dec-caught, receiver, index, rhs, plain-caught]" ] ]
+                  "receiver/index run once; compound and plain RHS effects precede the write fault"
+          }
+
+          test "scalar index read failures precede RHS while negative String indexes retain their split" {
+              let source =
+                  "def events = []\n"
+                  + "try { 'ab'[9] += (events << 'positive-oob-rhs') } catch (StringIndexOutOfBoundsException e) { events << 'positive-oob-caught' }\n"
+                  + "try { 'ab'[-3] += (events << 'negative-oob-rhs') } catch (ArrayIndexOutOfBoundsException e) { events << 'negative-oob-caught' }\n"
+                  + "try { 'ab'['zero'] += (events << 'string-key-rhs') } catch (SecurityException e) { events << 'string-key-caught' }\n"
+                  + "def integer = 7\ntry { integer[0] += (events << 'integer-rhs') } catch (SecurityException e) { events << 'integer-caught' }\n"
+                  + "def booleanValue = true\ntry { booleanValue[0] += (events << 'boolean-rhs') } catch (SecurityException e) { events << 'boolean-caught' }\n"
+                  + "def nullValue = null\ntry { nullValue[0] += (events << 'null-rhs') } catch (NullPointerException e) { events << 'null-caught' }\n"
+                  + "try { 'ab'[-1] += (events << 'negative-valid-rhs') } catch (SecurityException e) { events << 'negative-valid-caught' }\n"
+                  + "echo events\n"
+
+              let outcome = runStrict source
+              Expect.isNone outcome.Fault "all measured read/write faults are caught"
+              Expect.equal
+                  (stepArgs outcome)
+                  [ "echo",
+                    [ "[positive-oob-caught, negative-oob-caught, string-key-caught, integer-caught, boolean-caught, null-caught, negative-valid-rhs, negative-valid-caught]" ] ]
+                  "only an in-range negative String read reaches its RHS; every failed read suppresses it"
           }
 
           test "spread index results support bounded property and safe-property writes" {
@@ -1867,14 +2432,17 @@ let fg015ClosureAudit =
           }
 
           test "unsupported assignment receivers and targets never degrade to RHS-only success" {
-              let listOutcome = runStrict "def xs = [1]\nxs[0] = sh 'list-rhs'\necho 'after'\n"
+              let listOutcome = runStrict "def xs = [1]\nxs['zero'] = sh 'list-rhs'\necho 'after'\n"
 
               match listOutcome.Fault with
               | Some(Unsupported why) ->
                   Expect.equal why Interpreter.listIndexAssignmentRefusal "stable list-index boundary"
               | other -> failtestf "expected list-index refusal, got %A" other
 
-              Expect.isEmpty listOutcome.Effects "list-index refusal precedes RHS and later effects"
+              Expect.equal
+                  (stepArgs listOutcome)
+                  [ "sh", [ "list-rhs" ] ]
+                  "plain assignment evaluates its RHS before Jenkins rejects the non-integer key; later effects stay blocked"
 
               let invalidTarget =
                   Interpreter.runStrictVars
@@ -1894,4 +2462,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])

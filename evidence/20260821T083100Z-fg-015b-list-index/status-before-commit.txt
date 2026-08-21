@@ -1,0 +1,12 @@
+M  docs/COMPATIBILITY-SCORECARD.md
+M  evidence/20260821T083100Z-fg-015b-list-index/README.md
+M  evidence/20260821T083100Z-fg-015b-list-index/base-commit.txt
+M  evidence/20260821T083100Z-fg-015b-list-index/candidate-index-tree.txt
+M  evidence/20260821T083100Z-fg-015b-list-index/candidate.diff
+M  evidence/20260821T083100Z-fg-015b-list-index/corpus-scorecard.log
+M  evidence/20260821T083100Z-fg-015b-list-index/diffstat.txt
+M  evidence/20260821T083100Z-fg-015b-list-index/full-gate.log
+A  evidence/20260821T083100Z-fg-015b-list-index/qwen-rebase-request.json
+A  evidence/20260821T083100Z-fg-015b-list-index/qwen-rebase-response.json
+A  evidence/20260821T083100Z-fg-015b-list-index/rebase-focused.log
+M  evidence/20260821T083100Z-fg-015b-list-index/receipt-seals.log

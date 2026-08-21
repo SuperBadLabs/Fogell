@@ -247,8 +247,21 @@ module WalkerRules =
 
     let private noCheck = fun (_: Fogell.Groovy.Interpreter.Value list) (_: (string * Fogell.Groovy.Interpreter.Value) list) -> None
 
+    /// Validation diagnostics must be bounded independently of a value graph's
+    /// expanded textual size. Scalars retain their useful spelling; collections
+    /// use a type marker so an invalid hosted call cannot spend exponential time
+    /// rendering a small, heavily aliased DAG before it reports the shape error.
+    let private diagnosticValue =
+        function
+        | Fogell.Groovy.Interpreter.VList _ -> "<list>"
+        | Fogell.Groovy.Interpreter.VMap _ -> "<map>"
+        | Fogell.Groovy.Interpreter.VRange _ -> "<range>"
+        | Fogell.Groovy.Interpreter.VClosure _ -> "<closure>"
+        | Fogell.Groovy.Interpreter.VFunc(name, _, _) -> $"<function {name}>"
+        | value -> Fogell.Groovy.Interpreter.Value.toDisplay value
+
     let stepDescriptors: Map<string, StepDescriptor> =
-        let open' = Fogell.Groovy.Interpreter.Value.toDisplay
+        let open' = diagnosticValue
         let row max primary required missingPrimaryException named unsupported unknown returnValue shape check =
             { MaxPositionals = max
               PrimaryParameter = primary
@@ -327,7 +340,7 @@ module WalkerRules =
                   (fun positional _ ->
                       match positional with
                       | [ Fogell.Groovy.Interpreter.VList items ] ->
-                          items
+                          items.Value
                           |> List.map open'
                           |> List.tryFind (fun entry -> entry.IndexOf '=' <= 0)
                           |> Option.map (fun bad ->
@@ -390,14 +403,18 @@ module WalkerRules =
         (positional: Fogell.Groovy.Interpreter.Value list)
         (named: (string * Fogell.Groovy.Interpreter.Value) list)
         : Result<ValidatedHostedCall, HostedCallFailure> =
-        let shown = positional |> List.map Fogell.Groovy.Interpreter.Value.toDisplay |> String.concat ", "
+        // Kept lazy because descriptor lookup and several binding failures do
+        // not need values at all. When a shape diagnostic does, its rendering is
+        // bounded by argument count rather than recursively expanded aliases.
+        let shown () = positional |> List.map diagnosticValue |> String.concat ", "
 
         match Map.tryFind name stepDescriptors with
         | None -> Error(EngineRefusal $"hosted step `{name}` has no descriptor")
         | Some _ when not (List.isEmpty positional) && not (List.isEmpty named) ->
+            let displayed = shown ()
             Error(
                 EngineRefusal
-                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{shown}]` with 'Expected named arguments'"
+                    $"`{name}` takes positional arguments OR named ones, not both; Jenkins rejects `[{displayed}]` with 'Expected named arguments'"
             )
         | Some descriptor ->
             let unsupported =
@@ -442,7 +459,8 @@ module WalkerRules =
                     | _ -> positional, named
 
                 if List.length normalisedPositional > descriptor.MaxPositionals then
-                    Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{shown}]`")
+                    let displayed = shown ()
+                    Error(EngineRefusal $"`{name}` {descriptor.ShapeText}; Jenkins rejects `[{displayed}]`")
                 elif descriptor.RequiresPrimary && List.isEmpty normalisedPositional then
                     let primary = defaultArg descriptor.PrimaryParameter "its primary parameter"
                     match descriptor.MissingPrimaryException with
