@@ -232,7 +232,7 @@ module WalkerRules =
         Map.ofList
             [ "sh",
               row 1 (Some "script") true
-                  [ "script"; "label"; "returnStatus"; "returnStdout" ]
+                  [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
                   []
                   (warn "org.jenkinsci.plugins.workflow.steps.durable_task.ShellStep")
                   "takes at most 1 positional argument" noCheck
@@ -248,9 +248,11 @@ module WalkerRules =
                   "takes exactly one artifact pattern" noCheck
               "junit",
               row 1 (Some "testResults") true
-                  [ "testResults"; "allowEmptyResults"; "checksName"; "healthScale"
-                    "keepLongStdio"; "skipMarkingBuildUnstable"; "skipOldReports"
-                    "skipPublishingChecks"; "stdioRetention"; "testDataPublishers" ]
+                  [ "testResults"; "allowEmptyResults"; "checksName"; "healthScaleFactor"
+                    "keepLongStdio"; "keepProperties"; "keepTestNames"
+                    "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"
+                    "skipOldReports"; "skipPublishingChecks"; "stdioRetention"
+                    "testDataPublishers" ]
                   []
                   (warn "hudson.tasks.junit.pipeline.JUnitResultsStep")
                   "takes exactly one test-results pattern" noCheck

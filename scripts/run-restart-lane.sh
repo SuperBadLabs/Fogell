@@ -407,7 +407,9 @@ pipeline {
             steps {
                 script {
                     sh('invalid', 'extra')
-                    sh 'echo after'
+                    sh(script: 'printf warned > warned.txt', fogellProbeUnknown: true)
+                    echo(message: 'must-not-print', fogellProbeUnknown: true)
+                    sh 'printf effect > effect.txt'
                 }
             }
         }
@@ -423,7 +425,15 @@ grep -q $'^step-reason\tGate\t0\t' "$H_LANE/build.journal" || {
   cat "$H_LANE/build.journal"; exit 1; }
 grep -q "positional argument" "$H_LANE/build.journal" || {
   echo "FAIL: the journaled reason is not the refusal's own"; cat "$H_LANE/build.journal"; exit 1; }
-echo "a refused call with a successor keeps its own reason on the durable record"
+grep -q 'WARNING: Unknown parameter' "$H_LANE/run.log" && {
+  echo "FAIL: an unreachable warning-class call emitted after halt"; cat "$H_LANE/run.log"; exit 1; }
+grep -q 'must-not-print' "$H_LANE/run.log" && {
+  echo "FAIL: an unreachable constructor-map call emitted after halt"; cat "$H_LANE/run.log"; exit 1; }
+grep -q 'StepBindingFailed\|fogellProbeUnknown' "$H_LANE/build.journal" && {
+  echo "FAIL: an unreachable binding fault replaced the original refusal"; cat "$H_LANE/build.journal"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/warned.txt" ] && { echo "FAIL: unreachable warning-class effect landed"; exit 1; }
+[ -f "$H_LANE/ws/fg206h/effect.txt" ] && { echo "FAIL: unreachable plain effect landed"; exit 1; }
+echo "post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason"
 
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"

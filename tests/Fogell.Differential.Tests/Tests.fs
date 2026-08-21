@@ -1322,6 +1322,47 @@ let stepDescriptorValidation =
                   "one row, no schema-less fallback"
           }
 
+          test "all 14 descriptor rows match the pinned Jenkins schemas" {
+              // Jenkins 2.568.1 GDSL owns thirteen rows; archiveArtifacts is
+              // pinned by the direct archive-schema measurement receipt.
+              let expected =
+                  Map.ofList
+                      [ "sh", set [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
+                        "echo", set [ "message" ]
+                        "archiveArtifacts",
+                        set
+                            [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
+                              "excludes"; "fingerprint"; "followSymlinks"; "onlyIfSuccessful" ]
+                        "junit",
+                        set
+                            [ "testResults"; "allowEmptyResults"; "checksName"; "healthScaleFactor"
+                              "keepLongStdio"; "keepProperties"; "keepTestNames"
+                              "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"
+                              "skipOldReports"; "skipPublishingChecks"; "stdioRetention"
+                              "testDataPublishers" ]
+                        "checkout", set [ "scm"; "changelog"; "poll" ]
+                        "deleteDir", Set.empty
+                        "git", set [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ]
+                        "stash", set [ "name"; "allowEmpty"; "excludes"; "includes"; "useDefaultExcludes" ]
+                        "unstable", set [ "message" ]
+                        "unstash", set [ "name" ]
+                        "withEnv", set [ "overrides" ]
+                        "dir", set [ "path" ]
+                        "retry", set [ "count"; "conditions" ]
+                        "timeout", set [ "time"; "unit"; "activity" ] ]
+
+              for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
+                  Expect.equal
+                      (Set.union descriptor.NamedKeys descriptor.UnsupportedNamedKeys)
+                      (Map.find name expected)
+                      $"{name} keys drifted from the pinned Jenkins schema"
+
+              Expect.equal
+                  (Map.find "retry" WalkerRules.stepDescriptors).UnsupportedNamedKeys
+                  (set [ "conditions" ])
+                  "conditions is measured but remains an explicit unsupported capability"
+          }
+
           test "unknown-key policy is measured per step" {
               let warned =
                   set
@@ -1379,6 +1420,39 @@ let stepDescriptorValidation =
               with
               | Ok validated -> Expect.isEmpty validated.Warnings "all three keys are descriptor-owned"
               | Error error -> failtestf "supported archive schema refused: %A" error
+          }
+
+          test "corrected sh and junit keys are accepted, while healthScale stays unknown" {
+              match
+                  WalkerRules.validateHostedCall
+                      "sh"
+                      []
+                      [ "script", v "printf ok"; "encoding", v "UTF-8" ]
+              with
+              | Ok validated -> Expect.isEmpty validated.Warnings "encoding is a supported sh key"
+              | Error error -> failtestf "supported sh encoding refused: %A" error
+
+              let junitKeys =
+                  [ "testResults", v "**/*.xml"
+                    "healthScaleFactor", Fogell.Groovy.Interpreter.VInt 1L
+                    "keepProperties", Fogell.Groovy.Interpreter.VBool true
+                    "keepTestNames", Fogell.Groovy.Interpreter.VBool true
+                    "skipMarkingStageUnstable", Fogell.Groovy.Interpreter.VBool true ]
+
+              match WalkerRules.validateHostedCall "junit" [] junitKeys with
+              | Ok validated -> Expect.isEmpty validated.Warnings "all corrected junit keys are supported"
+              | Error error -> failtestf "supported junit schema refused: %A" error
+
+              match
+                  WalkerRules.validateHostedCall
+                      "junit"
+                      []
+                      [ "testResults", v "**/*.xml"; "healthScale", Fogell.Groovy.Interpreter.VInt 1L ]
+              with
+              | Ok validated ->
+                  Expect.equal validated.Warnings.Length 1 "invalid healthScale follows junit's measured warning policy"
+                  Expect.equal validated.Warnings.Head.UnknownKeys [ "healthScale" ] "invalid spelling is never normalized away"
+              | Error error -> failtestf "junit unknown-key policy changed: %A" error
           }
 
           test "warning data survives a later missing-primary binding throw" {
