@@ -124,3 +124,28 @@ not guess around the unsupported declaration. Blank and fully analyzed
 preambles remain admitted. The retained direct Jenkins measurement and the
 incremental gate bundle are under
 [`20260821T012214Z-fg-015-preamble-analysis`](../20260821T012214Z-fg-015-preamble-analysis).
+
+## Trailing top-level source boundary
+
+The next exact-head review found the symmetric capture hole after the
+Declarative block. The pipeline parser retained everything before `pipeline`
+but accepted success without consuming everything after the outer closing
+brace. Jenkins executes that trailing Groovy after the pipeline returns;
+Fogell dropped it. A direct four-case Jenkins 2.568.1 probe proved that a
+harmless helper/call and a default-parameter helper/call both run, a trailing
+spread assignment faults after stage and post effects, and comments/whitespace
+alone are inert.
+
+`Pipeline.Epilogue` now retains every byte from the exact outer closing brace
+through EOF. The outer brace is selected by the existing Groovy-aware
+Declarative grammar, so nested braces in script bodies, strings, slashy text,
+maps, and comments cannot move the capture boundary. Execution preflight parses
+the retained suffix: comments/whitespace become an empty script and stay
+admitted; a definite spread write uses `unsupported_spread_assignment`; every
+other statement or parse failure uses the stable `unsupported_epilogue`
+refusal before workspace or effects. This slice deliberately does not execute
+new suffix semantics.
+
+The direct oracle cases, pre/post receipts, focused evidence, and local Qwen
+review are under
+[`20260821T015030Z-fg-015-epilogue`](../20260821T015030Z-fg-015-epilogue).

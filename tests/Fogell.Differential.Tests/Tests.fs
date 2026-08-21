@@ -1496,6 +1496,15 @@ let spreadAssignmentPreflight =
                 FogellSide.preambleAnalysisRefusal
                 $"{label}: exact stable preamble-analysis reason"
 
+    let expectEpilogueRefusal label source =
+        match FogellSide.preflightExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed execution preflight" label
+        | Error why ->
+            Expect.equal
+                why
+                FogellSide.epilogueRefusal
+                $"{label}: exact stable epilogue reason"
+
     let withWorkspace (f: string -> string -> unit) =
         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-spread-assignment-preflight-" + Guid.NewGuid().ToString("N"))
         let job = "job"
@@ -1634,6 +1643,76 @@ let spreadAssignmentPreflight =
                   match FogellSide.preflightExecution source with
                   | Error why -> failtestf "%s preamble was over-refused: %s" label why
                   | Ok _ -> ()
+          }
+
+          test "a trailing spread write uses the shared spread-assignment refusal" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def rows = [[name: 'a']]; rows*.name = 'x'\n"
+
+              expectNamedRefusal "trailing spread assignment" source
+
+              let nested =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+                  + "def change(rows) { try { rows*.name = 'x' } catch (Throwable e) { } }\n"
+
+              expectNamedRefusal "spread assignment nested in trailing helper and catch" nested
+          }
+
+          test "parsed and unparsable nontrivial epilogues share one conservative refusal" {
+              let pipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }\n"
+
+              let sources =
+                  [ "parsed helper and call", "def trailing(v) { echo v }; trailing('ok')\n"
+                    "default-parameter helper", "def trailing(v = 'ok') { echo v }; trailing()\n"
+                    "ordinary top-level call", "echo 'tail'\n" ]
+
+              for label, tail in sources do
+                  expectEpilogueRefusal label (pipeline + tail)
+          }
+
+          test "epilogue comments and whitespace are parsed as empty and remain admitted" {
+              let pipeline =
+                  "pipeline { agent any stages { stage('probe') { steps { echo 'ordinary' } } } }"
+
+              for label, tail in
+                  [ "empty", ""
+                    "whitespace", "  \n\t\r\n"
+                    "line comment", "\n// trailing } comment\n"
+                    "block comment", "\n/* trailing { pipeline { } } */\n  " ] do
+                  match FogellSide.preflightExecution (pipeline + tail) with
+                  | Error why -> failtestf "%s epilogue was over-refused: %s" label why
+                  | Ok _ -> ()
+          }
+
+          test "trailing-source refusals block earlier stages, post and workspace preparation" {
+              let pipeline =
+                  "pipeline { agent any stages { "
+                  + "stage('before') { steps { sh 'touch before-epilogue.txt' } } "
+                  + "stage('after') { steps { sh 'touch after-epilogue.txt' } } "
+                  + "} post { always { sh 'touch epilogue-post.txt' } } }\n"
+
+              for label, tail, expected in
+                  [ "spread", "def rows = [[name: 'a']]; rows*.name = 'x'\n",
+                    Fogell.Groovy.Interpreter.Interpreter.spreadAssignmentRefusal
+                    "unmodelled", "def trailing(v) { echo v }; trailing('ok')\n",
+                    FogellSide.epilogueRefusal
+                    "unparsable", "def trailing(v = 'ok') { echo v }; trailing()\n",
+                    FogellSide.epilogueRefusal ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" (pipeline + tail) with
+                      | Ok trace -> failtestf "%s trailing source unexpectedly executed: %A" label trace
+                      | Error why -> Expect.equal why expected $"{label}: stable refusal"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: workspace preparation was not reached"
+
+                      for file in [ "before-epilogue.txt"; "after-epilogue.txt"; "epilogue-post.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{label}: {file} effect was not reached")
           }
           test "when expressions in top, nested and parallel stages cannot hide the target" {
               let assignment = "def rows = [[name: 'a']]; rows*.name = 'x'; true"

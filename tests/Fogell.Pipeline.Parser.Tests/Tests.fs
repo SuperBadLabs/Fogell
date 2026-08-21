@@ -779,13 +779,44 @@ let structure =
               | other -> failtestf "expected WhenExpression, got %A" other
           }
 
-          test "helper defs before AND after the pipeline block are tolerated" {
-              let src =
-                  "#!/usr/bin/env groovy\n@Library('x') _\ndef helper() { return 1 }\n"
-                  + mk "    stage('a') { steps { echo 'x' } }"
-                  + "\ndef trailing() { return 2 }\n"
+          test "source before and after the pipeline block is retained exactly" {
+              let before = "#!/usr/bin/env groovy\n@Library('x') _\ndef helper() { return 1 }\n"
+              let block = mk "    stage('a') { steps { echo 'x' } }"
+              let after = "\ndef trailing() { return 2 }\n"
+              let p = ok (before + block + after)
 
-              Expect.equal (ok src).Stages.Length 1 "block found amid surrounding statements"
+              Expect.equal p.Stages.Length 1 "block found amid surrounding statements"
+              Expect.equal p.Preamble before "every byte before the pipeline token is retained"
+              Expect.equal p.Epilogue ("\n" + after) "every byte after the exact outer brace is retained"
+          }
+
+          test "outer-boundary capture ignores braces in nested bodies, strings, slashy text and comments" {
+              let before = "def before() { return '}' }\n"
+
+              let block =
+                  "pipeline {\n"
+                  + "  agent any\n"
+                  + "  stages {\n"
+                  + "    stage('a') { steps { script {\n"
+                  + "      def quoted = \"}\"\n"
+                  + "      def pattern = /}/\n"
+                  + "      def nested = [value: [text: '{']]\n"
+                  + "      /* }}} */\n"
+                  + "      echo quoted\n"
+                  + "    } } }\n"
+                  + "  }\n"
+                  + "}"
+
+              let after = "\n// } trailing comment\n/* { pipeline { } } */\ndef after() { return \"}\" }\n"
+              let p = ok (before + block + after)
+
+              Expect.equal p.Preamble before "nested syntax did not move the opening boundary"
+              Expect.equal p.Epilogue after "nested syntax did not move the closing boundary"
+          }
+
+          test "Pipeline.empty has explicit empty surrounding-source provenance" {
+              Expect.equal Pipeline.empty.Preamble "" "empty preamble"
+              Expect.equal Pipeline.empty.Epilogue "" "empty epilogue"
           }
 
           test "a pipeline with no stages is a named rejection" {

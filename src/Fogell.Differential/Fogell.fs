@@ -103,6 +103,9 @@ module FogellSide =
     let preambleAnalysisRefusal =
         "unsupported_preamble_analysis: Fogell cannot parse this nonblank Declarative preamble for execution analysis; refusing before workspace preparation or effects because absence of an unsupported spread-property assignment cannot be proven"
 
+    let epilogueRefusal =
+        "unsupported_epilogue: nontrivial top-level Groovy after the Declarative pipeline is outside Fogell's execution model; refusing before workspace preparation or effects"
+
     let private containsUnsupportedSpreadAssignment (pipeline: Pipeline) : Result<bool, string> =
         let bodies =
             [ yield! scriptBodies (pipeline.Post |> List.collect snd)
@@ -127,13 +130,43 @@ module FogellSide =
         // helper could hide a later top-level spread write, and Fogell would run every
         // stage after Jenkins had already failed. There is no complete statement splitter
         // for Groovy, so a nonblank preamble that this analyzer cannot parse fails closed.
-        if System.String.IsNullOrWhiteSpace pipeline.Preamble then
-            Result.Ok bodiesContainAssignment
-        else
-            match Fogell.Groovy.Parser.Parser.parse pipeline.Preamble with
-            | Result.Ok script ->
-                Result.Ok(Fogell.Groovy.Ast.containsSpreadAssignment script || bodiesContainAssignment)
-            | Result.Error _ -> Result.Error preambleAnalysisRefusal
+        let preambleResult =
+            if System.String.IsNullOrWhiteSpace pipeline.Preamble then
+                Result.Ok false
+            else
+                match Fogell.Groovy.Parser.Parser.parse pipeline.Preamble with
+                | Result.Ok script -> Result.Ok(Fogell.Groovy.Ast.containsSpreadAssignment script)
+                | Result.Error _ -> Result.Error preambleAnalysisRefusal
+
+        match preambleResult with
+        | Result.Error why -> Result.Error why
+        | Result.Ok preambleContainsAssignment ->
+            // Jenkins executes top-level Groovy after the Declarative block returns.
+            // Fogell deliberately does not add that execution model in this bounded
+            // spread-write slice, but the exact suffix is retained by Pipeline.Epilogue
+            // and can no longer disappear. Parse through the same Groovy grammar used
+            // for preamble/body analysis: comments and whitespace become an empty script;
+            // a definite spread write gets the shared spread refusal; every other
+            // statement or parse failure gets one stable conservative boundary.
+            let epilogueResult =
+                if System.String.IsNullOrWhiteSpace pipeline.Epilogue then
+                    Result.Ok false
+                else
+                    match Fogell.Groovy.Parser.Parser.parse pipeline.Epilogue with
+                    | Result.Ok [] -> Result.Ok false
+                    | Result.Ok script when Fogell.Groovy.Ast.containsSpreadAssignment script ->
+                        Result.Ok true
+                    | Result.Ok _
+                    | Result.Error _ -> Result.Error epilogueRefusal
+
+            match epilogueResult with
+            | Result.Error why -> Result.Error why
+            | Result.Ok epilogueContainsAssignment ->
+                Result.Ok(
+                    preambleContainsAssignment
+                    || epilogueContainsAssignment
+                    || bodiesContainAssignment
+                )
 
     /// FG-014 execution boundary. Corpus admission is deliberately parse-only, but a
     /// parsed construct must not become an executable no-op. Jenkins resolves every

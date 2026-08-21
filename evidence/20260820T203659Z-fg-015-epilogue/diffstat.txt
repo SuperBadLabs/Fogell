@@ -1,0 +1,24 @@
+ docs/EXECUTION_BOARD.md                            |   2 +-
+ .../README.md                                      |  25 ++++++
+ .../20260821T015030Z-fg-015-epilogue/README.md     |  39 ++++++++
+ .../epilogue-comments-only.Jenkinsfile             |  13 +++
+ .../epilogue-default-helper.Jenkinsfile            |  13 +++
+ .../epilogue-harmless.Jenkinsfile                  |  13 +++
+ .../epilogue-spread-assignment.Jenkinsfile         |  20 +++++
+ .../oracle-verification.txt                        |  11 +++
+ .../epilogue-comments-only.receipt.txt             |  89 ++++++++++++++++++
+ .../epilogue-default-helper.receipt.txt            |  84 +++++++++++++++++
+ .../postfix-receipts/epilogue-harmless.receipt.txt |  84 +++++++++++++++++
+ .../epilogue-spread-assignment.receipt.txt         |  84 +++++++++++++++++
+ .../epilogue-comments-only.receipt.txt             |  89 ++++++++++++++++++
+ .../epilogue-default-helper.receipt.txt            |  91 +++++++++++++++++++
+ .../epilogue-harmless.receipt.txt                  |  91 +++++++++++++++++++
+ .../epilogue-spread-assignment.receipt.txt         | 100 +++++++++++++++++++++
+ .../qwen-request.json                              |  18 ++++
+ .../qwen-response.json                             |   1 +
+ src/Fogell.Differential/Fogell.fs                  |  47 ++++++++--
+ src/Fogell.Ir/Pipeline.fs                          |  14 ++-
+ src/Fogell.Pipeline.Parser/Parser.fs               |  16 ++--
+ tests/Fogell.Differential.Tests/Tests.fs           |  79 ++++++++++++++++
+ tests/Fogell.Pipeline.Parser.Tests/Tests.fs        |  43 +++++++--
+ 23 files changed, 1043 insertions(+), 23 deletions(-)
