@@ -1,11 +1,13 @@
-# Differential receipt — fg015-spread-index-outer-writes.Jenkinsfile
+# Differential receipt — reviewer-boundaries.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         0c57f021000ea27705989d0dc46fa07c43b25e19d2e7df93bd0a7183c00d4ae9
-case-digest:  9fb95669e7597522fc32b40da834787b64608fe90c824bca261c0908baab2697
+seal:         3888ac8ffbb775588963bcd0e5f77e86946f09e3417bd1b5eea546c2674a89d0
+case-digest:  bf8a9532ef20478da377c2bbc7f2d91fd64f60932a59a9d6edd496bdc2539061
 sealed-output: sequence
 
-VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: DIVERGED (2)
+  - terminal result: jenkins=success fogell=failure
+  - output line 0: jenkins=safe-map:safe:b:3:10 fogell=<absent>
 
 ## Comparison contract
   compared: terminal result
@@ -79,25 +81,21 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (8 lines):
-    | plain:plain:b
-    | safe:safe:b
-    | compound:3:10
-    | nested:nested:b1
-    | method:method:b0
-    | safe-method:safe-method:b:5:10
-    | safe-null:caught:null:b
-    | safe-scalar:caught:text
+  output (12 lines):
+    | safe-map:safe:b:3:10
+    | safe-null:caught:NullPointerException:null:b
+    | safe-scalar:caught:MissingPropertyException:text
+    | method-list-index:list-x:a1:b0
+    | method-null-index:caught:NullPointerException:null:b0
+    | method-map-index:map-x:b
+    | ordinary-map-index:ordinary-x
+    | safe-null-target
+    | safe-null-rhs
+    | safe-null-order:caught
+    | safe-missing-rhs
+    | safe-missing-order:caught
 
 ## Fogell
-  result:         success
+  result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (8 lines):
-    | plain:plain:b
-    | safe:safe:b
-    | compound:3:10
-    | nested:nested:b1
-    | method:method:b0
-    | safe-method:safe-method:b:5:10
-    | safe-null:caught:null:b
-    | safe-scalar:caught:text
+  output (0 lines):

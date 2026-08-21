@@ -25,6 +25,28 @@ pipeline {
 
           rows*.children[0].first().name = 'method'
           echo "method:${rows[0].children[0].name}:${rows[1].children[0].name}"
+
+          rows*.child.first()?.name = 'safe-method'
+          rows*.child.first()?.count += 2
+          rows*.child.first()?.count++
+          rows*.child.first()?.count--
+          echo "safe-method:${rows[0].child.name}:${rows[1].child.name}:${rows[0].child.count}:${rows[1].child.count}"
+
+          def nullRows = [[child: null], [child: [name: 'b']]]
+          try {
+            nullRows*.child.first()?.name = 'x'
+            echo "safe-null:unexpected:${nullRows[0].child}:${nullRows[1].child.name}"
+          } catch (NullPointerException e) {
+            echo "safe-null:caught:${nullRows[0].child}:${nullRows[1].child.name}"
+          }
+
+          def scalarRows = [[child: 'text']]
+          try {
+            scalarRows*.child.first()?.name = 'x'
+            echo "safe-scalar:unexpected:${scalarRows[0].child}"
+          } catch (MissingPropertyException e) {
+            echo "safe-scalar:caught:${scalarRows[0].child}"
+          }
         }
       }
     }

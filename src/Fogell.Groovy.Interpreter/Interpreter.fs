@@ -95,6 +95,9 @@ type Fault =
     /// throws MissingPropertyException here; the default mode's late-binding null
     /// is kept for consumers that model scripted Groovy's laxer contexts.
     | UnknownProperty of name: string
+    /// A write attempted to assign through a null receiver. Jenkins raises a
+    /// catchable NullPointerException here even for safe-navigation syntax.
+    | NullReceiverAssignment of target: string
 
 type Outcome =
     { Effects: Effect list
@@ -137,6 +140,12 @@ module Interpreter =
 
     let spreadIndexAssignmentRefusal =
         "unsupported_spread_index_assignment: a direct index l-value computed from spread projection crosses Fogell's unmodelled list index-assignment boundary; refusing before effects instead of silently discarding or misdirecting the write"
+
+    let listIndexAssignmentRefusal =
+        "unsupported_list_index_assignment: Fogell does not model mutation through a list index; refusing instead of evaluating the RHS and silently discarding the write"
+
+    let assignmentTargetRefusal =
+        "unsupported_assignment_target: Fogell cannot model this assignment target; refusing before the RHS instead of reporting success without a write"
 
     exception private Stop of Fault
     exception private ReturnSignal of Value
@@ -1172,19 +1181,24 @@ module Interpreter =
             // WRITE is the thing being decided below.
             let recvAndKey =
                 match target with
-                | EProp(r, name) -> Some(evalExpr st env r, name)
-                | ESafeProp((EIndex _ as r), name) when Ast.assignmentTargetIsSpreadDerivedIndex r ->
-                    // Bounded measured spelling: after an index result, Jenkins'
-                    // safe-property assignment mutates a non-null map and raises a
-                    // catchable NPE for null. The existing strict assigner provides
-                    // the same mutation/catchability boundary without list writes.
-                    Some(evalExpr st env r, name)
+                | EProp(r, name) -> evalExpr st env r, name, false
+                | ESafeProp(r, name) ->
+                    // Assignment is not a safe READ. Jenkins 2.568.1 mutates a
+                    // non-null map exactly as ordinary property assignment does,
+                    // and raises a catchable NPE for null — including after an
+                    // index or method-call result. Never short-circuit the write.
+                    evalExpr st env r, name, false
                 | EIndex(r, idx) ->
                     let rv = evalExpr st env r
-                    Some(rv, Value.toDisplay (evalExpr st env idx))
-                | other ->
-                    evalExpr st env other |> ignore
-                    None
+                    rv, Value.toDisplay (evalExpr st env idx), true
+                | _ -> raise (Stop(Unsupported assignmentTargetRefusal))
+
+            // List mutation is an unmodelled write boundary, not lax lookup.
+            // Once the receiver and key are known, refuse before the RHS so an
+            // unsupported assignment cannot run effects and then pretend success.
+            match recvAndKey with
+            | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+            | _ -> ()
 
             let value = evalExpr st env v
             st.LastValue <- Some value
@@ -1213,7 +1227,7 @@ module Interpreter =
             // shell and vanished here; the aliased map write printed alias:x there
             // and alias:null here — this arm's old name-keyed match dropped every
             // non-`env`-named target at `| _ -> ()`.
-            let assignInto (recv: Value) (key: string) =
+            let assignInto (recv: Value) (key: string) (isIndex: bool) =
                 match recv with
                 | VMap mr ->
                     match st.Host with
@@ -1224,20 +1238,21 @@ module Interpreter =
                         // write the shell never sees
                         host.SetEnv key (Value.toDisplay value)
                     | _ -> mr.Value <- Map.add key value mr.Value
-                // Not a map: Groovy REJECTS the write (MissingPropertyException on
-                // a String, NPE on null) and a script-level catch INTERCEPTS it —
+                | VNull -> raise (Stop(NullReceiverAssignment(if isIndex then "index" else key)))
+                | VList _ when isIndex -> raise (Stop(Unsupported listIndexAssignmentRefusal))
+                // Not a supported receiver: Groovy REJECTS the write
+                // (MissingPropertyException on a String) and a script-level catch INTERCEPTS it —
                 // measured: `try { s.FOO = 'x' } catch (Exception e)` runs on and
                 // SUCCEEDS on Jenkins. So the strict fault must be CATCHABLE:
                 // UnknownProperty is what the old blanket target-eval raised here,
                 // and the first spelling of this arm raised Unsupported instead —
                 // uncatchable, a false refusal the verifier caught by asking what
-                // class the fault was, not whether it fired. Lax keeps the no-op.
-                | _ when st.StrictVars -> raise (Stop(UnknownProperty key))
-                | _ -> ()
+                // class the fault was, not whether it fired. Assignment cannot
+                // inherit lax READ semantics: an absent write is never success.
+                | _ -> raise (Stop(UnknownProperty key))
 
             match recvAndKey with
-            | Some(recv, key) -> assignInto recv key
-            | None -> ()
+            | recv, key, isIndex -> assignInto recv key isIndex
 
             env
         // REVIEW FIX (Codex, PR #14 round 3): `[1].any { true; if (false) { false } }`
@@ -1420,6 +1435,17 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            // A null assignment receiver has Java/Groovy NPE ancestry. Keep this
+            // separate from MissingPropertyException so a narrow typed catch does
+            // not intercept the wrong runtime class.
+            let catchesNullReceiverAssignment =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"; "Throwable"; "RuntimeException"; "NullPointerException" ]
+                    |> List.contains t
+                | None -> false
+
             // Which declared types can intercept a failed shell step. Jenkins
             // surfaces it as hudson.AbortException < IOException < Exception —
             // NOT a RuntimeException, so `catch (RuntimeException e)` must let
@@ -1456,6 +1482,8 @@ module Interpreter =
                         handle (VStr $"hudson.AbortException: script returned exit code (step '{name}')")
                     | Stop(UnknownProperty n) when catchesMissingProperty ->
                         handle (VStr $"groovy.lang.MissingPropertyException: No such property: {n}")
+                    | Stop(NullReceiverAssignment target) when catchesNullReceiverAssignment ->
+                        handle (VStr $"java.lang.NullPointerException: Cannot assign through null {target} receiver")
                 with e ->
                     // uncaught: finally still runs, then the fault continues out
                     execBlock st cur fin |> ignore
@@ -1603,7 +1631,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | StepFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | StepFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an

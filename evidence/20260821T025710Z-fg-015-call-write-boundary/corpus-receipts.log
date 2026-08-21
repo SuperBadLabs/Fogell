@@ -1,0 +1,3 @@
+seal verification: 200 receipt(s) recomputed from their own content, all match
+corpus verified: 228/228 files match the pinned manifest
+scorecard artifacts current: tier1=1 admitted=192 tier3=35 of 228 corpus files; 199/199 expected case receipts proven

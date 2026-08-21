@@ -161,10 +161,13 @@ module Ast =
 
     /// A direct index l-value whose receiver was computed from spread projection
     /// is distinct from an outer write on the value returned by indexing. Jenkins
-    /// executes both, but the direct form is list-index assignment: simple and
+    /// executes both, but the direct form can be list-index assignment: simple and
     /// compound writes can update only the temporary projection, while another
-    /// index can select a referenced source list and persist. That is FG-015b's
-    /// mutation boundary, so this slice gives it a separate fail-closed reason.
+    /// index or a method such as `first()` can select a referenced source list and
+    /// persist. Calls on a spread-derived RECEIVER preserve that provenance; free
+    /// calls and every call input remain value boundaries. Static analysis cannot
+    /// prove whether the final receiver is a list or map, so the direct-index form
+    /// is deliberately refused as FG-015b while outer writes stay admitted.
     let assignmentTargetIsSpreadDerivedIndex (expr: Expr) : bool =
         let rec receiverUsesSpreadBeforeBoundary value =
             match value with
@@ -172,7 +175,9 @@ module Ast =
             | EProp(target, _)
             | ESafeProp(target, _)
             | EIndex(target, _) -> receiverUsesSpreadBeforeBoundary target
-            | ECall _ -> false
+            | ECall(MethodCall(target, _), _, _)
+            | ECall(SafeMethodCall(target, _), _, _) -> receiverUsesSpreadBeforeBoundary target
+            | ECall(FreeCall _, _, _) -> false
             | ENull
             | EBool _
             | EInt _

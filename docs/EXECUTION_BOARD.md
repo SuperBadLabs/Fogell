@@ -524,6 +524,27 @@ That remains FG-015b. Fogell gives every such direct target the distinct stable
 `unsupported_spread_index_assignment` preflight refusal before effects instead
 of silently discarding or misdirecting it. Evidence: [spread-index boundary](../evidence/20260821T020910Z-fg-015-spread-index-boundary).
 
+**FG-015 method-result write addendum.** Review probes on Jenkins 2.568.1
+measured the receiver boundary rather than inferring it: `rows*.child.first()?.name`
+mutates the returned non-null map; a null receiver raises a catchable
+`NullPointerException`; a scalar raises a catchable `MissingPropertyException`;
+and receiver effects precede RHS effects before either fault. Fogell now routes
+every `ESafeProp` assignment through the ordinary map writer, with a distinct
+typed null fault, instead of evaluating the RHS and reporting success without a
+write. Unsupported list-index receivers and syntactically invalid assignment
+targets likewise refuse explicitly before the RHS.
+
+The same probe proved `rows*.children.first()[0] = value` persistently mutates
+the selected source list, a null receiver throws catchably, and the statically
+indistinguishable map spelling also mutates. Because Fogell cannot decide the
+receiver type before execution without crossing FG-015b, a direct `EIndex`
+l-value retains spread-read provenance across method-call receivers and receives
+the conservative pre-effect `unsupported_spread_index_assignment` refusal in
+both list and map cases. This deliberate map over-refusal is named; outer
+property/safe-property writes on call or index results, free-call arguments,
+method arguments, trailing closures, and spread reads used as index keys remain
+admitted. Evidence: [method-result write boundary](../evidence/20260821T025710Z-fg-015-call-write-boundary).
+
 ## Wave 2 — Durable spine (McLoving-inspired)
 
 | id | pri | status | item | acceptance |

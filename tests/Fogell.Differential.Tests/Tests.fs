@@ -399,6 +399,16 @@ let stringModel =
                   (fun () -> GString.render env (step [ "m", "e=${1 - 'x'}" ] [] [] [] [] []) "m" "e=${1 - 'x'}" |> ignore)
                   "an unmodelled operator combination fails the argument"
 
+              Expect.throws
+                  (fun () ->
+                      GString.render
+                          env
+                          (step [ "m", "n=${def target = null; target?.name = 'x'}" ] [] [] [] [] [])
+                          "m"
+                          "n=${def target = null; target?.name = 'x'}"
+                      |> ignore)
+                  "a null assignment receiver cannot degrade into raw placeholder success"
+
               // A closure ASSIGNMENT hits the shared script Binding, even though the
               // closure environment itself is discarded.
               let b6 = GString.ScriptBinding()
@@ -1579,7 +1589,8 @@ let spreadAssignmentPreflight =
                   "pipeline { agent any stages { "
                   + "stage('before') { steps { sh 'touch before-index.txt' } } "
                   + "stage('bad') { steps { script { "
-                  + "def rows = [[child: [name: 'a']]]; rows*.child[0] = sh 'touch rhs-index.txt' "
+                  + "def rows = [[children: [[name: 'a']]]]; "
+                  + "rows*.children.first()[0] = sh 'touch rhs-index.txt' "
                   + "} sh 'touch after-index.txt' } } "
                   + "} post { always { sh 'touch post-index.txt' } } }"
 
@@ -1903,7 +1914,7 @@ let spreadAssignmentPreflight =
                     "index key", "xs[rows*.name[0]] = 'x'"
                     "method result property", "rows*.child.first().name = 'x'"
                     "method result safe property", "rows*.child.first()?.name = 'x'"
-                    "method result index", "rows*.child.first()[0] = 'x'"
+                    "safe-method result safe property", "rows*.child?.first()?.name = 'x'"
                     "named method result", "rows*.child.find(index: 0).name = 'x'"
                     "trailing method result", "rows*.child.find { true }.name = 'x'" ] do
                   match FogellSide.preflightExecution (pipelineWithBody statement) with
@@ -1917,6 +1928,16 @@ let spreadAssignmentPreflight =
                   expectNamedRefusal label (pipelineWithBody statement)
 
               expectSpreadIndexRefusal "direct index wrapper" (pipelineWithBody "rows*.child[0] = 'x'")
+
+              for label, statement in
+                  [ "method-result list index", "rows*.children.first()[0] = [name: 'x']"
+                    "safe-method-result list index", "rows*.children?.first()[0] = [name: 'x']"
+                    "nested method-result list index", "rows*.children.first().first()[0] = [name: 'x']"
+                    "method-result list compound", "rows*.counts.first()[0] += 1"
+                    "method-result list increment", "rows*.counts.first()[0]++"
+                    "method-result list decrement", "rows*.counts.first()[0]--"
+                    "method-result ambiguous map index", "rows*.holder.first()['slot'] = 'x'" ] do
+                  expectSpreadIndexRefusal label (pipelineWithBody statement)
 
               expectNamedRefusal
                   "actual assignment in method trailing closure"

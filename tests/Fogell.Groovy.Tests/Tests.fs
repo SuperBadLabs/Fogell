@@ -227,7 +227,25 @@ let grammar =
                   SAssign(EProp(ECall(MethodCall(ESpreadProp(EVar "rows", "child"), "find"), [], Some trailing), "name"), _) ] as script ->
                   Expect.equal trailing.Body [ SExpr(EBool true) ] "trailing closure stays attached to the boundary call"
                   Expect.isFalse (Ast.containsSpreadAssignment script) "no call-result wrapper is a spread write"
+                  Expect.isTrue
+                      (Ast.containsSpreadDerivedIndexAssignment script)
+                      "the direct method-result index retains spread-read provenance for preflight"
               | other -> failtestf "method-result write boundaries lost their AST shapes: %A" other
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.holder.first()['slot'] = 'x'\n"))
+                  "a statically ambiguous map/list receiver is conservatively classified"
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.children?.first()[0] = 'x'\n"))
+                  "safe method calls preserve the same direct-index provenance"
+
+              Expect.isTrue
+                  (Ast.containsSpreadDerivedIndexAssignment
+                      (parseOk "rows*.children.first().first()[0] = 'x'\n"))
+                  "nested method-call chains preserve provenance through every receiver"
 
               Expect.isTrue
                   (Ast.containsSpreadAssignment (parseOk "rows*.child.first()*.name = 'x'\n"))
@@ -463,15 +481,13 @@ let predicateValues =
 
           test "an assignment through a property or index target yields its RHS" {
               // Round-7 finding: only the bare-variable form recorded a value, so
-              // `env.DEPLOY = false` or `values[0] = false` as the FINAL statement left
+              // a supported map-property target as the FINAL statement left
               // LastValue absent or stale — reported unevaluable, or reusing an earlier
               // truthy value. Groovy assignments yield their RHS whatever the target is.
-              Expect.equal (run "true\nenv.DEPLOY = false").Returned (Some(VBool false)) "property target"
-
-              // The INDEX form (`xs[0] = false`) is not asserted here because the
-              // Groovy parser cannot parse it at all yet — a separate gap, measured at
-              // 9 corpus files, tracked as FG-015b. Asserting it here would have made
-              // this test fail for a reason unrelated to what it is testing.
+              Expect.equal
+                  (run "def values = [:]\ntrue\nvalues.DEPLOY = false").Returned
+                  (Some(VBool false))
+                  "a write that actually occurred yields its RHS"
           }
 
           test "a closure returns its trailing expression without `return`" {
@@ -1403,6 +1419,93 @@ let fg015ClosureAudit =
                   (stepArgs o)
                   [ "echo", [ "x" ]; "echo", [ "b" ] ]
                   "only the child returned by first is mutated"
+          }
+
+
+          test "safe-property writes after method calls mutate maps for every assignment form" {
+              let source =
+                  "def rows = [[child: [name: 'a', count: 1]], [child: [name: 'b', count: 10]]]\n"
+                  + "rows*.child.first()?.name = 'safe'\n"
+                  + "rows*.child.first()?.count += 2\n"
+                  + "rows*.child.first()?.count++\n"
+                  + "rows*.child.first()?.count--\n"
+                  + "echo \"${rows[0].child.name}:${rows[1].child.name}:${rows[0].child.count}:${rows[1].child.count}\"\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "all safe-property assignment forms execute"
+              Expect.equal (stepArgs o) [ "echo", [ "safe:b:3:10" ] ] "only first()'s returned map mutates"
+          }
+
+          test "safe-property null and missing receivers fault catchably after RHS effects" {
+              let source =
+                  "try { sh('null-target')?.name = sh('null-rhs') } "
+                  + "catch (NullPointerException e) { echo 'null-caught' }\n"
+                  + "def rows = [[child: 'text']]\n"
+                  + "try { rows*.child.first()?.name = sh('missing-rhs') } "
+                  + "catch (MissingPropertyException e) { echo 'missing-caught' }\n"
+
+              let o = runStrict source
+              Expect.isNone o.Fault "both exact runtime classes are intercepted"
+
+              Expect.equal
+                  (stepArgs o)
+                  [ "sh", [ "null-target" ]
+                    "sh", [ "null-rhs" ]
+                    "echo", [ "null-caught" ]
+                    "sh", [ "missing-rhs" ]
+                    "echo", [ "missing-caught" ] ]
+                  "receiver precedes RHS; the fault follows the RHS and never skips the catch"
+          }
+
+          test "narrow null and missing-property catches never intercept each other" {
+              let nullThroughMissing =
+                  runStrict (
+                      "def target = null\n"
+                      + "try { target?.name = 'x' } catch (MissingPropertyException e) { echo 'wrong' }\n"
+                  )
+
+              match nullThroughMissing.Fault with
+              | Some(NullReceiverAssignment "name") -> ()
+              | other -> failtestf "MissingPropertyException over-caught the null fault: %A" other
+
+              Expect.isEmpty nullThroughMissing.Effects "the wrong catch did not run"
+
+              let missingThroughNull =
+                  runStrict (
+                      "def target = 'text'\n"
+                      + "try { target?.name = 'x' } catch (NullPointerException e) { echo 'wrong' }\n"
+                  )
+
+              match missingThroughNull.Fault with
+              | Some(UnknownProperty "name") -> ()
+              | other -> failtestf "NullPointerException over-caught the missing-property fault: %A" other
+
+              Expect.isEmpty missingThroughNull.Effects "the wrong catch did not run"
+          }
+
+          test "unsupported assignment receivers and targets never degrade to RHS-only success" {
+              let listOutcome = runStrict "def xs = [1]\nxs[0] = sh 'list-rhs'\necho 'after'\n"
+
+              match listOutcome.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.listIndexAssignmentRefusal "stable list-index boundary"
+              | other -> failtestf "expected list-index refusal, got %A" other
+
+              Expect.isEmpty listOutcome.Effects "list-index refusal precedes RHS and later effects"
+
+              let invalidTarget =
+                  Interpreter.runStrictVars
+                      Budget.defaults
+                      steps
+                      Env.empty
+                      [ SAssign(EInt 1L, ECall(FreeCall "sh", [ APos(EStr "target-rhs") ], None)) ]
+
+              match invalidTarget.Fault with
+              | Some(Unsupported why) ->
+                  Expect.equal why Interpreter.assignmentTargetRefusal "stable unsupported-target boundary"
+              | other -> failtestf "expected target refusal, got %A" other
+
+              Expect.isEmpty invalidTarget.Effects "an unsupported target cannot evaluate its RHS"
           }
           ]
 
