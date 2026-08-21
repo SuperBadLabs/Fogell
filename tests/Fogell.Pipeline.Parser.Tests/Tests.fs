@@ -258,6 +258,46 @@ let structure =
               Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
           }
 
+          test "FG-014 balanced map and list named values retain structure and provenance" {
+              // DIRECTLY PROBED on Jenkins 2.568.1. Brackets delimit one argument even
+              // when inner maps, lists, strings and commas are nested inside it.
+              let src =
+                  "pipeline {\n  agent any\n  parameters {\n    choice(name: 'v', choices: ['a,b', 'c'], description: 'd')\n  }\n  stages {\n    stage('a') {\n      steps {\n        publishHTML target: [allowMissing: true, nested: [name: 'r'], providers: [[$class: 'C']]], label: 'report'\n      }\n    }\n  }\n}"
+
+              let pipeline = ok src
+              let choice = pipeline.Parameters |> List.exactlyOne
+              let publish = pipeline.Stages.[0].Steps |> List.exactlyOne
+
+              Expect.equal
+                  (choice.Named |> List.find (fun (name, _) -> name = "choices") |> snd)
+                  "['a,b', 'c']"
+                  "the complete list source survives"
+              Expect.contains choice.ExpressionArgs "choices" "the list remains an expression"
+              Expect.isFalse (choice.LiteralNamedArgs.Contains "choices") "a collection is not a quoted literal"
+              Expect.equal choice.ArgumentOrder [ "name"; "choices"; "description" ] "source order survives"
+
+              Expect.equal
+                  (publish.Named |> List.find (fun (name, _) -> name = "target") |> snd)
+                  "[allowMissing: true, nested: [name: 'r'], providers: [[$class: 'C']]]"
+                  "the complete nested map/list source survives"
+              Expect.contains publish.ExpressionArgs "target" "the map remains an expression"
+              Expect.equal (publish.Named |> List.map fst) [ "target"; "label" ] "the following outer argument survives"
+          }
+
+          test "FG-014 malformed or non-bracket collection boundaries remain refused" {
+              let sources =
+                  [ "unclosed list",
+                    mk "    stage('a') { steps { publishHTML target: [allowMissing: true\n echo 'must-not-disappear' } }"
+                    "unclosed nested map",
+                    mk "    stage('a') { steps { publishHTML target: [nested: [name: 'r']\n echo 'must-not-disappear' } }" ]
+
+              for label, source in sources do
+                  match Parser.parse source with
+                  | Error error ->
+                      Expect.equal error.Code MalformedSyntax $"{label}: unchecked collection source stays refused"
+                  | Ok pipeline -> failtestf "%s unexpectedly admitted: %A" label pipeline
+          }
+
           test "FG-014 string-labelled structural sections preserve their bodies" {
               // DIRECTLY PROBED on Jenkins 2.568.1 at all three corpus scopes.
               // The labels do not enter the Declarative model; the section body does.

@@ -25,7 +25,7 @@ Romeh_spring-boot-ignite.Jenkinsfile	admitted	-	parsed; execution NOT attempted 
 Romeh_spring-boot-sample-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 Statemood_jenkins-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 SumanReddy568_Selenium-Python-Pytest-framework.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @7:5
+SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile	3	malformed_syntax	malformed_syntax an opaque section @12:5
 SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile	3	malformed_syntax	malformed_syntax 'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}' @56:31
 TTFHW_jenkins_pipeline_java_maven.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 TTFHW_jenkins_pipeline_shell_scripts.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
@@ -61,7 +61,7 @@ cloud-bulldozer_scale-ci-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT a
 cloudogu_ces-build-lib.Jenkinsfile	3	malformed_syntax	malformed_syntax reserved @3:16
 cloudogu_continuous-delivery-slides.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @113:21
 cloudogu_gitops-build-lib.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-cloudogu_gitops-playground.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @16:5
+cloudogu_gitops-playground.Jenkinsfile	3	malformed_syntax	malformed_syntax script block did not parse as Groovy: malformed_syntax at 13:57: Expecting: '[' @109:25
 cloudogu_reveal.js-docker-example.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @142:21
 concur_jenkins-yml-workflowLibs.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 cvitter_jenkins-pipeline-examples.Jenkinsfile	1	-	receipt:cvitter_jenkins-pipeline-examples
@@ -75,13 +75,13 @@ evry-ace_jenkins-ace-library.Jenkinsfile	admitted	-	parsed; execution NOT attemp
 executeautomation_JenkinsPipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 fabric8io_fabric8-pipeline-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 fabric8io_fabric8-platform.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @78:5
+fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 gdemengin_pipeline-logparser.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @58:15
 gfkse_jenkins-shared-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 griddynamics-archive_mpl.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 hakdogan_jenkins-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 hamitmizrak_Devops_Jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @12:5
+holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 hungbang_spring-boot-aws-docdb-example.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ishrivatsa_terraform-vault-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 j8kin_habr-jenkinsfile.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @97:6
@@ -160,12 +160,12 @@ jenkinsci_webhook-step-plugin.Jenkinsfile	admitted	-	parsed; execution NOT attem
 jenkinsci_workflow-basic-steps-plugin.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 jenkinsci_workflow-job-plugin.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 jenkinsci_workflow-multibranch-plugin.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-jerearista_python-jenkinsfile-testing.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @18:5
+jerearista_python-jenkinsfile-testing.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @123:5
 jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @12:5
 judexzhu_Jenkins-Pipeline-CI-CD-with-Helm-on-Kubernetes.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: any char in ‘ ’, '/*' or '//' @34:6
 jussaragranja_SeleniumEasyTest2.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 juvalen_mb-checker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-k11h-de_zap-jenkins.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @18:2
+k11h-de_zap-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 kenych_jenkins_config_as_code.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 kesselborn_jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 kishorebhatia_pipeline-as-code-demo.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
@@ -182,7 +182,7 @@ ljpengelen_jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (u
 llknur_jenkinsfile-pipeline-project.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 maajor_Blender-Geometry-CI.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 macg33zr_pipelineUnit.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @41:5
+maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 maxyermayank_jenkins-pipeline-demo-pwa.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 mercedes-benz_pipeliner.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 merken_netCoreBuild.Jenkinsfile	3	malformed_syntax	malformed_syntax reserved @6:6
@@ -198,7 +198,7 @@ murphysecurity_murphysec-jenkins-tools.Jenkinsfile	admitted	-	parsed; execution 
 narasimhavuppala_jenkins-calculator.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @3:3
 narottamgla_selenium-bdd-cucumber.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 netcorebcn_quiz.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-nikoly_selenium-grid-docker.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @9:3
+nikoly_selenium-grid-docker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ocf_ircbot.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ocf_ocflib.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ocf_ocfweb.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2

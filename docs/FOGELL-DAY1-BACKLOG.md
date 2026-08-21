@@ -43,16 +43,42 @@ from tier 3 to admitted. Admission therefore moves 189 -> 192 and tier 3 moves
 38 -> 35, with no other corpus verdict change. Broader structural-section
 argument shapes remain refused rather than being skipped as unchecked Groovy.
 
-Seven historical rows remain after oracle-preserving minimisation and parser
+The third slice covers one general argument construct: a named value delimited
+by balanced square brackets. Lists and maps share the same syntax boundary, and
+the existing raw scanner could not distinguish their inner commas and braces
+from separators in the enclosing call. Direct Jenkins 2.568.1 probes accept the
+isolated map- and list-valued forms. The complete corpus movement is five rows:
+`fatimajamali81_jenkins-iis-cicd-pipeline.Jenkinsfile`,
+`holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile`,
+`k11h-de_zap-jenkins.Jenkinsfile`,
+`maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile` and
+`nikoly_selenium-grid-docker.Jenkinsfile` move from tier 3 to parse-only
+admission. Admission therefore moves 192 -> 197 and tier 3 moves 35 -> 30.
+`SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`,
+`cloudogu_gitops-playground.Jenkinsfile` and
+`jerearista_python-jenkinsfile-testing.Jenkinsfile` pass this construct and
+reach later rejections; they do not move verdict class. No other corpus verdict
+changes.
+
+Those five movements are not executable-compatibility claims. Exact whole-file
+model-converter probes accept `fatimajamali81` and `maxyermayank`; `holdennguyen`
+reaches the lab's missing Maven-installation configuration, while `k11h-de_zap`
+contains a literal placeholder and `nikoly` carries an independently invalid
+Declarative step shape. The scorecard records parsing only and does not erase
+those separate facts. At runtime every newly admitted named collection is
+refused by the shared execution preflight before workspace preparation or any
+effect, until a step's list/map semantics are implemented and proven. Existing
+positional collection semantics such as `withEnv(['A=1'])` remain executable.
+
+Six historical rows remain after oracle-preserving minimisation and parser
 instrumentation: HariSekhon reaches a closure-valued named argument (and later a
-chained-call named value); jjasghar a trailing comma in `parallel`; maxyermayank
-a map-valued named step argument; mjah an inline named Kubernetes stage agent;
-MrRameshRajendran a GString property name; SumitKr88 a list-valued `choice`
-argument; and yashpimple is rejected by Jenkins itself for an unterminated
-quoted URL. These are isolated-probe diagnoses, not guesses from ledger error
-positions, and are not grouped merely because several surface inside step
-bodies. FG-015 is not part of this implementation and is closure-audited
-separately.
+chained-call named value); jjasghar a closure/string-key `parallel` call whose
+trailing comma alone is not the blocker; mjah an inline named Kubernetes stage
+agent; MrRameshRajendran a GString property name; SumitKr88 now passes its
+list-valued `choice` and reaches a later environment rejection; and yashpimple
+is rejected by Jenkins itself for an unterminated quoted URL. These are
+isolated-probe diagnoses, not guesses from ledger error positions. FG-015 is not
+part of this implementation and is closure-audited separately.
 
 Measured 2026-07-30 via real `forge validate` dispatch over the pinned
 228-file corpus. 214/228 accepted (93.9%). All 14 failures are on the
