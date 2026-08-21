@@ -251,6 +251,62 @@ let structure =
               Expect.equal (ok (mk "    stage('a') { steps { echo 'x' } }")).Agent AgentAny "agent any"
           }
 
+          test "FG-014 inline plugin agents retain exact named argument source at pipeline and stage scope" {
+              // DIRECTLY PROBED on Jenkins 2.568.1 at both scopes. The plugin owns
+              // interpretation; the Declarative IR retains exact source and execution
+              // refuses it until provisioning semantics exist.
+              let args = "label: 'docker', yaml: \"${DOCKER_POD}\""
+              let source =
+                  $"def DOCKER_POD = 'apiVersion: v1'\npipeline {{\n  agent {{ kubernetes {args} }}\n  stages {{\n    stage('outer') {{\n      agent {{ kubernetes {args} }}\n      stages {{\n        stage('inner') {{ agent {{ kubernetes bogus: 'kept' }} steps {{ echo 'x' }} }}\n      }}\n    }}\n  }}\n}}"
+
+              let pipeline = ok source
+              Expect.equal pipeline.Agent (AgentUnmodelled("kubernetes", Some args)) "pipeline provenance"
+              Expect.equal pipeline.Stages.[0].Agent (Some(AgentUnmodelled("kubernetes", Some args))) "stage provenance"
+              Expect.equal
+                  pipeline.Stages.[0].Nested.[0].Agent
+                  (Some(AgentUnmodelled("kubernetes", Some "bogus: 'kept'")))
+                  "unknown plugin-owned named keys are retained because Jenkins accepts them"
+          }
+
+          test "FG-014 block plugin agent remains admitted without inline provenance" {
+              let source =
+                  "pipeline { agent { kubernetes { label 'docker'; yaml 'apiVersion: v1' } } stages { stage('a') { steps { echo 'x' } } } }"
+
+              Expect.equal
+                  (ok source).Agent
+                  (AgentUnmodelled("kubernetes", None))
+                  "legacy block form remains structurally distinct"
+          }
+
+          test "FG-014 inline plugin agent rejects Jenkins-invalid argument boundaries" {
+              let stageAgent args =
+                  $"pipeline {{ agent any stages {{ stage('a') {{ agent {{ kubernetes {args} }} steps {{ echo 'x' }} }} }} }}"
+
+              for label, args in
+                  [ "same-line missing comma", "label: 'docker' yaml: 'apiVersion: v1'"
+                    "newline missing comma", "label: 'docker'\n yaml: 'apiVersion: v1'"
+                    "duplicate key", "label: 'one', label: 'two'"
+                    "positional extra", "label: 'docker', yaml: 'apiVersion: v1', 'extra'" ] do
+                  let error = err (stageAgent args)
+                  Expect.equal error.Code MalformedSyntax $"{label}: model-invalid form is refused"
+
+              let unbraced =
+                  "pipeline { agent kubernetes label: 'docker', yaml: 'apiVersion: v1'\n stages { stage('a') { steps { echo 'x' } } } }"
+
+              Expect.equal (err unbraced).Code MalformedSyntax "the inline plugin form requires the agent block"
+          }
+
+          test "FG-014 duplicate agent sections cannot hide a plugin-defined agent" {
+              // DIRECTLY PROBED on Jenkins 2.568.1: duplicates are rejected at both
+              // scopes. Guard the collected nodes before first-match projection.
+              for label, source in
+                  [ "pipeline",
+                    "pipeline { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('a') { steps { echo 'x' } } } }"
+                    "stage",
+                    "pipeline { agent any stages { stage('a') { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } steps { echo 'x' } } } }" ] do
+                  Expect.equal (err source).Code MalformedSyntax $"{label}: duplicate agent sections are refused"
+          }
+
           test "environment is captured as key/value" {
               let src =
                   "pipeline {\n  agent any\n  environment {\n    FOO = 'bar'\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"

@@ -189,7 +189,7 @@ merken_netCoreBuild.Jenkinsfile	3	malformed_syntax	malformed_syntax reserved @6:
 metersphere_jenkins-plugin.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 microsoft_movie-db-java-on-azure.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '[' @1:6
 mindstix-labs_qa-automation-accelerator.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-mjah_kubernetes-jenkins-cicd-pipeline-example.Jenkinsfile	3	malformed_syntax	malformed_syntax opaque section @47:3
+mjah_kubernetes-jenkins-cicd-pipeline-example.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 mjuuso_provisioning_example.Jenkinsfile	3	malformed_syntax	malformed_syntax 'return', 'switch', 'throw', 'true', 'try', 'while' or '{' @1:1
 mmelmesary_Automated-DevOps-Project.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 mraible_ng-demo.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2

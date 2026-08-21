@@ -70,11 +70,23 @@ refused by the shared execution preflight before workspace preparation or any
 effect, until a step's list/map semantics are implemented and proven. Existing
 positional collection semantics such as `withEnv(['A=1'])` remain executable.
 
-Six historical rows remain after oracle-preserving minimisation and parser
+The fourth slice covers the inline named form of a plugin-defined Declarative
+agent. Direct Jenkins 2.568.1 model-converter probes accept
+`agent { kubernetes label: 'docker', yaml: "${DOCKER_POD}" }` at pipeline and
+stage scope, and accept the exact whole `mjah` file. The shared parser retains
+the plugin kind and exact inline argument source without evaluating it. Exactly
+`mjah_kubernetes-jenkins-cicd-pipeline-example.Jenkinsfile` moves from tier 3
+to parse-only admission: admission moves 197 -> 198 and tier 3 moves 30 -> 29,
+with no other corpus verdict change. Fogell does not implement Kubernetes pod
+provisioning, workspace placement, or plugin environment semantics; the shared
+execution preflight therefore refuses every retained plugin-defined agent before
+SCM checkout, workspace preparation, or effects, including nested stage forms.
+
+Five historical rows remain after oracle-preserving minimisation and parser
 instrumentation: HariSekhon reaches a closure-valued named argument (and later a
 chained-call named value); jjasghar a closure/string-key `parallel` call whose
-trailing comma alone is not the blocker; mjah an inline named Kubernetes stage
-agent; MrRameshRajendran a GString property name; SumitKr88 now passes its
+trailing comma alone is not the blocker; MrRameshRajendran a GString property
+name; SumitKr88 now passes its
 list-valued `choice` and reaches a later environment rejection; and yashpimple
 is rejected by Jenkins itself for an unterminated quoted URL. These are
 isolated-probe diagnoses, not guesses from ledger error positions. FG-015 is not

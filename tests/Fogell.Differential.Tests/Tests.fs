@@ -1879,6 +1879,96 @@ let unsupportedNamedCollections =
                           $"{label}: the existing executor path ran")
           } ]
 
+/// FG-014. Plugin-defined agents are admitted structurally, but Fogell has no
+/// Kubernetes provisioning, workspace placement or environment semantics. Every run
+/// entry converges on the same preflight before WalkerCtx and workspace preparation.
+let unsupportedDeclarativeAgents =
+    let args = "label: 'docker', yaml: 'apiVersion: v1'"
+
+    let cases =
+        [ "pipeline", $"pipeline {{ agent {{ kubernetes {args} }} stages {{ stage('a') {{ steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "pipeline (`kubernetes`)"
+          "stage", $"pipeline {{ agent any stages {{ stage('a') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "stage 'a' (`kubernetes`)"
+          "nested sequential", $"pipeline {{ agent any stages {{ stage('outer') {{ stages {{ stage('inner') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }} }} }}", "stage 'inner' (`kubernetes`)"
+          "nested parallel", $"pipeline {{ agent any stages {{ stage('outer') {{ parallel {{ stage('branch') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }} }} }}", "stage 'branch' (`kubernetes`)" ]
+
+    let control =
+        "pipeline { agent any stages { stage('a') { agent any steps { sh 'echo ran > ran.txt' } } } }"
+
+    let duplicates =
+        [ "pipeline", "pipeline { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+          "stage", "pipeline { agent any stages { stage('a') { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } steps { sh 'echo ran > ran.txt' } } } }" ]
+
+    let withWorkspace (f: string -> string -> unit) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-preflight-" + Guid.NewGuid().ToString("N"))
+        let job = "job"
+        let workspace = IO.Path.Combine(root, job)
+        IO.Directory.CreateDirectory(workspace) |> ignore
+        let sentinel = IO.Path.Combine(workspace, "sentinel.txt")
+        IO.File.WriteAllText(sentinel, "keep")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-014 plugin-defined agents fail closed before execution"
+        [ test "pipeline and every flattened stage form refuse before effects or workspace wipe" {
+              for label, source, scope in cases do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringStarts why "unsupported_agent:" $"{label}: stable named reason"
+                          Expect.stringContains why scope $"{label}: offending kind and scope named"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: fresh-run wipe was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "SCM execution refuses the agent before any checkout" {
+              let _, source, _ = cases.Head
+
+              withWorkspace (fun root workspace ->
+                  let unreachable = { Url = "file:///definitely/not/a/repository"; Branch = "main" }
+
+                  match FogellSide.runScm [] root "job" unreachable source with
+                  | Ok trace -> failtestf "SCM agent unexpectedly executed: %A" trace
+                  | Error why -> Expect.stringStarts why "unsupported_agent:" "preflight wins over checkout"
+
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt"))) "workspace retained"
+                  Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
+          }
+
+          test "duplicate agent sections refuse before first-match loss or effects" {
+              for label, source in duplicates do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s duplicate agent unexpectedly executed: %A" label trace
+                      | Error why -> Expect.stringContains why "malformed_syntax" $"{label}: admission refusal"
+
+                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt"))) "workspace retained"
+                      Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
+          }
+
+          test "modelled pipeline and stage agents remain executable" {
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" control with
+                  | Error why -> failtestf "control was refused: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "existing agent path is unchanged"
+
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "ran.txt")).Trim())
+                      "ran"
+                      "control effect ran")
+          } ]
+
 /// FG-014. Admission may retain tools syntax for the parse-only corpus metric, but
 /// execution must refuse before it can inherit an unrelated host toolchain and report a
 /// false success. These are real run entry points, so the sentinel proves the fresh-run
@@ -2630,6 +2720,7 @@ let main argv =
               genuineNullRuntime
               jenkinsBuildDataAttestation
               unsupportedNamedCollections
+              unsupportedDeclarativeAgents
               unsupportedDeclarativeTools
               spreadAssignmentPreflight
               userOutputSurvives

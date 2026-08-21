@@ -600,7 +600,24 @@ let private toolsSection: P<(string * string) list> =
 // command still needs the newline/semicolon boundary enforced by [toolEntryEnd].
 
 let private agentSpec: P<AgentSpec> =
-    let inner =
+    let unmodelledInline =
+        attempt (
+            identifierBare
+            .>>. withSkippedString
+                    (fun skipped args -> skipped, args)
+                    (skipMany1 (anyOf " \t") >>. argList)
+            >>= fun (kind, (source, (_named, positional, _, _, _, _, order))) ->
+                    if List.isEmpty order then
+                        fail "an inline agent requires at least one named argument"
+                    elif not (List.isEmpty positional) then
+                        fail "an inline agent accepts named arguments only"
+                    else
+                        // Keep spelling, quote kind, interpolation source and order.
+                        // The decoded [named] values are used only to prove that every
+                        // argument took the shared named-argument grammar.
+                        preturn (AgentUnmodelled(kind, Some(source.Trim()))))
+
+    let inner includeInline =
         choice
             [ attempt (keyword "any" >>% AgentAny)
               attempt (keyword "none" >>% AgentNone)
@@ -614,11 +631,13 @@ let private agentSpec: P<AgentSpec> =
                                AgentDocker(defaultArg img "", None))
                        <|> (stringLiteral |>> fun img -> AgentDocker(img, None))))
               attempt (keyword "dockerfile" >>. opt (balancedBody '{' '}') |>> fun _ -> AgentDockerfile None)
-              (identifier .>> opt (attempt (balancedRaw '{' '}')) |>> AgentUnmodelled) ]
+              if includeInline then unmodelledInline
+              (identifier .>>. opt (attempt (balancedRaw '{' '}'))
+               |>> fun (kind, _) -> AgentUnmodelled(kind, None)) ]
 
     keyword "agent"
-    >>. (attempt (between (symbol "{") (symbol "}") (ws >>. inner))
-         <|> inner)
+    >>. (attempt (between (symbol "{") (symbol "}") (ws >>. inner true))
+         <|> inner false)
 
 let private postConditionName: P<PostCondition> =
     choice
@@ -1003,6 +1022,7 @@ stageRef.Value <-
         // all four kinds together, labelled empty-first forms and recursively nested
         // stages. Jenkins rejects the collected model before a build starts. Guard
         // the nodes before `pick` can discard a body, especially an input gate.
+        >>= rejectingDuplicateSections "agent" (function SecAgent _ -> true | _ -> false)
         >>= rejectingDuplicateSections "tools" (function SecTools _ -> true | _ -> false)
         >>= rejectingDuplicateSections "post" (function SecPost _ -> true | _ -> false)
         >>= rejectingMultipleStageBodies)
@@ -1126,6 +1146,7 @@ let private pipelineParser: P<Pipeline> =
                   // exactly and left executable trailing statements silently unconsumed.
                   (skipChar '}')
                   (ws >>. many (attempt topSection)
+                   >>= rejectingDuplicateSections "agent" (function TopAgent _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false)))
