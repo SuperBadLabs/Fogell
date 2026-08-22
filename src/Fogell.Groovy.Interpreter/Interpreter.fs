@@ -1365,10 +1365,14 @@ module Interpreter =
             r
 
         match name, recv, args with
-        | "get", VScmMap scm, [ VStr key ] ->
+        | "get", VScmMap scm, [ VStr key ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
             scm.Entries |> Map.tryFind key |> Option.map VStr |> Option.defaultValue VNull
-        | "containsKey", VScmMap scm, [ VStr key ] -> VBool(Map.containsKey key scm.Entries)
-        | "keySet", VScmMap scm, [] ->
+        | "containsKey", VScmMap scm, [ VStr key ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VBool(Map.containsKey key scm.Entries)
+        | "keySet", VScmMap scm, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
             scm.Entries
             |> Map.toList
             |> List.map fst
@@ -1380,7 +1384,9 @@ module Interpreter =
                         $"method `{name}` is not modelled for an SCM return map; supported methods: get(String), containsKey(String), keySet()"
                 )
             )
-        | "join", VScmKeySet keys, [ VStr delimiter ] -> VStr(String.concat delimiter keys)
+        | "join", VScmKeySet keys, [ VStr delimiter ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VStr(String.concat delimiter keys)
         | _, VScmKeySet _, _ ->
             raise (Stop(Unsupported $"method `{name}` is not modelled for an SCM return-map key set; supported method: join(String)"))
         | ("get" | "containsKey"), _, _ ->
