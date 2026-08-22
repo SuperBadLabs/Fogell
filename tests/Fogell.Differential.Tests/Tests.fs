@@ -1800,7 +1800,8 @@ let genuineNullRuntime =
                       ref
                           { TotalCount = 1L
                             FailCount = 0L
-                            SkipCount = 0L })
+                            SkipCount = 0L
+                            PassCount = 1L })
 
               let mutable withSummary = summary
 
@@ -1812,30 +1813,72 @@ let genuineNullRuntime =
                   "a deeply wrapped summary is still found"
           }
 
-          test "JUnit publishes only the three measured count properties and remains nonterminal when unstable" {
+          test "JUnit publishes all four measured integer count properties and remains nonterminal when unstable" {
               let body =
-                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def got = junit(testResults: 'reports/summary.xml'); "
-                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1) { sh 'touch summary-ok.txt' }"
+                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 1) { sh 'touch summary-ok.txt' }"
 
               run body (fun workspace trace ->
                   Expect.equal trace.Result "unstable" "failing tests keep the build unstable without halting the script"
                   Expect.isTrue
                       (IO.File.Exists(IO.Path.Combine(workspace, "summary-ok.txt")))
-                      "all three typed count properties drove the measured branch")
+                      "all four typed count properties drove the measured branch")
+          }
+
+          test "JUnit passCount subtracts failures errors and skips across multiple suites" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuites><testsuite name=\\\"first\\\" tests=\\\"3\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"1\\\"><testcase name=\\\"first-pass\\\"/><testcase name=\\\"first-fail\\\"><failure/></testcase><testcase name=\\\"first-skip\\\"><skipped/></testcase></testsuite><testsuite name=\\\"second\\\" tests=\\\"4\\\" failures=\\\"0\\\" errors=\\\"1\\\" skipped=\\\"0\\\"><testcase name=\\\"second-pass-a\\\"/><testcase name=\\\"second-pass-b\\\"/><testcase name=\\\"second-pass-c\\\"/><testcase name=\\\"second-error\\\"><error/></testcase></testsuite></testsuites>' > reports/multi.xml\"; "
+                  + "def got = junit(testResults: 'reports/multi.xml'); "
+                  + "def passes = got.passCount; "
+                  + "if (got.totalCount == 7 && got.failCount == 2 && got.skipCount == 1 && passes == 4 && passes instanceof Integer && !(passes instanceof Long)) { sh 'touch multi-pass-count-ok.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "a failure and an error keep the build unstable"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "multi-pass-count-ok.txt")))
+                      "passCount preserves Integer-only provenance while subtracting both failure classes and skips")
+          }
+
+          test "JUnit passCount arithmetic fails closed until promotion and decimal types are modelled" {
+              let operations =
+                  [ "unary-minus", "-passes"
+                    "same-plus", "passes + other"
+                    "mixed-plus", "passes + 1"
+                    "same-minus", "passes - other"
+                    "same-multiply", "passes * other"
+                    "same-divide", "passes / other"
+                    "same-modulo", "passes % other"
+                    "range", "passes..other" ]
+
+              for label, expression in operations do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      + "def got = junit(testResults: 'reports/summary.xml'); "
+                      + "def passes = got.passCount; def other = got.passCount; "
+                      + $"try {{ def ignored = {expression}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: unmodelled arithmetic fails closed"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
+                          $"{label}: no successor effect escaped the refusal"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt")))
+                          $"{label}: ordinary Groovy catch cannot absorb a modelling refusal")
           }
 
           test "JUnit build-instability suppression preserves the typed summary in scripted calls" {
               let body =
-                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true); "
-                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1) { sh 'touch suppressed-summary-ok.txt' }"
+                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 1) { sh 'touch suppressed-summary-ok.txt' }"
 
               run body (fun workspace trace ->
                   Expect.equal trace.Result "success" "failed tests no longer mark the build unstable when suppression is true"
                   Expect.isTrue
                       (IO.File.Exists(IO.Path.Combine(workspace, "suppressed-summary-ok.txt")))
-                      "suppression leaves all three typed counts observable")
+                      "suppression leaves all four typed counts observable")
           }
 
           test "JUnit build-instability suppression uses bare boolean provenance outside script" {
@@ -2108,6 +2151,7 @@ let genuineNullRuntime =
               let operations =
                   [ "property", "def ignored = got.duration"
                     "method", "def ignored = got.getTotalCount()"
+                    "pass-getter", "def ignored = got.getPassCount()"
                     "index", "def ignored = got['totalCount']"
                     "truthiness", "def ignored = got ? 1 : 0"
                     "equality", "def ignored = got == got"

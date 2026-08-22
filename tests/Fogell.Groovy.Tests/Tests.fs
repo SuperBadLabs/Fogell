@@ -2337,6 +2337,18 @@ let fg015ClosureAudit =
               Expect.equal o.Returned (Some(VBool true)) "String is recognised"
           }
 
+          test "instanceof keeps the older wide integral surface Long-capable" {
+              let o = runStrict "def value = 4294967296\nreturn value instanceof Long\n"
+              Expect.isNone o.Fault "the large-literal type check evaluates"
+              Expect.equal o.Returned (Some(VBool true)) "a provenance-specific producer does not narrow every VInt"
+          }
+
+          test "string indexing checks int64 bounds before narrowing the index" {
+              let o = runStrict "return 'x'[4294967296]\n"
+              Expect.isNone o.Fault "an out-of-range int64 index does not escape as a host exception"
+              Expect.equal o.Returned (Some VNull) "the existing out-of-range result is preserved"
+          }
+
           test "multi-assign binds list elements by index" {
               let o = runStrict "def (left, right) = ['L', 'R']\necho \"${left}:${right}\"\n"
               Expect.isNone o.Fault "the assignment evaluates"

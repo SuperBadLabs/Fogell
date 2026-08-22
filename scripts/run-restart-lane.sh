@@ -803,7 +803,8 @@ pipeline {
                 script {
                     sh "echo probe >> probe-executions.txt; rm -rf reports; mkdir -p reports; printf '%s' '<testsuite name=\"resume\" tests=\"2\" failures=\"1\"><testcase name=\"pass\"/><testcase name=\"fail\"><failure/></testcase></testsuite>' > reports/summary.xml"
                     def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false)
-                    if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0) {
+                    def passes = got.passCount
+                    if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0 && passes == 1 && passes instanceof Integer && !(passes instanceof Long)) {
                         sh 'printf counts > counts.txt'
                     }
                     sh 'printf successor > successor.txt'
@@ -831,6 +832,13 @@ JF
 # boundary this arm resumes from, without timing a sub-millisecond SIGKILL.
 "${HOST[@]}" "$JW_LANE/Jenkinsfile" "$JW_LANE/ws" fg177jw "$JW_LANE/seed.journal" > "$JW_LANE/seed.log" 2>&1
 grep -q 'completed: success' "$JW_LANE/seed.log" || { echo "FAIL: JUnit warning seed run did not stay successful"; cat "$JW_LANE/seed.log"; exit 1; }
+for f in counts.txt successor.txt; do
+  [ -f "$JW_LANE/ws/fg177jw/$f" ] || { echo "FAIL: JUnit warning seed omitted its $f marker"; cat "$JW_LANE/seed.log"; exit 1; }
+done
+[ "$(cat "$JW_LANE/ws/fg177jw/counts.txt")" = counts ] || {
+  echo "FAIL: passCount did not select the seed count marker"; cat "$JW_LANE/seed.log"; exit 1; }
+[ "$(cat "$JW_LANE/ws/fg177jw/successor.txt")" = successor ] || {
+  echo "FAIL: JUnit warning seed successor marker is wrong"; cat "$JW_LANE/seed.log"; exit 1; }
 
 [ "$(grep -c $'^step-stage-warning\tprobe\t0\tunstable$' "$JW_LANE/seed.journal" || true)" -eq 1 ] || {
   echo "FAIL: seed journal has no unique unstable stage-warning record"; cat "$JW_LANE/seed.journal"; exit 1; }
@@ -864,6 +872,13 @@ grep -q 'completed: success' "$JW_LANE/resume.log" || {
   echo "FAIL: resumed stage warning changed the build result"; cat "$JW_LANE/resume.log"; exit 1; }
 [ "$(wc -l < "$JW_LANE/ws/fg177jw/probe-executions.txt")" -eq 1 ] || {
   echo "FAIL: JUnit script executed more than once across resume"; cat "$JW_LANE/ws/fg177jw/probe-executions.txt"; exit 1; }
+for f in counts.txt successor.txt; do
+  [ -f "$JW_LANE/ws/fg177jw/$f" ] || { echo "FAIL: resume lost the durable JUnit $f marker"; cat "$JW_LANE/resume.log"; exit 1; }
+done
+[ "$(cat "$JW_LANE/ws/fg177jw/counts.txt")" = counts ] || {
+  echo "FAIL: resume changed the durable passCount marker"; cat "$JW_LANE/resume.log"; exit 1; }
+[ "$(cat "$JW_LANE/ws/fg177jw/successor.txt")" = successor ] || {
+  echo "FAIL: resume changed the durable successor marker"; cat "$JW_LANE/resume.log"; exit 1; }
 for f in stage-always.txt stage-unstable.txt later.txt pipeline-success.txt; do
   [ -f "$JW_LANE/ws/fg177jw/$f" ] || { echo "FAIL: resumed JUnit warning omitted $f"; cat "$JW_LANE/resume.log"; exit 1; }
 done

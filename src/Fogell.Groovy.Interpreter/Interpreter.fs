@@ -303,7 +303,7 @@ module Interpreter =
         if Value.containsScmMap value then
             raise (Stop(Unsupported "SCM return-map rendering is not modelled; read one measured string key"))
         elif Value.containsJUnitSummary value then
-            raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, or skipCount"))
+            raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, skipCount, or passCount"))
         else
             match Value.tryToDisplay value with
             | Value.Text rendered -> rendered
@@ -421,6 +421,11 @@ module Interpreter =
     let private closureBuiltins =
         set [ "each"; "collect"; "find"; "findAll"; "any"; "every"; "sort" ]
 
+    let private (|Integral|_|) = function
+        | VInt i
+        | VInteger i -> Some i
+        | _ -> None
+
 
     let rec private evalExpr (st: State) (env: Env) (e: Expr) : Value =
         tick st
@@ -481,7 +486,7 @@ module Interpreter =
         | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
-            | ListLike xs, VInt i -> listRead xs i
+            | ListLike xs, Integral i -> listRead xs i
             | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
             | VScmMap scm, VStr key ->
@@ -492,7 +497,7 @@ module Interpreter =
                 raise (Stop(Unsupported "SCM return-map key-set indexing is not modelled; use join(String)"))
             | VJUnitSummary _, _ ->
                 raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
-            | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
+            | VStr s, Integral i when i >= 0L && i < int64 s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
             let v = evalExpr st env x
@@ -539,8 +544,9 @@ module Interpreter =
             | "totalCount" -> VInt summary.Value.TotalCount
             | "failCount" -> VInt summary.Value.FailCount
             | "skipCount" -> VInt summary.Value.SkipCount
+            | "passCount" -> VInteger summary.Value.PassCount
             | _ ->
-                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount"))
+                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount, passCount"))
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -649,10 +655,10 @@ module Interpreter =
             | Value.Answer r -> VBool(not r)
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
             | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for nominal Jenkins return values"))
-        | "<", VInt x, VInt y -> VBool(x < y)
-        | "<=", VInt x, VInt y -> VBool(x <= y)
-        | ">", VInt x, VInt y -> VBool(x > y)
-        | ">=", VInt x, VInt y -> VBool(x >= y)
+        | "<", Integral x, Integral y -> VBool(x < y)
+        | "<=", Integral x, Integral y -> VBool(x <= y)
+        | ">", Integral x, Integral y -> VBool(x > y)
+        | ">=", Integral x, Integral y -> VBool(x >= y)
         | ("=~" | "==~"), VStr s, VStr p ->
             // regex is evaluated with a hard timeout: an untrusted pattern is a
             // catastrophic-backtracking vector.
@@ -670,6 +676,7 @@ module Interpreter =
             VBool(
                 match a, t with
                 | VStr _, "String" -> true
+                | VInteger _, ("Integer" | "Number") -> true
                 | VInt _, ("Integer" | "Long" | "Number") -> true
                 | VList _, ("List" | "Collection" | "ArrayList") -> true
                 | VRange _, ("List" | "Collection" | "Range" | "IntRange") -> true
@@ -1397,7 +1404,7 @@ module Interpreter =
             // there would silently change stage selection.
             raise (Stop(Unsupported $"method `{name}` is modelled only for an SCM return map"))
         | _, VJUnitSummary _, _ ->
-            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
+            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, skipCount, or passCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
         // with the same binding rules and refusal contract as `f(x)` — for a closure
         // held in a LOCAL. A closure held in the script BINDING (assigned without
@@ -1650,7 +1657,7 @@ module Interpreter =
             // non-`env`-named target at `| _ -> ()`.
             let assignInto (recv: Value) (keyValue: Value) (isIndex: bool) =
                 match recv, keyValue, isIndex with
-                | VList items, VInt index, true -> listWrite st items index value
+                | VList items, Integral index, true -> listWrite st items index value
                 | VList _, _, true -> raise (Stop(Unsupported listIndexAssignmentRefusal))
                 | VRange _, _, true -> raise (Stop RangeMutation)
                 | VMap mr, _, _ ->
@@ -1701,10 +1708,10 @@ module Interpreter =
             // effects must not run for those compound-update failures.
             let oldValue, writeBack, listIndex =
                 match recv, keyValue with
-                | VList items, VInt index ->
+                | VList items, Integral index ->
                     listRead items index, (fun value -> listWrite st items index value), Some index
                 | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
-                | VRange values, VInt index ->
+                | VRange values, Integral index ->
                     let items = ref (Value.rangeItems values)
                     listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
                 | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
@@ -1718,7 +1725,7 @@ module Interpreter =
                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
                         | _ -> mr.Value <- Map.add key value mr.Value),
                     None
-                | VStr value, VInt index ->
+                | VStr value, Integral index ->
                     stringIndexRead value index,
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
@@ -1754,10 +1761,10 @@ module Interpreter =
 
             let oldValue, writeBack, listIndex =
                 match recv, keyValue with
-                | VList items, VInt index ->
+                | VList items, Integral index ->
                     listRead items index, (fun value -> listWrite st items index value), Some index
                 | VList _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
-                | VRange values, VInt index ->
+                | VRange values, Integral index ->
                     let items = ref (Value.rangeItems values)
                     listRead items index, (fun _ -> raise (Stop RangeMutation)), Some index
                 | VRange _, _ -> raise (Stop(Unsupported listIndexAssignmentRefusal))
@@ -1771,7 +1778,7 @@ module Interpreter =
                         | Some host when st.JenkinsEnvMaps.Contains mr -> host.SetEnv key (scriptDisplay value)
                         | _ -> mr.Value <- Map.add key value mr.Value),
                     None
-                | VStr value, VInt index ->
+                | VStr value, Integral index ->
                     stringIndexRead value index,
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
