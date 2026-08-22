@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hermetic Jenkins-driver double.  It derives only from runner-written inputs."""
 from __future__ import annotations
-import html, json, os, pathlib, shutil, sys
+import html, json, os, pathlib, sys
 
 state = pathlib.Path(os.environ["FG177_FAKE_STATE"])
 state.mkdir(parents=True, exist_ok=True)
