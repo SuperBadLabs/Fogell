@@ -1,0 +1,5 @@
+case	build_result	probe_status	later_status	required_markers	forbidden_markers
+b0s0	UNSTABLE	UNSTABLE	SUCCESS	counts.txt,successor.txt,stage-always.txt,stage-unstable.txt,pipeline-unstable.txt	wrong-stage.txt,wrong-later.txt,wrong-pipeline.txt,stage-success.txt,later.txt,pipeline-success.txt
+b0s1	SUCCESS	SUCCESS	SUCCESS	counts.txt,successor.txt,stage-always.txt,stage-success.txt,later.txt,pipeline-success.txt	wrong-stage.txt,wrong-later.txt,wrong-pipeline.txt,stage-unstable.txt,pipeline-unstable.txt
+b1s0	SUCCESS	UNSTABLE	SUCCESS	counts.txt,successor.txt,stage-always.txt,stage-unstable.txt,later.txt,pipeline-success.txt	wrong-stage.txt,wrong-later.txt,wrong-pipeline.txt,stage-success.txt,pipeline-unstable.txt
+b1s1	SUCCESS	SUCCESS	SUCCESS	counts.txt,successor.txt,stage-always.txt,stage-success.txt,later.txt,pipeline-success.txt	wrong-stage.txt,wrong-later.txt,wrong-pipeline.txt,stage-unstable.txt,pipeline-unstable.txt

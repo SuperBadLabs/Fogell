@@ -1,0 +1,46 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<flow-definition plugin="workflow-job@1590.v49101d088542">
+  <actions/>
+  <description>FG-177 retained JUnit stage-status oracle</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@4357.vd3195c6b_d381">
+    <script>// FG-177 both-flags control: explicit true for both marking flags has the same
+// build/stage projection as stage suppression alone, while counts and
+// continuation remain intact.
+pipeline {
+    agent any
+    options { skipStagesAfterUnstable() }
+    stages {
+        stage(&apos;probe&apos;) {
+            steps {
+                script {
+                    sh &quot;rm -rf reports *.txt; mkdir -p reports; printf &apos;%s&apos; &apos;&lt;testsuite name=\&quot;matrix\&quot; tests=\&quot;4\&quot; failures=\&quot;1\&quot; errors=\&quot;1\&quot; skipped=\&quot;1\&quot;&gt;&lt;testcase classname=\&quot;matrix.Sample\&quot; name=\&quot;pass\&quot;/&gt;&lt;testcase classname=\&quot;matrix.Sample\&quot; name=\&quot;fail\&quot;&gt;&lt;failure message=\&quot;failed\&quot;/&gt;&lt;/testcase&gt;&lt;testcase classname=\&quot;matrix.Sample\&quot; name=\&quot;error\&quot;&gt;&lt;error message=\&quot;errored\&quot;/&gt;&lt;/testcase&gt;&lt;testcase classname=\&quot;matrix.Sample\&quot; name=\&quot;skip\&quot;&gt;&lt;skipped/&gt;&lt;/testcase&gt;&lt;/testsuite&gt;&apos; &gt; reports/summary.xml&quot;
+                    def got = junit(testResults: &apos;reports/summary.xml&apos;, skipMarkingBuildUnstable: true, skipMarkingStageUnstable: true)
+                    if (got.totalCount == 4 &amp;&amp; got.failCount == 2 &amp;&amp; got.skipCount == 1) {
+                        sh &apos;printf 4,2,1 &gt; counts.txt&apos;
+                    }
+                    sh &apos;printf successor &gt; successor.txt&apos;
+                }
+            }
+            post {
+                always { sh &apos;printf always &gt; stage-always.txt&apos; }
+                success { sh &apos;printf success &gt; stage-success.txt&apos; }
+                unstable { sh &apos;printf wrong &gt; wrong-stage.txt&apos; }
+            }
+        }
+        stage(&apos;later&apos;) {
+            steps { sh &apos;printf later &gt; later.txt&apos; }
+        }
+    }
+    post {
+        success { sh &apos;printf success &gt; pipeline-success.txt&apos; }
+        unstable { sh &apos;printf wrong &gt; wrong-pipeline.txt&apos; }
+    }
+}
+</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

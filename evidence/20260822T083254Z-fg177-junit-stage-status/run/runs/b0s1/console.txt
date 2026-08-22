@@ -1,0 +1,45 @@
+Started by user unknown or anonymous
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins in /var/jenkins_home/workspace/fg177-stage-20260822T084118Z-3032403-b0s1
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (probe)
+[Pipeline] script
+[Pipeline] {
+[Pipeline] sh
++ rm -rf reports *.txt
++ mkdir -p reports
++ printf %s <testsuite name="matrix" tests="4" failures="1" errors="1" skipped="1"><testcase classname="matrix.Sample" name="pass"/><testcase classname="matrix.Sample" name="fail"><failure message="failed"/></testcase><testcase classname="matrix.Sample" name="error"><error message="errored"/></testcase><testcase classname="matrix.Sample" name="skip"><skipped/></testcase></testsuite>
+[Pipeline] junit
+Recording test results
+[Checks API] No suitable checks publisher found.
+[Pipeline] sh
++ printf 4,2,1
+[Pipeline] sh
++ printf successor
+[Pipeline] }
+[Pipeline] // script
+Post stage
+[Pipeline] sh
++ printf always
+[Pipeline] sh
++ printf success
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (later)
+[Pipeline] sh
++ printf later
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] sh
++ printf success
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+Finished: SUCCESS

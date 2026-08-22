@@ -790,5 +790,87 @@ done
 [ -f "$B_LANE/ws/fg177class/wrong-dir-class.txt" ] && { echo "FAIL: IllegalArgumentException caught dir's NullPointerException"; exit 1; }
 echo "junit and dir bind failures are caught by their measured NullPointerException class"
 
+echo "=== FG-177: a successful JUnit step replays its durable stage warning ==="
+JW_LANE="$LANE/fg177-junit-stage-warning-resume"
+mkdir -p "$JW_LANE/ws"
+cat > "$JW_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    options { skipStagesAfterUnstable() }
+    stages {
+        stage('probe') {
+            steps {
+                script {
+                    sh "echo probe >> probe-executions.txt; rm -rf reports; mkdir -p reports; printf '%s' '<testsuite name=\"resume\" tests=\"2\" failures=\"1\"><testcase name=\"pass\"/><testcase name=\"fail\"><failure/></testcase></testsuite>' > reports/summary.xml"
+                    def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false)
+                    if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0) {
+                        sh 'printf counts > counts.txt'
+                    }
+                    sh 'printf successor > successor.txt'
+                }
+            }
+            post {
+                always { sh 'printf always > stage-always.txt' }
+                unstable { sh 'printf unstable > stage-unstable.txt' }
+                success { sh 'printf wrong > wrong-stage.txt' }
+            }
+        }
+        stage('later') {
+            steps { sh 'printf later > later.txt' }
+        }
+    }
+    post {
+        success { sh 'printf success > pipeline-success.txt' }
+        unstable { sh 'printf wrong > wrong-pipeline.txt' }
+    }
+}
+JF
+
+# First obtain the exact durable prefix from a real execution. The prefix ends
+# after the successful step and BEFORE StageCommitted/post: that is the crash
+# boundary this arm resumes from, without timing a sub-millisecond SIGKILL.
+"${HOST[@]}" "$JW_LANE/Jenkinsfile" "$JW_LANE/ws" fg177jw "$JW_LANE/seed.journal" > "$JW_LANE/seed.log" 2>&1
+grep -q 'completed: success' "$JW_LANE/seed.log" || { echo "FAIL: JUnit warning seed run did not stay successful"; cat "$JW_LANE/seed.log"; exit 1; }
+
+[ "$(grep -c $'^step-stage-warning\tprobe\t0\tunstable$' "$JW_LANE/seed.journal" || true)" -eq 1 ] || {
+  echo "FAIL: seed journal has no unique unstable stage-warning record"; cat "$JW_LANE/seed.journal"; exit 1; }
+[ "$(grep -c $'^step-finished\tprobe\t0\tsuccess$' "$JW_LANE/seed.journal" || true)" -eq 1 ] || {
+  echo "FAIL: seed JUnit step was not durably successful"; cat "$JW_LANE/seed.journal"; exit 1; }
+JW_WARNING_LINE=$(grep -n $'^step-stage-warning\tprobe\t0\tunstable$' "$JW_LANE/seed.journal" | cut -d: -f1)
+JW_FINISH_LINE=$(grep -n $'^step-finished\tprobe\t0\tsuccess$' "$JW_LANE/seed.journal" | cut -d: -f1)
+[ "$JW_WARNING_LINE" -lt "$JW_FINISH_LINE" ] || {
+  echo "FAIL: stage warning was not journaled before StepFinished"; cat "$JW_LANE/seed.journal"; exit 1; }
+
+awk '1; $0 == "step-finished\tprobe\t0\tsuccess" { exit }' \
+  "$JW_LANE/seed.journal" > "$JW_LANE/resume.journal"
+grep -q $'^stage-committed\tprobe$' "$JW_LANE/resume.journal" && {
+  echo "FAIL: resume prefix crossed the intended pre-post boundary"; cat "$JW_LANE/resume.journal"; exit 1; }
+
+# Remove the seed run's post/later evidence. The step's own markers stay: their
+# count proves resume skipped the durably successful script rather than creating
+# the right post result by executing JUnit again.
+rm -f \
+  "$JW_LANE/ws/fg177jw/stage-always.txt" \
+  "$JW_LANE/ws/fg177jw/stage-unstable.txt" \
+  "$JW_LANE/ws/fg177jw/wrong-stage.txt" \
+  "$JW_LANE/ws/fg177jw/later.txt" \
+  "$JW_LANE/ws/fg177jw/pipeline-success.txt" \
+  "$JW_LANE/ws/fg177jw/wrong-pipeline.txt"
+
+"${HOST[@]}" "$JW_LANE/Jenkinsfile" "$JW_LANE/ws" fg177jw "$JW_LANE/resume.journal" > "$JW_LANE/resume.log" 2>&1
+grep -q 'skip (durably finished): probe#0' "$JW_LANE/resume.log" || {
+  echo "FAIL: resume re-executed the successful JUnit step"; cat "$JW_LANE/resume.log"; exit 1; }
+grep -q 'completed: success' "$JW_LANE/resume.log" || {
+  echo "FAIL: resumed stage warning changed the build result"; cat "$JW_LANE/resume.log"; exit 1; }
+[ "$(wc -l < "$JW_LANE/ws/fg177jw/probe-executions.txt")" -eq 1 ] || {
+  echo "FAIL: JUnit script executed more than once across resume"; cat "$JW_LANE/ws/fg177jw/probe-executions.txt"; exit 1; }
+for f in stage-always.txt stage-unstable.txt later.txt pipeline-success.txt; do
+  [ -f "$JW_LANE/ws/fg177jw/$f" ] || { echo "FAIL: resumed JUnit warning omitted $f"; cat "$JW_LANE/resume.log"; exit 1; }
+done
+for f in wrong-stage.txt wrong-pipeline.txt; do
+  [ ! -f "$JW_LANE/ws/fg177jw/$f" ] || { echo "FAIL: resumed JUnit warning selected $f"; exit 1; }
+done
+echo "durable warning preceded successful finish; resume selected stage unstable while build and pipeline stayed successful"
+
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"

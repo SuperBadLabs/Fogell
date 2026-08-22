@@ -1883,6 +1883,227 @@ let genuineNullRuntime =
                           "the dynamic direct call was refused before its successor")
           }
 
+          test "JUnit accepts typed scripted booleans for both independent instability channels" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"2\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "def suppressBuild = true; def suppressStage = false; "
+                  + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: suppressBuild, skipMarkingStageUnstable: suppressStage); "
+                  + "if (got.totalCount == 2 && got.failCount == 1) { sh 'touch scripted-summary.txt' } "
+                  + "} } post { unstable { sh 'touch stage-unstable.txt' } success { sh 'touch wrong-stage-success.txt' } } } } "
+                  + "post { success { sh 'touch pipeline-success.txt' } unstable { sh 'touch wrong-pipeline-unstable.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "typed scripted JUnit flags were refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "build suppression controls only the global result"
+
+                      for file in [ "scripted-summary.txt"; "stage-unstable.txt"; "pipeline-success.txt" ] do
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: the matching scripted/stage/post branch ran"
+
+                      for file in [ "wrong-stage-success.txt"; "wrong-pipeline-unstable.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: build and stage outcomes must not be conflated")
+          }
+
+          test "JUnit's two boolean flags preserve the measured build/stage result matrix" {
+              let rows =
+                  [ "default", "", "unstable", "stage-unstable.txt", "pipeline-unstable.txt"
+                    "explicit-false",
+                    ", skipMarkingBuildUnstable: false, skipMarkingStageUnstable: false",
+                    "unstable",
+                    "stage-unstable.txt",
+                    "pipeline-unstable.txt"
+                    "build-only",
+                    ", skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false",
+                    "success",
+                    "stage-unstable.txt",
+                    "pipeline-success.txt"
+                    "stage-only",
+                    ", skipMarkingBuildUnstable: false, skipMarkingStageUnstable: true",
+                    "success",
+                    "stage-success.txt",
+                    "pipeline-success.txt"
+                    "both",
+                    ", skipMarkingBuildUnstable: true, skipMarkingStageUnstable: true",
+                    "success",
+                    "stage-success.txt",
+                    "pipeline-success.txt" ]
+
+              for label, flags, expectedResult, expectedStagePost, expectedPipelinePost in rows do
+                  let source =
+                      "pipeline { agent any stages { stage('probe') { steps { "
+                      + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                      + $"junit testResults: 'reports/summary.xml'{flags}; sh 'touch successor.txt' "
+                      + "} post { unstable { sh 'touch stage-unstable.txt' } success { sh 'touch stage-success.txt' } } } } "
+                      + "post { unstable { sh 'touch pipeline-unstable.txt' } success { sh 'touch pipeline-success.txt' } } }"
+
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s matrix pipeline refused: %s" label why
+                      | Ok trace ->
+                          Expect.equal trace.Result expectedResult $"{label}: exact global result"
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                              $"{label}: JUnit instability remains nonterminal"
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, expectedStagePost)))
+                              $"{label}: stage post reads the WarningAction channel"
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, expectedPipelinePost)))
+                              $"{label}: pipeline post reads only the global build result"
+
+                          let wrongStagePost =
+                              if expectedStagePost = "stage-unstable.txt" then "stage-success.txt" else "stage-unstable.txt"
+
+                          let wrongPipelinePost =
+                              if expectedPipelinePost = "pipeline-unstable.txt" then
+                                  "pipeline-success.txt"
+                              else
+                                  "pipeline-unstable.txt"
+
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, wrongStagePost)))
+                              $"{label}: the opposite stage-post arm stayed closed"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, wrongPipelinePost)))
+                              $"{label}: the opposite pipeline-post arm stayed closed")
+          }
+
+          test "a nested sequential JUnit warning selects child and enclosing stage post without marking the build" {
+              let source =
+                  "pipeline { agent any stages { stage('parent') { stages { stage('child') { steps { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
+                  + "sh 'touch child-successor.txt' "
+                  + "} post { unstable { sh 'touch child-unstable.txt' } success { sh 'touch wrong-child-success.txt' } } } } "
+                  + "post { unstable { sh 'touch parent-unstable.txt' } success { sh 'touch wrong-parent-success.txt' } } } "
+                  + "stage('later') { steps { sh 'touch later.txt' } } } "
+                  + "post { success { sh 'touch pipeline-success.txt' } unstable { sh 'touch wrong-pipeline-unstable.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "nested sequential stage-warning pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the nested warning never enters the global build sink"
+
+                      for file in
+                          [ "child-successor.txt"
+                            "child-unstable.txt"
+                            "parent-unstable.txt"
+                            "later.txt"
+                            "pipeline-success.txt" ] do
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: the nested stage-warning propagation selected this effect"
+
+                      for file in
+                          [ "wrong-child-success.txt"
+                            "wrong-parent-success.txt"
+                            "wrong-pipeline-unstable.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: a stage warning cannot select the opposite stage or pipeline arm")
+          }
+
+          test "a parallel JUnit warning stays branch-local while selecting the enclosing fanout post" {
+              let source =
+                  "pipeline { agent any stages { stage('fanout') { parallel { "
+                  + "stage('warned') { steps { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/warned.xml\"; "
+                  + "junit testResults: 'reports/warned.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
+                  + "sh 'touch warned-successor.txt' "
+                  + "} post { unstable { sh 'touch warned-unstable.txt' } success { sh 'touch wrong-warned-success.txt' } } } "
+                  + "stage('clean') { steps { sh 'touch clean-branch.txt' } "
+                  + "post { success { sh 'touch clean-success.txt' } unstable { sh 'touch wrong-clean-unstable.txt' } } } "
+                  + "} post { unstable { sh 'touch fanout-unstable.txt' } success { sh 'touch wrong-fanout-success.txt' } } } "
+                  + "stage('later') { steps { sh 'touch parallel-later.txt' } } } "
+                  + "post { success { sh 'touch parallel-pipeline-success.txt' } unstable { sh 'touch wrong-parallel-pipeline-unstable.txt' } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "parallel stage-warning pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the parallel warning never enters the global build sink"
+
+                      for file in
+                          [ "warned-successor.txt"
+                            "warned-unstable.txt"
+                            "clean-branch.txt"
+                            "clean-success.txt"
+                            "fanout-unstable.txt"
+                            "parallel-later.txt"
+                            "parallel-pipeline-success.txt" ] do
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: the branch-local or enclosing expected effect ran"
+
+                      for file in
+                          [ "wrong-warned-success.txt"
+                            "wrong-clean-unstable.txt"
+                            "wrong-fanout-success.txt"
+                            "wrong-parallel-pipeline-unstable.txt" ] do
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, file)))
+                              $"{file}: the warned branch did not contaminate its sibling or global result")
+          }
+
+          test "both JUnit boolean flags refuse text, dynamic direct expressions and duplicates before report scanning" {
+              for key in [ "skipMarkingBuildUnstable"; "skipMarkingStageUnstable" ] do
+                  let scriptedText =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                      + $"junit(testResults: 'reports/summary.xml', {key}: 'true'); "
+                      + "sh 'touch scripted-text-ran.txt'"
+
+                  run scriptedText (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{key}: scripted text is not a boolean"
+                      Expect.isFalse
+                          (trace.Output |> List.contains "Recording test results")
+                          $"{key}: text was refused before the report scanner emitted"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "scripted-text-ran.txt")))
+                          $"{key}: the successor did not run")
+
+                  let dynamicDirect =
+                      "pipeline { agent any environment { SKIP = 'true' } stages { stage('probe') { steps { "
+                      + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                      + $"junit testResults: 'reports/summary.xml', {key}: env.SKIP; "
+                      + "sh 'touch dynamic-ran.txt' } } } }"
+
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" dynamicDirect with
+                      | Error why -> failtestf "%s dynamic-refusal pipeline could not run: %s" key why
+                      | Ok trace ->
+                          Expect.equal trace.Result "failure" $"{key}: rendered dynamic text is refused"
+                          Expect.isFalse
+                              (trace.Output |> List.contains "Recording test results")
+                              $"{key}: the dynamic value was refused before scanning"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, "dynamic-ran.txt")))
+                              $"{key}: the direct successor did not run")
+
+                  let duplicate =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                      + $"junit(testResults: 'reports/summary.xml', {key}: true, {key}: false); "
+                      + "sh 'touch duplicate-ran.txt'"
+
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" (pipeline duplicate) with
+                      | Ok trace -> failtestf "%s duplicate binding unexpectedly ran: %A" key trace
+                      | Error why ->
+                          Expect.stringContains why "malformed_syntax" $"{key}: Groovy rejects the duplicate map key"
+                          Expect.isFalse
+                              (IO.Directory.Exists(IO.Path.Combine(workspace, "reports")))
+                              $"{key}: the compile-shaped duplicate refusal happened before report setup"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, "duplicate-ran.txt")))
+                              $"{key}: the duplicate call cannot reach its successor")
+          }
+
           test "unmeasured JUnit object surface remains catch-opaque and cannot reach a successor effect" {
               let operations =
                   [ "property", "def ignored = got.duration"

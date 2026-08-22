@@ -1,0 +1,34 @@
+<flow-definition plugin="workflow-job"><actions/><description>FG-177 retained JUnit stage-status oracle</description><keepDependencies>false</keepDependencies><properties/><definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps"><script>// FG-177: suppressing only the build mark leaves Jenkins' probe-stage warning
+// intact. The build and pipeline post are successful, but stage post remains
+// unstable and the later stage runs.
+pipeline {
+    agent any
+    options { skipStagesAfterUnstable() }
+    stages {
+        stage('probe') {
+            steps {
+                script {
+                    sh "rm -rf reports *.txt; mkdir -p reports; printf '%s' '&lt;testsuite name=\"matrix\" tests=\"4\" failures=\"1\" errors=\"1\" skipped=\"1\"&gt;&lt;testcase classname=\"matrix.Sample\" name=\"pass\"/&gt;&lt;testcase classname=\"matrix.Sample\" name=\"fail\"&gt;&lt;failure message=\"failed\"/&gt;&lt;/testcase&gt;&lt;testcase classname=\"matrix.Sample\" name=\"error\"&gt;&lt;error message=\"errored\"/&gt;&lt;/testcase&gt;&lt;testcase classname=\"matrix.Sample\" name=\"skip\"&gt;&lt;skipped/&gt;&lt;/testcase&gt;&lt;/testsuite&gt;' &gt; reports/summary.xml"
+                    def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false)
+                    if (got.totalCount == 4 &amp;&amp; got.failCount == 2 &amp;&amp; got.skipCount == 1) {
+                        sh 'printf 4,2,1 &gt; counts.txt'
+                    }
+                    sh 'printf successor &gt; successor.txt'
+                }
+            }
+            post {
+                always { sh 'printf always &gt; stage-always.txt' }
+                unstable { sh 'printf unstable &gt; stage-unstable.txt' }
+                success { sh 'printf wrong &gt; wrong-stage.txt' }
+            }
+        }
+        stage('later') {
+            steps { sh 'printf later &gt; later.txt' }
+        }
+    }
+    post {
+        success { sh 'printf success &gt; pipeline-success.txt' }
+        unstable { sh 'printf wrong &gt; wrong-pipeline.txt' }
+    }
+}
+</script><sandbox>true</sandbox></definition><triggers/><disabled>false</disabled></flow-definition>

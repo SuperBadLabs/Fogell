@@ -51,6 +51,17 @@ type BranchCtx =
       /// must not leave a permanent mark on the build, and the build status is a
       /// monotone worst-of that could never be walked back.
       Sink: BuildStatus -> unit
+      /// Stage-local decoration which must not change the build result. Jenkins
+      /// represents this as a WarningAction on the step FlowNode; Fogell carries
+      /// the one runtime consequence it can observe directly: stage post
+      /// selection. Kept separate from Sink because JUnit build-result
+      /// suppression leaves the build SUCCESS while its enclosing stage remains
+      /// UNSTABLE.
+      ///
+      /// A stage body replaces this with a sink that updates its own stage result
+      /// and forwards to an enclosing stage. The run root ignores it. Persistence
+      /// observes and replays it separately from the step's build status.
+      StageSink: BuildStatus -> unit
       /// FG-101. Elapsed-ms at which a failFast sibling signalled, if it has. The
       /// cancellation model claims the EARLIER event wins; without a timestamp that claim
       /// was unbackable and the code simply let expiry win every tie — a comment promising

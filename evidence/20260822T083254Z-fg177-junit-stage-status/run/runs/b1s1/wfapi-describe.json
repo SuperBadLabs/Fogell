@@ -1,0 +1,59 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/fg177-stage-20260822T084118Z-3032403-b1s1/1/wfapi/describe"
+    }
+  },
+  "durationMillis": 6292,
+  "endTimeMillis": 1787388107540,
+  "id": "1",
+  "name": "#1",
+  "pauseDurationMillis": 0,
+  "queueDurationMillis": 29,
+  "stages": [
+    {
+      "_links": {
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b1s1/1/execution/node/6/wfapi/describe"
+        }
+      },
+      "durationMillis": 2953,
+      "execNode": "",
+      "id": "6",
+      "name": "probe",
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388102644,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b1s1/1/execution/node/20/wfapi/describe"
+        }
+      },
+      "durationMillis": 603,
+      "execNode": "",
+      "id": "20",
+      "name": "later",
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388105771,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b1s1/1/execution/node/25/wfapi/describe"
+        }
+      },
+      "durationMillis": 646,
+      "execNode": "",
+      "id": "25",
+      "name": "Declarative: Post Actions",
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388106538,
+      "status": "SUCCESS"
+    }
+  ],
+  "startTimeMillis": 1787388101248,
+  "status": "SUCCESS"
+}

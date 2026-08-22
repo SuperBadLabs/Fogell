@@ -27,6 +27,11 @@ type StepRequest =
       /// typed/literal argument before dispatch; the executor never guesses a
       /// boolean from the rendered `Named` strings.
       JUnitSkipMarkingBuildUnstable: bool
+      /// FG-177. `junit(skipMarkingStageUnstable: true)` suppresses the
+      /// pipeline-node/stage UNSTABLE decoration independently of the returned
+      /// summary. As with the build flag, the walker supplies a typed decision;
+      /// this layer never reconstructs a boolean from rendered argument text.
+      JUnitSkipMarkingStageUnstable: bool
       /// The WORKSPACE root (not the step's cwd): durable-task roots its script
       /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
       /// executed script's $0 is observable.
@@ -79,6 +84,11 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
+      /// A warning contribution attached to the current pipeline stage rather
+      /// than folded into the build result. JUnit is the first producer: failed
+      /// reports contribute UNSTABLE unless `skipMarkingStageUnstable` was set.
+      /// Failure/abort arms never decorate a stage through this channel.
+      StageWarning: BuildStatus option
       /// FG-174. The captured stdout UNMASKED, and ONLY when `CaptureStdout` asked for
       /// it — None on every other step, so the raw text exists nowhere it was not
       /// requested.
@@ -126,6 +136,7 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
+          StageWarning = None
           CapturedStdoutRaw = None
           Diagnostic = None
           EngineNote = None
@@ -312,6 +323,7 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
+              StageWarning = None
               // ONLY when asked. An unconditional copy would keep the unmasked text
               // alive on every step for no consumer.
               CapturedStdoutRaw = if request.CaptureStdout then Some run.Stdout else None
@@ -482,20 +494,25 @@ module Executor =
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.
-                // MEASURED (receipt `fg177-junit-skip-marking-build-unstable`,
-                // Jenkins 2.568.1 + JUnit 1416.vd753e036de5e): the option changes
-                // only build-result marking. Reports are still parsed and their
-                // counts are still returned. Interrupts and unreadable reports have
-                // already exited through the failure arms above and are never
-                // suppressed by this flag.
+                // The build and stage flags are two typed inputs to one measured
+                // matrix. A failed report contributes a stage warning unless stage
+                // marking is skipped; that surviving warning contributes UNSTABLE
+                // to the build unless build marking is skipped too. Reports are
+                // still parsed and their counts returned in every combination.
+                // Interrupts and unreadable reports have already exited through the
+                // failure arms above and neither flag can suppress them.
+                let marksStageUnstable =
+                    failed > 0 && not request.JUnitSkipMarkingStageUnstable
+
                 let status =
-                    if failed > 0 && not request.JUnitSkipMarkingBuildUnstable then
+                    if marksStageUnstable && not request.JUnitSkipMarkingBuildUnstable then
                         Unstable
                     else
                         Success
 
                 { ok status with
                     TestTotals = Some(total, failed, skipped)
+                    StageWarning = if marksStageUnstable then Some Unstable else None
                     Diagnostic =
                         if failed > 0 then
                             Some $"{failed} of {total} test(s) failed"

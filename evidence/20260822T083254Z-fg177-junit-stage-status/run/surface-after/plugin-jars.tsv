@@ -1,0 +1,11 @@
+junit	f2a3b39304cc1b3f1596c340bbd72d45a70518b710fda521b9739a3d0b703115	/var/jenkins_home/plugins/junit.jpi
+junit	7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142	/var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+junit	702deedb2178915b98df76b8f07d9da811034c96c595e597fde09e80ea859fa6	/var/jenkins_home/plugins/junit/WEB-INF/lib/parallel-collectors-2.6.1.jar
+pipeline-rest-api	6e463affa43f4013c4b0865d4c0442abd738440c54c8bb0cd70f0c1164743159	/var/jenkins_home/plugins/pipeline-rest-api.jpi
+pipeline-rest-api	5a66678c33469bd1bdfc1687e329c30d783480badf7361c805915d7c1e089936	/var/jenkins_home/plugins/pipeline-rest-api/WEB-INF/lib/pipeline-rest-api.jar
+pipeline-graph-analysis	8c89351cb13f694b9cc620501a75aed8bd4acdc0b9a6e6918b5dcb0543f08e7f	/var/jenkins_home/plugins/pipeline-graph-analysis.jpi
+pipeline-graph-analysis	03fa237140bf4b29f339e382e64f764c8a78bc6133cc8c8f4580251ae279c832	/var/jenkins_home/plugins/pipeline-graph-analysis/WEB-INF/lib/pipeline-graph-analysis.jar
+workflow-api	f4adbd6b34a2a0b643a12b898110bd976350142eff6322efda21efacbccb6835	/var/jenkins_home/plugins/workflow-api.jpi
+workflow-api	f9916fe5b823bcf915639762ff525179aeccc73bf25ea2cb80065918018d2100	/var/jenkins_home/plugins/workflow-api/WEB-INF/lib/workflow-api.jar
+pipeline-model-definition	a11506d4adaae0d6603310601cc4d2b1d4bc8ddd7574486d4a63c330d736b873	/var/jenkins_home/plugins/pipeline-model-definition.jpi
+pipeline-model-definition	21657f1174fe73c531bb7798b165feb43ffb80f4960b4eba613a3adedd2df016	/var/jenkins_home/plugins/pipeline-model-definition/WEB-INF/lib/pipeline-model-definition.jar

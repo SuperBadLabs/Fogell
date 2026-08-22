@@ -19,6 +19,7 @@ let roundTrip =
               let records =
                   [ StepStarted("Build", 0, "sh")
                     StepFinished("Build", 0, BuildStatus.Success)
+                    StepStageWarning("Build", 0, BuildStatus.Unstable)
                     StepFinished("Build", 1, BuildStatus.Failure)
                     StepReason("Build", 1, "script returned exit code 7")
                     StageCommitted "Build"
@@ -100,6 +101,36 @@ let resumePlanning =
           test "committed stages are recorded" {
               let plan = Resume.plan [ StageCommitted "Build"; StageCommitted "Test" ]
               Expect.equal plan.CommittedStages (Set.ofList [ "Build"; "Test" ]) "both"
+          }
+
+          test "a successful step retains its separate stage warning" {
+              let plan =
+                  Resume.plan
+                      [ StepStarted("Test", 0, "junit")
+                        StepStageWarning("Test", 0, BuildStatus.Unstable)
+                        StepFinished("Test", 0, BuildStatus.Success) ]
+
+              Expect.equal
+                  (Resume.dispositionOf plan "Test" 0)
+                  (AlreadyFinished BuildStatus.Success)
+                  "the build-facing status stays successful"
+
+              Expect.equal
+                  (Resume.stageWarningOf plan "Test" 0)
+                  (Some BuildStatus.Unstable)
+                  "the stage-only consequence is replayable"
+          }
+
+          test "multiple stage warning records retain their worst status" {
+              let plan =
+                  Resume.plan
+                      [ StepStageWarning("Test", 0, BuildStatus.Failure)
+                        StepStageWarning("Test", 0, BuildStatus.Unstable) ]
+
+              Expect.equal
+                  (Resume.stageWarningOf plan "Test" 0)
+                  (Some BuildStatus.Failure)
+                  "a later weaker record can never improve a durable warning"
           } ]
 
 /// The board's acceptance criterion, run as a genuine crash: SIGKILL a real
@@ -254,6 +285,20 @@ let retryAttempts =
 
               Expect.equal (Map.tryFind "Flaky" plan.RetryAttempts) (Some 3) "last marker"
               Expect.equal (Resume.dispositionOf plan "Flaky" 0) Interrupted "attempt 3's live state"
+          }
+
+          test "retry segmentation does not erase an earlier attempt's stage warning" {
+              let plan =
+                  Resume.plan
+                      [ StepStageWarning("Flaky", 0, BuildStatus.Unstable)
+                        StepFinished("Flaky", 0, BuildStatus.Success)
+                        RetryAttemptStarted("Flaky", 2)
+                        StepStarted("Flaky", 0, "sh") ]
+
+              Expect.equal
+                  (Resume.stageWarningOf plan "Flaky" 0)
+                  (Some BuildStatus.Unstable)
+                  "the earlier FlowNode remains inside the Jenkins stage graph"
           } ]
 
 let stepReasons =

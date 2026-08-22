@@ -1,0 +1,40 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/25/wfapi/describe"
+    }
+  },
+  "durationMillis": 670,
+  "execNode": "",
+  "id": "25",
+  "name": "Declarative: Post Actions",
+  "pauseDurationMillis": 0,
+  "stageFlowNodes": [
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/26/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/26/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/26/wfapi/describe"
+        }
+      },
+      "durationMillis": 377,
+      "execNode": "",
+      "id": "26",
+      "name": "Shell Script",
+      "parameterDescription": "printf unstable > pipeline-unstable.txt",
+      "parentNodes": [
+        "25"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388083474,
+      "status": "SUCCESS"
+    }
+  ],
+  "startTimeMillis": 1787388083297,
+  "status": "SUCCESS"
+}
