@@ -1857,6 +1857,23 @@ let genuineNullRuntime =
                       "the returned summary carries all four exact counts and Integer-not-Long passCount provenance")
           }
 
+          test "JUnit empty reports synthesize failures before extension gating" {
+              let body =
+                  "sh \"rm -rf reports empty-summary.txt; mkdir -p reports; : > reports/empty.txt; : > reports/empty.XML\"; "
+                  + "def got = junit(testResults: 'reports/*'); "
+                  + "def passes = got.passCount; "
+                  + "if (got.totalCount == 2 && got.failCount == 2 && got.skipCount == 0 && passes == 0 "
+                  + "&& passes instanceof Integer && !(passes instanceof Long)) { "
+                  + "sh 'printf 2,2,0,0,Integer > empty-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "two empty reports are ordinary JUnit instability"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "empty-summary.txt")))
+                      "2,2,0,0,Integer"
+                      "empty .txt and uppercase .XML reports each synthesize one failure before extension gating")
+          }
+
           test "JUnit aggregates valid cases with one synthetic failure per malformed XML file" {
               let body =
                   "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/valid.xml; printf '%s' 'not-xml' > reports/malformed.xml\"; "

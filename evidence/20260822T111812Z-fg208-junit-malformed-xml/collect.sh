@@ -8,6 +8,7 @@ output="$bundle/run"
 cases=(
   "$repo/differential/cases/fg208-junit-malformed-xml.Jenkinsfile"
   "$repo/differential/cases/fg208-junit-malformed-mixed.Jenkinsfile"
+  "$repo/differential/cases/fg208-junit-empty-any-extension.Jenkinsfile"
 )
 
 : "${FG208_JENKINS_URL:=http://127.0.0.1:18099}"
@@ -74,6 +75,7 @@ dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fspro
   "$FG208_JENKINS_URL" "$FG208_JENKINS_CORE" "$stage/receipts" \
   "$stage/inputs/fg208-junit-malformed-xml.Jenkinsfile" \
   "$stage/inputs/fg208-junit-malformed-mixed.Jenkinsfile" \
+  "$stage/inputs/fg208-junit-empty-any-extension.Jenkinsfile" \
   > "$stage/run.log" 2>&1
 printf 'differential-cli-exit=0\n' > "$stage/exit.txt"
 
@@ -89,9 +91,11 @@ capture_container > "$stage/container-after.txt"
     "$stage/inputs/fg208-junit-malformed-xml.Jenkinsfile"
   cmp "$repo/differential/cases/fg208-junit-malformed-mixed.Jenkinsfile" \
     "$stage/inputs/fg208-junit-malformed-mixed.Jenkinsfile"
+  cmp "$repo/differential/cases/fg208-junit-empty-any-extension.Jenkinsfile" \
+    "$stage/inputs/fg208-junit-empty-any-extension.Jenkinsfile"
   dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
     -c Release --no-build -- --verify-seals "$stage/receipts"
-  for case_name in fg208-junit-malformed-xml fg208-junit-malformed-mixed; do
+  for case_name in fg208-junit-malformed-xml fg208-junit-malformed-mixed fg208-junit-empty-any-extension; do
     receipt="$stage/receipts/$case_name.receipt.txt"
     grep -Fx 'VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash' "$receipt"
     case_digest=$(sha256sum "$stage/inputs/$case_name.Jenkinsfile" | awk '{print $1}')

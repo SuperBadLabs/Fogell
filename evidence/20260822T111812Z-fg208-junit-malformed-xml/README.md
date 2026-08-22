@@ -1,6 +1,6 @@
 # FG-208 malformed JUnit XML evidence
 
-This compact bundle binds two independent Jenkins 2.568.1 / Fogell
+This compact bundle binds three independent Jenkins 2.568.1 / Fogell
 differential jobs for the malformed-report recovery implemented by pinned
 JUnit plugin `1416.vd753e036de5e`.
 
@@ -11,24 +11,28 @@ a deterministic marker. `fg208-junit-malformed-mixed` pairs one consistent
 passing report with one malformed `.xml`; both engines retain the valid case,
 add one synthetic failed test, return `2,1,0,1`, continue, and finish UNSTABLE.
 
+`fg208-junit-empty-any-extension` publishes zero-byte `.txt` and uppercase
+`.XML` reports. Both engines synthesize one `[empty]` failure per file before
+extension gating, return `2,2,0,0,Integer`, continue, and finish UNSTABLE.
+
 The ordinary differential receipts compare terminal result, ordered normalized
 output, and canonical workspace hash, so both report-ingest paths are tier-1
 observable. The cases are separate jobs and each starts by removing its own
 reports and marker.
 
-The retained run brackets both jobs with the FG-177 Jenkins oracle, immutable
+The retained run brackets all three jobs with the FG-177 Jenkins oracle, immutable
 container identity, exact JUnit jar digest, and private bytecode for
 `TestResultSummary`, `TestResult`, `SuiteResult`, and `CaseResult`. Before/after
 captures must be byte-identical. The run copies its inputs and collector,
-verifies both receipt seals and case digests, records `STATUS=COMPLETE`, and
+verifies all three receipt seals and case digests, records `STATUS=COMPLETE`, and
 binds every retained file with `MANIFEST.sha256`.
 
-This proves only the retained lowercase-`.xml` parse-failure recovery and its
-aggregation with a valid sibling. An unretained read-only oracle audit also
-observed empty XML, per-file multiplicity, suppression, uppercase `.XML`, and
-non-XML extension behavior; focused Fogell tests and captured bytecode pin the
-implemented boundary, but those edges are not presented as additional receipt
-claims. Testcase-child authority over missing, invalid, or inconsistent suite
+This proves the retained lowercase-`.xml` parse-failure recovery, its aggregation
+with a valid sibling, and extension-independent zero-byte recovery. An unretained
+read-only oracle audit also observed malformed-file multiplicity, suppression,
+and the case-sensitive extension gate for non-empty parse failures; focused
+Fogell tests and captured bytecode pin those unretained edges. Testcase-child
+authority over missing, invalid, or inconsistent suite
 aggregate attributes remains a separate report-ingest residual. Duration,
 object/UI surface, numeric-width arithmetic, and other JUnit options remain out
 of scope.

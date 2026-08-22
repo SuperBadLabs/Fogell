@@ -161,32 +161,43 @@ module Publish =
                     aborted <- true
                 else
                 try
-                    let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
+                    // Jenkins checks File.length() before parsing or applying the
+                    // malformed-report extension gate. Consequently every zero-byte
+                    // matched report is one synthetic `[empty]` failure, regardless
+                    // of its extension; a non-empty parse failure is recovered only
+                    // for an exact lowercase `.xml` path.
+                    use stream = File.OpenRead(Path.Combine(workspace, relative))
 
-                    // Sum over <testsuite> elements; a <testsuites> wrapper is
-                    // common, and counting both would double every figure.
-                    let suites =
-                        doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
+                    if stream.Length = 0L then
+                        total <- total + 1L
+                        failed <- failed + 1L
+                    else
+                        let doc = Xml.Linq.XDocument.Load(stream)
 
-                    let readInt (e: Xml.Linq.XElement) name =
-                        match e.Attribute(Xml.Linq.XName.Get name) with
-                        | null -> 0L
-                        | a ->
-                            match Int32.TryParse a.Value with
-                            | true, v -> int64 v
-                            | _ -> 0L
+                        // Sum over <testsuite> elements; a <testsuites> wrapper is
+                        // common, and counting both would double every figure.
+                        let suites =
+                            doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
 
-                    for suite in suites do
-                        total <- total + readInt suite "tests"
-                        failed <- failed + readInt suite "failures" + readInt suite "errors"
-                        skipped <- skipped + readInt suite "skipped"
+                        let readInt (e: Xml.Linq.XElement) name =
+                            match e.Attribute(Xml.Linq.XName.Get name) with
+                            | null -> 0L
+                            | a ->
+                                match Int32.TryParse a.Value with
+                                | true, v -> int64 v
+                                | _ -> 0L
+
+                        for suite in suites do
+                            total <- total + readInt suite "tests"
+                            failed <- failed + readInt suite "failures" + readInt suite "errors"
+                            skipped <- skipped + readInt suite "skipped"
                 with
                 | :? System.Xml.XmlException
                     when relative.EndsWith(".xml", StringComparison.Ordinal) ->
                     // Pinned junit-plugin 1416.vd753e036de5e:
                     // TestResult.parse(File, ...) catches DocumentException for a
                     // `.xml` path and adds one failed `[failed-to-read]` case. Empty
-                    // `.xml` files take the sibling `[empty]` arm with the same counts.
+                    // files took the earlier extension-independent `[empty]` arm.
                     total <- total + 1L
                     failed <- failed + 1L
                 | ex -> unreadable <- $"{relative}: {ex.GetType().Name}" :: unreadable

@@ -3,6 +3,7 @@ workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/
 
   fg208-junit-malformed-xml.Jenkinsfile          PROVEN           fg208-junit-malformed-xml.receipt.txt
   fg208-junit-malformed-mixed.Jenkinsfile        PROVEN           fg208-junit-malformed-mixed.receipt.txt
+  fg208-junit-empty-any-extension.Jenkinsfile    PROVEN           fg208-junit-empty-any-extension.receipt.txt
 
-tier-1 proven (incl. workspace): 2 / 2
-proven-partial (result+output):  0 / 2
+tier-1 proven (incl. workspace): 3 / 3
+proven-partial (result+output):  0 / 3

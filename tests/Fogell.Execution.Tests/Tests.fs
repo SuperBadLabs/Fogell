@@ -830,9 +830,26 @@ let externalInterrupt =
 
               File.WriteAllText(report, "")
               let empty = junit "report.xml" false false None
-              Expect.equal empty.Status Unstable "an empty .xml report is the plugin's sibling synthetic failed case"
+              Expect.equal empty.Status Unstable "an empty report is the plugin's sibling synthetic failed case"
               Expect.equal empty.TestTotals (Some(1, 1, 0)) "the empty-report case contributes the same summary counts"
               Expect.equal empty.StageWarning (Some Unstable) "the empty-report failure decorates the stage"
+
+              let emptyText = Path.Combine(baseRequest.Workspace, "empty.txt")
+              File.WriteAllText(emptyText, "")
+              let emptyTextResult = junit "empty.txt" false false None
+              Expect.equal emptyTextResult.Status Unstable "zero-byte detection precedes the malformed-report extension gate"
+              Expect.equal emptyTextResult.TestTotals (Some(1, 1, 0)) "an empty non-XML report contributes the synthetic case"
+              Expect.equal emptyTextResult.StageWarning (Some Unstable) "an empty non-XML report is an ordinary test warning"
+
+              let emptyUppercase = Path.Combine(baseRequest.Workspace, "empty.XML")
+              File.WriteAllText(emptyUppercase, "")
+              let emptyUppercaseResult = junit "empty.XML" false false None
+              Expect.equal emptyUppercaseResult.Status Unstable "empty uppercase .XML is recovered before case-sensitive parsing"
+              Expect.equal emptyUppercaseResult.TestTotals (Some(1, 1, 0)) "empty uppercase .XML contributes the synthetic case"
+              Expect.equal emptyUppercaseResult.StageWarning (Some Unstable) "empty uppercase .XML is an ordinary test warning"
+
+              File.Delete emptyText
+              File.Delete emptyUppercase
 
               File.WriteAllText(report, "not xml")
 
@@ -870,9 +887,9 @@ let externalInterrupt =
 
               File.WriteAllText(Path.Combine(baseRequest.Workspace, "report.XML"), "not xml")
               let uppercase = junit "report.XML" true true None
-              Expect.equal uppercase.Status Failure "the plugin extension gate is case-sensitive"
-              Expect.isNone uppercase.TestTotals "uppercase .XML does not acquire synthetic counts"
-              Expect.isNone uppercase.StageWarning "uppercase .XML failure is not a test warning"
+              Expect.equal uppercase.Status Failure "the non-empty malformed-report extension gate is case-sensitive"
+              Expect.isNone uppercase.TestTotals "non-empty uppercase .XML does not acquire synthetic counts"
+              Expect.isNone uppercase.StageWarning "non-empty uppercase .XML failure is not a test warning"
 
               let ioReport = Path.Combine(baseRequest.Workspace, "io.xml")
               File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
