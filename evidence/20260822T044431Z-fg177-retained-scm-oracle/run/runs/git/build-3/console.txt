@@ -1,0 +1,83 @@
+Started by user unknown or anonymous
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins in /var/jenkins_home/workspace/fg177-20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2-git
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (probe)
+[Pipeline] script
+[Pipeline] {
+[Pipeline] dir
+Running in /var/jenkins_home/workspace/fg177-20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2-git/checkout
+[Pipeline] {
+[Pipeline] git
+Selected Git installation does not exist. Using Default
+The recommended git tool is: NONE
+No credentials specified
+ > git rev-parse --resolve-git-dir /var/jenkins_home/workspace/fg177-20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2-git/checkout/.git # timeout=10
+Fetching changes from the remote Git repository
+ > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+Fetching upstream changes from git://100.105.179.51/repo.git
+ > git --version # timeout=10
+ > git --version # 'git version 2.47.3'
+ > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+ > git rev-parse refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main^{commit} # timeout=10
+Checking out Revision 19d8595d58deb010546852e60393860e4b0fb82a (refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main)
+ > git config core.sparsecheckout # timeout=10
+ > git checkout -f 19d8595d58deb010546852e60393860e4b0fb82a # timeout=10
+ > git branch -a -v --no-abbrev # timeout=10
+ > git branch -D fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main # timeout=10
+ > git checkout -b fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main 19d8595d58deb010546852e60393860e4b0fb82a # timeout=10
+Commit message: "FG-177 fixture C"
+ > git rev-list --no-walk ee2e8410ad4d2dc787bc256d3e9d784508a08537 # timeout=10
+[Pipeline] sh
++ git rev-parse HEAD
+[Pipeline] writeFile
+[Pipeline] sh
++ cp payload.txt fg177-workspace-payload.txt
+[Pipeline] echo
+FG177 MAP PRODUCER=git BUILD=3 CLASS=java.util.TreeMap
+[Pipeline] echo
+FG177 MAP RENDER=[GIT_BRANCH:origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main, GIT_COMMIT:19d8595d58deb010546852e60393860e4b0fb82a, GIT_LOCAL_BRANCH:fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main, GIT_PREVIOUS_COMMIT:ee2e8410ad4d2dc787bc256d3e9d784508a08537, GIT_PREVIOUS_SUCCESSFUL_COMMIT:2a89cb54588f67fa8b29d98e88b43eb1c9b12d02, GIT_URL:git://100.105.179.51/repo.git]
+[Pipeline] echo
+FG177 MAP KEYS=GIT_BRANCH,GIT_COMMIT,GIT_LOCAL_BRANCH,GIT_PREVIOUS_COMMIT,GIT_PREVIOUS_SUCCESSFUL_COMMIT,GIT_URL
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_BRANCH|java.lang.String|origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_COMMIT|java.lang.String|19d8595d58deb010546852e60393860e4b0fb82a
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_LOCAL_BRANCH|java.lang.String|fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_PREVIOUS_COMMIT|java.lang.String|ee2e8410ad4d2dc787bc256d3e9d784508a08537
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_PREVIOUS_SUCCESSFUL_COMMIT|java.lang.String|2a89cb54588f67fa8b29d98e88b43eb1c9b12d02
+[Pipeline] echo
+FG177 MAP ENTRY=GIT_URL|java.lang.String|git://100.105.179.51/repo.git
+[Pipeline] echo
+FG177 HISTORY KEY=GIT_PREVIOUS_COMMIT|PRESENT=true|VALUE=ee2e8410ad4d2dc787bc256d3e9d784508a08537
+[Pipeline] echo
+FG177 HISTORY KEY=GIT_PREVIOUS_SUCCESSFUL_COMMIT|PRESENT=true|VALUE=2a89cb54588f67fa8b29d98e88b43eb1c9b12d02
+[Pipeline] echo
+FG177 ACCESS PROPERTY=19d8595d58deb010546852e60393860e4b0fb82a|INDEX=19d8595d58deb010546852e60393860e4b0fb82a|DYNAMIC=19d8595d58deb010546852e60393860e4b0fb82a
+[Pipeline] echo
+FG177 MISSING PROPERTY=null|INDEX=null|GET=null|CONTAINS=false
+[Pipeline] echo
+FG177 WRONG-INDEX integer=THREW:java.lang.ClassCastException
+[Pipeline] echo
+FG177 WRONG-INDEX null=THREW:java.lang.NullPointerException
+[Pipeline] }
+[Pipeline] // dir
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] archiveArtifacts
+Archiving artifacts
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+Finished: SUCCESS
