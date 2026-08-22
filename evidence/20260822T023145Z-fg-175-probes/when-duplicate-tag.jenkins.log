@@ -1,0 +1,35 @@
+CASE: when-duplicate-tag.Jenkinsfile
+CASE-SHA256: b48cd24466aaa70af090f2641e9a96ccbec19ff8ff57c0fb0c4e94717d89c000
+JOB: fg175-duplicate-tag
+BUILD: http://127.0.0.1:18099/job/fg175-duplicate-tag/1/
+JENKINS: 2.568.1
+STATE: {"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":false,"result":"FAILURE"}
+CONSOLE:
+Started by user unknown or anonymous
+org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
+WorkflowScript: 6: Duplicate named parameter 'pattern' found. at line: 6 column: 24. File: WorkflowScript @ line 6, column 24.
+               when { tag pattern: 'v1', pattern: 'v2' }
+                          ^
+
+1 error
+
+	at org.codehaus.groovy.control.ErrorCollector.failIfErrors(ErrorCollector.java:309)
+	at org.codehaus.groovy.control.CompilationUnit.applyToSourceUnits(CompilationUnit.java:981)
+	at org.codehaus.groovy.control.CompilationUnit.doPhaseOperation(CompilationUnit.java:626)
+	at org.codehaus.groovy.control.CompilationUnit.processPhaseOperations(CompilationUnit.java:602)
+	at org.codehaus.groovy.control.CompilationUnit.compile(CompilationUnit.java:579)
+	at groovy.lang.GroovyClassLoader.doParseClass(GroovyClassLoader.java:323)
+	at groovy.lang.GroovyClassLoader.parseClass(GroovyClassLoader.java:293)
+	at PluginClassLoader for script-security//org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.GroovySandbox$Scope.parse(GroovySandbox.java:162)
+	at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.doParse(CpsGroovyShell.java:202)
+	at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.reparse(CpsGroovyShell.java:186)
+	at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.parseScript(CpsFlowExecution.java:670)
+	at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.start(CpsFlowExecution.java:616)
+	at PluginClassLoader for workflow-job//org.jenkinsci.plugins.workflow.job.WorkflowRun.run(WorkflowRun.java:368)
+	at hudson.model.ResourceController.execute(ResourceController.java:97)
+	at hudson.model.Executor.run(Executor.java:456)
+[withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: fg175-duplicate-tag #1 did not yet start
+[withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: fg175-duplicate-tag #1 did not yet start
+Finished: FAILURE
+WORKSPACE:
+STATUS: absent

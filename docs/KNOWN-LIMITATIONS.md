@@ -11,15 +11,6 @@ false success.
 Of 228 corpus files: **1** proven, **198** admitted (parsed — NOT a
 parity claim), **29** rejected. This page covers the rejected set.
 
-## opaque section
-
-Files: **9**
-
-- `DeekshithSN_Jenkinsfile.Jenkinsfile`
-- `HariSekhon_Jenkins.Jenkinsfile`
-- `VAD37_unity-jenkinsfile.Jenkinsfile`
-- …and 6 more (see the ledger)
-
 ## Expecting: '['
 
 Files: **8**
@@ -29,19 +20,35 @@ Files: **8**
 - `cloudogu_reveal.js-docker-example.Jenkinsfile`
 - …and 5 more (see the ledger)
 
+## a `input` section that does not parse is refused, never consumed opaquely
+
+Files: **4**
+
+- `DeekshithSN_Jenkinsfile.Jenkinsfile`
+- `alanmacgowan_WebApplication.Jenkinsfile`
+- `aws-samples_ecs-bg-external-controller.Jenkinsfile`
+- …and 1 more (see the ledger)
+
+## a parenthesised argument body that does not parse is refused, never downgraded to one positional value
+
+Files: **2**
+
+- `HariSekhon_Jenkins.Jenkinsfile`
+- `jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile`
+
+## a `environment` section that does not parse is refused, never recorded as an opaque section
+
+Files: **2**
+
+- `SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`
+- `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
+
 ## reserved
 
 Files: **2**
 
 - `cloudogu_ces-build-lib.Jenkinsfile`
 - `merken_netCoreBuild.Jenkinsfile`
-
-## an opaque section
-
-Files: **2**
-
-- `SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile`
-- `saidsef_alpine-jenkins-dockerfile.Jenkinsfile`
 
 ## Expecting: any char in ‘ ’, '/*' or '//'
 
@@ -67,6 +74,24 @@ Files: **1**
 Files: **1**
 
 - `SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile`
+
+## a `agent` section that does not parse is refused, never recorded as an opaque section
+
+Files: **1**
+
+- `VAD37_unity-jenkinsfile.Jenkinsfile`
+
+## a `steps` section that does not parse is refused, never consumed opaquely
+
+Files: **1**
+
+- `yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile`
+
+## a `post` section that does not parse is refused, never recorded as an opaque section
+
+Files: **1**
+
+- `jerearista_python-jenkinsfile-testing.Jenkinsfile`
 
 ## 'switch', 'throw', 'true', 'try', 'while' or '{'
 

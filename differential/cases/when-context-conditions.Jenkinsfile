@@ -1,6 +1,7 @@
 // FG-048b. The six `when` conditions whose truth depends on build CONTEXT a plain
 // pipeline job does not have: an SCM changelog, multibranch metadata, a timer trigger, a
-// restart.
+// restart. The filtered changeRequest stage is also FG-175's overshoot control: a valid
+// condition shape Fogell does not fully model must remain admitted and skip here.
 //
 // MEASURED: on such a job every one of them is FALSE, its stage is skipped, and the build
 // SUCCEEDS — only `control.txt` is written. Before this they failed CLOSED, refusing up to
@@ -18,6 +19,10 @@ pipeline {
         stage('changeRequest') {
             when { changeRequest() }
             steps { sh 'echo ran > changeRequest.txt' }
+        }
+        stage('changeRequest-filtered') {
+            when { changeRequest target: 'main' }
+            steps { sh 'echo ran > changeRequest-filtered.txt' }
         }
         stage('changeset') {
             when { changeset '**/*.java' }

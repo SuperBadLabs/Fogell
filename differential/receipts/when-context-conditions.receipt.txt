@@ -1,8 +1,8 @@
 # Differential receipt — when-context-conditions.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2ac6e6447d828edd50d0ea9088958758ab6535dfc4b390b31ceedab821475fc9
-case-digest:  0981d949b978653e11ed35ae05fa502dbad7a407429b00ded27f3381bf498c4a
+seal:         8ad979aeb2d0b33a2f9da20411130461ada86d721d976f1270cc8f2e36903c0a
+case-digest:  07a0007ed234370df40da42f534b30696a08fffce66eee8b27067c16b89c9998
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -79,9 +79,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Jenkins
   result:         success
   workspace-hash: 69bf4e35c035a41905373669c2dbe18c8b069dc579621ffa3b4fdfc77888fe15
-  output (7 lines):
+  output (8 lines):
     | Stage "buildingTag" skipped due to when conditional
     | Stage "changeRequest" skipped due to when conditional
+    | Stage "changeRequest-filtered" skipped due to when conditional
     | Stage "changeset" skipped due to when conditional
     | Stage "changelog" skipped due to when conditional
     | Stage "triggeredBy" skipped due to when conditional
@@ -93,9 +94,10 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 ## Fogell
   result:         success
   workspace-hash: 69bf4e35c035a41905373669c2dbe18c8b069dc579621ffa3b4fdfc77888fe15
-  output (7 lines):
+  output (8 lines):
     | Stage "buildingTag" skipped due to when conditional
     | Stage "changeRequest" skipped due to when conditional
+    | Stage "changeRequest-filtered" skipped due to when conditional
     | Stage "changeset" skipped due to when conditional
     | Stage "changelog" skipped due to when conditional
     | Stage "triggeredBy" skipped due to when conditional

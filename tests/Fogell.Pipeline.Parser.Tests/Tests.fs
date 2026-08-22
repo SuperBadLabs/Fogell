@@ -18,6 +18,12 @@ let private err source =
     | Ok _ -> failtest "expected a rejection"
     | Error e -> e
 
+let private expectDuplicateWhen key body =
+    let e = err (mk $"    stage('B') {{ when {{ {body} }}\n steps {{ sh 'x' }} }}")
+    Expect.equal e.Code MalformedSyntax "a named admission refusal"
+    Expect.stringContains e.Message $"duplicate named argument `{key}`" "the duplicated key is preserved across parser backtracking"
+    Expect.isGreaterThan e.Position.Line 0L "the refusal has a source position"
+
 /// FG-004: bounds are applied BEFORE the recursive grammar, so hostile input
 /// can never reach it. Each limit has a named code and a position.
 let admissionLimits =
@@ -94,17 +100,11 @@ let structure =
               |> ignore
           }
 
-          test "the refusal carries a named code and a position" {
-              // WHAT IT ACTUALLY SAYS, not what I wanted it to. The parser's own message
-              // names the duplicated argument, but an enclosing fallback generalises it
-              // to `malformed_syntax at L:C: opaque section` before it reaches the
-              // caller. That still satisfies tier 3 — a rejection with a named code and a
-              // position — and the safety property (nothing runs) holds either way, so
-              // the test asserts the reachable guarantee instead of a nicer sentence.
-              // The lost detail is recorded on the board rather than papered over here.
-              let e = err (mk "    stage('B') { steps { sh script: 'x', returnStatus: true, returnStatus: false } }")
-              Expect.stringContains (string e) "malformed_syntax" "a named code"
-              Expect.stringContains (string e) ":" "and a position"
+          test "a parenthesised duplicate keeps its key, code and position" {
+              let e = err (mk "    stage('B') { steps { sh(script: 'x', returnStatus: true, returnStatus: false) } }")
+              Expect.equal e.Code MalformedSyntax "a named code"
+              Expect.stringContains e.Message "duplicate named argument `returnStatus`" "the inner refusal survives the reparse"
+              Expect.isGreaterThan e.Position.Line 0L "and has a position"
           }
 
           test "DISTINCT named arguments are untouched" {
@@ -123,113 +123,100 @@ let structure =
               Expect.equal p.Stages.[0].Steps.Length 2 "both steps parse"
           }
 
-          // FG-175. A KNOWN GAP, PINNED SO IT CANNOT BE MISTAKEN FOR COVERAGE.
-          //
-          // The duplicate rule is wired into `equals` and `environment` too, but it
-          // CANNOT REACH the caller there: `when` falls back to `whenSectionOpaque`,
-          // which consumes any unparseable body as raw text and marks the condition
-          // UNMODELLED. So the refusal backtracks into that fallback and the stage merely
-          // fails closed and SKIPS.
-          //
-          // That is still a divergence, MEASURED by scratch probe and UNPROVEN by receipt
-          // (FG-129 — a compile-shaped refusal emits nothing comparable): Jenkins rejects
-          // the pipeline at compile time and runs NOTHING, while Fogell runs the earlier
-          // stage and reports SUCCESS. Closing it means changing how section fallbacks handle a REFUSAL as
-          // opposed to an unmodelled shape — the fallback is deliberate (FG-152) and
-          // load-bearing, so this is a design change, not a patch. FG-175 carries it.
-          //
-          // These tests assert TODAY'S behaviour on purpose. When FG-175 lands they will
-          // fail, which is the point: they are the tripwire, not an endorsement.
-          test "FG-175 gap: a duplicate in when-equals PARSES, and the condition is unmodelled" {
-              let p = ok (mk "    stage('B') { when { equals expected: 1, actual: 1, actual: 2 }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          // FG-175. A semantic refusal survives parser backtracking. `when` keeps its
+          // deliberate opaque lane for unknown/plugin-owned conditions, but a duplicate
+          // named key is a conclusive Groovy map-literal error and admission must see it
+          // before any stage runs. The shared assertion checks the named code, duplicated
+          // key and source position rather than merely asking for any parse failure.
+          test "FG-175: a duplicate in when-equals is refused" {
+              expectDuplicateWhen "actual" "equals expected: 1, actual: 1, actual: 2"
           }
 
-          // The SINGLE-KEY conditions reach the same place by a different route: the
-          // second pair is left UNCONSUMED, the condition fails, and the opaque fallback
-          // absorbs the section. An earlier comment of mine claimed these "cannot
-          // duplicate" a named argument — they can, and review caught the sentence.
-          test "FG-175 gap: a duplicate in when-tag lands in the same fallback" {
-              let p = ok (mk "    stage('B') { when { tag pattern: 'v1', pattern: 'v2' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          // The single-key conditions used to consume one pair and leave the second for
+          // either the opaque fallback or a sibling condition. They now consume the
+          // complete named group before applying the same duplicate guard as `equals`.
+          test "FG-175: a duplicate in when-tag is refused" {
+              expectDuplicateWhen "pattern" "tag pattern: 'v1', pattern: 'v2'"
           }
 
-          test "FG-175 gap: a duplicate in when-branch lands in the same fallback" {
-              let p = ok (mk "    stage('B') { when { branch pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          test "FG-175: a duplicate in when-branch is refused" {
+              expectDuplicateWhen "pattern" "branch pattern: 'a', pattern: 'b'"
           }
 
-          test "FG-175 gap: a duplicate in when-changelog lands in the same fallback" {
-              let p = ok (mk "    stage('B') { when { changelog pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          test "FG-175: a duplicate in when-changelog is refused" {
+              expectDuplicateWhen "pattern" "changelog pattern: 'a', pattern: 'b'"
           }
 
-          test "FG-175 gap: a duplicate in when-triggeredBy lands in the same fallback" {
-              let p = ok (mk "    stage('B') { when { triggeredBy cause: 'a', cause: 'b' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          test "FG-175: a duplicate in when-triggeredBy is refused" {
+              expectDuplicateWhen "cause" "triggeredBy cause: 'a', cause: 'b'"
           }
 
-          test "FG-175 gap: a duplicate in when-changeset lands in the same fallback" {
-              let p = ok (mk "    stage('B') { when { changeset pattern: 'a', pattern: 'b' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          test "FG-175: a duplicate in when-changeset is refused" {
+              expectDuplicateWhen "pattern" "changeset pattern: 'a', pattern: 'b'"
           }
 
-          // AND A SECOND ROUTE TO THE SAME GAP, which this test found by being WRONG.
-          //
-          // Four review rounds went on enumerations of mine that were each missing one
-          // more condition — `equals`, then the single-key ones, then `changeset` — so
-          // this was written to assert the PROPERTY instead: that leftover arguments
-          // always end in `whenSectionOpaque`. They do not. `changeRequest` accepts only
-          // empty parens here, and `changeRequest target: 'a', target: 'b'` parses as TWO
-          // conditions implicitly ANDed — `WhenAllOf [WhenChangeRequest; WhenUnmodelled
-          // ("target", ": 'a', target: 'b'")]`. Stray argument text becomes an extra
-          // condition rather than a parse failure.
-          //
-          // The USER-VISIBLE outcome is identical (unmodelled -> fail closed -> the stage
-          // SKIPS, where Jenkins rejects the pipeline), but the mechanism is different, so
-          // a FG-175 fix aimed only at the opaque fallback would leave this route open.
-          // Recorded here because the enumeration was never the hard part.
-          test "FG-175 gap: leftover named args become a second, implicitly ANDed condition" {
-              let p = ok (mk "    stage('B') { when { changeRequest target: 'a', target: 'b' }\n steps { sh 'x' } }")
-
-              match p.Stages.[0].When with
-              | Some(WhenAllOf parts) ->
-                  Expect.isTrue
-                      (parts |> List.exists (function WhenUnmodelled _ -> true | _ -> false))
-                      "the leftover arrives as an unmodelled sibling condition, so the stage fails closed"
-              | other -> failtestf "expected an implicit AllOf, got %A" other
+          // `changeRequest` was a distinct route: its keyword parsed as the zero-argument
+          // condition and the remaining named text became an implicitly-ANDed sibling.
+          // Consuming the filter group closes that reinterpretation without refusing a
+          // valid single filter Fogell does not yet model.
+          test "FG-175: duplicate changeRequest filters cannot become an implicit sibling" {
+              expectDuplicateWhen "target" "changeRequest target: 'a', target: 'b'"
           }
 
           test "the ORDINARY single-key conditions still parse" {
               // What the tripwires above must not be confused with.
               ok (mk "    stage('B') { when { tag pattern: 'v1' }\n steps { sh 'x' } }") |> ignore
               ok (mk "    stage('B') { when { branch 'main' }\n steps { sh 'x' } }") |> ignore
+              match (ok (mk "    stage('B') { when { changeRequest target: 'main' }\n steps { sh 'x' } }")).Stages.[0].When with
+              | Some(WhenAllOf [ WhenChangeRequest; WhenUnmodelled("changeRequest", _) ]) -> ()
+              | other -> failtestf "a valid unsupported filter must remain fail-closed, got %A" other
           }
 
-          test "FG-175 gap: a duplicate in when-environment PARSES, and the condition is unmodelled" {
-              let p = ok (mk "    stage('B') { when { environment name: 'T', value: 'a', value: 'b' }\n steps { sh 'x' } }")
+          test "FG-175: a duplicate in when-environment is refused" {
+              expectDuplicateWhen "value" "environment name: 'T', value: 'a', value: 'b'"
+          }
 
-              match p.Stages.[0].When with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtestf "expected the opaque fallback to swallow it, got %A" other
+          test "FG-175: a duplicate nested in a when composition is refused" {
+              expectDuplicateWhen "value" "allOf { branch 'main'; environment name: 'T', value: 'a', value: 'b' }"
+          }
+
+          test "FG-175: parenthesised named conditions use the same duplicate guard" {
+              for key, body in
+                  [ "actual", "equals(expected: 1, actual: 1, actual: 2)"
+                    "pattern", "tag(pattern: 'v1', pattern: 'v2')"
+                    "pattern", "branch(pattern: 'a', pattern: 'b')"
+                    "pattern", "changelog(pattern: 'a', pattern: 'b')"
+                    "cause", "triggeredBy(cause: 'a', cause: 'b')"
+                    "pattern", "changeset(pattern: 'a', pattern: 'b')"
+                    "target", "changeRequest(target: 'a', target: 'b')"
+                    "value", "environment(name: 'T', value: 'a', value: 'b')" ] do
+                  expectDuplicateWhen key body
+
+              expectDuplicateWhen "target" "anyOf { branch 'main'; changeRequest(target: 'a', target: 'b') }"
+          }
+
+          test "FG-175: opaque values cannot hide a duplicate key" {
+              for key, body in
+                  [ "pattern", "tag pattern: patternFactory(1, 2), pattern: otherFactory([3, 4])"
+                    "actual", "equals expected: [left: 1, right: 2], actual: helper(1, 2), actual: { x -> x }"
+                    "value", "environment name: env.NAME, value: [one: 1, two: 2], value: lookup('x', 'y')" ] do
+                  expectDuplicateWhen key body
+          }
+
+          test "opaque nonduplicate equals operands remain fail-closed" {
+              let parsed =
+                  ok (mk "    stage('B') { when { equals expected: [1], actual: [2] }\n steps { sh 'must-not-run' } }")
+
+              match parsed.Stages.[0].When with
+              | Some(WhenUnmodelled("equals", _)) -> ()
+              | other -> failtestf "unsupported collection operands must not become modelled equals values, got %A" other
+          }
+
+          test "parenthesised valid named and positional conditions still parse" {
+              ok (mk "    stage('B') { when { tag(pattern: 'v1') }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { branch('main') }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { equals(expected: 1, actual: 1) }\n steps { sh 'x' } }") |> ignore
+              ok (mk "    stage('B') { when { environment(name: 'T', value: 'a') }\n steps { sh 'x' } }") |> ignore
           }
 
           test "the ORDINARY when conditions still parse" {
@@ -723,13 +710,12 @@ let structure =
               let one w = (ok (mk $"    stage('a') {{ when {{ {w} }} steps {{ echo 'x' }} }}")).Stages.[0].When
 
               Expect.equal (one "buildingTag()") (Some WhenBuildingTag) "empty parens are fine"
-
-              match one "buildingTag('x')" with
-              | Some(WhenUnmodelled _) -> ()
-              | other -> failtest $"arguments must not be discarded, got {other}"
+              let invalid = err (mk "    stage('a') { when { buildingTag('x') } steps { echo 'x' } }")
+              Expect.equal invalid.Code MalformedSyntax "non-empty arguments are refused at admission"
+              Expect.stringContains invalid.Message "does not accept arguments" "the refusal names the rule"
 
               match one "changeRequest(target: 'main')" with
-              | Some(WhenUnmodelled _) -> ()
+              | Some(WhenAllOf [ WhenChangeRequest; WhenUnmodelled("changeRequest", _) ]) -> ()
               | other -> failtest $"a changeRequest filter must not be dropped, got {other}"
           }
 
@@ -747,9 +733,9 @@ let structure =
               Expect.equal (one "changelog pattern: '.*fix.*'") (Some(WhenChangelog ".*fix.*")) "same key for changelog"
               Expect.equal (one "triggeredBy cause: 'TimerTrigger'") (Some(WhenTriggeredBy "TimerTrigger")) "cause for triggeredBy"
 
-              match one "changeset glob: '**/*.java'" with
-              | Some(WhenUnmodelled("changeset", _)) -> ()
-              | other -> failtest $"`glob` is rejected by Jenkins and must be unmodelled, got {other}"
+              let invalid = err (mk "    stage('a') { when { changeset glob: '**/*.java' } steps { echo 'x' } }")
+              Expect.equal invalid.Code MalformedSyntax "the measured-invalid key is refused"
+              Expect.stringContains invalid.Message "`glob`" "the diagnostic names the invalid key"
 
               match one "changeset comparator: 'REGEXP'" with
               | Some(WhenUnmodelled("changeset", _)) -> ()
@@ -780,11 +766,22 @@ let structure =
 
               // Nested inside a condition it must NOT be accepted, because Jenkins refuses
               // to compile such a pipeline.
-              let nested = ok (mk "    stage('a') { when { anyOf { beforeAgent true\n branch 'x' } } steps { echo 'y' } }")
+              let nested = err (mk "    stage('a') { when { anyOf { beforeAgent true\n branch 'x' } } steps { echo 'y' } }")
+              Expect.equal nested.Code MalformedSyntax "a nested directive is refused at admission"
+              Expect.stringContains nested.Message "cannot be nested" "the refusal names the invalid placement"
 
-              match nested.Stages.[0].When with
-              | Some(WhenAnyOf [ WhenUnmodelled("beforeAgent", _); _ ]) -> ()
-              | other -> failtest $"a nested directive must be unmodelled, got {other}"
+              for body in [ "beforeAgent maybe"; "beforeInput 1"; "beforeOptions" ] do
+                  let malformed = err (mk $"    stage('a') {{ when {{ {body}\n branch 'main' }} steps {{ echo 'x' }} }}")
+                  Expect.equal malformed.Code MalformedSyntax $"{body}: malformed directive is refused"
+                  Expect.stringContains malformed.Message "requires `true` or `false`" $"{body}: rule is named"
+          }
+
+          test "empty and directive-only when sections refuse at admission" {
+              for label, body in
+                  [ "empty", ""; "beforeAgent only", "beforeAgent true"; "all directives", "beforeAgent true\n beforeInput false\n beforeOptions true" ] do
+                  let e = err (mk $"    stage('a') {{ when {{ {body} }} steps {{ echo 'x' }} }}")
+                  Expect.equal e.Code MalformedSyntax $"{label}: named admission code"
+                  Expect.stringContains e.Message "empty when closure" $"{label}: Jenkins rule named"
           }
 
           test "an equals operand may be a bare identifier with an underscore" {
