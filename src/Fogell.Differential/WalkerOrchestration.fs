@@ -54,9 +54,18 @@ type PersistenceHooks =
       /// `step-finished failure` (but before BuildFinished) flips the build to
       /// success and runs stages the failure should have halted.
       SkippedStatus: string -> int -> BuildStatus option
+      /// stage -> stepIndex -> a durably recorded stage-local warning from a
+      /// finished step. This is deliberately separate from SkippedStatus: a
+      /// JUnit result may leave the build SUCCESS while making its enclosing
+      /// stage UNSTABLE for stage-post selection.
+      SkippedStageWarning: string -> int -> BuildStatus option
       /// stage -> stepIndex -> stepName. Written (and made durable) BEFORE the
       /// step runs.
       OnStepStarted: string -> int -> string -> unit
+      /// stage -> stepIndex -> the step's worst stage-local warning. Called
+      /// BEFORE OnStepFinished so a durably finished step can never lose the
+      /// warning that its enclosing stage must replay after restart.
+      OnStepStageWarning: string -> int -> BuildStatus -> unit
       /// stage -> stepIndex -> the step's worst sunk status.
       OnStepFinished: string -> int -> BuildStatus -> unit
       /// The stage boundary — the journal's group-commit point.
@@ -466,7 +475,11 @@ module WalkerOrchestration =
                                 Sink =
                                     fun st ->
                                         effective.Value <- BuildStatus.worstOf effective.Value st
-                                        ctx.Sink st }
+                                        ctx.Sink st
+                                StageSink =
+                                    fun st ->
+                                        effective.Value <- BuildStatus.worstOf effective.Value st
+                                        ctx.StageSink st }
 
                         for st in steps do
                             if not (halted postCtx) then
@@ -520,7 +533,10 @@ module WalkerOrchestration =
                         let subtreeStatus (root: Stage) =
                             Pipeline.flattenStages [ root ]
                             |> List.collect (fun d -> d.Steps |> List.mapi (fun i _ -> d.Name, i))
-                            |> List.choose (fun (n, i) -> hooks.SkippedStatus n i)
+                            |> List.collect (fun (n, i) ->
+                                [ hooks.SkippedStatus n i
+                                  hooks.SkippedStageWarning n i ]
+                                |> List.choose id)
                             |> List.fold BuildStatus.worstOf BuildStatus.Success
 
                         // REVERSED: flattenStages is preorder, so replaying in
@@ -550,6 +566,15 @@ module WalkerOrchestration =
                                         || recorded = BuildStatus.Aborted
                                     then
                                         ctx.Failed.Value <- true
+                                | None -> ())
+
+                            st.Steps
+                            |> List.iteri (fun i _ ->
+                                match hooks.SkippedStageWarning st.Name i with
+                                | Some warning ->
+                                    entered <- true
+                                    replayed <- BuildStatus.worstOf replayed warning
+                                    ctx.StageSink warning
                                 | None -> ())
 
                             // A container stage has NO direct steps: its
@@ -589,6 +614,7 @@ module WalkerOrchestration =
                                 // arm must see that too — the failure flag alone
                                 // is not the post's outcome.
                                 let postObserved = ref BuildStatus.Success
+                                let postStageObserved = ref BuildStatus.Success
 
                                 let postCtx =
                                     { ctx with
@@ -596,10 +622,15 @@ module WalkerOrchestration =
                                         Sink =
                                             fun st ->
                                                 postObserved.Value <- BuildStatus.worstOf postObserved.Value st
-                                                ctx.Sink st }
+                                                ctx.Sink st
+                                        StageSink =
+                                            fun st ->
+                                                postStageObserved.Value <- BuildStatus.worstOf postStageObserved.Value st
+                                                ctx.StageSink st }
 
                                 runPostWithDeadline postCtx cwd st status previousBuild inherited
                                 outcome <- BuildStatus.worstOf outcome postObserved.Value
+                                outcome <- BuildStatus.worstOf outcome postStageObserved.Value
 
                                 if postCtx.Failed.Value then
                                     ctx.Failed.Value <- true
@@ -618,13 +649,24 @@ module WalkerOrchestration =
 
                 | Some true ->
                 let stageStatus = ref BuildStatus.Success
+                // Parallel branches can publish build-facing and stage-only
+                // statuses concurrently. Keep worst-of monotone across both
+                // channels instead of racing two read/modify/write sequences.
+                let stageStatusLock = obj ()
+
+                let markStage st =
+                    lock stageStatusLock (fun () ->
+                        stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st)
 
                 let body =
                     { ctx with
                         Failed = ref false
                         Sink = fun st ->
-                                stageStatus.Value <- BuildStatus.worstOf stageStatus.Value st
-                                ctx.Sink st }
+                                markStage st
+                                ctx.Sink st
+                        StageSink = fun st ->
+                                markStage st
+                                ctx.StageSink st }
 
                 // FG-053(b). Stage-level `options { retry(N) }` re-runs THIS STAGE'S
                 // STEPS, through the same `runWithRetry` the `retry(N) { }` step
@@ -801,7 +843,10 @@ module WalkerOrchestration =
                 // otherwise successful stage marked the build failed but left the
                 // pipeline runnable — later stages ran and a failFast parent was
                 // never told. Jenkins propagates it.
-                let postCtx = { ctx with Failed = ref false }
+                let postCtx =
+                    { ctx with
+                        Failed = ref false
+                        StageSink = body.StageSink }
 
                 // MEASURED: a STAGE's `options { timeout }` bounds the stage's STEPS,
                 // not its `post`. Jenkins ran the `aborted` arm after the stage
@@ -2532,6 +2577,14 @@ module WalkerOrchestration =
                         match persistence with
                         | None -> runStepDispatch ctx cwd stage step deadline
                         | Some hooks ->
+                            // A warning from an earlier retry attempt still
+                            // decorates the stage even when this attempt must
+                            // execute the same step index again. Replay it
+                            // independently of the execution disposition;
+                            // worst-of sinks make this idempotent.
+                            hooks.SkippedStageWarning stage.Name i
+                            |> Option.iter ctx.StageSink
+
                             if not (hooks.ShouldExecute stage.Name i) then
                                 // replay the recorded outcome: skipping the
                                 // EXECUTION must not skip the CONSEQUENCE
@@ -2542,12 +2595,14 @@ module WalkerOrchestration =
                                     if st = BuildStatus.Failure || st = BuildStatus.Aborted then
                                         ctx.Failed.Value <- true
                                 | None -> ()
+
                             else
                                 hooks.OnStepStarted stage.Name i step.Name
 
                                 // observe THIS step's worst sunk status without
                                 // disturbing the branch's own sink
                                 let observed = ref BuildStatus.Success
+                                let observedStageWarning = ref BuildStatus.Success
 
                                 let observing =
                                     { ctx with
@@ -2555,6 +2610,12 @@ module WalkerOrchestration =
                                             fun st ->
                                                 observed.Value <- BuildStatus.worstOf observed.Value st
                                                 ctx.Sink st
+                                        StageSink =
+                                            fun st ->
+                                                observedStageWarning.Value <-
+                                                    BuildStatus.worstOf observedStageWarning.Value st
+
+                                                ctx.StageSink st
                                         // FG-114: FRESH per step, so a step whose
                                         // own path emits nothing cannot inherit
                                         // its predecessor's reason
@@ -2568,6 +2629,10 @@ module WalkerOrchestration =
                                         DurabilityKey = Some(stage.Name, i) }
 
                                 runStepDispatch observing cwd stage step deadline
+
+                                if observedStageWarning.Value <> BuildStatus.Success then
+                                    hooks.OnStepStageWarning stage.Name i observedStageWarning.Value
+
                                 hooks.OnStepFinished stage.Name i observed.Value
 
                                 // FG-114: the reason travels only beside a failed
@@ -2622,6 +2687,7 @@ module WalkerOrchestration =
                                   // The build status still gets it: ctx.Sink
                                   // forwards upward to `bump`.
                                   Sink = ctx.Sink
+                                  StageSink = ctx.StageSink
                                   EnvOverlay = ctx.EnvOverlay
                                   HostedBody = None
                                   HostedDeadline = None

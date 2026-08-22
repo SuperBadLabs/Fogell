@@ -1,0 +1,39 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/20/wfapi/describe"
+    }
+  },
+  "durationMillis": 367,
+  "execNode": "",
+  "id": "20",
+  "name": "later",
+  "pauseDurationMillis": 0,
+  "stageFlowNodes": [
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/21/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/21/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s0/1/execution/node/21/wfapi/describe"
+        }
+      },
+      "durationMillis": 91,
+      "execNode": "",
+      "id": "21",
+      "name": "Get contextual object from internal APIs",
+      "parentNodes": [
+        "20"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388082944,
+      "status": "SUCCESS"
+    }
+  ],
+  "startTimeMillis": 1787388082780,
+  "status": "SUCCESS"
+}

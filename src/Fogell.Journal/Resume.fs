@@ -17,6 +17,10 @@ type StepDisposition =
 type ResumePlan =
     { /// Per (stage, index) decision.
       Steps: Map<string * int, StepDisposition>
+      /// Stage-only status decoration produced by a durably finished step.
+      /// Separate from Steps because a successful step can still leave its
+      /// enclosing stage unstable without changing the build result.
+      StageWarnings: Map<string * int, BuildStatus>
       /// Stages whose boundary was committed — everything in them is durable.
       CommittedStages: Set<string>
       /// Set when the build already reached a terminal state; resume is a no-op.
@@ -74,6 +78,7 @@ module Resume =
                         | Some(AlreadyFinished _) -> acc
                         | _ -> Map.add (stage, i) Interrupted acc
                     | StepFinished(stage, i, status) -> Map.add (stage, i) (AlreadyFinished status) acc
+                    | StepStageWarning _ -> acc
                     // FG-135. A new retry attempt SUPERSEDES the stage's step records
                     // so far: they describe attempts that already failed, and reading
                     // a failed attempt's `step-finished` as durably-finished is what
@@ -93,6 +98,26 @@ module Resume =
                     | InputDecisionVoided _
                     | InputAnswerProvisional _
                     | InputPromptCancellable _ -> acc)
+                Map.empty
+
+        let stageWarnings =
+            records
+            |> List.fold
+                (fun acc r ->
+                    match r with
+                    | StepStageWarning(stage, i, status) ->
+                        Map.change
+                            (stage, i)
+                            (fun prior ->
+                                Some(
+                                    prior
+                                    |> Option.defaultValue BuildStatus.Success
+                                    |> fun current -> BuildStatus.worstOf current status))
+                            acc
+                    // Retry markers deliberately do not clear warnings. Jenkins'
+                    // prior-attempt FlowNodes remain inside the stage graph, so a
+                    // warning action from an earlier attempt still decorates it.
+                    | _ -> acc)
                 Map.empty
 
         let inputSteps =
@@ -121,6 +146,7 @@ module Resume =
                 Map.empty
 
         { Steps = steps
+          StageWarnings = stageWarnings
           RetryAttempts =
             records
             |> List.fold
@@ -190,6 +216,9 @@ module Resume =
 
     let dispositionOf (plan: ResumePlan) (stage: string) (index: int) =
         Map.tryFind (stage, index) plan.Steps |> Option.defaultValue NotStarted
+
+    let stageWarningOf (plan: ResumePlan) (stage: string) (index: int) =
+        Map.tryFind (stage, index) plan.StageWarnings
 
     /// FG-046b. An interrupted `input` whose answer is already on record is the
     /// ONE step that is safe to re-run. Every other step is refused because we

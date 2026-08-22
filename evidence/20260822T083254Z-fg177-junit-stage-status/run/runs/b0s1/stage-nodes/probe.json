@@ -1,0 +1,159 @@
+{
+  "_links": {
+    "self": {
+      "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/6/wfapi/describe"
+    }
+  },
+  "durationMillis": 2860,
+  "execNode": "",
+  "id": "6",
+  "name": "probe",
+  "pauseDurationMillis": 0,
+  "stageFlowNodes": [
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/9/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/9/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/9/wfapi/describe"
+        }
+      },
+      "durationMillis": 403,
+      "execNode": "",
+      "id": "9",
+      "name": "Shell Script",
+      "parameterDescription": "rm -rf reports *.txt; mkdir -p reports; printf '%s' '<testsuite name=\"matrix\" tests=\"4\" failures=\"1\" errors=\"1\" skipped=\"1\"><testcase classname=\"matrix.Sample\" name=\"pass\"/><testcase classname=\"matrix.Sample\" name=\"fail\"><failure message=\"failed\"/></testcase><testcase classname=\"matrix.Sample\" name=\"error\"><error message=\"errored\"/></testcase><testcase classname=\"matrix.Sample\" name=\"skip\"><skipped/></testcase></testsuite>' > reports/summary.xml",
+      "parentNodes": [
+        "8"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388087067,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/10/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/10/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/10/wfapi/describe"
+        }
+      },
+      "durationMillis": 219,
+      "execNode": "",
+      "id": "10",
+      "name": "Archive JUnit-formatted test results",
+      "parentNodes": [
+        "9"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388087470,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/11/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/11/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/11/wfapi/describe"
+        }
+      },
+      "durationMillis": 446,
+      "execNode": "",
+      "id": "11",
+      "name": "Shell Script",
+      "parameterDescription": "printf 4,2,1 > counts.txt",
+      "parentNodes": [
+        "10"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388087689,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/12/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/12/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/12/wfapi/describe"
+        }
+      },
+      "durationMillis": 409,
+      "execNode": "",
+      "id": "12",
+      "name": "Shell Script",
+      "parameterDescription": "printf successor > successor.txt",
+      "parentNodes": [
+        "11"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388088135,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/15/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/15/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/15/wfapi/describe"
+        }
+      },
+      "durationMillis": 387,
+      "execNode": "",
+      "id": "15",
+      "name": "Shell Script",
+      "parameterDescription": "printf always > stage-always.txt",
+      "parentNodes": [
+        "14"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388088759,
+      "status": "SUCCESS"
+    },
+    {
+      "_links": {
+        "console": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/16/log"
+        },
+        "log": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/16/wfapi/log"
+        },
+        "self": {
+          "href": "/job/fg177-stage-20260822T084118Z-3032403-b0s1/1/execution/node/16/wfapi/describe"
+        }
+      },
+      "durationMillis": 360,
+      "execNode": "",
+      "id": "16",
+      "name": "Shell Script",
+      "parameterDescription": "printf success > stage-success.txt",
+      "parentNodes": [
+        "15"
+      ],
+      "pauseDurationMillis": 0,
+      "startTimeMillis": 1787388089146,
+      "status": "SUCCESS"
+    }
+  ],
+  "startTimeMillis": 1787388086772,
+  "status": "SUCCESS"
+}

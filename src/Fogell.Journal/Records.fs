@@ -17,6 +17,11 @@ type Record =
     /// A step finished with a known outcome. Only this record makes a step safe
     /// to skip on resume.
     | StepFinished of stage: string * stepIndex: int * status: BuildStatus
+    /// A stage-local warning produced by a step. It is deliberately separate
+    /// from StepFinished: Jenkins can leave the build SUCCESS while a WarningAction
+    /// makes the enclosing stage UNSTABLE. Written before StepFinished so a
+    /// durably skippable step can never lose the stage consequence on resume.
+    | StepStageWarning of stage: string * stepIndex: int * status: BuildStatus
     /// A stage boundary — the point at which the journal is fsynced (group
     /// commit). Everything before it is durable.
     | StageCommitted of stage: string
@@ -165,6 +170,8 @@ module Record =
         function
         | StepStarted(stage, i, name) -> $"step-started\t{stage}\t{i}\t{name}"
         | StepFinished(stage, i, status) -> $"step-finished\t{stage}\t{i}\t{BuildStatus.toWireString status}"
+        | StepStageWarning(stage, i, status) ->
+            $"step-stage-warning\t{stage}\t{i}\t{BuildStatus.toWireString status}"
         | StageCommitted stage -> $"stage-committed\t{stage}"
         | BuildFinished status -> $"build-finished\t{BuildStatus.toWireString status}"
         | ScriptDigest d -> $"script-digest\t{d}"
@@ -190,6 +197,10 @@ module Record =
         | [| "step-finished"; stage; i; status |] ->
             match System.Int32.TryParse i, BuildStatus.ofWireString status with
             | (true, idx), Some s -> Some(StepFinished(stage, idx, s))
+            | _ -> None
+        | [| "step-stage-warning"; stage; i; status |] ->
+            match System.Int32.TryParse i, BuildStatus.ofWireString status with
+            | (true, idx), Some s -> Some(StepStageWarning(stage, idx, s))
             | _ -> None
         | [| "stage-committed"; stage |] -> Some(StageCommitted stage)
         | [| "build-finished"; status |] -> BuildStatus.ofWireString status |> Option.map BuildFinished

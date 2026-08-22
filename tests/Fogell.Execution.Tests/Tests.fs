@@ -29,6 +29,7 @@ let private request root script =
       TimeoutMs = None
       CaptureStdout = false
       JUnitSkipMarkingBuildUnstable = false
+      JUnitSkipMarkingStageUnstable = false
       Interrupt = None
       InterruptBeatsDeadline = None
       WorkspaceRoot = None
@@ -711,6 +712,7 @@ let externalInterrupt =
                         TimeoutMs = None
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
+                        JUnitSkipMarkingStageUnstable = false
                         Interrupt = None
                         InterruptBeatsDeadline = None
                         WorkspaceRoot = None
@@ -726,6 +728,7 @@ let externalInterrupt =
               // returned Failure, so a timeout selected `post { failure }` where shell
               // and archive timeouts select `post { aborted }`. Assert the exact status.
               Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
+              Expect.isNone r.StageWarning "an interrupted junit does not decorate the stage as unstable"
 
               // Round-12 mirror: with NO matching report, an interrupt must still be an
               // abort rather than "no test report matched the pattern" — which would
@@ -738,6 +741,7 @@ let externalInterrupt =
                         Environment = []
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
+                        JUnitSkipMarkingStageUnstable = false
                         TimeoutMs = None
                         Interrupt = None
                         InterruptBeatsDeadline = None
@@ -750,6 +754,7 @@ let externalInterrupt =
                         BuildKey = "k" }
 
               Expect.equal noMatch.Status Aborted "zero-match plus interrupt is an abort"
+              Expect.isNone noMatch.StageWarning "the zero-match interrupt has no stage warning"
 
               match noMatch.Diagnostic with
               | Some d -> Expect.isFalse (d.Contains "no test report matched") $"not blamed on the pattern: {d}"
@@ -760,7 +765,7 @@ let externalInterrupt =
               | None -> failtest "an aborted junit must carry a diagnostic"
           }
 
-          test "junit can suppress only failed-test build instability while preserving counts and hard failures" {
+          test "junit build and stage suppression flags cover the measured four-combination matrix" {
               let root = tempRoot ()
               let baseRequest = request root ""
               let report = Path.Combine(baseRequest.Workspace, "report.xml")
@@ -769,26 +774,63 @@ let externalInterrupt =
                   report,
                   "<testsuite tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/><testcase name=\"bad\"><failure message=\"boom\"/></testcase></testsuite>")
 
-              let junit suppress =
+              let junit skipBuild skipStage =
                   Executor.runStep
                       { baseRequest with
                           Name = "junit"
                           Script = None
                           Named = [ "testResults", "report.xml" ]
-                          JUnitSkipMarkingBuildUnstable = suppress }
+                          JUnitSkipMarkingBuildUnstable = skipBuild
+                          JUnitSkipMarkingStageUnstable = skipStage }
 
-              let normal = junit false
-              let suppressed = junit true
+              // Keep the original build-only control names: comments elsewhere
+              // cite these concepts, and the stale-reference audit treats a
+              // needless local rename as possible documentation drift.
+              let normal = junit false false
+              let suppressed = junit true false
 
-              Expect.equal normal.Status Unstable "the default still marks failed tests unstable"
-              Expect.equal suppressed.Status Success "literal true suppresses only build-result marking"
-              Expect.equal normal.TestTotals (Some(2, 1, 0)) "default totals"
-              Expect.equal suppressed.TestTotals normal.TestTotals "suppression never erases the returned summary"
+              let matrix =
+                  [ "skipBuild=false, skipStage=false", normal, Unstable, Some Unstable
+                    "skipBuild=true, skipStage=false", suppressed, Success, Some Unstable
+                    "skipBuild=false, skipStage=true", junit false true, Success, None
+                    "skipBuild=true, skipStage=true", junit true true, Success, None ]
+
+              for label, observed, expectedStatus, expectedWarning in matrix do
+
+                  Expect.equal observed.Status expectedStatus $"{label}: exact build contribution"
+                  Expect.equal observed.StageWarning expectedWarning $"{label}: exact stage decoration"
+                  Expect.equal observed.TestTotals (Some(2, 1, 0)) $"{label}: suppression never erases counts"
+          }
+
+          test "junit stage suppression never masks malformed or interrupted report failures" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let report = Path.Combine(baseRequest.Workspace, "report.xml")
+
+              let junit deadlineExpired =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "report.xml" ]
+                          JUnitSkipMarkingBuildUnstable = true
+                          JUnitSkipMarkingStageUnstable = true
+                          DeadlineExpired = deadlineExpired }
 
               File.WriteAllText(report, "not xml")
-              let malformed = junit true
+              let malformed = junit None
               Expect.equal malformed.Status Failure "the option cannot suppress an unreadable report"
               Expect.isNone malformed.TestTotals "a malformed report never fabricates counts"
+              Expect.isNone malformed.StageWarning "a malformed report is not a test-failure stage warning"
+
+              File.WriteAllText(
+                  report,
+                  "<testsuite tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/></testsuite>")
+
+              let interrupted = junit (Some(fun () -> true))
+              Expect.equal interrupted.Status Aborted "the option cannot suppress an interrupted scan"
+              Expect.isNone interrupted.TestTotals "an interrupted scan never publishes counts"
+              Expect.isNone interrupted.StageWarning "an interrupted scan does not decorate the stage as unstable"
           }
 
           test "an interrupt that never fires leaves the step alone" {

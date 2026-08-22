@@ -639,6 +639,10 @@ module FogellSide =
                   Interrupt = None
                   Failed = ref false
                   Sink = bump
+                  // The root has no enclosing Declarative stage. Stage-local
+                  // decorations are consumed by runStage's derived StageSink;
+                  // a warning reaching this boundary must not alter the build.
+                  StageSink = ignore
                   EnvOverlay = []
                   HostedBody = None
                   HostedDeadline = None

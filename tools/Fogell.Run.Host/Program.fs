@@ -915,6 +915,11 @@ let main argv =
                         match Resume.dispositionOf plan stage i with
                         | AlreadyFinished st -> Some st
                         | _ -> None
+              // A retry marker supersedes build-facing step dispositions, but
+              // Jenkins keeps prior-attempt FlowNodes inside the stage graph.
+              // Their WarningActions therefore remain part of stage-post
+              // selection even after a later attempt starts.
+              SkippedStageWarning = fun stage i -> Resume.stageWarningOf plan stage i
               ShouldExecute =
                 fun stage i ->
                     let run =
@@ -948,6 +953,11 @@ let main argv =
                 fun stage i name ->
                     journal.Append(StepStarted(stage, i, name))
                     journal.Sync()
+              // WalkerOrchestration calls this before OnStepFinished. That
+              // ordering keeps a durably skippable successful JUnit step from
+              // losing its separate unstable stage decoration after restart.
+              OnStepStageWarning =
+                fun stage i status -> journal.Append(StepStageWarning(stage, i, status))
               OnStepFinished = fun stage i status -> journal.Append(StepFinished(stage, i, status))
               OnStageCommitted =
                 fun stage ->

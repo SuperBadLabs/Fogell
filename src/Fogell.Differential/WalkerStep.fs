@@ -147,37 +147,42 @@ module WalkerStep =
 
         let wantsStatus = contract = WalkerRules.ExitStatus
 
-        // FG-177. The JUnit flag is a typed boolean setter just like the shell
-        // return flags above. Resolve it before dispatch, while the parser's
-        // ExpressionArgs or the scripted host's typed HostedArgs can still tell
-        // bare `true` from the string `'true'`; StepRequest.Named cannot.
-        let junitSkipMarkingBuildUnstableState =
-            if step.Name = "junit" then
+        // FG-177. Both JUnit instability flags are typed boolean setters. Resolve
+        // them through ONE boundary before dispatch, while the parser's
+        // ExpressionArgs or the scripted host's typed HostedArgs can still tell a
+        // boolean from text which merely renders as `true` or `false`.
+        //
+        // The direct Declarative path needs BOTH provenance checks. ExpressionArgs
+        // says the value was unquoted, while the exact raw token says it was the
+        // literal itself rather than `env.SKIP`, `!false`, or another expression
+        // that happens to render to the same text. The hosted path already carries
+        // the evaluated Value and therefore accepts an ordinary scripted VBool.
+        let junitBooleanFlagState (key: string) =
+            if step.Name <> "junit" then
+                None
+            else
                 let suppliedAsBooleanValue =
                     match ctx.HostedArgs with
                     | Some(_, named) ->
                         named
-                        |> List.exists (fun (key, value) ->
-                            key = "skipMarkingBuildUnstable"
+                        |> List.exists (fun (candidate, value) ->
+                            candidate = key
                             && match value with
                                | VBool _ -> true
                                | _ -> false)
                     | None ->
-                        step.ExpressionArgs.Contains "skipMarkingBuildUnstable"
+                        step.ExpressionArgs.Contains key
                         && (step.Named
-                            |> List.exists (fun (key, raw) ->
-                                key = "skipMarkingBuildUnstable"
-                                && (raw = "true" || raw = "false")))
+                            |> List.exists (fun (candidate, raw) ->
+                                candidate = key && (raw = "true" || raw = "false")))
 
                 renderedNamed
-                |> List.choose (fun (key, rendered) ->
-                    if key = "skipMarkingBuildUnstable" then Some rendered else None)
+                |> List.choose (fun (candidate, rendered) ->
+                    if candidate = key then Some rendered else None)
                 |> function
                     | [] -> None
-                    | [ "true" ] when suppliedAsBooleanValue ->
-                        Some WalkerRules.FlagOn
-                    | [ "false" ] when suppliedAsBooleanValue ->
-                        Some WalkerRules.FlagOff
+                    | [ "true" ] when suppliedAsBooleanValue -> Some WalkerRules.FlagOn
+                    | [ "false" ] when suppliedAsBooleanValue -> Some WalkerRules.FlagOff
                     | [ rendered ] ->
                         Some(
                             WalkerRules.FlagRejected
@@ -186,17 +191,26 @@ module WalkerStep =
                         Some(
                             WalkerRules.FlagRejected
                                 "was supplied more than once; Fogell refuses unmeasured duplicate-key binding before scanning reports")
-            else
-                None
+
+        let junitSkipMarkingBuildUnstableState =
+            junitBooleanFlagState "skipMarkingBuildUnstable"
+
+        let junitSkipMarkingStageUnstableState =
+            junitBooleanFlagState "skipMarkingStageUnstable"
 
         let junitFlagRejection =
-            match junitSkipMarkingBuildUnstableState with
-            | Some(WalkerRules.FlagRejected why) ->
-                Some $"step 'junit' argument `skipMarkingBuildUnstable` {why}"
-            | _ -> None
+            [ "skipMarkingBuildUnstable", junitSkipMarkingBuildUnstableState
+              "skipMarkingStageUnstable", junitSkipMarkingStageUnstableState ]
+            |> List.tryPick (fun (key, state) ->
+                match state with
+                | Some(WalkerRules.FlagRejected why) -> Some $"step 'junit' argument `{key}` {why}"
+                | _ -> None)
 
         let junitSkipMarkingBuildUnstable =
             junitSkipMarkingBuildUnstableState = Some WalkerRules.FlagOn
+
+        let junitSkipMarkingStageUnstable =
+            junitSkipMarkingStageUnstableState = Some WalkerRules.FlagOn
 
         let result =
             match flagRejection, junitFlagRejection with
@@ -220,6 +234,7 @@ module WalkerStep =
                   // deliberately not part of this condition.
                   CaptureStdout = wantsStdout
                   JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
+                  JUnitSkipMarkingStageUnstable = junitSkipMarkingStageUnstable
                   // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
                   // default. A 120 s constant sat here and aborted any step
                   // outliving two minutes, invisible to every case that
@@ -250,6 +265,13 @@ module WalkerStep =
                   Named = renderedNamed
                   Artifacts = Some(ArtifactStore.under artifactRoot)
                   BuildKey = jobName }
+
+        // Jenkins' JUnit step has two outcome channels: the build result and a
+        // WarningAction attached to the current Pipeline node. Stage post observes
+        // the latter even when skipMarkingBuildUnstable leaves the global build
+        // successful. Keep it out of ctx.Sink: feeding the warning into both sinks
+        // would silently undo build-result suppression.
+        result.StageWarning |> Option.iter ctx.StageSink
 
         // Output arrives exactly once, via OnLine. An earlier version also
         // appended result.Stdout, so every shell line was emitted twice and
