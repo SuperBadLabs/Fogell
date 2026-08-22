@@ -497,7 +497,7 @@ module Interpreter =
                 raise (Stop(Unsupported "SCM return-map key-set indexing is not modelled; use join(String)"))
             | VJUnitSummary _, _ ->
                 raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
-            | VStr s, Integral i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
+            | VStr s, Integral i when i >= 0L && i < int64 s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
             let v = evalExpr st env x
@@ -683,7 +683,7 @@ module Interpreter =
                 | VMap _, ("Map" | "HashMap" | "LinkedHashMap") -> true
                 | VBool _, "Boolean" -> true
                 | _ -> false)
-        | "..", Integral x, Integral y ->
+        | "..", VInt x, VInt y ->
             let distance = System.Numerics.BigInteger.Abs(bigint y - bigint x)
 
             if distance > bigint st.Budget.MaxLoopIterations then

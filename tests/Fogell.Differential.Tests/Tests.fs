@@ -1848,7 +1848,8 @@ let genuineNullRuntime =
                     "same-minus", "passes - other"
                     "same-multiply", "passes * other"
                     "same-divide", "passes / other"
-                    "same-modulo", "passes % other" ]
+                    "same-modulo", "passes % other"
+                    "range", "passes..other" ]
 
               for label, expression in operations do
                   let body =
