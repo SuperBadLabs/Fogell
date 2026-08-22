@@ -23,6 +23,11 @@ type Value =
     /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
     /// and alias:null here while the write vanished into a dropped match arm.
     | VMap of Map<string, Value> ref
+    /// FG-177 slice 4. The immutable, nominal projection of the TreeMap returned
+    /// by the pinned Git steps. It is deliberately not a VMap: exposing the
+    /// script-owned map implementation would also expose mutation, structural
+    /// equality, rendering and the rest of Groovy's Map surface without evidence.
+    | VScmMap of ScmMap
     /// FG-177 slice 5. A closed projection of Jenkins'
     /// `hudson.tasks.junit.TestResultSummary`. This is deliberately nominal rather
     /// than a map: map lookup, indexing, mutation and structural equality would add
@@ -36,6 +41,9 @@ and JUnitSummary =
     { TotalCount: int64
       FailCount: int64
       SkipCount: int64 }
+
+and ScmMap =
+    { Entries: Map<string, string> }
 
 and Env =
     /// FG-179. `Vars` maps a local name to a REF CELL, not to a value, and the indirection
@@ -146,6 +154,7 @@ module Value =
                 | VStr _
                 | VRange _
                 | VJUnitSummary _
+                | VScmMap _
                 | VClosure _
                 | VFunc _ -> ()
             | CompleteReference identity ->
@@ -235,6 +244,7 @@ module Value =
                        |> String.concat ", ")
                     + "]"
             | VJUnitSummary _ -> "<junit-test-result-summary>"
+            | VScmMap _ -> "<scm-return-map>"
             | VClosure _ -> "<closure>"
             | VFunc(n, _, _) -> $"<function {n}>"
 
@@ -246,11 +256,13 @@ module Value =
         | Text rendered -> rendered
         | DisplayCycleDetected -> "<cyclic collection>"
 
-    /// Finds the deliberately opaque JUnit value even when a script wraps it in
-    /// a collection before passing it to a rendering or hosted-call boundary.
-    let containsJUnitSummary value =
+    /// Finds one deliberately nominal Jenkins value even when a script wraps it
+    /// in ordinary collections before passing it to a rendering, throw, equality,
+    /// ordering, or hosted-call boundary. The graph walk is iterative and
+    /// identity-aware because script-owned collection graphs may be deep or cyclic.
+    let private containsNominalValue predicate value =
         match value with
-        | VJUnitSummary _ -> true
+        | candidate when predicate candidate -> true
         | VList _
         | VMap _ ->
             // Script-owned collections can be nested to the evaluation budget.
@@ -263,7 +275,7 @@ module Value =
 
             while not found && pending.Count > 0 do
                 match pending.Pop() with
-                | VJUnitSummary _ -> found <- true
+                | candidate when predicate candidate -> found <- true
                 | VList values when seen.Add(box values) ->
                     for item in values.Value do
                         pending.Push item
@@ -278,8 +290,19 @@ module Value =
         | VInt _
         | VStr _
         | VRange _
+        | VScmMap _
+        | VJUnitSummary _
         | VClosure _
         | VFunc _ -> false
+
+    let containsJUnitSummary value =
+        containsNominalValue (function VJUnitSummary _ -> true | _ -> false) value
+
+    let containsScmMap value =
+        containsNominalValue (function VScmMap _ -> true | _ -> false) value
+
+    let containsNominalJenkinsValue value =
+        containsJUnitSummary value || containsScmMap value
 
     /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
     ///
@@ -367,7 +390,7 @@ module Value =
             | _, VRange _ -> false
             | _ -> a = b
 
-        if containsJUnitSummary a || containsJUnitSummary b then
+        if containsNominalJenkinsValue a || containsNominalJenkinsValue b then
             Unmodelled
         else
             let answer = go [] a b
@@ -395,8 +418,9 @@ module Value =
             | VRange _ -> 4
             | VMap _ -> 5
             | VJUnitSummary _ -> 6
-            | VClosure _ -> 7
-            | VFunc _ -> 8
+            | VScmMap _ -> 7
+            | VClosure _ -> 8
+            | VFunc _ -> 9
 
         let seenPair (seen: (obj * obj) list) left right =
             seen
@@ -444,6 +468,7 @@ module Value =
                         if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
                         answer
                 | VJUnitSummary _, VJUnitSummary _
+                | VScmMap _, VScmMap _
                 | VClosure _, VClosure _
                 | VFunc _, VFunc _ ->
                     unorderable <- true
@@ -477,7 +502,7 @@ module Value =
                     else
                         compareEntries seen leftTail rightTail
 
-        if containsJUnitSummary a || containsJUnitSummary b then
+        if containsNominalJenkinsValue a || containsNominalJenkinsValue b then
             Unorderable
         else
             let answer =
@@ -501,6 +526,7 @@ module Value =
         | VRange values -> not (List.isEmpty values)
         | VMap m -> not (Map.isEmpty m.Value)
         | VJUnitSummary _ -> true
+        | VScmMap _ -> true
         | VClosure _
         | VFunc _ -> true
 

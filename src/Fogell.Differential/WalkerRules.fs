@@ -106,7 +106,7 @@ type BranchCtx =
       ///
       /// The inner option is deliberately UNSET until a modelled producer publishes.
       /// `VNull` is a genuine measured answer, so it cannot also be the initial marker
-      /// for JUnit and SCM maps which remain unsupported. Wrapper-body values
+      /// for modelled JUnit and SCM-map producers. Wrapper-body values
       /// are captured by the interpreter around the existing unit body thunk.
       ///
       /// TYPED, not text: `returnStatus` must yield a Groovy INTEGER or `if (code == 0)`
@@ -181,7 +181,6 @@ module WalkerRules =
     /// point: a boolean at each call site cannot express precedence, and the two readers
     /// were free to resolve the combination differently — which is exactly what they did.
     type UnsupportedReturn =
-        | ScmMap
         | OutsideHostedVocabulary
 
     type ReturnContract =
@@ -201,6 +200,10 @@ module WalkerRules =
         /// properties on Jenkins' TestResultSummary. Every other object operation
         /// remains refused by the interpreter.
         | JUnitSummary
+        /// The closed one-remote map returned by the pinned Git plugin for `git`
+        /// and SCM-defined `checkout scm`. The interpreter owns the nominal map
+        /// surface; this contract only admits the producer into a value position.
+        | ScmMap
         /// Jenkins returns a value, but Fogell does not yet carry a closed model for it.
         | UnsupportedValue of UnsupportedReturn
 
@@ -264,6 +267,7 @@ module WalkerRules =
         | Fogell.Groovy.Interpreter.VMap _ -> "<map>"
         | Fogell.Groovy.Interpreter.VRange _ -> "<range>"
         | Fogell.Groovy.Interpreter.VJUnitSummary _ -> "<junit-test-result-summary>"
+        | Fogell.Groovy.Interpreter.VScmMap _ -> "<scm-map>"
         | Fogell.Groovy.Interpreter.VClosure _ -> "<closure>"
         | Fogell.Groovy.Interpreter.VFunc(name, _, _) -> $"<function {name}>"
         | value -> Fogell.Groovy.Interpreter.Value.toDisplay value
@@ -316,7 +320,7 @@ module WalkerRules =
               "checkout",
               row 1 (Some "scm") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "scm"; "changelog"; "poll" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.scm.GenericSCMStep")
-                  (UnsupportedValue ScmMap)
+                  ScmMap
                   "takes exactly one SCM argument" noCheck
               "deleteDir",
               row 0 None false None [] []
@@ -326,7 +330,7 @@ module WalkerRules =
               "git",
               row 1 (Some "url") false None [ "url"; "branch"; "changelog"; "credentialsId"; "poll" ] []
                   (warn "jenkins.plugins.git.GitStep")
-                  (UnsupportedValue ScmMap)
+                  ScmMap
                   "takes at most one repository URL" noCheck
               "stash",
               row 1 (Some "name") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
@@ -553,7 +557,8 @@ module WalkerRules =
         | ExitStatus
         | CapturedStdout
         | BodyResult
-        | JUnitSummary -> true
+        | JUnitSummary
+        | ScmMap -> true
         | UnsupportedValue _ -> false
 
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):

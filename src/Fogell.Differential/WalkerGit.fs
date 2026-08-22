@@ -172,9 +172,10 @@ module WalkerGit =
         with ex ->
             Result.Error ex.Message
 
-    /// The last-built revision, kept CONTROLLER-side (under the artifact root,
-    /// like the stash store) because that is where Jenkins keeps SCM build
-    /// data: `deleteDir()` wipes the workspace, not the build history.
+    /// The last-built revision and the build result that FINALISES it, kept
+    /// CONTROLLER-side (under the artifact root, like the stash store) because
+    /// that is where Jenkins keeps SCM build data: `deleteDir()` wipes the
+    /// workspace, not the build history.
     /// MEASURED (receipt `git-step-deletedir.b2`): a wiped workspace on build 2
     /// gets the full CLONE shape but ends `git rev-list --no-walk <prior sha>`,
     /// NOT "First time build" — shape is workspace-keyed, the TAIL is
@@ -184,8 +185,10 @@ module WalkerGit =
     /// steps must not read one checkout's sha as another repo's history, and a
     /// same-build re-checkout must see the PREVIOUS build's revision, not its
     /// own write from minutes ago — Jenkins' build data is frozen at build
-    /// start. Reads take the newest record from an EARLIER build; writes stamp
-    /// this build's number.
+    /// start. A revision written by a build that crashed before producing a
+    /// terminal result is not history. Reads therefore take only records from
+    /// FINALIZED earlier builds; writes stamp this build's number and become
+    /// visible only when `finalizeBuild` publishes its terminal-result marker.
     let private scmKey (url: string) (branch: string) =
         use h = Security.Cryptography.SHA256.Create()
 
@@ -202,29 +205,149 @@ module WalkerGit =
     // IOException. Coarse but correct: record IO is tiny and rare.
     let private recordLock = obj ()
 
-    let private readPriorRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) =
-        lock recordLock (fun () ->
-        let dir = scmDir artifactRoot jobKey
+    let private resultMarker (artifactRoot: string) (jobKey: string) (buildNumber: int) =
+        Path.Combine(scmDir artifactRoot jobKey, $"build@{buildNumber}.result")
 
-        if not (Directory.Exists dir) then
+    let private parseFinalResult (path: string) =
+        try
+            match (File.ReadAllText path).Trim().Split '\t' with
+            | [| "fogell-scm-build-result-v1"; value |] ->
+                BuildStatus.ofWireString value
+                |> Option.filter BuildStatus.isTerminal
+            | _ -> None
+        with _ ->
+            // A torn or otherwise unreadable marker is not a completed build.
+            // Silently inventing history here can select the wrong pipeline
+            // branch; absence keeps the SCM map honest and fail-closed.
             None
-        else
-            Directory.GetFiles(dir, $"{key}@*.revision")
-            |> Array.choose (fun f ->
-                let name = Path.GetFileNameWithoutExtension f
 
-                match Int32.TryParse(name.Substring(key.Length + 1)) with
-                | true, n when n < buildNumber -> Some(n, f)
-                | _ -> None)
-            |> Array.sortByDescending fst
-            |> Array.tryHead
-            |> Option.map (fun (_, f) -> (File.ReadAllText f).Trim()))
+    type private PriorHistory =
+        { Previous: string option
+          PreviousSuccessful: string option
+          LatestStatus: BuildStatus option }
+
+    let private emptyPriorHistory =
+        { Previous = None
+          PreviousSuccessful = None
+          LatestStatus = None }
+
+    let private readPriorHistory (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) =
+        lock recordLock (fun () ->
+            let dir = scmDir artifactRoot jobKey
+
+            if not (Directory.Exists dir) then
+                Ok emptyPriorHistory
+            else
+                let candidates =
+                    Directory.GetFiles(dir, $"{key}@*.revision")
+                    |> Array.choose (fun revisionPath ->
+                        let name = Path.GetFileNameWithoutExtension revisionPath
+
+                        match Int32.TryParse(name.Substring(key.Length + 1)) with
+                        | true, n when n < buildNumber -> Some(n, revisionPath)
+                        | _ -> None)
+
+                let inspected =
+                    candidates
+                    |> Array.map (fun (n, revisionPath) ->
+                        let marker = resultMarker artifactRoot jobKey n
+
+                        if not (File.Exists marker) then
+                            Error $"SCM retained history is incomplete: build {n} has a revision without a finalized result"
+                        else
+                            match parseFinalResult marker with
+                            | None ->
+                                Error $"SCM retained history is corrupt: build {n} has an unreadable finalized-result marker"
+                            | Some result ->
+                                try
+                                    let revision = (File.ReadAllText revisionPath).Trim()
+
+                                    if Text.RegularExpressions.Regex.IsMatch(revision, "^[0-9a-fA-F]{40}$") then
+                                        Ok(n, revision, result)
+                                    else
+                                        Error $"SCM retained history is corrupt: build {n} has an invalid revision"
+                                with _ ->
+                                    Error $"SCM retained history is corrupt: build {n} has an unreadable revision")
+
+                match inspected |> Array.tryPick (function Error why -> Some why | Ok _ -> None) with
+                | Some why -> Error why
+                | None ->
+                    let finalized =
+                        inspected
+                        |> Array.choose (function Ok entry -> Some entry | Error _ -> None)
+                        |> Array.sortByDescending (fun (n, _, _) -> n)
+
+                    Ok
+                        { Previous =
+                            finalized
+                            |> Array.tryHead
+                            |> Option.map (fun (_, revision, _) -> revision)
+                          PreviousSuccessful =
+                            finalized
+                            |> Array.tryFind (fun (_, _, result) -> result = BuildStatus.Success)
+                            |> Option.map (fun (_, revision, _) -> revision)
+                          LatestStatus =
+                            finalized
+                            |> Array.tryHead
+                            |> Option.map (fun (_, _, result) -> result) })
 
     let private writeRevision (artifactRoot: string) (jobKey: string) (key: string) (buildNumber: int) (sha: string) =
         lock recordLock (fun () ->
             let dir = scmDir artifactRoot jobKey
             Directory.CreateDirectory dir |> ignore
             File.WriteAllText(Path.Combine(dir, $"{key}@{buildNumber}.revision"), sha))
+
+    /// Publish the terminal result that makes every SCM revision captured by
+    /// this build eligible for later history. The marker is job-wide because a
+    /// build has one terminal result even when it checks out several remotes.
+    /// A build that captured no SCM revision is a no-op: ordinary inline jobs
+    /// must not manufacture an `_scm` directory merely because every run has a
+    /// terminal status.
+    /// Same-result repetition is idempotent (resume/finally paths may converge
+    /// here); a conflicting terminal result is refused rather than rewriting
+    /// history after a later build may already have consumed it.
+    let finalizeBuild
+        (artifactRoot: string)
+        (jobKey: string)
+        (buildNumber: int)
+        (result: BuildStatus)
+        =
+        if buildNumber <= 0 then
+            invalidArg (nameof buildNumber) "SCM build number must be positive"
+
+        if not (BuildStatus.isTerminal result) then
+            invalidArg (nameof result) "SCM history can be finalized only with a terminal build result"
+
+        lock recordLock (fun () ->
+            let dir = scmDir artifactRoot jobKey
+            if
+                not (Directory.Exists dir)
+                || Directory.GetFiles(dir, $"*@{buildNumber}.revision").Length = 0
+            then
+                ()
+            else
+                let marker = resultMarker artifactRoot jobKey buildNumber
+                let body = $"fogell-scm-build-result-v1\t{BuildStatus.toWireString result}"
+
+                if File.Exists marker then
+                    match parseFinalResult marker with
+                    | Some existing when existing = result -> ()
+                    | Some existing ->
+                        invalidOp
+                            $"SCM build {buildNumber} is already finalized as {BuildStatus.toWireString existing}, not {BuildStatus.toWireString result}"
+                    | None ->
+                        invalidOp $"SCM build {buildNumber} has an unreadable finalized-result marker"
+                else
+                    // Same-directory move is atomic. A process death before the
+                    // move leaves no visible finalized marker; after it, readers
+                    // see the complete versioned payload.
+                    let pending = Path.Combine(dir, $".build@{buildNumber}.{Guid.NewGuid():N}.result.tmp")
+
+                    try
+                        File.WriteAllText(pending, body)
+                        File.Move(pending, marker)
+                    finally
+                        if File.Exists pending then File.Delete pending)
 
     /// FG-052: the changelog TAIL (First-time / rev-list) narrates ONCE per
     /// build for GitSCM checkouts — the build's first checkout says it, later
@@ -264,6 +387,45 @@ module WalkerGit =
         | GitStep
         | GitScm
 
+    /// FG-177. The closed return of the two measured Git producers. `Entries`
+    /// is the exact immutable TreeMap projection licensed by the retained
+    /// oracle: producer-specific base keys plus the two history keys together,
+    /// or neither history key on the branch's first finalized observation.
+    /// `Revision` remains explicit because auto-checkout also uses it for the
+    /// Declarative GIT_* environment wrapper; callers must not recover it by
+    /// guessing at a map key.
+    type CheckoutResult =
+        { Revision: string
+          Entries: Map<string, string> }
+
+    let private resultEntries
+        (style: Style)
+        (url: string)
+        (branch: string)
+        (revision: string)
+        (history: PriorHistory)
+        =
+        let baseEntries =
+            match style with
+            | GitStep ->
+                [ "GIT_BRANCH", $"origin/{branch}"
+                  "GIT_COMMIT", revision
+                  "GIT_LOCAL_BRANCH", branch
+                  "GIT_URL", url ]
+            | GitScm ->
+                [ "GIT_BRANCH", $"origin/{branch}"
+                  "GIT_COMMIT", revision
+                  "GIT_URL", url ]
+
+        let historyEntries =
+            [ history.Previous
+              |> Option.map (fun previous -> "GIT_PREVIOUS_COMMIT", previous)
+              history.PreviousSuccessful
+              |> Option.map (fun successful -> "GIT_PREVIOUS_SUCCESSFUL_COMMIT", successful) ]
+            |> List.choose id
+
+        Map.ofList (baseEntries @ historyEntries)
+
     /// Execute the step. First failure wins: later commands are skipped and the
     /// branch fails with the failing command named (fail closed — carrying on
     /// with a half-initialised repo is the silent-loss shape).
@@ -279,12 +441,13 @@ module WalkerGit =
         (buildNumber: int)
         (url: string)
         (branch: string)
-        : string option =
+        : CheckoutResult option =
         let emit = runCtx.Emit
         let refspec = "+refs/heads/*:refs/remotes/origin/*"
         let mutable failure: string option = None
         let mutable cancelled = false
         let mutable checkedOutSha: string option = None
+        let mutable deleteExistingLocalBranch = false
 
         // Each subprocess waits AT MOST the remaining enclosing deadline (a
         // `timeout` block must not be outlived by a ten-minute fetch), floored
@@ -345,20 +508,55 @@ module WalkerGit =
                     if not cancelled then
                         failure <- Some $"{what} ({e})"
 
-        // The REAL discriminator (a `.git` that is a worktree FILE, not a
-        // directory, must not read as fresh): ran silently here, narrated in
-        // its measured position below when the repo exists.
-        let fresh =
-            match git env (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
-            | Ok _ -> false
-            | Result.Error _ -> true
-
         // Build HISTORY, independent of the workspace: the record survives
         // deleteDir() exactly as Jenkins' build data does. (In the
         // same-workspace re-fetch, the record equals the pre-fetch HEAD the
         // measurement showed — receipt `git-step-refetch.b2`.)
         let key = scmKey url branch
-        let prevSha = readPriorRevision artifactRoot jobKey key buildNumber
+        let historyResult = readPriorHistory artifactRoot jobKey key buildNumber
+        let history = historyResult |> Result.defaultValue emptyPriorHistory
+
+        // The retained oracle licenses exactly these predecessor states. It
+        // did not measure a branch whose first checkout finished non-success,
+        // nor the SCM-map behavior after UNSTABLE/ABORTED. Refuse BEFORE even
+        // the silent rev-parse discriminator runs: an unlicensed history must
+        // not fetch, initialise or otherwise mutate the caller's workspace.
+        failure <-
+            match historyResult with
+            | Error why -> Some why
+            | Ok history ->
+                match history.Previous, history.PreviousSuccessful, history.LatestStatus with
+                | None, None, None -> None
+                | Some _, Some _, Some BuildStatus.Success
+                | Some _, Some _, Some BuildStatus.Failure -> None
+                | _, _, Some BuildStatus.Unstable ->
+                    Some "SCM retained history is outside the measured contract: latest finalized predecessor is unstable"
+                | _, _, Some BuildStatus.Aborted ->
+                    Some "SCM retained history is outside the measured contract: latest finalized predecessor is aborted"
+                | Some _, None, _ ->
+                    Some
+                        "SCM retained history is outside the measured contract: GIT_PREVIOUS_COMMIT exists without GIT_PREVIOUS_SUCCESSFUL_COMMIT"
+                | None, Some _, _ ->
+                    Some
+                        "SCM retained history is corrupt: GIT_PREVIOUS_SUCCESSFUL_COMMIT exists without GIT_PREVIOUS_COMMIT"
+                | _, _, Some BuildStatus.Success
+                | _, _, Some BuildStatus.Failure ->
+                    Some "SCM retained history has finalized status without the complete measured history pair"
+                | _, _, Some BuildStatus.NotBuilt
+                | _, _, None ->
+                    Some "SCM retained history has no trustworthy finalized predecessor result"
+
+        // The REAL discriminator (a `.git` that is a worktree FILE, not a
+        // directory, must not read as fresh): ran silently here, narrated in
+        // its measured position below when the repo exists. It is deliberately
+        // skipped when the history boundary above refuses the checkout.
+        let fresh =
+            if failure.IsSome then
+                false
+            else
+                match git env (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
+                | Ok _ -> false
+                | Result.Error _ -> true
 
         if failure.IsNone then
             // Dialect-INDEPENDENT since the lab's git-tool descriptor was first
@@ -426,6 +624,22 @@ module WalkerGit =
                     [ "fetch"; "--tags"; "--force"; "--progress"; "--"; url; refspec ]
                 |> ignore
 
+            // The git step deletes the TARGET local branch only when that
+            // branch already exists. The retained main->feature switch has a
+            // reused repository but no local feature branch, and Jenkins goes
+            // straight from `branch -a` to `checkout -b` there. Treat exit 1
+            // from the silent existence query as absence; transport/cancel
+            // failures still fail the checkout.
+            if style = GitStep && not fresh && failure.IsNone && not cancelled then
+                match git env (bound ()) shouldStop cwd [ "show-ref"; "--verify"; "--quiet"; $"refs/heads/{branch}" ] with
+                | Ok _ ->
+                    checkCancelled ()
+                    deleteExistingLocalBranch <- not cancelled
+                | Result.Error e when e.StartsWith "exit " -> checkCancelled ()
+                | Result.Error e ->
+                    checkCancelled ()
+                    if not cancelled then failure <- Some $"git show-ref local branch ({e})"
+
             let sha =
                 step
                     (Some $"> git rev-parse refs/remotes/origin/{branch}^{{commit}} # timeout=10")
@@ -452,7 +666,7 @@ module WalkerGit =
                         [ "branch"; "-a"; "-v"; "--no-abbrev" ]
                     |> ignore
 
-                    if not fresh then
+                    if deleteExistingLocalBranch then
                         step (Some $"> git branch -D {branch} # timeout=10") "git branch -D" [ "branch"; "-D"; branch ]
                         |> ignore
 
@@ -473,7 +687,7 @@ module WalkerGit =
                         style = GitStep || tryClaimTail artifactRoot jobKey buildNumber
 
                     if narrateTail then
-                        match prevSha with
+                        match history.Previous with
                         | None -> emit "First time build. Skipping changelog."
                         | Some prev ->
                             step
@@ -495,11 +709,17 @@ module WalkerGit =
                 ctx.Sink BuildStatus.Failure
 
         let completed =
-            if failure.IsNone && not cancelled then checkedOutSha else None
+            if failure.IsNone && not cancelled then
+                checkedOutSha
+                |> Option.map (fun revision ->
+                    { Revision = revision
+                      Entries = resultEntries style url branch revision history })
+            else
+                None
 
         match completed, Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" with
-        | Some revision, "fg177-probes-v1" ->
-            runCtx.NoteEngine $"git-checkout branch={branch} revision={revision} url={attestationUrl url}"
+        | Some checkout, "fg177-probes-v1" ->
+            runCtx.NoteEngine $"git-checkout branch={branch} revision={checkout.Revision} url={attestationUrl url}"
         | _ -> ()
 
         completed
@@ -545,12 +765,10 @@ module WalkerGit =
             with _ ->
                 ()
 
-    /// The `git` step's public face — unchanged contract. (Whether the git
-    /// STEP also exports GIT_* to later steps is unmeasured; its sha is
-    /// deliberately dropped rather than wrapped.)
+    /// The `git` step's public face. Its closed result is the step's value; it
+    /// does not export GIT_* to later steps merely by returning those entries.
     let runStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch =
         runWithStyle GitStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch
-        |> ignore
 
     /// FG-052. `checkout scm` and the Declarative auto-checkout stage.
     let runCheckout runCtx ctx cwd deadline env artifactRoot jobKey buildNumber (scm: ScmSpec) =

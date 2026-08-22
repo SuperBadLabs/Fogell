@@ -29,7 +29,10 @@ module Sandbox =
         set
             [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
               "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
-              "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
+              // FG-177: get/containsKey are admitted as NAMES only; the
+              // interpreter implements their narrow signatures solely for the
+              // nominal SCM return map and rejects every other receiver/shape.
+              "get"; "containsKey"; "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
               "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus"
               // FG-189/FG-195: `f.call(x)` is the explicit closure-invocation spelling;
               // the interpreter dispatches it only on a VClosure receiver, so admitting
