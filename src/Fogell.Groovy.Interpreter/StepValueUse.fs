@@ -14,8 +14,8 @@ open Fogell.Groovy
 /// value is the call's value.
 ///
 /// The refusal survives the change because of the HOST, not the interpreter: the walker's
-/// dispatch publishes only explicitly modelled values. A genuine Jenkins null is safe;
-/// an absent JUnit, SCM-map or wrapper-body model is not. So
+/// dispatch publishes only explicitly modelled values. A genuine Jenkins null and a
+/// hosted wrapper's body result are safe; an absent JUnit or SCM-map model is not. So
 ///
 ///     def out = sh(script: 'git rev-parse HEAD', returnStdout: true)
 ///     if (out.startsWith('abc')) { … }
@@ -100,8 +100,9 @@ module StepValueUse =
             | ECall(target, args, trailing) ->
                 // A call whose descriptor has a modelled return is no longer refused:
                 // `sh(returnStdout: true)` and `sh(returnStatus: true)` carry typed
-                // answers, while the seven FG-177 rows carry a genuine VNull. JUnit,
-                // SCM maps and wrapper body results remain refused.
+                // answers, the seven null rows carry a genuine VNull, and the four
+                // hosted wrappers carry their body's result. JUnit and SCM maps remain
+                // refused.
                 //
                 // LIFTED, on the third attempt, and the two earlier attempts are why this
                 // is now believable rather than merely plumbed. Both times the refusal

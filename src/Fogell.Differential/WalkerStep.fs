@@ -273,6 +273,9 @@ module WalkerStep =
             | WalkerRules.CapturedStdout ->
                 slot.Value <- Some(VStr(defaultArg result.CapturedStdoutRaw result.Stdout))
             | WalkerRules.GenuineNull -> slot.Value <- Some VNull
+            // Wrapper bodies never pass through Executor. Their typed result is
+            // captured by the interpreter when the walker invokes the body thunk.
+            | WalkerRules.BodyResult
             | WalkerRules.UnsupportedValue _
             | WalkerRules.ExitStatus -> ())
 

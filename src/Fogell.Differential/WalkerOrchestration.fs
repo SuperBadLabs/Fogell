@@ -1923,11 +1923,9 @@ module WalkerOrchestration =
             //
             // THE REFUSALS COME FIRST, and they are why this is safe to ship. Steps run
             // LIVE through `Interpreter.runHosted` (FG-172) — the batch model this comment
-            // used to describe is gone — but the walker's dispatch still returns UNIT, so
-            // a step call yields null and a body reading a step's RETURN VALUE would decide
-            // branches wrongly. `StepValueUse.find` names every such position and refuses.
-            // FG-174 carries implementing `returnStdout`/`returnStatus`, which is what
-            // would let that refusal be lifted.
+            // used to describe is gone. `StepValueUse.find` admits only descriptor-modelled
+            // values — typed shell returns, genuine nulls, and hosted-wrapper body results —
+            // and refuses the remaining JUnit/SCM object surfaces by name.
             | "script", _ when step.ScriptBody.IsSome ->
                 let src = Option.get step.ScriptBody
 
@@ -2422,10 +2420,13 @@ module WalkerOrchestration =
                                             // Perform and unwinds. This placeholder carries no
                                             // semantic claim.
                                             | None, _ when halted dispatchCtx -> VNull
-                                            // These calls are legal as discarded statements. The
-                                            // static gate refuses every value position, so the host
-                                            // must return a transport value which is unobservable.
+                                            // Unsupported object/map calls are legal as discarded
+                                            // statements, so the host supplies an unobservable
+                                            // transport null. BodyResult also travels as transport
+                                            // here: the interpreter owns the closure's typed value
+                                            // and replaces this after the wrapper invokes its thunk.
                                             | None, WalkerRules.UnsupportedValue _ -> VNull
+                                            | None, WalkerRules.BodyResult -> VNull
                                             | None, _ ->
                                                 Interpreter.raiseHostedCallRefused
                                                     $"script block: hosted step `{name}` completed without publishing its modelled return contract"

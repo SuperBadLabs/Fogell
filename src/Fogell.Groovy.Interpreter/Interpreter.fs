@@ -25,8 +25,8 @@ type Effect =
 ///   - a body executes in the host's own context — DONE, `dir`/`timeout`/`retry`;
 ///   - an `env` mutation is reported at the assignment — DONE, and the host currently
 ///     REFUSES it, because Fogell's overlay does not yet cross the script boundary;
-///   - a return value CAN be returned — the walker's dispatch still yields unit, so the
-///     host returns null and value uses stay refused;
+///   - direct-step return values publish through the host, and hosted wrappers return the
+///     typed value captured when their body thunk runs;
 ///   - per-step journaling is POSSIBLE here — the hooks are keyed
 ///     `stage -> stepIndex`, and per-CHILD identity inside a block is FG-204:
 ///     FG-135's stage-level attempt markers do not deliver it, and FG-171 closed
@@ -914,6 +914,11 @@ module Interpreter =
                 // written at the call site and shares that one. `capturedEnv` is `Some` only
                 // in the first case, which is exactly when they differ.
                 let bodyEnv = ref (defaultArg capturedEnv env)
+                // The thunk stays unit-returning so the established host seam and every
+                // wrapper dispatcher remain unchanged. Its result travels in this fresh
+                // per-call cell instead: a retry may invoke the thunk repeatedly, and the
+                // last successful invocation naturally becomes the wrapper's answer.
+                let bodyResult: Value option ref = ref None
 
                 let runBody =
                     bodyClosure
@@ -1040,19 +1045,31 @@ module Interpreter =
                             let captured =
                                 bodyEnv.Value.Vars |> Map.toSeq |> Seq.map fst |> Set.ofSeq
 
+                            // Same implicit/explicit return discipline as an ordinary
+                            // closure invocation. Save LastValue because the body is a
+                            // nested evaluation: its trailing expression is the wrapper's
+                            // value, not the enclosing script's trailing expression.
+                            let outerValue = st.LastValue
+
                             try
+                                // A host owns invocation count and fault policy. Never let
+                                // an earlier successful invocation survive into a later
+                                // invocation which faults and is absorbed by that host.
+                                bodyResult.Value <- None
+
                                 try
+                                    st.LastValue <- None
                                     let after = execBlock st bodyEnv.Value c.Body
 
                                     bodyEnv.Value <-
                                         { after with
                                             Vars = after.Vars |> Map.filter (fun k _ -> captured.Contains k) }
-                                with ReturnSignal _ ->
-                                    // A closure-local return ends the BODY. The value is
-                                    // dropped because a wrapper does not consume one:
-                                    // `dir('x') { return 5 }` is not `dir` returning 5.
-                                    ()
+
+                                    bodyResult.Value <- Some(defaultArg st.LastValue VNull)
+                                with ReturnSignal value ->
+                                    bodyResult.Value <- Some value
                             finally
+                                st.LastValue <- outerValue
                                 st.Depth <- st.Depth - 1)
 
                 match st.Host with
@@ -1096,9 +1113,27 @@ module Interpreter =
                         then
                             raise (Stop(CyclicValue HostedArgumentCoercion))
 
-                        let value = host.Perform phase s positionalArgs namedArgs runBody
+                        let transportValue = host.Perform phase s positionalArgs namedArgs runBody
                         ensureCanContinue ()
-                        value
+
+                        // Only a host-declared block step gets the closure's result.
+                        // Other hosted calls retain the value returned by Perform even if
+                        // their syntax happened to carry a closure. A declared wrapper
+                        // which returns without invoking its supplied body must refuse:
+                        // value use has now been admitted, so inventing null here would be
+                        // the same silent wrong answer this gate exists to prevent.
+                        if takesBlock && runBody.IsSome then
+                            match bodyResult.Value with
+                            | Some value -> value
+                            | None ->
+                                raise (
+                                    Stop(
+                                        HostedCallRefused
+                                            $"hosted wrapper `{s}` completed without executing its body, so no return value exists"
+                                    )
+                                )
+                        else
+                            transportValue
                     finally
                         if runBody.IsSome then
                             match Map.tryFind "env" env.Vars with

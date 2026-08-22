@@ -11,6 +11,46 @@ open Fogell.Ir
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
 
+    /// Pipeline options accepted by this execution engine. Keeping the behaviour
+    /// and any collection-shaped argument exception in one closed descriptor list
+    /// prevents the option allowlist and the shared named-collection preflight from
+    /// drifting independently.
+    type private PipelineOptionBehaviour =
+        | Honoured
+        | InertForSingleBuild
+
+    type private PipelineOptionDescriptor =
+        { Name: string
+          Behaviour: PipelineOptionBehaviour
+          UnevaluatedNamedCollectionArgs: Set<string> }
+
+    let private pipelineOptionDescriptors =
+        [ { Name = "timeout"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "timestamps"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "ansiColor"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "skipDefaultCheckout"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "parallelsAlwaysFailFast"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "skipStagesAfterUnstable"; Behaviour = Honoured; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "buildDiscarder"; Behaviour = InertForSingleBuild; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "disableConcurrentBuilds"; Behaviour = InertForSingleBuild; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "quietPeriod"; Behaviour = InertForSingleBuild; UnevaluatedNamedCollectionArgs = Set.empty }
+          { Name = "rateLimitBuilds"
+            Behaviour = InertForSingleBuild
+            UnevaluatedNamedCollectionArgs = set [ "throttle" ] } ]
+
+    let private pipelineOptionDescriptorsByName =
+        pipelineOptionDescriptors |> List.map (fun descriptor -> descriptor.Name, descriptor) |> Map.ofList
+
+    let private supportedPipelineOptionNames =
+        pipelineOptionDescriptorsByName |> Map.keys |> Set.ofSeq
+
+    let private isDeclaredPipelineOptionCollection (step: Step) argumentName =
+        pipelineOptionDescriptorsByName
+        |> Map.tryFind step.Name
+        |> Option.exists (fun descriptor ->
+            descriptor.Behaviour = InertForSingleBuild
+            && descriptor.UnevaluatedNamedCollectionArgs.Contains argumentName)
+
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
@@ -225,38 +265,48 @@ module FogellSide =
                         )
                     else
                         // FG-014 residual slice. Bracket-valued named arguments are retained as
-                        // source expressions for parse-only corpus admission. No executor arm has
-                        // been proven to consume a named list/map with Jenkins semantics, so the
-                        // shared execution preflight refuses them before workspace preparation or
-                        // any earlier step. Positional collections such as `withEnv(['A=1'])` are
-                        // deliberately outside this rule: that existing runtime path is proven.
-                        let rec flattenSteps (steps: Step list) =
-                            steps |> List.collect (fun step -> step :: flattenSteps step.Block)
+                        // source expressions for parse-only corpus admission. No executable step
+                        // has been proven to consume a named list/map with Jenkins semantics, so
+                        // the shared preflight refuses them before workspace preparation or any
+                        // earlier step. The one exception is descriptor-owned and inert for a
+                        // single build: pipeline `rateLimitBuilds(throttle: [...])`, already proven
+                        // by `options-accept-and-ignore`. Positional collections such as
+                        // `withEnv(['A=1'])` are outside this rule: that runtime path is proven.
+                        let rec collectionOccurrences allowPipelineOptionCollections (steps: Step list) =
+                            steps
+                            |> List.collect (fun step ->
+                                let here =
+                                    step.Named
+                                    |> List.choose (fun (name, source) ->
+                                        let value = source.Trim()
+
+                                        if step.ExpressionArgs.Contains name
+                                           && value.StartsWith("[", StringComparison.Ordinal)
+                                           && value.EndsWith("]", StringComparison.Ordinal)
+                                           && not (
+                                               allowPipelineOptionCollections
+                                               && isDeclaredPipelineOptionCollection step name
+                                           ) then
+                                            Some $"step '{step.Name}' argument `{name}`"
+                                        else
+                                            None)
+
+                                // Only the direct entries of `pipeline.Options` get the
+                                // descriptor exception. A nested block is executable step
+                                // scope again and therefore returns to the default refusal.
+                                here @ collectionOccurrences false step.Block)
 
                         let postSteps (post: (PostCondition * Step list) list) =
-                            post |> List.collect (fun (_, steps) -> flattenSteps steps)
+                            post |> List.collect (fun (_, steps) -> collectionOccurrences false steps)
 
-                        let allSteps =
-                            flattenSteps (pipeline.Options @ pipeline.Parameters @ pipeline.Triggers)
+                        let unsupportedCollections =
+                            collectionOccurrences true pipeline.Options
+                            @ collectionOccurrences false (pipeline.Parameters @ pipeline.Triggers)
                             @ (pipeline.Stages
                                |> Pipeline.flattenStages
                                |> List.collect (fun stage ->
-                                   flattenSteps (stage.Options @ stage.Steps) @ postSteps stage.Post))
+                                   collectionOccurrences false (stage.Options @ stage.Steps) @ postSteps stage.Post))
                             @ postSteps pipeline.Post
-
-                        let unsupportedCollections =
-                            allSteps
-                            |> List.collect (fun step ->
-                                step.Named
-                                |> List.choose (fun (name, source) ->
-                                    let value = source.Trim()
-
-                                    if step.ExpressionArgs.Contains name
-                                       && value.StartsWith("[", StringComparison.Ordinal)
-                                       && value.EndsWith("]", StringComparison.Ordinal) then
-                                        Some $"step '{step.Name}' argument `{name}`"
-                                    else
-                                        None))
                             |> List.distinct
 
                         if List.isEmpty unsupportedCollections then
@@ -359,7 +409,9 @@ module FogellSide =
             // silently ignored. That is the divergence this project refuses by name
             // rather than commits quietly (FG-103). Caught by the pre-push verifier.
             //
-            // HONOURED: the engine implements the semantics.
+            // The closed descriptor table above owns both categories and is the
+            // source of `supportedPipelineOptionNames`: HONOURED means the engine
+            // implements the semantics.
             // PIPELINE scope. `retry` is deliberately ABSENT: FG-053(b) implements
             // it for a STAGE's options only, and Jenkins' pipeline-level `retry`
             // retries the WHOLE PIPELINE — a different feature this engine does not
@@ -368,25 +420,16 @@ module FogellSide =
             // conflation PR #38 fixed for `ansiColor` and I reproduced in the very
             // next ticket. The corpus has ZERO pipeline-level `retry` (measured:
             // 0 pipeline / 2 stage), so refusing it costs nothing today.
-            let honouredOptions =
-                set [ "timeout"; "timestamps"; "ansiColor"; "skipDefaultCheckout"; "parallelsAlwaysFailFast"
-                      "skipStagesAfterUnstable" ]
-
-            // INERT: retention and queueing policy with no observable effect on ONE
-            // build, which is all a receipt can see. Accepted with the reason stated.
-            // Receipt: `options-accept-and-ignore`.
-            let inertOptions =
-                set [ "buildDiscarder"; "disableConcurrentBuilds"; "quietPeriod"; "rateLimitBuilds" ]
-
-            // Everything else Jenkins accepts is REFUSED, because accepting it would
-            // mean running a build whose semantics this engine does not reproduce.
+            // INERT descriptors cover retention and queueing policy with no observable
+            // effect on ONE build, which is all a receipt can see. Receipt:
+            // `options-accept-and-ignore`. Everything else Jenkins accepts is REFUSED,
+            // because accepting it would mean running a build whose semantics this
+            // engine does not reproduce.
             // FG-053(b) has since implemented `skipStagesAfterUnstable` (pipeline
             // scope) and `retry` (STAGE scope only — Jenkins' pipeline-level `retry`
             // retries the whole pipeline, which this engine does not do), so both
             // have moved out of this set. What remains refused is everything Jenkins
             // accepts whose semantics are not reproduced here.
-            let supportedOptions = Set.union honouredOptions inertOptions
-
             // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
             // reason above: Jenkins enumerates a DIFFERENT valid set for a stage
             // `options` block than for the pipeline one and refuses pipeline-only
@@ -400,7 +443,7 @@ module FogellSide =
             let refusedPipelineOptions =
                 pipeline.Options
                 |> List.map (fun o -> o.Name)
-                |> List.filter (fun n -> not (supportedOptions.Contains n))
+                |> List.filter (fun n -> not (supportedPipelineOptionNames.Contains n))
                 |> List.distinct
 
             let stageOptionNames =
