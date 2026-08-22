@@ -893,17 +893,27 @@ let externalInterrupt =
 
               let ioReport = Path.Combine(baseRequest.Workspace, "io.xml")
               File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
-              let ioPolls = ref 0
+              let vanishedPolls = ref 0
 
               let deleteAfterGlob () =
-                  ioPolls.Value <- ioPolls.Value + 1
-                  if ioPolls.Value = 1 then File.Delete ioReport
+                  vanishedPolls.Value <- vanishedPolls.Value + 1
+                  if vanishedPolls.Value = 1 then File.Delete ioReport
                   false
 
-              let ioFailure = junit "io.xml" true true (Some deleteAfterGlob)
-              Expect.equal ioFailure.Status Failure "a lowercase .xml I/O fault is not synthetic"
-              Expect.isNone ioFailure.TestTotals "an I/O fault publishes no summary"
-              Expect.isNone ioFailure.StageWarning "an I/O fault is not a test-failure warning"
+              let vanished = junit "io.xml" false false (Some deleteAfterGlob)
+              Expect.equal vanished.Status Unstable "a report vanished after glob expansion follows Java File.length zero semantics"
+              Expect.equal vanished.TestTotals (Some(1, 1, 0)) "a vanished matched path contributes one synthetic empty case"
+              Expect.equal vanished.StageWarning (Some Unstable) "a vanished matched path remains an ordinary test warning"
+
+              File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
+
+              use heldOpen =
+                  File.Open(ioReport, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+              let ioFailure = junit "io.xml" true true None
+              Expect.equal ioFailure.Status Failure "a nonzero report which cannot be opened remains terminal"
+              Expect.isNone ioFailure.TestTotals "a genuine open failure publishes no summary"
+              Expect.isNone ioFailure.StageWarning "a genuine open failure is not a test-failure warning"
 
               let postScanReport = Path.Combine(baseRequest.Workspace, "postscan.xml")
               File.WriteAllText(postScanReport, "not xml")

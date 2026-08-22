@@ -124,7 +124,7 @@ module Publish =
     /// The pinned JUnit plugin turns a syntactically malformed `.xml` report into
     /// one synthetic failed test (`[failed-to-read]`) and continues aggregating
     /// the other matched reports. Preserve that narrow compatibility rule while
-    /// keeping actual I/O failures and malformed non-XML inputs unreadable.
+    /// keeping nonzero-file open failures and malformed non-XML inputs unreadable.
     /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
@@ -161,17 +161,18 @@ module Publish =
                     aborted <- true
                 else
                 try
-                    // Jenkins checks File.length() before parsing or applying the
-                    // malformed-report extension gate. Consequently every zero-byte
-                    // matched report is one synthetic `[empty]` failure, regardless
-                    // of its extension; a non-empty parse failure is recovered only
-                    // for an exact lowercase `.xml` path.
-                    use stream = File.OpenRead(Path.Combine(workspace, relative))
+                    // Jenkins calls File.length() before opening or parsing. Java
+                    // returns zero both for a zero-byte file and for a path which
+                    // vanished after glob expansion, so both become one synthetic
+                    // `[empty]` failure without an open attempt. A non-empty parse
+                    // failure is recovered only for an exact lowercase `.xml` path.
+                    let report = FileInfo(Path.Combine(workspace, relative))
 
-                    if stream.Length = 0L then
+                    if not report.Exists || report.Length = 0L then
                         total <- total + 1L
                         failed <- failed + 1L
                     else
+                        use stream = report.OpenRead()
                         let doc = Xml.Linq.XDocument.Load(stream)
 
                         // Sum over <testsuite> elements; a <testsuites> wrapper is

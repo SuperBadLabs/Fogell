@@ -16,6 +16,26 @@ cases=(
 : "${FG208_JENKINS_HOST:=luigi}"
 : "${FG208_JENKINS_CONTAINER:=jenkins-lab}"
 
+# Host and container are interpolated into command strings which the differential
+# CLI later passes to a shell. Refuse shell syntax and option-shaped targets before
+# creating a stage or contacting either controller.
+for target_var in FG208_JENKINS_HOST FG208_JENKINS_CONTAINER; do
+  target_value=${!target_var}
+  [[ "$target_value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+    echo "ERROR: invalid $target_var: $target_value" >&2
+    exit 1
+  }
+done
+
+configure_differential_commands() {
+  local host=$1
+  local container=$2
+  export FOGELL_JENKINS_WORKSPACE_CMD="ssh $host \"podman exec $container sh -c \\\"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\\\"\""
+  export FOGELL_JENKINS_ENV_CMD="ssh $host \"podman exec $container env\""
+  export FOGELL_JENKINS_GIT_VERSION_CMD="ssh $host \"podman exec $container git --version\""
+  export FOGELL_JENKINS_WIPE_CMD="ssh $host \"podman exec $container sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\\\"\""
+}
+
 if [[ -e "$output" ]]; then
   echo "ERROR: refusing to overwrite retained run: $output" >&2
   exit 1
@@ -63,10 +83,7 @@ capture_junit > "$stage/junit-bytecode-before.txt"
 capture_container > "$stage/container-before.txt"
 
 cd "$repo"
-export FOGELL_JENKINS_WORKSPACE_CMD='ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_home/workspace/{job} 2>/dev/null && find . -type f | sort | xargs -r sha256sum\""'
-export FOGELL_JENKINS_ENV_CMD='ssh luigi "podman exec jenkins-lab env"'
-export FOGELL_JENKINS_GIT_VERSION_CMD='ssh luigi "podman exec jenkins-lab git --version"'
-export FOGELL_JENKINS_WIPE_CMD='ssh luigi "podman exec jenkins-lab sh -c \"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp\""'
+configure_differential_commands "$FG208_JENKINS_HOST" "$FG208_JENKINS_CONTAINER"
 
 dotnet build tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   -c Release --nologo > "$stage/build.log"
@@ -102,6 +119,24 @@ capture_container > "$stage/container-after.txt"
     receipt_digest=$(awk '/^case-digest:/ {print $2}' "$receipt")
     [[ "$case_digest" == "$receipt_digest" ]]
   done
+  (
+    configure_differential_commands fg208-proof-host fg208-proof-container
+    for command_var in \
+      FOGELL_JENKINS_WORKSPACE_CMD \
+      FOGELL_JENKINS_ENV_CMD \
+      FOGELL_JENKINS_GIT_VERSION_CMD \
+      FOGELL_JENKINS_WIPE_CMD
+    do
+      command_value=${!command_var}
+      [[ "$command_value" == "ssh fg208-proof-host "* ]]
+      [[ "$command_value" == *"podman exec fg208-proof-container "* ]]
+      [[ "$command_value" != *luigi* ]]
+      [[ "$command_value" != *jenkins-lab* ]]
+    done
+    [[ "$FOGELL_JENKINS_WORKSPACE_CMD" == *'{job}'* ]]
+    [[ "$FOGELL_JENKINS_WIPE_CMD" == *'{job}'* ]]
+    printf 'configured-target override proof: 4 commands, literal job placeholders preserved\n'
+  )
 } > "$stage/validation.txt"
 
 printf 'COMPLETE\n' > "$stage/STATUS"
