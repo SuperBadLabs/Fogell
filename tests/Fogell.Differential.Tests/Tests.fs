@@ -1333,16 +1333,16 @@ let stepDescriptorValidation =
                   "one row, no schema-less fallback"
           }
 
-          test "return shapes partition null, body, and deferred object rows" {
+          test "return shapes partition null, body, JUnit summary, and deferred SCM rows" {
               let genuineNull =
                   set [ "sh"; "echo"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
 
               let bodyResult = set [ "dir"; "timeout"; "retry"; "withEnv" ]
+              let junitSummary = set [ "junit" ]
 
               let expectedUnsupported =
                   Map.ofList
-                      [ "junit", WalkerRules.JUnitTestResultSummary
-                        "git", WalkerRules.ScmMap
+                      [ "git", WalkerRules.ScmMap
                         "checkout", WalkerRules.ScmMap ]
 
               for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
@@ -1356,6 +1356,11 @@ let stepDescriptorValidation =
                       Expect.isTrue
                           (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
                           $"{name} body result is safe in a value position"
+                  elif junitSummary.Contains name then
+                      Expect.equal descriptor.ReturnValue WalkerRules.JUnitSummary "junit returns the closed count projection"
+                      Expect.isTrue
+                          (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
+                          "the measured JUnit count projection is safe in a value position"
                   else
                       let unsupported = Map.find name expectedUnsupported
                       Expect.equal
@@ -1367,7 +1372,7 @@ let stepDescriptorValidation =
                           $"{name} value use stays refused"
 
               Expect.equal
-                  (Set.unionMany [ genuineNull; bodyResult; expectedUnsupported |> Map.keys |> Set.ofSeq ])
+                  (Set.unionMany [ genuineNull; bodyResult; junitSummary; expectedUnsupported |> Map.keys |> Set.ofSeq ])
                   WalkerRules.scriptStepVocabulary
                   "the classifications partition all 14 descriptors"
           }
@@ -1786,10 +1791,9 @@ let genuineNullRuntime =
                           $"{file}: a fault never became a null result")
           }
 
-          test "JUnit and SCM map values remain refused before execution" {
+          test "SCM map values remain refused before execution" {
               let unsupported =
-                  [ "junit", "def got = junit(testResults: 'reports/*.xml')"
-                    "git", "def got = git(url: 'file:///tmp/repo.git')"
+                  [ "git", "def got = git(url: 'file:///tmp/repo.git')"
                     "checkout", "def got = checkout(scm)" ]
 
               for step, body in unsupported do
@@ -1801,6 +1805,50 @@ let genuineNullRuntime =
                           Expect.isFalse
                               (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
                               $"{step}: the script never began executing")
+          }
+
+          test "JUnit publishes only the three measured count properties and remains nonterminal when unstable" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                  + "def got = junit(testResults: 'reports/summary.xml'); "
+                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1) { sh 'touch summary-ok.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "failing tests keep the build unstable without halting the script"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "summary-ok.txt")))
+                      "all three typed count properties drove the measured branch")
+          }
+
+          test "unmeasured JUnit object surface remains catch-opaque and cannot reach a successor effect" {
+              let operations =
+                  [ "property", "def ignored = got.duration"
+                    "method", "def ignored = got.getTotalCount()"
+                    "index", "def ignored = got['totalCount']"
+                    "truthiness", "def ignored = got ? 1 : 0"
+                    "equality", "def ignored = got == got"
+                    "stringification", "def ignored = \"${got}\""
+                    "mutation", "got.totalCount = 0"
+                    "spread", "def ignored = [got]*.totalCount"
+                    "instanceof", "def ignored = got instanceof Object"
+                    "throw", "throw got"
+                    "nested-throw", "throw [got]"
+                    "nested-host-argument", "echo([got])" ]
+
+              for label, operation in operations do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      + "def got = junit(testResults: 'reports/summary.xml'); "
+                      + $"try {{ {operation}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: an unmodelled object operation fails closed"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
+                          $"{label}: the successor inside try did not run"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt")))
+                          $"{label}: ordinary Groovy catch cannot absorb a Fogell modelling refusal")
           }
 
           test "dir, timeout, retry and withEnv publish the body result" {

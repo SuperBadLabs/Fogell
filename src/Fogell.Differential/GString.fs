@@ -206,6 +206,7 @@ module GString =
                                           match Value.tryEq old v with
                                           | Value.Answer same -> not same
                                           | Value.CycleDetected -> true
+                                          | Value.Unmodelled -> true
                                       | None -> true) then
                                     Map.add k v acc
                                 else

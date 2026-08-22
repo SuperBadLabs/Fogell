@@ -300,9 +300,18 @@ module Interpreter =
             raise (Stop(BudgetExhausted $"evaluation exceeded {st.Budget.MaxSteps} steps"))
 
     let private scriptDisplay value =
-        match Value.tryToDisplay value with
-        | Value.Text rendered -> rendered
-        | Value.DisplayCycleDetected -> raise (Stop(CyclicValue Display))
+        if Value.containsJUnitSummary value then
+            raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, or skipCount"))
+        else
+            match Value.tryToDisplay value with
+            | Value.Text rendered -> rendered
+            | Value.DisplayCycleDetected -> raise (Stop(CyclicValue Display))
+
+    let private scriptTruthy value =
+        match value with
+        | VJUnitSummary _ ->
+            raise (Stop(Unsupported "JUnit TestResultSummary truthiness is not modelled; read a measured count property"))
+        | _ -> Value.isTruthy value
 
     let private scriptHashKey value =
         if Value.hasReferenceCycle value then
@@ -470,13 +479,15 @@ module Interpreter =
             | ListLike xs, VInt i -> listRead xs i
             | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
+            | VJUnitSummary _, _ ->
+                raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
             let v = evalExpr st env x
 
             match op with
-            | "!" -> VBool(not (Value.isTruthy v))
+            | "!" -> VBool(not (scriptTruthy v))
             | "-" ->
                 match v with
                 | VInt i -> VInt(-i)
@@ -486,13 +497,13 @@ module Interpreter =
             | _ -> raise (Stop(Unsupported $"unary operator {op}"))
         | EBinary(op, l, r) -> evalBinary st env op l r
         | ETernary(c, a, b) ->
-            if Value.isTruthy (evalExpr st env c) then
+            if scriptTruthy (evalExpr st env c) then
                 evalExpr st env a
             else
                 evalExpr st env b
         | EElvis(a, b) ->
             let v = evalExpr st env a
-            if Value.isTruthy v then v else evalExpr st env b
+            if scriptTruthy v then v else evalExpr st env b
         | EClosure c ->
             // FG-191. EVERY EVALUATION MINTS A DISTINCT CLOSURE, as Groovy's does:
             // equality compares the captured env RECORD by reference, and a loop
@@ -508,6 +519,13 @@ module Interpreter =
     and private evalProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VMap m -> defaultArg (Map.tryFind name m.Value) VNull
+        | VJUnitSummary summary ->
+            match name with
+            | "totalCount" -> VInt summary.Value.TotalCount
+            | "failCount" -> VInt summary.Value.FailCount
+            | "skipCount" -> VInt summary.Value.SkipCount
+            | _ ->
+                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount"))
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -521,8 +539,12 @@ module Interpreter =
     and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VNull -> VNull
+        | VJUnitSummary _ ->
+            raise (Stop(Unsupported "spread access on JUnit TestResultSummary is not modelled"))
         | ListLike xs ->
-            if xs.Value.Length > st.Budget.MaxLoopIterations then
+            if xs.Value |> List.exists Value.containsJUnitSummary then
+                raise (Stop(Unsupported "spread access over a JUnit TestResultSummary is not modelled"))
+            elif xs.Value.Length > st.Budget.MaxLoopIterations then
                 raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
 
             xs.Value
@@ -544,15 +566,15 @@ module Interpreter =
         // short-circuit before evaluating the right side
         match op with
         | "&&" ->
-            if Value.isTruthy (evalExpr st env l) then
-                VBool(Value.isTruthy (evalExpr st env r))
+            if scriptTruthy (evalExpr st env l) then
+                VBool(scriptTruthy (evalExpr st env r))
             else
                 VBool false
         | "||" ->
-            if Value.isTruthy (evalExpr st env l) then
+            if scriptTruthy (evalExpr st env l) then
                 VBool true
             else
-                VBool(Value.isTruthy (evalExpr st env r))
+                VBool(scriptTruthy (evalExpr st env r))
         | _ ->
 
         let a = evalExpr st env l
@@ -561,6 +583,9 @@ module Interpreter =
 
     and private evalBinaryValues (st: State) op a b : Value =
         match op, a, b with
+        | _, VJUnitSummary _, _
+        | _, _, VJUnitSummary _ ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for JUnit TestResultSummary"))
         | "+", VInt x, VInt y -> VInt(x + y)
         | "+", VStr x, _ -> VStr(x + scriptDisplay b)
         | "+", _, VStr y -> VStr(scriptDisplay a + y)
@@ -592,10 +617,12 @@ module Interpreter =
             match Value.tryEq a b with
             | Value.Answer r -> VBool r
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
+            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary"))
         | "!=", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool(not r)
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
+            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary"))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -1288,6 +1315,8 @@ module Interpreter =
             r
 
         match name, recv, args with
+        | _, VJUnitSummary _, _ ->
+            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
         // with the same binding rules and refusal contract as `f(x)` — for a closure
         // held in a LOCAL. A closure held in the script BINDING (assigned without
@@ -1328,7 +1357,9 @@ module Interpreter =
                 |> List.exists (fun x ->
                     match Value.tryEq v x with
                     | Value.Answer r -> r
-                    | Value.CycleDetected -> raise (Stop(CyclicValue Equality)))
+                    | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
+                    | Value.Unmodelled ->
+                        raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary")))
             )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
@@ -1389,7 +1420,7 @@ module Interpreter =
                     "find"
                     xs
                     (fun () -> Option.isNone found)
-                    (fun x -> if Value.isTruthy (applyClosure c env x) then found <- Some x)
+                    (fun x -> if scriptTruthy (applyClosure c env x) then found <- Some x)
 
                 Option.defaultValue VNull found
             | None -> recv
@@ -1403,7 +1434,7 @@ module Interpreter =
                     "findAll"
                     xs
                     (fun () -> true)
-                    (fun x -> if Value.isTruthy (applyClosure c env x) then matches.Add x)
+                    (fun x -> if scriptTruthy (applyClosure c env x) then matches.Add x)
 
                 VList(ref (List.ofSeq matches))
             | None -> recv
@@ -1411,14 +1442,14 @@ module Interpreter =
             match trailing with
             | Some c ->
                 let mutable matched = false
-                iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- Value.isTruthy (applyClosure c env x))
+                iterateLiveList st "any" xs (fun () -> not matched) (fun x -> matched <- scriptTruthy (applyClosure c env x))
                 VBool matched
             | None -> VBool false
         | "every", ListLike xs, _ ->
             match trailing with
             | Some c ->
                 let mutable allMatched = true
-                iterateLiveList st "every" xs (fun () -> allMatched) (fun x -> allMatched <- Value.isTruthy (applyClosure c env x))
+                iterateLiveList st "every" xs (fun () -> allMatched) (fun x -> allMatched <- scriptTruthy (applyClosure c env x))
                 VBool allMatched
             | None -> VBool true
         | _ when st.StrictVars ->
@@ -1552,6 +1583,8 @@ module Interpreter =
                         // write the shell never sees
                         host.SetEnv key (scriptDisplay value)
                     | _ -> mr.Value <- Map.add key value mr.Value
+                | VJUnitSummary _, _, _ ->
+                    raise (Stop(Unsupported "JUnit TestResultSummary mutation is not modelled"))
                 | VNull, _, _ ->
                     let targetName = if isIndex then "index" else scriptDisplay keyValue
                     raise (Stop(NullReceiverAssignment targetName))
@@ -1606,6 +1639,8 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | VJUnitSummary _, _ ->
+                    raise (Stop(Unsupported "JUnit TestResultSummary compound index mutation is not modelled"))
                 | _, _ -> raise (Stop(RejectedIndexOperation "read"))
 
             let rhsValue = evalExpr st env rhs
@@ -1654,6 +1689,8 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | VJUnitSummary _, _ ->
+                    raise (Stop(Unsupported "JUnit TestResultSummary postfix index mutation is not modelled"))
                 | _, _ -> raise (Stop(RejectedIndexOperation "read"))
 
             let value =
@@ -1679,7 +1716,7 @@ module Interpreter =
         | SIf(c, t, f) ->
             st.LastValue <- None
 
-            if Value.isTruthy (evalExpr st env c) then
+            if scriptTruthy (evalExpr st env c) then
                 execBlock st env t
             else
                 execBlock st env f
@@ -1727,7 +1764,7 @@ module Interpreter =
             let mutable iterations = 0
             let mutable running = true
 
-            while running && Value.isTruthy (evalExpr st cur c) do
+            while running && scriptTruthy (evalExpr st cur c) do
                 iterations <- iterations + 1
 
                 if iterations > st.Budget.MaxLoopIterations then
@@ -1772,6 +1809,7 @@ module Interpreter =
                         match Value.tryEq v (evalExpr st env case) with
                         | Value.Answer r -> r
                         | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
+                        | Value.Unmodelled -> raise (Stop(Unsupported "switch equality is not modelled for JUnit TestResultSummary"))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 
@@ -1809,7 +1847,13 @@ module Interpreter =
         | SReturn e -> raise (ReturnSignal(match e with Some x -> evalExpr st env x | None -> VNull))
         | SBreak -> raise BreakSignal
         | SContinue -> raise ContinueSignal
-        | SThrow e -> raise (Stop(Thrown(evalExpr st env e)))
+        | SThrow e ->
+            let thrown = evalExpr st env e
+
+            if Value.containsJUnitSummary thrown then
+                raise (Stop(Unsupported "throwing a JUnit TestResultSummary directly or inside a collection is not modelled"))
+            else
+                raise (Stop(Thrown thrown))
         | STry(body, catch, fin) ->
             // MissingPropertyException is CATCHABLE — `try { MISSING } catch (e)`
             // renders the fallback on Jenkins — and `finally` runs whether or not

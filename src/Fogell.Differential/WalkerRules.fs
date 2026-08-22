@@ -181,7 +181,6 @@ module WalkerRules =
     /// point: a boolean at each call site cannot express precedence, and the two readers
     /// were free to resolve the combination differently — which is exactly what they did.
     type UnsupportedReturn =
-        | JUnitTestResultSummary
         | ScmMap
         | OutsideHostedVocabulary
 
@@ -198,6 +197,10 @@ module WalkerRules =
         /// The interpreter preserves the Value directly; the walker only decides
         /// when and how often the existing body thunk runs.
         | BodyResult
+        /// A nominal, immutable projection of the three pinned integer count
+        /// properties on Jenkins' TestResultSummary. Every other object operation
+        /// remains refused by the interpreter.
+        | JUnitSummary
         /// Jenkins returns a value, but Fogell does not yet carry a closed model for it.
         | UnsupportedValue of UnsupportedReturn
 
@@ -260,6 +263,7 @@ module WalkerRules =
         | Fogell.Groovy.Interpreter.VList _ -> "<list>"
         | Fogell.Groovy.Interpreter.VMap _ -> "<map>"
         | Fogell.Groovy.Interpreter.VRange _ -> "<range>"
+        | Fogell.Groovy.Interpreter.VJUnitSummary _ -> "<junit-test-result-summary>"
         | Fogell.Groovy.Interpreter.VClosure _ -> "<closure>"
         | Fogell.Groovy.Interpreter.VFunc(name, _, _) -> $"<function {name}>"
         | value -> Fogell.Groovy.Interpreter.Value.toDisplay value
@@ -307,7 +311,7 @@ module WalkerRules =
                     "testDataPublishers" ]
                   []
                   (warn "hudson.tasks.junit.pipeline.JUnitResultsStep")
-                  (UnsupportedValue JUnitTestResultSummary)
+                  JUnitSummary
                   "takes exactly one test-results pattern" noCheck
               "checkout",
               row 1 (Some "scm") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "scm"; "changelog"; "poll" ] []
@@ -548,7 +552,8 @@ module WalkerRules =
         | GenuineNull
         | ExitStatus
         | CapturedStdout
-        | BodyResult -> true
+        | BodyResult
+        | JUnitSummary -> true
         | UnsupportedValue _ -> false
 
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):
