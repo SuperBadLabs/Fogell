@@ -249,24 +249,37 @@ module Value =
     /// Finds the deliberately opaque JUnit value even when a script wraps it in
     /// a collection before passing it to a rendering or hosted-call boundary.
     let containsJUnitSummary value =
-        let seen = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+        match value with
+        | VJUnitSummary _ -> true
+        | VList _
+        | VMap _ ->
+            // Script-owned collections can be nested to the evaluation budget.
+            // Keep that shape off the native call stack, and allocate the graph
+            // walk only when the root can actually contain another Value.
+            let seen = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+            let pending = System.Collections.Generic.Stack<Value>()
+            let mutable found = false
+            pending.Push value
 
-        let rec contains =
-            function
-            | VJUnitSummary _ -> true
-            | VList values ->
-                if seen.Add(box values) then values.Value |> List.exists contains else false
-            | VMap values ->
-                if seen.Add(box values) then values.Value |> Map.exists (fun _ item -> contains item) else false
-            | VNull
-            | VBool _
-            | VInt _
-            | VStr _
-            | VRange _
-            | VClosure _
-            | VFunc _ -> false
+            while not found && pending.Count > 0 do
+                match pending.Pop() with
+                | VJUnitSummary _ -> found <- true
+                | VList values when seen.Add(box values) ->
+                    for item in values.Value do
+                        pending.Push item
+                | VMap values when seen.Add(box values) ->
+                    for KeyValue(_, item) in values.Value do
+                        pending.Push item
+                | _ -> ()
 
-        contains value
+            found
+        | VNull
+        | VBool _
+        | VInt _
+        | VStr _
+        | VRange _
+        | VClosure _
+        | VFunc _ -> false
 
     /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
     ///
@@ -464,16 +477,18 @@ module Value =
                     else
                         compareEntries seen leftTail rightTail
 
-        let answer =
-            match a, b with
-            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
-            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
-            | _ -> compareValues [] a b
+        if containsJUnitSummary a || containsJUnitSummary b then
+            Unorderable
+        else
+            let answer =
+                match a, b with
+                | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
+                | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
+                | _ -> compareValues [] a b
 
-        if containsJUnitSummary a || containsJUnitSummary b then Unorderable
-        elif cycle then OrderingCycleDetected
-        elif unorderable then Unorderable
-        else Order answer
+            if cycle then OrderingCycleDetected
+            elif unorderable then Unorderable
+            else Order answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =

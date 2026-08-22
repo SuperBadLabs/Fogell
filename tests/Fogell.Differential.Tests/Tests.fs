@@ -1807,6 +1807,33 @@ let genuineNullRuntime =
                               $"{step}: the script never began executing")
           }
 
+          test "JUnit containment is stack-safe for deeply nested script collections" {
+              let mutable withoutSummary = Fogell.Groovy.Interpreter.VInt 0L
+
+              for _ in 1..20000 do
+                  withoutSummary <- Fogell.Groovy.Interpreter.VList(ref [ withoutSummary ])
+
+              Expect.isFalse
+                  (Fogell.Groovy.Interpreter.Value.containsJUnitSummary withoutSummary)
+                  "a deep ordinary value is scanned without consuming the native call stack"
+
+              let summary =
+                  Fogell.Groovy.Interpreter.VJUnitSummary(
+                      ref
+                          { TotalCount = 1L
+                            FailCount = 0L
+                            SkipCount = 0L })
+
+              let mutable withSummary = summary
+
+              for _ in 1..20000 do
+                  withSummary <- Fogell.Groovy.Interpreter.VList(ref [ withSummary ])
+
+              Expect.isTrue
+                  (Fogell.Groovy.Interpreter.Value.containsJUnitSummary withSummary)
+                  "a deeply wrapped summary is still found"
+          }
+
           test "JUnit publishes only the three measured count properties and remains nonterminal when unstable" {
               let body =
                   "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
