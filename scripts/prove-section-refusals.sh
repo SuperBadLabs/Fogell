@@ -385,8 +385,127 @@ expect_refusal_before_effects when-malformed-expression early.txt 'pipeline {
     }
 }'
 
+# FG-175, remaining measured class. Duplicate map keys are conclusive Groovy
+# compile errors, but `attempt` used to erase the refusal and let the opaque
+# `when` fallback turn it into a runtime gate. Exercise every parser mechanism:
+# an existing duplicate guard, a single-key parser that formerly left bytes
+# behind, the changeRequest implicit-sibling route, and recursive composition.
+expect_refusal_before_effects when-duplicate-equals early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { equals expected: 1, actual: 1, actual: 2 }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-duplicate-tag early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { tag pattern: "v1", pattern: "v2" }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-duplicate-change-request early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { changeRequest target: "main", target: "release" }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-duplicate-nested early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { allOf { branch "main"; environment name: "T", value: "a", value: "b" } }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-duplicate-parenthesised-opaque early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { changeRequest(target: targetFactory(1, 2), target: [name: "release", labels: ["a", "b"]]) }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-invalid-changeset-glob early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { changeset glob: "**/*.java" }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+expect_refusal_before_effects when-invalid-directive-value early.txt 'pipeline {
+    agent any
+    stages {
+        stage("early") { steps { sh "touch early.txt" } }
+        stage("gated") {
+            when { beforeAgent maybe; branch "main" }
+            steps { sh "touch gated.txt" }
+        }
+    }
+}'
+
+# Overshoot control: a valid filter Fogell does not fully model stays admitted
+# and fail-closed on a plain job. The filtered stage must not run, while the
+# following stage proves the pipeline was not refused wholesale.
+when_filter_log=$(run_case when-valid-unmodelled-filter 'pipeline {
+    agent any
+    stages {
+        stage("filtered") {
+            when { changeRequest target: "main" }
+            steps { sh "touch must-not-run.txt" }
+        }
+        stage("control") { steps { sh "touch control.txt" } }
+    }
+}')
+if grep -q 'completed: success' <<<"$when_filter_log" \
+   && [ ! -e "$LAB/when-valid-unmodelled-filter/ws/run/must-not-run.txt" ] \
+   && [ -e "$LAB/when-valid-unmodelled-filter/ws/run/control.txt" ]; then
+  echo "  control when-valid-unmodelled-filter: admitted, filtered, and continued"
+else
+  echo "  FAIL: valid unsupported when filter was refused or executed"
+  sed 's/^/    | /' <<<"$when_filter_log" | head -5
+  FAILED=1
+fi
+
+# A broader scanner is used only to find duplicates. It must not silently widen
+# Fogell's equals evaluator to collection/call/closure values it cannot model.
+when_equals_log=$(run_case when-valid-unmodelled-equals 'pipeline {
+    agent any
+    stages {
+        stage("filtered") {
+            when { equals expected: [1], actual: [2] }
+            steps { sh "touch must-not-run.txt" }
+        }
+    }
+}')
+if grep -q 'completed: failure' <<<"$when_equals_log" \
+   && [ ! -e "$LAB/when-valid-unmodelled-equals/ws/run/must-not-run.txt" ]; then
+  echo "  control when-valid-unmodelled-equals: admitted and failed closed without running the gated stage"
+else
+  echo "  FAIL: unsupported equals values did not fail closed before the gated effect"
+  sed 's/^/    | /' <<<"$when_equals_log" | head -5
+  FAILED=1
+fi
+
 if [ "$FAILED" -eq 0 ]; then
-  echo "SECTION-REFUSAL PROOF: options/steps/environment refuse at both levels, the input DIRECTIVE refuses, a misplaced break/continue and a malformed when-expression each refuse BEFORE any stage runs, and every control still runs"
+  echo "SECTION-REFUSAL PROOF: acted-on sections and every measured compile-invalid when route refuse BEFORE any stage runs, while valid controls still run"
 else
   echo "SECTION-REFUSAL PROOF FAILED"
   exit 1

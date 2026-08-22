@@ -10,7 +10,32 @@ open Fogell.Ir
 /// braces and quotes — strings, GStrings, slashy strings, comments — or the
 /// block matcher counts a `{` inside a comment and the whole parse derails.
 
-type P<'a> = Parser<'a, unit>
+/// Semantic refusals are different from ordinary grammar misses. FParsec's
+/// `attempt` correctly rewinds the latter so a deliberate opaque fallback can
+/// fail closed, but the former must survive that rewind and reach admission.
+/// The mutable cell is intentional: stream backtracking restores the user-state
+/// value, not mutations made through the same referenced object.
+type ParserState =
+    { mutable Refusal: (string * Fogell.Ir.Position) option }
+
+let parserState () = { Refusal = None }
+
+type P<'a> = Parser<'a, ParserState>
+
+/// Record a semantic refusal before failing the current parser branch. The
+/// fallback may still parse, but admission reads this cell before returning it.
+let refuse (message: string) : P<'a> =
+    getPosition .>>. getUserState
+    >>= fun (position, state) ->
+            if state.Refusal.IsNone then
+                state.Refusal <-
+                    Some(
+                        message,
+                        { Line = position.Line
+                          Column = position.Column }
+                    )
+
+            fail message
 
 let ws1: P<unit> = skipMany1 (anyOf " \t\r\n")
 
@@ -287,7 +312,7 @@ let stringLiteral: P<string> = lexeme stringLiteralBare
 /// reassembling a raw expression needs the text back exactly as written —
 /// [stringLiteral] decodes, which is the wrong thing for that job.
 let stringSpanRaw: P<string> =
-    let scan (stream: CharStream<unit>) =
+    let scan (stream: CharStream<ParserState>) =
         let start = stream.Index
         let c = stream.Peek()
 
@@ -381,7 +406,7 @@ let endsExpression (c: char) =
 /// candidate span falls back to the ordinary single character, which is
 /// exactly the pre-FG-141 reading — the fix can only remove derailments.
 let balancedRaw (opening: char) (closing: char) : P<string> =
-    let inner (stream: CharStream<unit>) =
+    let inner (stream: CharStream<ParserState>) =
         if stream.Peek() <> opening then
             Reply(Error, expected $"'{opening}'")
         else

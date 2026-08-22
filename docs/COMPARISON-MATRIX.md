@@ -100,7 +100,7 @@ itself. This is the single most consequential correction in revision 2.
 | Steps per stage | unbounded | unbounded `[S]` — `FG-037` open | **1 — but enforced at EXECUTION, not admission** `[S]` **[WAS: "enforced" — imprecise]** |
 | Parallel branches | yes | yes `[R]` | not via the user surface `[S]`; **store supports join nodes and fan-out** `[S]` **[WAS: "not expressible" — true only of the front end]** |
 | `matrix` / `axes` | yes | absent `[S]` — `FG-017` | **store has `MAX_MATRIX_AXES`/`MAX_MATRIX_CELLS`**, no YAML surface `[S]` **[WAS: `N/A`]** |
-| Conditional stages | yes | yes `[R]`, `FG-175` PARTIAL | `Succeeded`/`Completed` edge conditions in the store `[S]` |
+| Conditional stages | yes | yes `[R]`, `FG-175` DONE | `Succeeded`/`Completed` edge conditions in the store `[S]` |
 | `script { }` blocks | yes | yes `[R]` | `N/A` |
 | DAG shape | arbitrary | follows the Jenkinsfile `[R]` | **general DAG in the store; linear chain is a COMPILER choice** `[S]` — `controller-store/src/dag.rs` **[WAS: "linear chain only"]** |
 | Step types | plugins | 14 `[S]` | **1** — `Step::Process` only `[S]`; modes `Direct\|WindowsCmd\|PowerShell` |

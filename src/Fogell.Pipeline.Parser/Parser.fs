@@ -16,7 +16,7 @@ open Fogell.Pipeline.Parser.Lexeme
 ///   block form              withEnv(['A=1']) { … }  /  script { … }
 ///
 /// Argument *values* are captured as source text, not evaluated (ADR 0002).
-let private stepParser, private stepRef = createParserForwardedToRef<Step, unit> ()
+let private stepParser, private stepRef = createParserForwardedToRef<Step, ParserState> ()
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
@@ -172,19 +172,12 @@ let private wholeValue (p: P<'a>) : P<'a> =
 /// only step arguments, and the review found `when { equals actual: 1, actual: 2 }` the
 /// very next round — the same defect on a surface I had not enumerated.
 ///
-/// WHICH SURFACES THIS RULE REACHES, corrected after the sentence here claimed more than
-/// the code delivers — the enumeration was right about the SHAPES and wrong about their
-/// consequence, which is the overclaim class this project treats as a defect:
-///   - STEP ARGUMENTS: guarded, and the refusal REACHES the caller. That path has no
-///     fallback above it, so the pipeline is rejected — which is what Jenkins does.
-///   - `when { equals … }` and `when { environment … }`: guarded here, but the refusal is
-///     swallowed by `whenSectionOpaque` and the stage merely fails closed. FG-175.
-///   - `tag`, `branch`, `changelog`, `triggeredBy`: these parse ONE named argument, and I
-///     wrote that they therefore "cannot duplicate one". They can. `when { tag pattern:
-///     'v1', pattern: 'v2' }` leaves the second pair UNCONSUMED, the condition fails, and
-///     the same opaque fallback absorbs the section — identical outcome, reached by a
-///     different route. Not guarded, and guarding them here would change nothing while
-///     the fallback stands. FG-175 covers them, and each has a tripwire test.
+/// WHICH SURFACES THIS RULE REACHES: step arguments and every named-argument
+/// `when` condition. FG-175 made a semantic refusal parser state rather than an
+/// ordinary failure, so the first refusal survives `attempt` and is returned by
+/// admission even if a later alternative parses the same bytes opaquely. The
+/// single-key conditions also consume their complete named group before calling
+/// this guard; a second pair can no longer remain for a fallback to reinterpret.
 /// A new list-shaped surface must call this.
 let private firstDuplicateName (names: string list) : string option =
     names
@@ -196,7 +189,7 @@ let private firstDuplicateName (names: string list) : string option =
 /// non-empty one from a first-match projection.
 let private rejectingDuplicateSections sectionName isSection sections : P<'a list> =
     if sections |> List.filter isSection |> List.length > 1 then
-        fail $"multiple occurrences of the `{sectionName}` section: Jenkins rejects duplicate sections before running anything"
+        refuse $"multiple occurrences of the `{sectionName}` section: Jenkins rejects duplicate sections before running anything"
     else
         preturn sections
 
@@ -204,7 +197,7 @@ let private rejectingDuplicateSections sectionName isSection sections : P<'a lis
 let private rejectingDuplicates (keyOf: 'a -> string) (items: 'a list) : P<'a list> =
     match firstDuplicateName (items |> List.map keyOf) with
     | Some name ->
-        fail
+        refuse
             $"duplicate named argument `{name}`: Groovy builds named arguments as a map literal, so Jenkins rejects the pipeline before running anything"
     | None -> preturn items
 
@@ -444,11 +437,18 @@ let private stepBlock: P<Step list> =
 
 let private parenArgs (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+    let state = parserState ()
 
-    match runParserOnString (ws >>. argList .>> eof) () "args" body with
-    | ParserResult.Success(v, _, _) -> preturn v
-    | ParserResult.Failure _ ->
-        fail $"a parenthesised argument body that does not parse is refused, never downgraded to one positional value: ({body})"
+    match runParserOnString (ws >>. argList .>> eof) state "args" body with
+    | ParserResult.Success(v, parsedState, _) ->
+        match parsedState.Refusal with
+        | Some(message, _) -> refuse message
+        | None -> preturn v
+    | ParserResult.Failure(_, _, failedState) ->
+        match failedState.Refusal with
+        | Some(message, _) -> refuse message
+        | None ->
+            refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
@@ -685,18 +685,96 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// to the unmodelled branch, and from there (see below) out of the `when`
 /// section entirely. Named arguments, in either order.
 /// Receipt: `when-conditions`.
+/// One complete `when` named-argument value. This is intentionally broader than
+/// Fogell's modelled value grammar: duplicate map keys are a Groovy compile error
+/// whether the values are strings, expressions, calls, lists, maps, or closures.
+/// Each balanced/quoted span is one chunk, so commas inside it cannot become outer
+/// argument separators. The ordinary chunk uses the same slashy-aware scanner as
+/// step arguments.
+let private whenRawValue: P<string> =
+    let ordinary =
+        rawArgValue [ ','; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
+
+    many1Strings (
+        attempt (balancedRaw '(' ')')
+        <|> attempt (balancedRaw '[' ']')
+        <|> attempt (balancedRaw '{' '}')
+        <|> ordinary)
+    .>> ws
+    |>> fun value -> value.Trim()
+
+let private whenNamedArgument: P<string * string> =
+    attempt (identifier .>>? symbol ":" .>>. whenRawValue)
+
+let private whenNamedGroup: P<(string * string) list> =
+    sepBy1 whenNamedArgument (symbol ",") >>= rejectingDuplicates fst
+
+let private whenNamedGroupOrParens: P<(string * string) list> =
+    attempt (between (symbol "(") (symbol ")") whenNamedGroup)
+    <|> whenNamedGroup
+
+let private decodeWhenString (source: string) =
+    match runParserOnString (ws >>. stringLiteral .>> eof) (parserState ()) "when-value" source with
+    | ParserResult.Success(value, _, _) -> Some value
+    | ParserResult.Failure _ -> None
+
+let private decodeWhenEqualsOperand (source: string) =
+    let scalar =
+        attempt (stringLiteral |>> fun value -> $"'{value}'")
+        // Preserve the deliberately narrow scalar grammar that Fogell can
+        // evaluate. The broad raw scanner above exists to catch duplicate keys;
+        // it is not permission to model calls, lists, maps, or closures as
+        // equals operands.
+        <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)
+
+    match runParserOnString (ws >>. scalar .>> eof) (parserState ()) "when-equals-value" source with
+    | ParserResult.Success(value, _, _) -> Some value
+    | ParserResult.Failure _ -> None
+
+let private renderWhenPairs pairs =
+    pairs |> List.map (fun (name, value) -> $"{name}: {value}") |> String.concat ", "
+
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
-    >>. (sepBy1 (identifier .>> symbol ":" .>>. stringLiteral) (symbol ",") >>= rejectingDuplicates fst)
+    >>. whenNamedGroupOrParens
     |>> fun pairs ->
-            let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
+            let getString k =
+                pairs
+                |> List.tryPick (fun (n, v) -> if n = k then decodeWhenString v else None)
 
-            match get "name", get "value" with
+            match getString "name", getString "value" with
             | Some n, Some v -> WhenEnvironment(n, v)
             | _ ->
                 // Recognised the keyword but not its arguments: unmodelled, so
                 // evaluation fails closed rather than assuming a direction.
-                WhenUnmodelled("environment", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
+                WhenUnmodelled("environment", renderWhenPairs pairs)
+
+/// A string-valued condition with one modelled key. Consume the WHOLE named
+/// group before deciding whether Fogell models it: otherwise a second pair is
+/// reinterpreted as either an opaque section or an implicit sibling condition.
+/// Distinct unsupported keys remain unmodelled and fail closed; duplicate keys
+/// are a conclusive Groovy map-literal refusal and are recorded by the shared
+/// duplicate guard.
+let private whenNamedOrBareString
+    (kind: string)
+    (key: string)
+    (modelled: string -> WhenCondition)
+    : P<WhenCondition> =
+    let fromNamed pairs =
+        match pairs with
+        | [ (name, value) ] when name = key ->
+            match decodeWhenString value with
+            | Some decoded -> modelled decoded
+            | None -> WhenUnmodelled(kind, renderWhenPairs pairs)
+        | _ -> WhenUnmodelled(kind, renderWhenPairs pairs)
+
+    let named = whenNamedGroupOrParens |>> fromNamed
+
+    let positional =
+        attempt (between (symbol "(") (symbol ")") stringLiteral)
+        <|> stringLiteral
+
+    named <|> (positional |>> modelled)
 
 /// `when { tag 'v*' }` — also accepts the named form `tag pattern: 'v*'`.
 /// REVIEW FIX (Copilot, PR #13): the named form accepted ANY key, so
@@ -704,9 +782,7 @@ let private whenEnvironmentCondition: P<WhenCondition> =
 /// gate. Only `pattern:` is accepted; anything else is unmodelled and fails closed.
 let private whenTagCondition: P<WhenCondition> =
     keyword "tag"
-    >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
-          |>> fun (k, v) -> if k = "pattern" then WhenTag v else WhenUnmodelled("tag", $"{k}: {v}"))
-         <|> (stringLiteral |>> WhenTag))
+    >>. whenNamedOrBareString "tag" "pattern" WhenTag
     .>> ws
 
 /// `when { equals expected: 2, actual: 2 }` — a pure comparison, so it is worth
@@ -715,23 +791,17 @@ let private whenEqualsCondition: P<WhenCondition> =
     keyword "equals"
     // Operands keep their SOURCE form, quotes included, so a quoted "2" and a bare
     // 2 are distinguishable — Jenkins compares objects, and String != Integer.
-    >>. sepBy1
-            (identifier .>> symbol ":"
-             .>>. (attempt (stringLiteral |>> fun v -> $"'{v}'")
-                   // `_` belongs here: the last unmodelled `when` in the corpus was
-                   // `equals expected: 'False', actual: _deploy_to_nexus`, and omitting
-                   // underscore from an IDENTIFIER charset made that whole condition
-                   // unmodelled — so the stage failed closed over one character.
-                   <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)))
-            (symbol ",")
-    >>= rejectingDuplicates fst
+    >>. whenNamedGroupOrParens
     .>> ws
     |>> fun pairs ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
 
             match get "expected", get "actual" with
-            | Some e, Some a -> WhenEquals(e, a)
-            | _ -> WhenUnmodelled("equals", pairs |> List.map (fun (n, v) -> $"{n}: {v}") |> String.concat ", ")
+            | Some e, Some a ->
+                match decodeWhenEqualsOperand e, decodeWhenEqualsOperand a with
+                | Some modelledExpected, Some modelledActual -> WhenEquals(modelledExpected, modelledActual)
+                | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
+            | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
 
 /// A `;` between conditions. `anyOf { branch 'a'; branch 'b' }` is idiomatic and
 /// appeared in 6 corpus files, where `many whenCondition` stopped at the semicolon, the
@@ -754,12 +824,73 @@ let private emptyParens: P<unit> = symbol "(" >>. symbol ")"
 /// inverts the gate in both directions at once. A different key is returned as raw text so the caller can record
 /// it unmodelled rather than mistake it for the value.
 /// Receipt: `when-scm-pattern-keys`.
-let private namedOrBare (key: string) : P<Result<string, string>> =
+let private namedOrBare (kind: string) (key: string) (measuredInvalidKeys: Set<string>) : P<Result<string, string>> =
     // `Ok`/`Error` unqualified resolve to FParsec's ReplyStatus here, not Result — the
     // same shadowing that bit this file once before.
-    (attempt (identifier .>> symbol ":" .>>. stringLiteral)
-     |>> fun (k, v) -> if k = key then Result.Ok v else Result.Error $"{k}: {v}")
-    <|> (stringLiteral |>> Result.Ok)
+    let named =
+        whenNamedGroupOrParens
+        >>= fun pairs ->
+                match pairs |> List.tryFind (fun (name, _) -> Set.contains name measuredInvalidKeys) with
+                | Some(name, _) ->
+                    refuse $"`{kind}` named argument `{name}` is rejected by Jenkins"
+                | None ->
+                    match pairs with
+                    | [ (k, v) ] when k = key ->
+                        match decodeWhenString v with
+                        | Some decoded -> preturn (Result.Ok decoded)
+                        | None -> preturn (Result.Error(renderWhenPairs pairs))
+                    | _ -> preturn (Result.Error(renderWhenPairs pairs))
+
+    let positional =
+        attempt (between (symbol "(") (symbol ")") stringLiteral)
+        <|> stringLiteral
+
+    named <|> (positional |>> Result.Ok)
+
+/// A genuinely argument-free condition. Empty parentheses are accepted; any
+/// non-empty parenthesised body is a known invalid shape, not an unmodelled
+/// condition that may be combined away by three-valued `when` evaluation.
+let private zeroArgWhen (kind: string) (modelled: WhenCondition) : P<WhenCondition> =
+    keyword kind
+    >>. ((attempt emptyParens >>% modelled)
+         <|> (attempt (balancedRaw '(' ')')
+              >>= fun raw -> refuse $"`{kind}` does not accept arguments: {raw}")
+         <|> preturn modelled)
+    .>> ws
+
+/// `changeRequest` is argument-free in Fogell's model but Jenkins also accepts
+/// command-form filters. Preserve those valid unsupported filters as an
+/// unmodelled gate, while still rejecting duplicate map keys at admission.
+let private whenChangeRequest: P<WhenCondition> =
+    keyword "changeRequest"
+    >>. ((attempt emptyParens >>% WhenChangeRequest)
+         <|> (attempt whenNamedGroupOrParens
+              |>> fun pairs ->
+                      WhenAllOf
+                          [ WhenChangeRequest
+                            WhenUnmodelled(
+                                "changeRequest",
+                                renderWhenPairs pairs
+                            ) ])
+         <|> (attempt (balancedRaw '(' ')') |>> fun raw -> WhenUnmodelled("changeRequest", raw))
+         <|> preturn WhenChangeRequest)
+    .>> ws
+
+/// Direct-only `when` directives. Kept above [whenCondition] because the
+/// recursive parser also uses the same grammar to identify and refuse them in
+/// a nested position.
+let private whenDirectiveKeyword: P<unit> =
+    keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions"
+
+let private whenDirective: P<unit> =
+    whenDirectiveKeyword
+    >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
+    .>> ws
+
+let private invalidWhenDirective () : P<'a> =
+    whenDirectiveKeyword
+    >>. manySatisfy (fun c -> c <> '\n' && c <> '}' && c <> ';')
+    >>= fun raw -> refuse $"a direct when directive requires `true` or `false`, got: {raw.Trim()}"
 
 let rec private whenCondition: P<WhenCondition> =
     parse {
@@ -773,22 +904,18 @@ let rec private whenCondition: P<WhenCondition> =
                       // parentheses and DISCARDED the contents, so `buildingTag('x')` and
                       // `changeRequest(target: 'main')` were silently modelled as their
                       // argument-free forms — Jenkins rejects the first and applies a
-                      // filter for the second. Only genuinely EMPTY parens are accepted;
-                      // anything inside falls through to unmodelled and fails closed.
-                      // Named forms validate their key, the same rule already applied to
-                      // `tag` and `branch`, so a wrong key cannot become the pattern.
-                      attempt (keyword "buildingTag" >>. opt (attempt emptyParens) .>> ws >>% WhenBuildingTag)
-                      attempt (keyword "changeRequest" >>. opt (attempt emptyParens) .>> ws >>% WhenChangeRequest)
-                      attempt (keyword "isRestartedRun" >>. opt (attempt emptyParens) .>> ws >>% WhenIsRestartedRun)
-                      attempt (keyword "changeset" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
-                      attempt (keyword "changelog" >>. namedOrBare "pattern" .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
-                      attempt (keyword "triggeredBy" >>. namedOrBare "cause" .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
-                      attempt (
-                          keyword "branch"
-                          >>. ((attempt (identifier .>> symbol ":" .>>. stringLiteral)
-                                |>> fun (k, v) -> if k = "pattern" then WhenBranch v else WhenUnmodelled("branch", $"{k}: {v}"))
-                               <|> (stringLiteral |>> WhenBranch))
-                          .>> ws)
+                      // filter for the second. A non-empty `buildingTag(...)` is now a
+                      // semantic refusal; a valid unsupported `changeRequest(...)` filter
+                      // remains unmodelled and fails closed. Named forms validate their
+                      // key, the same rule already applied to `tag` and `branch`, so a
+                      // wrong key cannot become the pattern.
+                      attempt (zeroArgWhen "buildingTag" WhenBuildingTag)
+                      attempt whenChangeRequest
+                      attempt (zeroArgWhen "isRestartedRun" WhenIsRestartedRun)
+                      attempt (keyword "changeset" >>. namedOrBare "changeset" "pattern" (Set.singleton "glob") .>> ws |>> function Result.Ok v -> WhenChangeset v | Result.Error raw -> WhenUnmodelled("changeset", raw))
+                      attempt (keyword "changelog" >>. namedOrBare "changelog" "pattern" Set.empty .>> ws |>> function Result.Ok v -> WhenChangelog v | Result.Error raw -> WhenUnmodelled("changelog", raw))
+                      attempt (keyword "triggeredBy" >>. namedOrBare "triggeredBy" "cause" Set.empty .>> ws |>> function Result.Ok v -> WhenTriggeredBy v | Result.Error raw -> WhenUnmodelled("triggeredBy", raw))
+                      attempt (keyword "branch" >>. whenNamedOrBareString "branch" "pattern" WhenBranch .>> ws)
                       attempt whenTagCondition
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition
@@ -796,6 +923,14 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
+                      // These directives are legal only directly under `when`.
+                      // Reinterpreting one inside a composition as an unknown
+                      // condition delays Jenkins' compile-time rejection until
+                      // stage evaluation, after earlier stages may have run.
+                      attempt (
+                          whenDirective
+                          >>. refuse "`beforeAgent`, `beforeInput`, and `beforeOptions` are directives and cannot be nested inside a when condition")
+                      attempt (invalidWhenDirective ())
                       // Unrecognised condition. `.>> ws` is load-bearing: without
                       // it this branch ends mid-line, the enclosing `}` fails to
                       // match, and the ENTIRE `when` section falls through to the
@@ -836,21 +971,18 @@ let rec private whenCondition: P<WhenCondition> =
 /// both engines fail and only the narration differs (Jenkins prints a Groovy compile
 /// report, Fogell a stage-gate error), so forcing it to PROVEN would have meant
 /// pattern-matching a compiler's error layout. Held by a parser test instead.
-let private whenDirective: P<unit> =
-    (keyword "beforeAgent" <|> keyword "beforeInput" <|> keyword "beforeOptions")
-    >>. ((stringReturn "true" ()) <|> (stringReturn "false" ()))
-    .>> ws
-
 /// One item directly under `when`: a directive (contributing nothing) or a condition.
 let private whenItem: P<WhenCondition option> =
-    (attempt (whenDirective >>% None)) <|> (whenCondition |>> Some)
+    (attempt (whenDirective >>% None))
+    <|> attempt (invalidWhenDirective ())
+    <|> (whenCondition |>> Some)
 
 let private whenSection: P<WhenCondition> =
     keyword "when"
-    >>. between (symbol "{") (symbol "}") (ws >>. many1 (attempt whenItem))
-    |>> fun items ->
+    >>. between (symbol "{") (symbol "}") (ws >>. many (attempt whenItem))
+    >>= fun items ->
             match items |> List.choose id with
-            | [ single ] -> single
+            | [ single ] -> preturn single
             // MEASURED: Jenkins REJECTS a `when` holding only directives —
             //   WorkflowScript: 5: Empty when closure, remove the property or add some
             //   content.
@@ -859,12 +991,13 @@ let private whenSection: P<WhenCondition> =
             // UNPROVEN BY RECEIPT: measured by probe; no case in the suite, for the same reason
             // as the nested-directive claim above — a rejection makes both engines fail and only
             // the narration differ. Held by a parser test.
-            | [] -> WhenUnmodelled("when", "empty when closure")
-            | multiple -> WhenAllOf multiple
+            | [] -> refuse "a `when` section containing only directives is rejected by Jenkins as an empty when closure"
+            | multiple -> preturn (WhenAllOf multiple)
 
-/// Backstop. If the structured parse above fails for ANY reason, the `when`
-/// must still be recorded — as unmodelled, so evaluation fails closed. It must
-/// never be allowed to disappear and leave the stage unconditional.
+/// Backstop. If the structured parse above has an ordinary grammar miss, the
+/// `when` must still be recorded as unmodelled so evaluation fails closed. A
+/// conclusive semantic refusal may also backtrack through here, but the mutable
+/// per-parse refusal cell survives and admission returns that refusal instead.
 let private whenSectionOpaque: P<WhenCondition> =
     keyword "when" >>. balancedRaw '{' '}' |>> fun raw -> WhenUnmodelled("when", raw)
 
@@ -913,7 +1046,7 @@ let private actedOnSections =
           // mine. FG-155.
           "input" ]
 
-let private stageParser, private stageRef = createParserForwardedToRef<Stage, unit> ()
+let private stageParser, private stageRef = createParserForwardedToRef<Stage, ParserState> ()
 
 let private stagesBody: P<Stage list> =
     between (symbol "{") (symbol "}") (ws >>. many (attempt stageParser))
@@ -962,7 +1095,7 @@ let private rejectingMultipleStageBodies sections : P<StageSection list> =
         | _ -> false
 
     if sections |> List.filter isBody |> List.length > 1 then
-        fail
+        refuse
             "only one of `matrix`, `parallel`, `stages`, or `steps` is allowed for a stage: Jenkins rejects competing stage bodies before running anything"
     else
         preturn sections
@@ -1022,7 +1155,7 @@ stageRef.Value <-
                            // so consuming it opaquely is a documented degradation rather
                            // than a silent loss.
                            if actedOnSections.Contains n then
-                               fail
+                               refuse
                                    $"a `{n}` section that does not parse is refused, never consumed opaquely"
                            else
                                (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
@@ -1102,7 +1235,7 @@ let private topSection: P<TopSection> =
           (identifier
            >>= (fun n ->
                if actedOnSections.Contains n then
-                   fail $"a `{n}` section that does not parse is refused, never recorded as an opaque section"
+                   refuse $"a `{n}` section that does not parse is refused, never recorded as an opaque section"
                else
                    (attempt (balancedRaw '{' '}') <|> attempt (balancedRaw '(' ')'))
                    |>> fun _ -> TopOther n)) ]
@@ -1438,17 +1571,31 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
 /// shape: a rule covering one path while an equivalent path stays open. `parse` now only
 /// supplies the defaults, so there is nothing left to forget. Raised in review on PR #53.
 let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
+    let refusalError (message: string) (position: Fogell.Ir.Position) : AdmissionError =
+        // Admission diagnostics are also emitted as one TSV row by the corpus
+        // scorer. A refusal may quote raw multi-line source, but it must not turn
+        // one corpus result into several apparent files in generated evidence.
+        let oneLine =
+            message.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ').Trim()
+
+        { Code = MalformedSyntax
+          Message = oneLine
+          Position = position }
+
     match Limits.precheck limits source with
     | Result.Error e -> Result.Error e
     | Result.Ok() ->
         if not (looksDeclarative source) then
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
-            match runParserOnString (pipelineParser .>> eof) () "Jenkinsfile" source with
-            | ParserResult.Success(p, _, _) ->
-                if List.isEmpty p.Stages then
+            match runParserOnString (pipelineParser .>> eof) (parserState ()) "Jenkinsfile" source with
+            | ParserResult.Success(p, state, _) ->
+                match state.Refusal with
+                | Some(message, position) ->
+                    Result.Error(refusalError message position)
+                | None when List.isEmpty p.Stages ->
                     Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
-                else
+                | None ->
                     match scriptBodyErrors p with
                     | (why, position) :: _ ->
                         Result.Error
@@ -1456,15 +1603,19 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                               Message = why
                               Position = position }
                     | [] -> Result.Ok p
-            | ParserResult.Failure(msg, err, _) ->
-                let pos = err.Position
+            | ParserResult.Failure(msg, err, state) ->
+                match state.Refusal with
+                | Some(message, position) ->
+                    Result.Error(refusalError message position)
+                | None ->
+                    let pos = err.Position
 
-                let firstLine =
-                    msg.Split('\n')
-                    |> Array.filter (fun l -> l.Trim() <> "")
-                    |> Array.tryLast
-                    |> Option.defaultValue "unparsable"
+                    let firstLine =
+                        msg.Split('\n')
+                        |> Array.filter (fun l -> l.Trim() <> "")
+                        |> Array.tryLast
+                        |> Option.defaultValue "unparsable"
 
-                Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+                    Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source
