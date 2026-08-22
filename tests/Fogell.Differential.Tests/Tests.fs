@@ -1601,6 +1601,7 @@ let stepDescriptorValidation =
 
               let junitKeys =
                   [ "testResults", v "**/*.xml"
+                    "allowEmptyResults", Fogell.Groovy.Interpreter.VBool true
                     "healthScaleFactor", Fogell.Groovy.Interpreter.VInt 1L
                     "keepProperties", Fogell.Groovy.Interpreter.VBool true
                     "keepTestNames", Fogell.Groovy.Interpreter.VBool true
@@ -1824,6 +1825,71 @@ let genuineNullRuntime =
                   Expect.isTrue
                       (IO.File.Exists(IO.Path.Combine(workspace, "summary-ok.txt")))
                       "all four typed count properties drove the measured branch")
+          }
+
+          test "JUnit aggregate-zero is terminal by default and with explicit false" {
+              for label, option in [ "default", ""; "explicit-false", ", allowEmptyResults: false" ] do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"999\\\" failures=\\\"999\\\" errors=\\\"999\\\" skipped=\\\"999\\\"/>' > reports/empty.xml\"; "
+                      + $"junit(testResults: 'reports/empty.xml'{option}); "
+                      + "sh 'touch empty-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: a matched report with no recognized result fails"
+                      Expect.isTrue
+                          (trace.Output |> List.contains "None of the test reports contained any result")
+                          $"{label}: the terminal aggregate-empty notice is visible"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "empty-successor.txt")))
+                          $"{label}: the terminal JUnit call suppresses its successor")
+          }
+
+          test "JUnit no-match is terminal and emits its exact notice by default and with explicit false" {
+              for label, option in [ "default", ""; "explicit-false", ", allowEmptyResults: false" ] do
+                  let body =
+                      $"junit(testResults: 'reports/nothing-*.xml'{option}); "
+                      + "sh 'touch no-report-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: no matching report is terminal"
+                      Expect.isTrue
+                          (trace.Output |> List.contains "No test report files were found. Configuration error?")
+                          $"{label}: the terminal no-report notice is visible"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "no-report-successor.txt")))
+                          $"{label}: the terminal no-report call suppresses its successor")
+          }
+
+          test "typed allowEmptyResults publishes the zero summary and continues" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"999\\\" failures=\\\"999\\\" errors=\\\"999\\\" skipped=\\\"999\\\"/>' > reports/empty.xml\"; "
+                  + "def allow = true; def got = junit(testResults: 'reports/empty.xml', allowEmptyResults: allow); "
+                  + "if (got.totalCount == 0 && got.failCount == 0 && got.skipCount == 0 && got.passCount == 0) { "
+                  + "sh 'touch allowed-zero-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "success" "a scripted VBool permits the empty aggregate"
+                  Expect.isTrue
+                      (trace.Output |> List.contains "None of the test reports contained any result")
+                      "the permitted empty aggregate stays visible"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "allowed-zero-summary.txt")))
+                      "the nominal zero summary drove the successor branch")
+
+              let direct =
+                  "pipeline { agent any stages { stage('probe') { steps { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite/>' > reports/direct-empty.xml\"; "
+                  + "junit testResults: 'reports/direct-empty.xml', allowEmptyResults: true; "
+                  + "sh 'touch direct-allowed-empty.txt' } } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" direct with
+                  | Error why -> failtestf "direct allowEmptyResults pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "a direct bare boolean permits the empty aggregate"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "direct-allowed-empty.txt")))
+                          "the direct stage-level successor ran")
           }
 
           test "JUnit passCount subtracts failures errors and skips across multiple suites" {
@@ -2144,8 +2210,8 @@ let genuineNullRuntime =
                               $"{file}: the warned branch did not contaminate its sibling or global result")
           }
 
-          test "both JUnit boolean flags refuse text, dynamic direct expressions and duplicates before report scanning" {
-              for key in [ "skipMarkingBuildUnstable"; "skipMarkingStageUnstable" ] do
+          test "JUnit boolean options refuse text, dynamic direct expressions and duplicates before report scanning" {
+              for key in [ "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"; "allowEmptyResults" ] do
                   let scriptedText =
                       "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
                       + $"junit(testResults: 'reports/summary.xml', {key}: 'true'); "

@@ -27,6 +27,10 @@ type StepRequest =
       /// typed/literal argument before dispatch; the executor never guesses a
       /// boolean from the rendered `Named` strings.
       JUnitSkipMarkingBuildUnstable: bool
+      /// `junit(allowEmptyResults: true)` permits either no matching reports or
+      /// a matched aggregate containing no recognized result. The walker owns
+      /// the typed boolean boundary and supplies the decision before scanning.
+      JUnitAllowEmptyResults: bool
       /// FG-177. `junit(skipMarkingStageUnstable: true)` suppresses the
       /// pipeline-node/stage UNSTABLE decoration independently of the returned
       /// summary. As with the build flag, the walker supplies a typed decision;
@@ -482,6 +486,16 @@ module Executor =
 
                 fired request.Interrupt || fired request.DeadlineExpired
 
+            let noReports = "No test report files were found. Configuration error?"
+            let noResults = "None of the test reports contained any result"
+
+            let emptySummary (messages: string list) =
+                messages
+                |> List.iter (fun message -> request.OnLine |> Option.iter (fun emit -> emit message))
+
+                { ok Success with
+                    TestTotals = Some(0, 0, 0) }
+
             match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
             // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
             // `timeout` ending in `junit` selected `post { failure }` where a shell or
@@ -490,7 +504,21 @@ module Executor =
             | Result.Error Interrupted ->
                 { ok Aborted with
                     Diagnostic = Some "junit aborted: the step was interrupted while reading test reports" }
+            | Result.Error NoReports ->
+                if request.JUnitAllowEmptyResults then
+                    // The pinned plugin emits both messages: the parser permits
+                    // the missing glob, then the aggregate summary is also empty.
+                    emptySummary [ noReports; noResults ]
+                else
+                    request.OnLine |> Option.iter (fun emit -> emit noReports)
+                    { ok Failure with Diagnostic = Some noReports }
             | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
+            | Result.Ok(total, _, _) when total = 0 ->
+                if request.JUnitAllowEmptyResults then
+                    emptySummary [ noResults ]
+                else
+                    request.OnLine |> Option.iter (fun emit -> emit noResults)
+                    { ok Failure with Diagnostic = Some noResults }
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.

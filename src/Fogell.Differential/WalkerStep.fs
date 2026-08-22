@@ -147,7 +147,7 @@ module WalkerStep =
 
         let wantsStatus = contract = WalkerRules.ExitStatus
 
-        // FG-177. Both JUnit instability flags are typed boolean setters. Resolve
+        // FG-177 / FG-210. JUnit boolean options are typed setters. Resolve
         // them through ONE boundary before dispatch, while the parser's
         // ExpressionArgs or the scripted host's typed HostedArgs can still tell a
         // boolean from text which merely renders as `true` or `false`.
@@ -198,9 +198,13 @@ module WalkerStep =
         let junitSkipMarkingStageUnstableState =
             junitBooleanFlagState "skipMarkingStageUnstable"
 
+        let junitAllowEmptyResultsState =
+            junitBooleanFlagState "allowEmptyResults"
+
         let junitFlagRejection =
             [ "skipMarkingBuildUnstable", junitSkipMarkingBuildUnstableState
-              "skipMarkingStageUnstable", junitSkipMarkingStageUnstableState ]
+              "skipMarkingStageUnstable", junitSkipMarkingStageUnstableState
+              "allowEmptyResults", junitAllowEmptyResultsState ]
             |> List.tryPick (fun (key, state) ->
                 match state with
                 | Some(WalkerRules.FlagRejected why) -> Some $"step 'junit' argument `{key}` {why}"
@@ -211,6 +215,9 @@ module WalkerStep =
 
         let junitSkipMarkingStageUnstable =
             junitSkipMarkingStageUnstableState = Some WalkerRules.FlagOn
+
+        let junitAllowEmptyResults =
+            junitAllowEmptyResultsState = Some WalkerRules.FlagOn
 
         let result =
             match flagRejection, junitFlagRejection with
@@ -234,6 +241,7 @@ module WalkerStep =
                   // deliberately not part of this condition.
                   CaptureStdout = wantsStdout
                   JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
+                  JUnitAllowEmptyResults = junitAllowEmptyResults
                   JUnitSkipMarkingStageUnstable = junitSkipMarkingStageUnstable
                   // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
                   // default. A 120 s constant sat here and aborted any step

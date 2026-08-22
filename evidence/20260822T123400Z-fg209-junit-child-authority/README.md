@@ -23,14 +23,16 @@ element order; skipped-only synthesizes nothing. A testcase containing both
 `<skipped>` and `<failure>` is also skipped regardless of element order. Those
 oracle edges are focused-test inputs, not receipt claims from this bundle.
 
-Well-formed reports with no recognized result remain separate. The same
-unretained matrix found that empty suites fail with
+At collection time, well-formed reports with no recognized result remained
+separate. The same unretained matrix found that empty suites fail with
 `None of the test reports contained any result` regardless of missing,
 nonnumeric, negative, consistent, or inconsistent aggregate attributes. A direct
 suite `<skipped>` alone takes that zero-result path, while a direct suite
 `<error>` alone synthesizes a failed case. A zero-result sibling does not poison
-a valid sibling. FG-209 does not promote the terminal zero-result path to a
-retained parity case; it remains an explicit FG-177 ingest residual.
+a valid sibling. FG-209 did not promote the terminal zero-result path to a
+retained parity case; FG-210 later closed its default and typed
+`allowEmptyResults` contract. Arbitrary-root direct-testcase/classname behavior
+remains a separate unretained FG-177 ingest edge.
 
 Run `bash evidence/20260822T123400Z-fg209-junit-child-authority/collect.sh`
 from the repository root. The collector refuses to overwrite its retained

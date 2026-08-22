@@ -29,6 +29,7 @@ let private request root script =
       TimeoutMs = None
       CaptureStdout = false
       JUnitSkipMarkingBuildUnstable = false
+      JUnitAllowEmptyResults = false
       JUnitSkipMarkingStageUnstable = false
       Interrupt = None
       InterruptBeatsDeadline = None
@@ -712,6 +713,7 @@ let externalInterrupt =
                         TimeoutMs = None
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
+                        JUnitAllowEmptyResults = false
                         JUnitSkipMarkingStageUnstable = false
                         Interrupt = None
                         InterruptBeatsDeadline = None
@@ -741,6 +743,7 @@ let externalInterrupt =
                         Environment = []
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
+                        JUnitAllowEmptyResults = false
                         JUnitSkipMarkingStageUnstable = false
                         TimeoutMs = None
                         Interrupt = None
@@ -876,6 +879,113 @@ let externalInterrupt =
               Expect.equal deeplyNested.Status Success "deep suite nesting does not consume the native call stack"
               Expect.equal deeplyNested.TestTotals (Some(1, 0, 0)) "the deepest direct testcase is counted once"
               Expect.isNone deeplyNested.StageWarning "the deeply nested case passed"
+          }
+
+          test "junit fails one aggregate with no recognized result unless typed allowEmptyResults permits it" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let emitted = ResizeArray<string>()
+
+              let junit pattern allowEmpty =
+                  emitted.Clear()
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", pattern ]
+                              JUnitAllowEmptyResults = allowEmpty
+                              OnLine = Some emitted.Add }
+
+                  observed, List.ofSeq emitted
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "zero-attributes.xml"),
+                  "<testsuite tests=\"999\" failures=\"999\" errors=\"999\" skipped=\"999\"/>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "zero-testsuites.xml"),
+                  "<testsuites/>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "zero-skipped-suite.xml"),
+                  "<testsuite><skipped/></testsuite>")
+
+              let empty, emptyOutput = junit "zero-*.xml" false
+              Expect.equal empty.Status Failure "all zero-result siblings produce one terminal aggregate failure"
+              Expect.isNone empty.TestTotals "a terminal empty aggregate publishes no summary"
+              Expect.isNone empty.StageWarning "empty input is not a test-failure WarningAction"
+              Expect.equal
+                  empty.Diagnostic
+                  (Some "None of the test reports contained any result")
+                  "the aggregate-empty reason is distinct from a missing glob"
+              Expect.equal
+                  emptyOutput
+                  [ "Recording test results"; "None of the test reports contained any result" ]
+                  "the terminal reason is emitted before it remains available as a diagnostic"
+
+              let suppressed =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "zero-*.xml" ]
+                          JUnitSkipMarkingBuildUnstable = true
+                          JUnitSkipMarkingStageUnstable = true }
+
+              Expect.equal suppressed.Status Failure "instability flags cannot suppress a terminal empty aggregate"
+              Expect.isNone suppressed.TestTotals "suppression cannot manufacture an empty summary"
+              Expect.isNone suppressed.StageWarning "the terminal failure never decorates the stage"
+
+              let allowed, allowedOutput = junit "zero-*.xml" true
+              Expect.equal allowed.Status Success "allowEmptyResults makes the empty aggregate nonterminal"
+              Expect.equal allowed.TestTotals (Some(0, 0, 0)) "the permitted call returns an exact zero summary"
+              Expect.isNone allowed.StageWarning "a permitted empty result has no stage warning"
+              Expect.equal
+                  allowedOutput
+                  [ "Recording test results"; "None of the test reports contained any result" ]
+                  "the permitted empty aggregate remains visible in the log"
+
+              let missing, missingOutput = junit "nothing-matches-*.xml" false
+              Expect.equal missing.Status Failure "a missing report remains terminal by default"
+              Expect.isNone missing.TestTotals "a missing report publishes no summary by default"
+              Expect.equal
+                  missing.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "missing reports keep their distinct pinned reason"
+              Expect.equal
+                  missingOutput
+                  [ "Recording test results"; "No test report files were found. Configuration error?" ]
+                  "the terminal no-report notice is emitted exactly"
+
+              let allowedMissing, allowedMissingOutput = junit "nothing-matches-*.xml" true
+              Expect.equal allowedMissing.Status Success "allowEmptyResults also permits a missing glob"
+              Expect.equal allowedMissing.TestTotals (Some(0, 0, 0)) "the permitted missing glob returns the zero summary"
+              Expect.equal
+                  allowedMissingOutput
+                  [ "Recording test results"
+                    "No test report files were found. Configuration error?"
+                    "None of the test reports contained any result" ]
+                  "the parser and aggregate-empty notices are both emitted"
+
+              let polls = ref 0
+
+              let abortAfterScan () =
+                  polls.Value <- polls.Value + 1
+                  polls.Value = 3
+
+              let interrupted =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "zero-attributes.xml" ]
+                          JUnitAllowEmptyResults = true
+                          DeadlineExpired = Some abortAfterScan }
+
+              Expect.equal polls.Value 3 "the interrupt fired only at the final aggregate poll"
+              Expect.equal interrupted.Status Aborted "post-scan interruption outranks allowed empty results"
+              Expect.isNone interrupted.TestTotals "an interrupted empty scan publishes no summary"
+              Expect.isNone interrupted.StageWarning "an interrupted scan never decorates the stage"
           }
 
           test "junit synthesizes failed tests for malformed XML while real unreadability and interruption remain terminal" {
