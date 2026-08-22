@@ -268,6 +268,7 @@ module WalkerRules =
         | Fogell.Groovy.Interpreter.VRange _ -> "<range>"
         | Fogell.Groovy.Interpreter.VJUnitSummary _ -> "<junit-test-result-summary>"
         | Fogell.Groovy.Interpreter.VScmMap _ -> "<scm-map>"
+        | Fogell.Groovy.Interpreter.VScmKeySet _ -> "<scm-key-set>"
         | Fogell.Groovy.Interpreter.VClosure _ -> "<closure>"
         | Fogell.Groovy.Interpreter.VFunc(name, _, _) -> $"<function {name}>"
         | value -> Fogell.Groovy.Interpreter.Value.toDisplay value

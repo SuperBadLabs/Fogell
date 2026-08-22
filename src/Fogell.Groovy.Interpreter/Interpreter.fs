@@ -311,7 +311,8 @@ module Interpreter =
 
     let private scriptTruthy value =
         match value with
-        | VScmMap _ ->
+        | VScmMap _
+        | VScmKeySet _ ->
             raise (Stop(Unsupported "SCM return-map truthiness is not modelled; read one measured string key"))
         | VJUnitSummary _ ->
             raise (Stop(Unsupported "JUnit TestResultSummary truthiness is not modelled; read a measured count property"))
@@ -487,6 +488,8 @@ module Interpreter =
                 scm.Entries |> Map.tryFind key |> Option.map VStr |> Option.defaultValue VNull
             | VScmMap _, _ ->
                 raise (Stop(Unsupported "SCM return-map indexing is modelled only for string keys"))
+            | VScmKeySet _, _ ->
+                raise (Stop(Unsupported "SCM return-map key-set indexing is not modelled; use join(String)"))
             | VJUnitSummary _, _ ->
                 raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
@@ -529,6 +532,8 @@ module Interpreter =
         | VMap m -> defaultArg (Map.tryFind name m.Value) VNull
         | VScmMap scm ->
             scm.Entries |> Map.tryFind name |> Option.map VStr |> Option.defaultValue VNull
+        | VScmKeySet _ ->
+            raise (Stop(Unsupported "SCM return-map key-set properties are not modelled; use join(String)"))
         | VJUnitSummary summary ->
             match name with
             | "totalCount" -> VInt summary.Value.TotalCount
@@ -549,7 +554,8 @@ module Interpreter =
     and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VNull -> VNull
-        | VScmMap _ ->
+        | VScmMap _
+        | VScmKeySet _ ->
             raise (Stop(Unsupported "spread access on an SCM return map is not modelled"))
         | VJUnitSummary _ ->
             raise (Stop(Unsupported "spread access on JUnit TestResultSummary is not modelled"))
@@ -600,6 +606,9 @@ module Interpreter =
         | _, VScmMap _, _
         | _, _, VScmMap _ ->
             raise (Stop(Unsupported $"operator '{op}' is not modelled for an SCM return map"))
+        | _, VScmKeySet _, _
+        | _, _, VScmKeySet _ ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for an SCM return-map key set"))
         | _, VJUnitSummary _, _
         | _, _, VJUnitSummary _ ->
             raise (Stop(Unsupported $"operator '{op}' is not modelled for JUnit TestResultSummary"))
@@ -1362,9 +1371,8 @@ module Interpreter =
         | "keySet", VScmMap scm, [] ->
             scm.Entries
             |> Map.toList
-            |> List.map (fst >> VStr)
-            |> ref
-            |> VList
+            |> List.map fst
+            |> VScmKeySet
         | _, VScmMap _, _ ->
             raise (
                 Stop(
@@ -1372,6 +1380,9 @@ module Interpreter =
                         $"method `{name}` is not modelled for an SCM return map; supported methods: get(String), containsKey(String), keySet()"
                 )
             )
+        | "join", VScmKeySet keys, [ VStr delimiter ] -> VStr(String.concat delimiter keys)
+        | _, VScmKeySet _, _ ->
+            raise (Stop(Unsupported $"method `{name}` is not modelled for an SCM return-map key set; supported method: join(String)"))
         | _, VJUnitSummary _, _ ->
             raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
@@ -1640,7 +1651,8 @@ module Interpreter =
                         // write the shell never sees
                         host.SetEnv key (scriptDisplay value)
                     | _ -> mr.Value <- Map.add key value mr.Value
-                | VScmMap _, _, _ ->
+                | VScmMap _, _, _
+                | VScmKeySet _, _, _ ->
                     raise (Stop(Unsupported "SCM return-map mutation is not modelled"))
                 | VJUnitSummary _, _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary mutation is not modelled"))
@@ -1698,7 +1710,8 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
-                | VScmMap _, _ ->
+                | VScmMap _, _
+                | VScmKeySet _, _ ->
                     raise (Stop(Unsupported "SCM return-map compound index mutation is not modelled"))
                 | VJUnitSummary _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary compound index mutation is not modelled"))
@@ -1750,7 +1763,8 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
-                | VScmMap _, _ ->
+                | VScmMap _, _
+                | VScmKeySet _, _ ->
                     raise (Stop(Unsupported "SCM return-map postfix index mutation is not modelled"))
                 | VJUnitSummary _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary postfix index mutation is not modelled"))
@@ -1819,6 +1833,8 @@ module Interpreter =
                         | BreakSignal -> running <- false)
 
                 cur
+            | VScmKeySet _ ->
+                raise (Stop(Unsupported "iteration over an SCM return-map key set is not modelled; use join(String)"))
             | _ -> env
         | SWhile(c, body) ->
             st.LastValue <- None

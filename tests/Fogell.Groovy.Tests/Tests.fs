@@ -1397,6 +1397,17 @@ let scmMapValues =
               | other -> failtestf "expected a list of measured SCM-map answers, got %A" other
           }
 
+          test "keySet returns a sorted nominal view" {
+              let outcome, performed = runScmScript "return source().keySet()"
+
+              Expect.isNone outcome.Fault "the zero-argument key-set projection runs"
+              Expect.equal performed [ "source" ] "the projection stays interpreter-local"
+              Expect.equal
+                  outcome.Returned
+                  (Some(VScmKeySet [ "GIT_BRANCH"; "GIT_COMMIT"; "GIT_URL" ]))
+                  "the key set is sorted and never represented as a mutable VList"
+          }
+
           test "unmeasured object operations remain catch-opaque" {
               let operations =
                   [ "rendering", "def ignored = \"${value}\""
@@ -1419,6 +1430,11 @@ let scmMapValues =
                     "get non-string", "def ignored = value.get(0)"
                     "containsKey non-string", "def ignored = value.containsKey(0)"
                     "keySet argument", "def ignored = value.keySet('extra')"
+                    "keySet append", "def keys = value.keySet(); keys << 'FAKE'"
+                    "keySet add", "def keys = value.keySet(); keys.add('FAKE')"
+                    "keySet iteration", "def keys = value.keySet(); for (key in keys) { sink('escaped') }"
+                    "keySet rendering", "def ignored = \"${value.keySet()}\""
+                    "keySet hosted argument", "sink(value.keySet())"
                     "throw", "throw value"
                     "nested throw", "throw [value]"
                     "hosted argument", "sink(value)"

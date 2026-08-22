@@ -28,6 +28,10 @@ type Value =
     /// script-owned map implementation would also expose mutation, structural
     /// equality, rendering and the rest of Groovy's Map surface without evidence.
     | VScmMap of ScmMap
+    /// The sorted key-set view returned by VScmMap.keySet(). Nominal and
+    /// immutable for the same reason as its parent: an ordinary VList would
+    /// admit list mutation even though TreeMap.keySet().add is unsupported.
+    | VScmKeySet of string list
     /// FG-177 slice 5. A closed projection of Jenkins'
     /// `hudson.tasks.junit.TestResultSummary`. This is deliberately nominal rather
     /// than a map: map lookup, indexing, mutation and structural equality would add
@@ -155,6 +159,7 @@ module Value =
                 | VRange _
                 | VJUnitSummary _
                 | VScmMap _
+                | VScmKeySet _
                 | VClosure _
                 | VFunc _ -> ()
             | CompleteReference identity ->
@@ -245,6 +250,7 @@ module Value =
                     + "]"
             | VJUnitSummary _ -> "<junit-test-result-summary>"
             | VScmMap _ -> "<scm-return-map>"
+            | VScmKeySet _ -> "<scm-return-map-key-set>"
             | VClosure _ -> "<closure>"
             | VFunc(n, _, _) -> $"<function {n}>"
 
@@ -291,6 +297,7 @@ module Value =
         | VStr _
         | VRange _
         | VScmMap _
+        | VScmKeySet _
         | VJUnitSummary _
         | VClosure _
         | VFunc _ -> false
@@ -299,7 +306,7 @@ module Value =
         containsNominalValue (function VJUnitSummary _ -> true | _ -> false) value
 
     let containsScmMap value =
-        containsNominalValue (function VScmMap _ -> true | _ -> false) value
+        containsNominalValue (function VScmMap _ | VScmKeySet _ -> true | _ -> false) value
 
     let containsNominalJenkinsValue value =
         containsJUnitSummary value || containsScmMap value
@@ -419,8 +426,9 @@ module Value =
             | VMap _ -> 5
             | VJUnitSummary _ -> 6
             | VScmMap _ -> 7
-            | VClosure _ -> 8
-            | VFunc _ -> 9
+            | VScmKeySet _ -> 8
+            | VClosure _ -> 9
+            | VFunc _ -> 10
 
         let seenPair (seen: (obj * obj) list) left right =
             seen
@@ -469,6 +477,7 @@ module Value =
                         answer
                 | VJUnitSummary _, VJUnitSummary _
                 | VScmMap _, VScmMap _
+                | VScmKeySet _, VScmKeySet _
                 | VClosure _, VClosure _
                 | VFunc _, VFunc _ ->
                     unorderable <- true
@@ -527,6 +536,7 @@ module Value =
         | VMap m -> not (Map.isEmpty m.Value)
         | VJUnitSummary _ -> true
         | VScmMap _ -> true
+        | VScmKeySet _ -> true
         | VClosure _
         | VFunc _ -> true
 
