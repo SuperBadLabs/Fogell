@@ -503,8 +503,8 @@ let stepValueUse =
     // The original reason was the batch model: it collected `StepCall` effects and every
     // call evaluated to `VNull`, so a body using a return value decided branches on null.
     // FG-172 replaced that with a live host and FG-174 taught `sh` to answer
-    // `returnStdout`/`returnStatus`; FG-177 then separated a measured genuine null from
-    // an unsupported object/map/body result. The exemplars use `node()` for the latter,
+    // `returnStdout`/`returnStatus`; FG-177 then separated a measured genuine null and
+    // wrapper body result from unsupported object/map results. The exemplars use `node()` for the latter,
     // while plain sh/echo/archive calls are admitted by the stub contract below.
     let uses src =
         // A STUB of the real contract, deliberately. This assembly must not depend on
@@ -665,7 +665,7 @@ let stepValueUse =
                   "the flag does not turn echo into a stdout producer"
           }
 
-          test "unsupported object, map and wrapper results stay refused" {
+          test "unsupported object and map results stay refused" {
               Expect.equal (usedSteps "def got = node()") [ "node" ] "an unmodelled producer remains blocked"
           }
         ]
@@ -712,7 +712,8 @@ let hostedSteps =
         host, log
 
     let runIt host src =
-        Interpreter.runHosted host Budget.defaults steps (Env.empty) (parseOk src)
+        let hostedVocabulary = Set.union steps (set [ "dir"; "timeout"; "retry"; "withEnv" ])
+        Interpreter.runHosted host Budget.defaults hostedVocabulary (Env.empty) (parseOk src)
 
     testList
         "FG-160 slice 2 the host performs steps live"
@@ -759,6 +760,77 @@ let hostedSteps =
                   (List.ofSeq log)
                   [ "node(linux)"; "node:body-start"; "sh(pwd)"; "node:body-end" ]
                   "the inner step runs between the wrapper's setup and teardown"
+          }
+
+          test "a wrapper returns its body's typed implicit or explicit value" {
+              let host, _ = recording ()
+
+              let explicit = runIt host "return dir('sub') { return 7 }"
+              Expect.isNone explicit.Fault "explicit body return ran"
+              Expect.equal explicit.Returned (Some(VInt 7L)) "the Integer stayed typed"
+
+              let implicit = runIt host "return withEnv(['A=1']) { ['value', 2] }"
+              Expect.isNone implicit.Fault "implicit body return ran"
+
+              match implicit.Returned with
+              | Some(VList values) ->
+                  Expect.equal values.Value [ VStr "value"; VInt 2L ] "the list stayed typed"
+              | other -> failtestf "expected a typed list body result, got %A" other
+          }
+
+          test "the body-result cell keeps the final host invocation" {
+              let host =
+                  hostThat
+                      (fun name _ _ runBody ->
+                          match name, runBody with
+                          | "retry", Some run ->
+                              run ()
+                              run ()
+                          | _, Some run -> run ()
+                          | _ -> ()
+
+                          VNull)
+                      (fun _ _ -> ())
+
+              let outcome = runIt host "def n = 0\nreturn retry(2) { n = n + 1\n n }"
+              Expect.isNone outcome.Fault "the seam permitted both host-selected invocations"
+              Expect.equal outcome.Returned (Some(VInt 2L)) "the final host invocation supplies the result"
+          }
+
+          test "an absorbed later fault cannot recycle an earlier body result" {
+              let host =
+                  hostThat
+                      (fun name _ _ runBody ->
+                          match name, runBody with
+                          | "retry", Some run ->
+                              run ()
+
+                              try
+                                  run ()
+                              with _ ->
+                                  ()
+                          | _, Some run -> run ()
+                          | _ -> ()
+
+                          VNull)
+                      (fun _ _ -> ())
+
+              let outcome = runIt host "def n = 0\nreturn retry(2) { n = n + 1\n if (n == 2) { 1 / 0 }\n n }"
+
+              match outcome.Fault with
+              | Some(HostedCallRefused why) ->
+                  Expect.stringContains why "no return value exists" "the stale first result was cleared"
+              | other -> failtestf "expected a hosted-call refusal, got %A" other
+          }
+
+          test "a wrapper that does not invoke its body cannot invent null" {
+              let host = hostThat (fun _ _ _ _ -> VNull) (fun _ _ -> ())
+              let outcome = runIt host "return dir('sub') { 7 }"
+
+              match outcome.Fault with
+              | Some(HostedCallRefused why) ->
+                  Expect.stringContains why "without executing its body" "the refusal names the missing result"
+              | other -> failtestf "expected a hosted-call refusal, got %A" other
           }
 
           test "a wrapper body is NOT run when the host declines to run it" {

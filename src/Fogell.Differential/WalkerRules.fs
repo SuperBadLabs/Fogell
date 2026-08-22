@@ -106,7 +106,8 @@ type BranchCtx =
       ///
       /// The inner option is deliberately UNSET until a modelled producer publishes.
       /// `VNull` is a genuine measured answer, so it cannot also be the initial marker
-      /// for JUnit, SCM maps and wrapper-body values which remain unsupported.
+      /// for JUnit and SCM maps which remain unsupported. Wrapper-body values
+      /// are captured by the interpreter around the existing unit body thunk.
       ///
       /// TYPED, not text: `returnStatus` must yield a Groovy INTEGER or `if (code == 0)`
       /// compares an Integer to a String and is quietly false — a wrong answer of exactly
@@ -182,7 +183,6 @@ module WalkerRules =
     type UnsupportedReturn =
         | JUnitTestResultSummary
         | ScmMap
-        | WrapperBodyResult
         | OutsideHostedVocabulary
 
     type ReturnContract =
@@ -194,6 +194,10 @@ module WalkerRules =
         | ExitStatus
         /// stdout, byte-verbatim, trailing newline included.
         | CapturedStdout
+        /// A block-taking hosted step returns the value produced by its body closure.
+        /// The interpreter preserves the Value directly; the walker only decides
+        /// when and how often the existing body thunk runs.
+        | BodyResult
         /// Jenkins returns a value, but Fogell does not yet carry a closed model for it.
         | UnsupportedValue of UnsupportedReturn
 
@@ -335,7 +339,7 @@ module WalkerRules =
                   "takes exactly one stash name" noCheck
               "withEnv",
               row 1 (Some "overrides") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException) [ "overrides" ] [] ConstructorMapThrow
-                  (UnsupportedValue WrapperBodyResult)
+                  BodyResult
                   "takes exactly one list argument of NAME=VALUE strings"
                   (fun positional _ ->
                       match positional with
@@ -348,7 +352,7 @@ module WalkerRules =
                       | _ -> Some "`withEnv` takes exactly one list argument of NAME=VALUE strings")
               "dir",
               row 1 (Some "path") true (Some Fogell.Groovy.Interpreter.NullPointerException) [ "path" ] [] ConstructorMapThrow
-                  (UnsupportedValue WrapperBodyResult)
+                  BodyResult
                   "takes exactly one path argument"
                   (fun positional _ ->
                       match positional with
@@ -357,7 +361,7 @@ module WalkerRules =
               "retry",
               row 1 (Some "count") false None [ "count" ] [ "conditions" ]
                   (warn "org.jenkinsci.plugins.workflow.steps.RetryStep")
-                  (UnsupportedValue WrapperBodyResult)
+                  BodyResult
                   "takes at most one attempt count"
                   (fun positional _ ->
                       match positional with
@@ -368,7 +372,7 @@ module WalkerRules =
               "timeout",
               row 1 (Some "time") false None [ "time"; "unit"; "activity" ] []
                   (warn "org.jenkinsci.plugins.workflow.steps.TimeoutStep")
-                  (UnsupportedValue WrapperBodyResult)
+                  BodyResult
                   "takes at most one positional time argument or named time/unit/activity arguments" noCheck ]
 
     /// Compatibility views are derived from the descriptor, never independently kept.
@@ -543,7 +547,8 @@ module WalkerRules =
     let returnValueIsModelled = function
         | GenuineNull
         | ExitStatus
-        | CapturedStdout -> true
+        | CapturedStdout
+        | BodyResult -> true
         | UnsupportedValue _ -> false
 
     /// Jenkins' duration wording, measured on 2.568.1 (Util.getTimeSpanString):

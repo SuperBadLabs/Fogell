@@ -1192,8 +1192,8 @@ let returnFlagContract =
               for step in [ "dir"; "withEnv" ] do
                   Expect.equal
                       (contract step true true)
-                      (WalkerRules.UnsupportedValue WalkerRules.WrapperBodyResult)
-                      $"{step} needs body propagation"
+                      WalkerRules.BodyResult
+                      $"{step} returns its body"
 
               Expect.equal
                   (contract "error" true true)
@@ -1333,19 +1333,17 @@ let stepDescriptorValidation =
                   "one row, no schema-less fallback"
           }
 
-          test "return shapes exhaust the seven genuine-null rows and four deferred slices" {
+          test "return shapes partition null, body, and deferred object rows" {
               let genuineNull =
                   set [ "sh"; "echo"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
+
+              let bodyResult = set [ "dir"; "timeout"; "retry"; "withEnv" ]
 
               let expectedUnsupported =
                   Map.ofList
                       [ "junit", WalkerRules.JUnitTestResultSummary
                         "git", WalkerRules.ScmMap
-                        "checkout", WalkerRules.ScmMap
-                        "dir", WalkerRules.WrapperBodyResult
-                        "timeout", WalkerRules.WrapperBodyResult
-                        "retry", WalkerRules.WrapperBodyResult
-                        "withEnv", WalkerRules.WrapperBodyResult ]
+                        "checkout", WalkerRules.ScmMap ]
 
               for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
                   if genuineNull.Contains name then
@@ -1353,6 +1351,11 @@ let stepDescriptorValidation =
                       Expect.isTrue
                           (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
                           $"{name} is safe in a value position"
+                  elif bodyResult.Contains name then
+                      Expect.equal descriptor.ReturnValue WalkerRules.BodyResult $"{name} returns its body"
+                      Expect.isTrue
+                          (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
+                          $"{name} body result is safe in a value position"
                   else
                       let unsupported = Map.find name expectedUnsupported
                       Expect.equal
@@ -1364,7 +1367,7 @@ let stepDescriptorValidation =
                           $"{name} value use stays refused"
 
               Expect.equal
-                  (Set.union genuineNull (expectedUnsupported |> Map.keys |> Set.ofSeq))
+                  (Set.unionMany [ genuineNull; bodyResult; expectedUnsupported |> Map.keys |> Set.ofSeq ])
                   WalkerRules.scriptStepVocabulary
                   "the classifications partition all 14 descriptors"
           }
@@ -1783,15 +1786,11 @@ let genuineNullRuntime =
                           $"{file}: a fault never became a null result")
           }
 
-          test "JUnit, SCM maps and wrapper body values remain refused before execution" {
+          test "JUnit and SCM map values remain refused before execution" {
               let unsupported =
                   [ "junit", "def got = junit(testResults: 'reports/*.xml')"
                     "git", "def got = git(url: 'file:///tmp/repo.git')"
-                    "checkout", "def got = checkout(scm)"
-                    "dir", "def got = dir('child') { return 'body' }"
-                    "timeout", "def got = timeout(time: 1, unit: 'MINUTES') { return 'body' }"
-                    "retry", "def got = retry(count: 1) { return 'body' }"
-                    "withEnv", "def got = withEnv(['A=1']) { return 'body' }" ]
+                    "checkout", "def got = checkout(scm)" ]
 
               for step, body in unsupported do
                   withWorkspace (fun root workspace ->
@@ -1802,6 +1801,27 @@ let genuineNullRuntime =
                           Expect.isFalse
                               (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
                               $"{step}: the script never began executing")
+          }
+
+          test "dir, timeout, retry and withEnv publish the body result" {
+              let body =
+                  "def dirValue = dir('child') { return 'DIR-BODY' }; "
+                  + "def timeoutValue = timeout(time: 1, unit: 'MINUTES') { ['TIMEOUT-BODY', 6] }; "
+                  + "def attempts = 0; "
+                  + "def retryValue = retry(count: 2) { attempts = attempts + 1; "
+                  + "if (attempts == 1) { sh 'exit 1' }; return \"RETRY-${attempts}\" }; "
+                  + "def withEnvValue = withEnv(['FG177_BODY=value']) { return \"WITHENV-${env.FG177_BODY}\" }; "
+                  + "if (dirValue == 'DIR-BODY' && timeoutValue[0] == 'TIMEOUT-BODY' "
+                  + "&& timeoutValue[1] + 1 == 7 "
+                  + "&& retryValue == 'RETRY-2' && withEnvValue == 'WITHENV-value') { "
+                  + "sh 'printf pass > wrapper-body-result.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "success" "the recovered retry leaves the build successful"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "wrapper-body-result.txt")))
+                      "pass"
+                      "all four wrapper results reached Groovy with the measured values")
           } ]
 
 /// FG-014 residual slice. Balanced named collections are admitted as source expressions,
