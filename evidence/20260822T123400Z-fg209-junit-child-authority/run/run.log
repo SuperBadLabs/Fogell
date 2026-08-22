@@ -1,0 +1,10 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg209-junit-missing-aggregate-attrs.Jenkinsf   PROVEN           fg209-junit-missing-aggregate-attrs.receipt.txt
+  fg209-junit-nonnumeric-aggregate-attrs.Jenki   PROVEN           fg209-junit-nonnumeric-aggregate-attrs.receipt.txt
+  fg209-junit-negative-aggregate-attrs.Jenkins   PROVEN           fg209-junit-negative-aggregate-attrs.receipt.txt
+  fg209-junit-inconsistent-aggregate-attrs.Jen   PROVEN           fg209-junit-inconsistent-aggregate-attrs.receipt.txt
+
+tier-1 proven (incl. workspace): 4 / 4
+proven-partial (result+output):  0 / 4

@@ -120,7 +120,9 @@ module Publish =
     let archive store buildKey workspace patterns =
         archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
 
-    /// Parse JUnit XML totals. Reads only the attributes every producer emits.
+    /// Parse JUnit XML totals. The pinned plugin derives its summary from testcase
+    /// children and ignores the suite aggregate attributes, which are frequently
+    /// absent, stale, or producer-specific.
     /// The pinned JUnit plugin turns a syntactically malformed `.xml` report into
     /// one synthetic failed test (`[failed-to-read]`) and continues aggregating
     /// the other matched reports. Preserve that narrow compatibility rule while
@@ -145,9 +147,8 @@ module Publish =
         elif List.isEmpty files then
             Error(Unreadable "no test report matched the pattern")
         else
-            // Accumulate wider than the Java summary surface. A valid sibling can
-            // already publish Int32.MaxValue; adding one synthetic failure must not
-            // wrap both counters negative and make Executor classify the run SUCCESS.
+            // Accumulate wider than the Java summary surface so neither a very large
+            // child population nor synthetic failures can wrap into false success.
             let mutable total = 0L
             let mutable failed = 0L
             let mutable skipped = 0L
@@ -175,23 +176,51 @@ module Publish =
                         use stream = report.OpenRead()
                         let doc = Xml.Linq.XDocument.Load(stream)
 
-                        // Sum over <testsuite> elements; a <testsuites> wrapper is
-                        // common, and counting both would double every figure.
-                        let suites =
-                            doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
+                        let xmlName name = Xml.Linq.XName.Get name
 
-                        let readInt (e: Xml.Linq.XElement) name =
-                            match e.Attribute(Xml.Linq.XName.Get name) with
-                            | null -> 0L
-                            | a ->
-                                match Int32.TryParse a.Value with
-                                | true, v -> int64 v
-                                | _ -> 0L
+                        let hasDirectChild name (element: Xml.Linq.XElement) =
+                            not (isNull (element.Element(xmlName name)))
 
-                        for suite in suites do
-                            total <- total + readInt suite "tests"
-                            failed <- failed + readInt suite "failures" + readInt suite "errors"
-                            skipped <- skipped + readInt suite "skipped"
+                        let tallyCase (element: Xml.Linq.XElement) =
+                            total <- total + 1L
+
+                            // TestResult.freeze classifies skipped first. This
+                            // applies both to ordinary testcase elements and to the
+                            // synthetic case constructed from a suite-level error.
+                            if hasDirectChild "skipped" element then
+                                skipped <- skipped + 1L
+                            elif hasDirectChild "failure" element || hasDirectChild "error" element then
+                                failed <- failed + 1L
+
+                        match doc.Root with
+                        | null -> ()
+                        | root ->
+                            // SuiteResult.parse walks direct nested <testsuite>
+                            // elements. Use an explicit work stack: report nesting is
+                            // untrusted input and must not consume the native call stack.
+                            let pending = System.Collections.Generic.Stack<Xml.Linq.XElement>()
+                            pending.Push root
+
+                            while pending.Count > 0 do
+                                let element = pending.Pop()
+
+                                // Only direct suite edges are traversed. Stack order is
+                                // unobservable because the published values are totals.
+                                for nested in element.Elements(xmlName "testsuite") do
+                                    pending.Push nested
+
+                                // Only an actual suite owns testcase and suite-error
+                                // children; arbitrary wrappers do not own direct cases.
+                                if element.Name = xmlName "testsuite" then
+                                    // A suite-level error is represented as one synthetic
+                                    // case in addition to ordinary testcase children.
+                                    // It is still skipped when that same suite element
+                                    // carries a direct skipped marker.
+                                    if hasDirectChild "error" element then
+                                        tallyCase element
+
+                                    for testCase in element.Elements(xmlName "testcase") do
+                                        tallyCase testCase
                 with
                 | :? System.Xml.XmlException
                     when relative.EndsWith(".xml", StringComparison.Ordinal) ->
