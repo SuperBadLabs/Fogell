@@ -1,0 +1,12 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg210-junit-zero-result-default.Jenkinsfile    PROVEN           fg210-junit-zero-result-default.receipt.txt
+  fg210-junit-zero-result-explicit-false.Jenki   PROVEN           fg210-junit-zero-result-explicit-false.receipt.txt
+  fg210-junit-zero-result-allow-empty.Jenkinsf   PROVEN           fg210-junit-zero-result-allow-empty.receipt.txt
+  fg210-junit-no-match-default.Jenkinsfile       PROVEN           fg210-junit-no-match-default.receipt.txt
+  fg210-junit-no-match-allow-empty.Jenkinsfile   PROVEN           fg210-junit-no-match-allow-empty.receipt.txt
+  fg210-junit-zero-result-sibling.Jenkinsfile    PROVEN           fg210-junit-zero-result-sibling.receipt.txt
+
+tier-1 proven (incl. workspace): 6 / 6
+proven-partial (result+output):  0 / 6

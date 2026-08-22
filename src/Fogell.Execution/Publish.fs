@@ -24,6 +24,7 @@ type ArtifactStore =
 /// `post { aborted }` — unlike shell and archive timeouts. The cause has to survive.
 type JUnitProblem =
     | Interrupted
+    | NoReports
     | Unreadable of string
 
 /// FG-047. Controller-side stash storage.
@@ -145,7 +146,10 @@ module Publish =
         if abort () then
             Error Interrupted
         elif List.isEmpty files then
-            Error(Unreadable "no test report matched the pattern")
+            // Keep absence distinct from a report which matched but could not be
+            // read. `allowEmptyResults` may permit this condition, but must never
+            // suppress a genuine I/O or parse failure.
+            Error NoReports
         else
             // Accumulate wider than the Java summary surface so neither a very large
             // child population nor synthetic failures can wrap into false success.
@@ -249,6 +253,7 @@ module Publish =
         match parseJUnitWithAbort workspace patterns (fun () -> false) with
         | Ok v -> Ok v
         | Error Interrupted -> Error "interrupted"
+        | Error NoReports -> Error "no test report matched the pattern"
         | Error(Unreadable m) -> Error m
 
 module Stash =
