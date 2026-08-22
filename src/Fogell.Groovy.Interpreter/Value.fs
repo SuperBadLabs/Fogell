@@ -23,8 +23,19 @@ type Value =
     /// measured: `def other = local; other.FOO = 'x'` printed alias:x on Jenkins
     /// and alias:null here while the write vanished into a dropped match arm.
     | VMap of Map<string, Value> ref
+    /// FG-177 slice 5. A closed projection of Jenkins'
+    /// `hudson.tasks.junit.TestResultSummary`. This is deliberately nominal rather
+    /// than a map: map lookup, indexing, mutation and structural equality would add
+    /// object surface Jenkins does not grant merely because three count properties
+    /// are measured.
+    | VJUnitSummary of JUnitSummary ref
     | VClosure of Closure * Env
     | VFunc of name: string * parameters: string list * body: Stmt list
+
+and JUnitSummary =
+    { TotalCount: int64
+      FailCount: int64
+      SkipCount: int64 }
 
 and Env =
     /// FG-179. `Vars` maps a local name to a REF CELL, not to a value, and the indirection
@@ -134,6 +145,7 @@ module Value =
                 | VInt _
                 | VStr _
                 | VRange _
+                | VJUnitSummary _
                 | VClosure _
                 | VFunc _ -> ()
             | CompleteReference identity ->
@@ -156,6 +168,7 @@ module Value =
     type Compared =
         | Answer of bool
         | CycleDetected
+        | Unmodelled
 
     /// A total, host-safe answer for the subset of Groovy values which Fogell
     /// orders. `OrderingCycleDetected` means structural comparison revisited the
@@ -221,6 +234,7 @@ module Value =
                            $"{k}:{shown}")
                        |> String.concat ", ")
                     + "]"
+            | VJUnitSummary _ -> "<junit-test-result-summary>"
             | VClosure _ -> "<closure>"
             | VFunc(n, _, _) -> $"<function {n}>"
 
@@ -231,6 +245,41 @@ module Value =
         match tryToDisplay v with
         | Text rendered -> rendered
         | DisplayCycleDetected -> "<cyclic collection>"
+
+    /// Finds the deliberately opaque JUnit value even when a script wraps it in
+    /// a collection before passing it to a rendering or hosted-call boundary.
+    let containsJUnitSummary value =
+        match value with
+        | VJUnitSummary _ -> true
+        | VList _
+        | VMap _ ->
+            // Script-owned collections can be nested to the evaluation budget.
+            // Keep that shape off the native call stack, and allocate the graph
+            // walk only when the root can actually contain another Value.
+            let seen = System.Collections.Generic.HashSet<obj>(HashIdentity.Reference)
+            let pending = System.Collections.Generic.Stack<Value>()
+            let mutable found = false
+            pending.Push value
+
+            while not found && pending.Count > 0 do
+                match pending.Pop() with
+                | VJUnitSummary _ -> found <- true
+                | VList values when seen.Add(box values) ->
+                    for item in values.Value do
+                        pending.Push item
+                | VMap values when seen.Add(box values) ->
+                    for KeyValue(_, item) in values.Value do
+                        pending.Push item
+                | _ -> ()
+
+            found
+        | VNull
+        | VBool _
+        | VInt _
+        | VStr _
+        | VRange _
+        | VClosure _
+        | VFunc _ -> false
 
     /// FG-191. Equality that cannot kill the process, with Groovy's own rules:
     ///
@@ -318,8 +367,11 @@ module Value =
             | _, VRange _ -> false
             | _ -> a = b
 
-        let answer = go [] a b
-        if cycle then CycleDetected else Answer answer
+        if containsJUnitSummary a || containsJUnitSummary b then
+            Unmodelled
+        else
+            let answer = go [] a b
+            if cycle then CycleDetected else Answer answer
 
     /// Cycle-aware structural ordering for collection builtins. This preserves
     /// the old discriminated-union ordering for acyclic values while ensuring
@@ -342,8 +394,9 @@ module Value =
             | VList _ -> 4
             | VRange _ -> 4
             | VMap _ -> 5
-            | VClosure _ -> 6
-            | VFunc _ -> 7
+            | VJUnitSummary _ -> 6
+            | VClosure _ -> 7
+            | VFunc _ -> 8
 
         let seenPair (seen: (obj * obj) list) left right =
             seen
@@ -390,6 +443,7 @@ module Value =
                         let answer = compareEntries (pair :: seen) (Map.toList xs.Value) (Map.toList ys.Value)
                         if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
                         answer
+                | VJUnitSummary _, VJUnitSummary _
                 | VClosure _, VClosure _
                 | VFunc _, VFunc _ ->
                     unorderable <- true
@@ -423,15 +477,18 @@ module Value =
                     else
                         compareEntries seen leftTail rightTail
 
-        let answer =
-            match a, b with
-            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
-            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
-            | _ -> compareValues [] a b
+        if containsJUnitSummary a || containsJUnitSummary b then
+            Unorderable
+        else
+            let answer =
+                match a, b with
+                | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
+                | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
+                | _ -> compareValues [] a b
 
-        if cycle then OrderingCycleDetected
-        elif unorderable then Unorderable
-        else Order answer
+            if cycle then OrderingCycleDetected
+            elif unorderable then Unorderable
+            else Order answer
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =
@@ -443,6 +500,7 @@ module Value =
         | VList xs -> not (List.isEmpty xs.Value)
         | VRange values -> not (List.isEmpty values)
         | VMap m -> not (Map.isEmpty m.Value)
+        | VJUnitSummary _ -> true
         | VClosure _
         | VFunc _ -> true
 

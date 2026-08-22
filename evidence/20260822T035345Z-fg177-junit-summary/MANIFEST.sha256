@@ -1,0 +1,16 @@
+1b62cdf5953c4d07b912b48e98766fafde570f99f07d23354abc43f1d5341ade  ./README.md
+e7ba08771b6c383bdc64ce8c0677a0046a490e34ac53014b7d1ac30a408cad9c  ./build.log
+b6f57111105fe339ac11f3e1224e4e1e5b66cd5c605898898eab2105ecc49c76  ./collect.sh
+588d08bd5f83351ff2ac71b724abfdb770a7c1254495970b2cb06b11c05893d0  ./container-after.txt
+588d08bd5f83351ff2ac71b724abfdb770a7c1254495970b2cb06b11c05893d0  ./container-before.txt
+334ac1f5665307967d68c20375b3f78411d580f3f4572528f8c262186fda5c8d  ./exit.txt
+bfec67feb98e35f773c6b3e4b2a0ea82a4f4c2cf1872adb568e29521fd9056b6  ./fg177-junit-summary-counts.Jenkinsfile
+78a15aeabfb76a18bb13a4da7ec1b2503dd2f6a86ca9390eca4ec8011765b1c1  ./junit-surface-after.txt
+78a15aeabfb76a18bb13a4da7ec1b2503dd2f6a86ca9390eca4ec8011765b1c1  ./junit-surface-before.txt
+1966af2d72aa46820422612f92c3efa8cd8229dbc69f1a69a4a692e53ad51842  ./oracle-after.txt
+1966af2d72aa46820422612f92c3efa8cd8229dbc69f1a69a4a692e53ad51842  ./oracle-before.txt
+2a2612da07718c48b9da3b79a3665bba9e14ba99a450f09789a2d9e9dce3230c  ./oracle-metadata/jenkins-controller-image.txt
+5c527167c41f888bbbe66d3d520592654a496c74f4847e5db4c0a3c4f5246577  ./oracle-metadata/jenkins-core.txt
+6af6817f555a6fbbbcb5b41d48e7be58b00517efc913b21cfb825d0614630b3a  ./oracle-metadata/jenkins-plugins.tsv
+1c19b155a850f3475d299906120f013488162d374273aed6772eedfce85365a7  ./receipts/fg177-junit-summary-counts.receipt.txt
+b3021d572fd201b2ab91aaaf8f75a1abda2ff240db8d9078bf3f4cc25ee46000  ./run.log

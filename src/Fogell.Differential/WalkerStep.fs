@@ -273,6 +273,17 @@ module WalkerStep =
             | WalkerRules.CapturedStdout ->
                 slot.Value <- Some(VStr(defaultArg result.CapturedStdoutRaw result.Stdout))
             | WalkerRules.GenuineNull -> slot.Value <- Some VNull
+            | WalkerRules.JUnitSummary ->
+                match result.TestTotals with
+                | Some(total, failed, skipped) ->
+                    slot.Value <-
+                        Some(
+                            VJUnitSummary(
+                                ref
+                                    { TotalCount = int64 total
+                                      FailCount = int64 failed
+                                      SkipCount = int64 skipped }))
+                | None -> ()
             // Wrapper bodies never pass through Executor. Their typed result is
             // captured by the interpreter when the walker invokes the body thunk.
             | WalkerRules.BodyResult

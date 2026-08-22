@@ -2241,6 +2241,13 @@ module WalkerOrchestration =
                                                 emit
                                                     $"WARNING: Unknown parameter(s) found for class type '{warning.BindingClass}': {keys}"
 
+                                        if
+                                            (rawPositional |> List.exists Value.containsJUnitSummary)
+                                            || (rawNamed |> List.exists (snd >> Value.containsJUnitSummary))
+                                        then
+                                            Interpreter.raiseHostedCallRefused
+                                                "script block: passing a JUnit TestResultSummary directly or inside a collection to a hosted step is not modelled"
+
                                         match WalkerRules.validateHostedCall name rawPositional rawNamed with
                                         | Error(WalkerRules.EngineRefusal why) ->
                                             Interpreter.raiseHostedCallRefused $"script block: {why}"

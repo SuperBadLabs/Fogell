@@ -1,0 +1,7 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg177-junit-summary-counts.Jenkinsfile         PROVEN           fg177-junit-summary-counts.receipt.txt
+
+tier-1 proven (incl. workspace): 1 / 1
+proven-partial (result+output):  0 / 1
