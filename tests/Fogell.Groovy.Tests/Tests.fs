@@ -1493,6 +1493,22 @@ let scmMapValues =
                       (List.ofSeq seen)
                       [ [ VStr expected ] ]
                       $"{label}: the real shadowing value reaches validation, never the injected scm token"
+          }
+
+          test "SCM accessor names reject non-SCM receivers in the lax evaluator" {
+              let cases =
+                  [ "ordinary map containsKey", "def value = [GIT_COMMIT: 'fake']\nreturn value.containsKey('GIT_COMMIT')"
+                    "ordinary map get", "def value = [GIT_COMMIT: 'fake']\nreturn value.get('GIT_COMMIT')"
+                    "free containsKey", "return containsKey('GIT_COMMIT')" ]
+
+              for label, source in cases do
+                  let outcome =
+                      Interpreter.run Budget.defaults Set.empty Env.empty (parseOk source)
+
+                  match outcome.Fault with
+                  | Some(Unsupported message) ->
+                      Expect.stringContains message "only for an SCM return map" $"{label}: stable refusal"
+                  | other -> failtestf "%s: expected an explicit lax-path refusal, got %A" label other
           } ]
 
 /// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are

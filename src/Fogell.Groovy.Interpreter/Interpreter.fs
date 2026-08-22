@@ -1383,6 +1383,13 @@ module Interpreter =
         | "join", VScmKeySet keys, [ VStr delimiter ] -> VStr(String.concat delimiter keys)
         | _, VScmKeySet _, _ ->
             raise (Stop(Unsupported $"method `{name}` is not modelled for an SCM return-map key set; supported method: join(String)"))
+        | ("get" | "containsKey"), _, _ ->
+            // These names are globally admitted by the sandbox only so the
+            // nominal SCM receiver can reach the narrow arms above. Ordinary
+            // maps and free calls remain unmodelled in both strict hosted
+            // scripts and the lax `when` evaluator; falling through to null
+            // there would silently change stage selection.
+            raise (Stop(Unsupported $"method `{name}` is modelled only for an SCM return map"))
         | _, VJUnitSummary _, _ ->
             raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
