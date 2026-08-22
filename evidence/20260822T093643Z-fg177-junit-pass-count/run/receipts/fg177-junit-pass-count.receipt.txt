@@ -1,8 +1,8 @@
 # Differential receipt — fg177-junit-pass-count.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b318a4f49df12731c51abaff6ecdb83466499d99fe36c2a1a2b2b9d944e8d8f6
-case-digest:  289fd94439ccd6d284143786285a8b2fb48557c4e9dbfe273ff16441fb18b6a3
+seal:         18817f89e7bfc9d9e84dc516030ce7e6af5d3f62fbb339b0061ce1e926f8d68e
+case-digest:  8e0b8caca12ffe858ce91a5cf51665b1896614ed8ecb1a6bcbfc48fe410dc5da
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash

@@ -803,7 +803,8 @@ pipeline {
                 script {
                     sh "echo probe >> probe-executions.txt; rm -rf reports; mkdir -p reports; printf '%s' '<testsuite name=\"resume\" tests=\"2\" failures=\"1\"><testcase name=\"pass\"/><testcase name=\"fail\"><failure/></testcase></testsuite>' > reports/summary.xml"
                     def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false)
-                    if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0 && got.passCount == 1) {
+                    def passes = got.passCount
+                    if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0 && passes == 1 && passes instanceof Integer && !(passes instanceof Long)) {
                         sh 'printf counts > counts.txt'
                     }
                     sh 'printf successor > successor.txt'

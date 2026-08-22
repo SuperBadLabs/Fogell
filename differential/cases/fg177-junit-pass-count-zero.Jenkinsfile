@@ -11,7 +11,7 @@ pipeline {
                     def summary = junit(testResults: 'reports/pass-count-zero.xml')
                     def passes = summary.passCount
 
-                    if (summary.totalCount == 3 && summary.failCount == 2 && summary.skipCount == 1 && passes == 0 && passes instanceof Integer) {
+                    if (summary.totalCount == 3 && summary.failCount == 2 && summary.skipCount == 1 && passes == 0 && passes instanceof Integer && !(passes instanceof Long)) {
                         sh 'printf 3,2,1,0,Integer > fg177-junit-pass-count-zero.txt'
                     } else {
                         sh 'printf wrong > fg177-junit-pass-count-zero.txt'

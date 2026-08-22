@@ -1830,13 +1830,41 @@ let genuineNullRuntime =
               let body =
                   "sh \"mkdir -p reports; printf '%s' '<testsuites><testsuite name=\\\"first\\\" tests=\\\"3\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"1\\\"><testcase name=\\\"first-pass\\\"/><testcase name=\\\"first-fail\\\"><failure/></testcase><testcase name=\\\"first-skip\\\"><skipped/></testcase></testsuite><testsuite name=\\\"second\\\" tests=\\\"4\\\" failures=\\\"0\\\" errors=\\\"1\\\" skipped=\\\"0\\\"><testcase name=\\\"second-pass-a\\\"/><testcase name=\\\"second-pass-b\\\"/><testcase name=\\\"second-pass-c\\\"/><testcase name=\\\"second-error\\\"><error/></testcase></testsuite></testsuites>' > reports/multi.xml\"; "
                   + "def got = junit(testResults: 'reports/multi.xml'); "
-                  + "if (got.totalCount == 7 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 4) { sh 'touch multi-pass-count-ok.txt' }"
+                  + "def passes = got.passCount; "
+                  + "if (got.totalCount == 7 && got.failCount == 2 && got.skipCount == 1 && passes == 4 && passes instanceof Integer && !(passes instanceof Long)) { sh 'touch multi-pass-count-ok.txt' }"
 
               run body (fun workspace trace ->
                   Expect.equal trace.Result "unstable" "a failure and an error keep the build unstable"
                   Expect.isTrue
                       (IO.File.Exists(IO.Path.Combine(workspace, "multi-pass-count-ok.txt")))
-                      "passCount subtracts both failure classes and skips after suite aggregation")
+                      "passCount preserves Integer-only provenance while subtracting both failure classes and skips")
+          }
+
+          test "JUnit passCount arithmetic fails closed until promotion and decimal types are modelled" {
+              let operations =
+                  [ "unary-minus", "-passes"
+                    "same-plus", "passes + other"
+                    "mixed-plus", "passes + 1"
+                    "same-minus", "passes - other"
+                    "same-multiply", "passes * other"
+                    "same-divide", "passes / other"
+                    "same-modulo", "passes % other" ]
+
+              for label, expression in operations do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      + "def got = junit(testResults: 'reports/summary.xml'); "
+                      + "def passes = got.passCount; def other = got.passCount; "
+                      + $"try {{ def ignored = {expression}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: unmodelled arithmetic fails closed"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
+                          $"{label}: no successor effect escaped the refusal"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt")))
+                          $"{label}: ordinary Groovy catch cannot absorb a modelling refusal")
           }
 
           test "JUnit build-instability suppression preserves the typed summary in scripted calls" {

@@ -429,6 +429,7 @@ module GString =
         match v with
         | VStr _ -> "String"
         | VInt _ -> "Integer"
+        | VInteger _ -> "Integer"
         | VBool _ -> "Boolean"
         | VList _ -> "ArrayList"
         | VRange _ -> "IntRange"

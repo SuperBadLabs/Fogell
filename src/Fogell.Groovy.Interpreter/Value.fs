@@ -9,6 +9,10 @@ type Value =
     | VNull
     | VBool of bool
     | VInt of int64
+    /// A value proven to be boxed as java.lang.Integer rather than Long.
+    /// Keep this provenance only where the producer contract is measured;
+    /// VInt remains the wider, historically ambiguous integral surface.
+    | VInteger of int64
     | VStr of string
     /// FG-015b. Groovy lists are reference objects. The ref is list identity:
     /// aliases, nested selections and method results share mutations, while a
@@ -156,6 +160,7 @@ module Value =
                 | VNull
                 | VBool _
                 | VInt _
+                | VInteger _
                 | VStr _
                 | VRange _
                 | VJUnitSummary _
@@ -213,6 +218,7 @@ module Value =
             | VNull -> "null"
             | VBool b -> if b then "true" else "false"
             | VInt i -> string i
+            | VInteger i -> string i
             | VStr s -> s
             | VList xs ->
                 if seenRef xs then
@@ -295,6 +301,7 @@ module Value =
         | VNull
         | VBool _
         | VInt _
+        | VInteger _
         | VStr _
         | VRange _
         | VScmMap _
@@ -386,6 +393,9 @@ module Value =
             | VList xa, VRange xb ->
                 let right = rangeItems xb
                 xa.Value.Length = right.Length && List.forall2 (go seen) xa.Value right
+            | VInteger x, VInteger y
+            | VInteger x, VInt y
+            | VInt x, VInteger y -> x = y
             | VClosure(c1, e1), VClosure(c2, e2) ->
                 System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
             | VClosure _, _
@@ -421,6 +431,7 @@ module Value =
             | VNull -> 0
             | VBool _ -> 1
             | VInt _ -> 2
+            | VInteger _ -> 2
             | VStr _ -> 3
             | VList _ -> 4
             | VRange _ -> 4
@@ -448,6 +459,9 @@ module Value =
                 | VNull, VNull -> 0
                 | VBool x, VBool y -> compare x y
                 | VInt x, VInt y -> compare x y
+                | VInteger x, VInteger y
+                | VInteger x, VInt y
+                | VInt x, VInteger y -> compare x y
                 | VStr x, VStr y -> compare x y
                 | VList xs, VList ys ->
                     let pair = box xs, box ys
@@ -531,6 +545,7 @@ module Value =
         | VNull -> false
         | VBool b -> b
         | VInt i -> i <> 0L
+        | VInteger i -> i <> 0L
         | VStr s -> s <> ""
         | VList xs -> not (List.isEmpty xs.Value)
         | VRange values -> not (List.isEmpty values)

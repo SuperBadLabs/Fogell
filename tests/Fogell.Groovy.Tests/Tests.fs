@@ -2337,6 +2337,12 @@ let fg015ClosureAudit =
               Expect.equal o.Returned (Some(VBool true)) "String is recognised"
           }
 
+          test "instanceof keeps the older wide integral surface Long-capable" {
+              let o = runStrict "def value = 4294967296\nreturn value instanceof Long\n"
+              Expect.isNone o.Fault "the large-literal type check evaluates"
+              Expect.equal o.Returned (Some(VBool true)) "a provenance-specific producer does not narrow every VInt"
+          }
+
           test "multi-assign binds list elements by index" {
               let o = runStrict "def (left, right) = ['L', 'R']\necho \"${left}:${right}\"\n"
               Expect.isNone o.Fault "the assignment evaluates"

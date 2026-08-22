@@ -4,8 +4,8 @@
   Fogell.Ir -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
   Fogell.Groovy -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
   Fogell.Admission -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
-  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
   Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
   Fogell.Execution -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
   Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
   Fogell.Differential -> /home/srikanth/projects/fogell-worktrees/fg-177-junit-pass-count/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
