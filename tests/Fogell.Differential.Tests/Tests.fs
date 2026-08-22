@@ -1825,6 +1825,64 @@ let genuineNullRuntime =
                       "all three typed count properties drove the measured branch")
           }
 
+          test "JUnit build-instability suppression preserves the typed summary in scripted calls" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                  + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true); "
+                  + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1) { sh 'touch suppressed-summary-ok.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "success" "failed tests no longer mark the build unstable when suppression is true"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "suppressed-summary-ok.txt")))
+                      "suppression leaves all three typed counts observable")
+          }
+
+          test "JUnit build-instability suppression uses bare boolean provenance outside script" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true; "
+                  + "sh 'touch declarative-suppressed.txt' } } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "bare-boolean JUnit pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "ExpressionArgs preserves the bare true flag"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "declarative-suppressed.txt")))
+                          "the direct stage-level successor ran")
+          }
+
+          test "JUnit build-instability suppression refuses string text before scanning reports" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: 'true'); "
+                  + "sh 'touch string-coercion-ran.txt'"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "failure" "Fogell does not infer a boolean from rendered string text"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "string-coercion-ran.txt")))
+                      "the refused call cannot reach its successor")
+
+              let declarativeSource =
+                  "pipeline { agent any environment { SKIP = 'true' } stages { stage('probe') { steps { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: env.SKIP; "
+                  + "sh 'touch expression-coercion-ran.txt' } } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" declarativeSource with
+                  | Error why -> failtestf "dynamic-boolean refusal pipeline could not run: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "rendered expression text cannot masquerade as a boolean literal"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "expression-coercion-ran.txt")))
+                          "the dynamic direct call was refused before its successor")
+          }
+
           test "unmeasured JUnit object surface remains catch-opaque and cannot reach a successor effect" {
               let operations =
                   [ "property", "def ignored = got.duration"

@@ -28,6 +28,7 @@ let private request root script =
       Environment = []
       TimeoutMs = None
       CaptureStdout = false
+      JUnitSkipMarkingBuildUnstable = false
       Interrupt = None
       InterruptBeatsDeadline = None
       WorkspaceRoot = None
@@ -709,6 +710,7 @@ let externalInterrupt =
                         Environment = []
                         TimeoutMs = None
                         CaptureStdout = false
+                        JUnitSkipMarkingBuildUnstable = false
                         Interrupt = None
                         InterruptBeatsDeadline = None
                         WorkspaceRoot = None
@@ -735,6 +737,7 @@ let externalInterrupt =
                         Workspace = ws
                         Environment = []
                         CaptureStdout = false
+                        JUnitSkipMarkingBuildUnstable = false
                         TimeoutMs = None
                         Interrupt = None
                         InterruptBeatsDeadline = None
@@ -755,6 +758,37 @@ let externalInterrupt =
               match r.Diagnostic with
               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
               | None -> failtest "an aborted junit must carry a diagnostic"
+          }
+
+          test "junit can suppress only failed-test build instability while preserving counts and hard failures" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let report = Path.Combine(baseRequest.Workspace, "report.xml")
+
+              File.WriteAllText(
+                  report,
+                  "<testsuite tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/><testcase name=\"bad\"><failure message=\"boom\"/></testcase></testsuite>")
+
+              let junit suppress =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "report.xml" ]
+                          JUnitSkipMarkingBuildUnstable = suppress }
+
+              let normal = junit false
+              let suppressed = junit true
+
+              Expect.equal normal.Status Unstable "the default still marks failed tests unstable"
+              Expect.equal suppressed.Status Success "literal true suppresses only build-result marking"
+              Expect.equal normal.TestTotals (Some(2, 1, 0)) "default totals"
+              Expect.equal suppressed.TestTotals normal.TestTotals "suppression never erases the returned summary"
+
+              File.WriteAllText(report, "not xml")
+              let malformed = junit true
+              Expect.equal malformed.Status Failure "the option cannot suppress an unreadable report"
+              Expect.isNone malformed.TestTotals "a malformed report never fabricates counts"
           }
 
           test "an interrupt that never fires leaves the step alone" {

@@ -22,6 +22,11 @@ type StepRequest =
       /// FG-174. `sh(returnStdout: true)` captures stdout rather than printing it.
       /// The trace on stderr still streams, which is what Jenkins does.
       CaptureStdout: bool
+      /// FG-177. `junit(skipMarkingBuildUnstable: true)` leaves a build successful
+      /// when parsed reports contain failures. The walker resolves this from the
+      /// typed/literal argument before dispatch; the executor never guesses a
+      /// boolean from the rendered `Named` strings.
+      JUnitSkipMarkingBuildUnstable: bool
       /// The WORKSPACE root (not the step's cwd): durable-task roots its script
       /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
       /// executed script's $0 is observable.
@@ -477,7 +482,17 @@ module Executor =
             | Result.Ok(total, failed, skipped) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.
-                let status = if failed > 0 then Unstable else Success
+                // MEASURED (receipt `fg177-junit-skip-marking-build-unstable`,
+                // Jenkins 2.568.1 + JUnit 1416.vd753e036de5e): the option changes
+                // only build-result marking. Reports are still parsed and their
+                // counts are still returned. Interrupts and unreadable reports have
+                // already exited through the failure arms above and are never
+                // suppressed by this flag.
+                let status =
+                    if failed > 0 && not request.JUnitSkipMarkingBuildUnstable then
+                        Unstable
+                    else
+                        Success
 
                 { ok status with
                     TestTotals = Some(total, failed, skipped)
