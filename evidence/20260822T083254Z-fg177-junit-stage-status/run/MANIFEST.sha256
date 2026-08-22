@@ -73,7 +73,7 @@ ff7fefff4f8a5ec2c5a109c741b485ac9dcb6274e52aa27c8a38a2e3f89813c0  ./runs/b1s1/wo
 0fca74fedf635986ed8ec1fbb1cbb2f75c9924c1f86bf30a6aa23dcb7032a8b3  ./tooling/collect.sh
 013f3b48ca2da8c31b0efaad5798d7c434078dc4dbfc23c1a4545ecee8db7eaa  ./tooling/expected.tsv
 eba615b74e8414d04013872951792806e6917595653dd157d0bdc534368bd90d  ./tooling/jenkins-driver.py
-45e2e12852658c4f06214d183dbb15f03b09f818afd3cc707b8bf8cabaa34231  ./tooling/tests/test-runner.sh
+e126f0042632c939cb75fbd0d9510615c19edb2843a61d9acd978803785fbab2  ./tooling/tests/test-runner.sh
 8285dee62ee72f725f4f148f950e517feb839af31efb20a0651a5fcc591269de  ./tooling/tests/test-validator.py
 197e1f5c1d767244c6976e68cf06934099198a0be6ab15f7c1fefe5b079fccc5  ./tooling/validate-stage-run.py
 cd069bdc42f92379342fe542823c57e8ec185f331b7c7ca43c7c4d80afd1cc3c  ./validation.txt
