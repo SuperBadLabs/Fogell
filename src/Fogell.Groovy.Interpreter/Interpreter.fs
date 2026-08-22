@@ -303,7 +303,7 @@ module Interpreter =
         if Value.containsScmMap value then
             raise (Stop(Unsupported "SCM return-map rendering is not modelled; read one measured string key"))
         elif Value.containsJUnitSummary value then
-            raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, or skipCount"))
+            raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, skipCount, or passCount"))
         else
             match Value.tryToDisplay value with
             | Value.Text rendered -> rendered
@@ -539,8 +539,9 @@ module Interpreter =
             | "totalCount" -> VInt summary.Value.TotalCount
             | "failCount" -> VInt summary.Value.FailCount
             | "skipCount" -> VInt summary.Value.SkipCount
+            | "passCount" -> VInt summary.Value.PassCount
             | _ ->
-                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount"))
+                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount, passCount"))
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -1397,7 +1398,7 @@ module Interpreter =
             // there would silently change stage selection.
             raise (Stop(Unsupported $"method `{name}` is modelled only for an SCM return map"))
         | _, VJUnitSummary _, _ ->
-            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
+            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, skipCount, or passCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
         // with the same binding rules and refusal contract as `f(x)` — for a closure
         // held in a LOCAL. A closure held in the script BINDING (assigned without

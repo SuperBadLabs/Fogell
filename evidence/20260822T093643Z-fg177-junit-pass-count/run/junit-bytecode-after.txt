@@ -1,0 +1,131 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+Compiled from "TestResultSummary.java"
+public class hudson.tasks.junit.TestResultSummary implements java.io.Serializable {
+  private int failCount;
+
+  private int skipCount;
+
+  private int passCount;
+
+  private int totalCount;
+
+  private float duration;
+
+  public hudson.tasks.junit.TestResultSummary();
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: iload_2
+       3: iload_3
+       4: iload         4
+       6: ldc           #7                  // float -1.0f
+       8: invokespecial #8                  // Method "<init>":(IIIIF)V
+      11: return
+
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int, float);
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: iload_1
+       6: putfield      #13                 // Field failCount:I
+       9: aload_0
+      10: iload_2
+      11: putfield      #17                 // Field skipCount:I
+      14: aload_0
+      15: iload_3
+      16: putfield      #20                 // Field passCount:I
+      19: aload_0
+      20: iload         4
+      22: putfield      #23                 // Field totalCount:I
+      25: aload_0
+      26: fload         5
+      28: putfield      #26                 // Field duration:F
+      31: return
+
+  public hudson.tasks.junit.TestResultSummary(hudson.tasks.junit.TestResult);
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: invokevirtual #30                 // Method hudson/tasks/junit/TestResult.getFailCount:()I
+       9: putfield      #13                 // Field failCount:I
+      12: aload_0
+      13: aload_1
+      14: invokevirtual #36                 // Method hudson/tasks/junit/TestResult.getSkipCount:()I
+      17: putfield      #17                 // Field skipCount:I
+      20: aload_0
+      21: aload_1
+      22: invokevirtual #39                 // Method hudson/tasks/junit/TestResult.getPassCount:()I
+      25: putfield      #20                 // Field passCount:I
+      28: aload_0
+      29: aload_1
+      30: invokevirtual #42                 // Method hudson/tasks/junit/TestResult.getTotalCount:()I
+      33: putfield      #23                 // Field totalCount:I
+      36: aload_0
+      37: aload_1
+      38: invokevirtual #45                 // Method hudson/tasks/junit/TestResult.getDuration:()F
+      41: putfield      #26                 // Field duration:F
+      44: aload_0
+      45: getfield      #23                 // Field totalCount:I
+      48: ifne          105
+      51: aload_1
+      52: invokevirtual #49                 // Method hudson/tasks/junit/TestResult.getSuites:()Ljava/util/Collection;
+      55: invokeinterface #53,  1           // InterfaceMethod java/util/Collection.iterator:()Ljava/util/Iterator;
+      60: astore_2
+      61: aload_2
+      62: invokeinterface #59,  1           // InterfaceMethod java/util/Iterator.hasNext:()Z
+      67: ifeq          105
+      70: aload_2
+      71: invokeinterface #65,  1           // InterfaceMethod java/util/Iterator.next:()Ljava/lang/Object;
+      76: checkcast     #69                 // class hudson/tasks/junit/SuiteResult
+      79: astore_3
+      80: aload_3
+      81: invokevirtual #71                 // Method hudson/tasks/junit/SuiteResult.getCases:()Ljava/util/List;
+      84: invokeinterface #75,  1           // InterfaceMethod java/util/List.isEmpty:()Z
+      89: ifne          102
+      92: new           #80                 // class java/lang/IllegalArgumentException
+      95: dup
+      96: ldc           #82                 // String Attempt to construct TestResultSummary from TestResult without calling tally/freeze
+      98: invokespecial #84                 // Method java/lang/IllegalArgumentException."<init>":(Ljava/lang/String;)V
+     101: athrow
+     102: goto          61
+     105: return
+
+  public int getFailCount();
+    Code:
+       0: aload_0
+       1: getfield      #13                 // Field failCount:I
+       4: ireturn
+
+  public int getSkipCount();
+    Code:
+       0: aload_0
+       1: getfield      #17                 // Field skipCount:I
+       4: ireturn
+
+  public int getPassCount();
+    Code:
+       0: aload_0
+       1: getfield      #20                 // Field passCount:I
+       4: ireturn
+
+  public int getTotalCount();
+    Code:
+       0: aload_0
+       1: getfield      #23                 // Field totalCount:I
+       4: ireturn
+
+  public float getDuration();
+    Code:
+       0: aload_0
+       1: getfield      #26                 // Field duration:F
+       4: freturn
+}

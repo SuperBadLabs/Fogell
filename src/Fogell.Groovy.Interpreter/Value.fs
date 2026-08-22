@@ -35,7 +35,7 @@ type Value =
     /// FG-177 slice 5. A closed projection of Jenkins'
     /// `hudson.tasks.junit.TestResultSummary`. This is deliberately nominal rather
     /// than a map: map lookup, indexing, mutation and structural equality would add
-    /// object surface Jenkins does not grant merely because three count properties
+    /// object surface Jenkins does not grant merely because four count properties
     /// are measured.
     | VJUnitSummary of JUnitSummary ref
     | VClosure of Closure * Env
@@ -44,7 +44,8 @@ type Value =
 and JUnitSummary =
     { TotalCount: int64
       FailCount: int64
-      SkipCount: int64 }
+      SkipCount: int64
+      PassCount: int64 }
 
 and ScmMap =
     { Entries: Map<string, string> }
