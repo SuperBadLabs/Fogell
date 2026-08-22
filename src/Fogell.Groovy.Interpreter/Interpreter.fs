@@ -300,7 +300,9 @@ module Interpreter =
             raise (Stop(BudgetExhausted $"evaluation exceeded {st.Budget.MaxSteps} steps"))
 
     let private scriptDisplay value =
-        if Value.containsJUnitSummary value then
+        if Value.containsScmMap value then
+            raise (Stop(Unsupported "SCM return-map rendering is not modelled; read one measured string key"))
+        elif Value.containsJUnitSummary value then
             raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, or skipCount"))
         else
             match Value.tryToDisplay value with
@@ -309,6 +311,9 @@ module Interpreter =
 
     let private scriptTruthy value =
         match value with
+        | VScmMap _
+        | VScmKeySet _ ->
+            raise (Stop(Unsupported "SCM return-map truthiness is not modelled; read one measured string key"))
         | VJUnitSummary _ ->
             raise (Stop(Unsupported "JUnit TestResultSummary truthiness is not modelled; read a measured count property"))
         | _ -> Value.isTruthy value
@@ -479,6 +484,12 @@ module Interpreter =
             | ListLike xs, VInt i -> listRead xs i
             | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
+            | VScmMap scm, VStr key ->
+                scm.Entries |> Map.tryFind key |> Option.map VStr |> Option.defaultValue VNull
+            | VScmMap _, _ ->
+                raise (Stop(Unsupported "SCM return-map indexing is modelled only for string keys"))
+            | VScmKeySet _, _ ->
+                raise (Stop(Unsupported "SCM return-map key-set indexing is not modelled; use join(String)"))
             | VJUnitSummary _, _ ->
                 raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
             | VStr s, VInt i when i >= 0L && int i < s.Length -> VStr(string s.[int i])
@@ -519,6 +530,10 @@ module Interpreter =
     and private evalProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VMap m -> defaultArg (Map.tryFind name m.Value) VNull
+        | VScmMap scm ->
+            scm.Entries |> Map.tryFind name |> Option.map VStr |> Option.defaultValue VNull
+        | VScmKeySet _ ->
+            raise (Stop(Unsupported "SCM return-map key-set properties are not modelled; use join(String)"))
         | VJUnitSummary summary ->
             match name with
             | "totalCount" -> VInt summary.Value.TotalCount
@@ -539,10 +554,15 @@ module Interpreter =
     and private evalSpreadProp (st: State) (recv: Value) (name: string) : Value =
         match recv with
         | VNull -> VNull
+        | VScmMap _
+        | VScmKeySet _ ->
+            raise (Stop(Unsupported "spread access on an SCM return map is not modelled"))
         | VJUnitSummary _ ->
             raise (Stop(Unsupported "spread access on JUnit TestResultSummary is not modelled"))
         | ListLike xs ->
-            if xs.Value |> List.exists Value.containsJUnitSummary then
+            if xs.Value |> List.exists Value.containsScmMap then
+                raise (Stop(Unsupported "spread access over an SCM return map is not modelled"))
+            elif xs.Value |> List.exists Value.containsJUnitSummary then
                 raise (Stop(Unsupported "spread access over a JUnit TestResultSummary is not modelled"))
             elif xs.Value.Length > st.Budget.MaxLoopIterations then
                 raise (Stop(BudgetExhausted "spread projection exceeds the iteration budget"))
@@ -583,6 +603,12 @@ module Interpreter =
 
     and private evalBinaryValues (st: State) op a b : Value =
         match op, a, b with
+        | _, VScmMap _, _
+        | _, _, VScmMap _ ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for an SCM return map"))
+        | _, VScmKeySet _, _
+        | _, _, VScmKeySet _ ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for an SCM return-map key set"))
         | _, VJUnitSummary _, _
         | _, _, VJUnitSummary _ ->
             raise (Stop(Unsupported $"operator '{op}' is not modelled for JUnit TestResultSummary"))
@@ -617,12 +643,12 @@ module Interpreter =
             match Value.tryEq a b with
             | Value.Answer r -> VBool r
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
-            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary"))
+            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for nominal Jenkins return values"))
         | "!=", _, _ ->
             match Value.tryEq a b with
             | Value.Answer r -> VBool(not r)
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
-            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary"))
+            | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for nominal Jenkins return values"))
         | "<", VInt x, VInt y -> VBool(x < y)
         | "<=", VInt x, VInt y -> VBool(x <= y)
         | ">", VInt x, VInt y -> VBool(x > y)
@@ -761,7 +787,20 @@ module Interpreter =
 
         let evalArgument e =
             ensureCanContinue ()
-            let value = evalExpr st env e
+            // Jenkins injects `scm` as a job binding object. Fogell never
+            // exposes that object generically; the only measured consumer is
+            // the registered `checkout(scm)` step. Preserve its existing
+            // walker token without making `scm` readable/renderable by echo,
+            // interpolation, helpers, or any other hosted call. A script-defined
+            // function named checkout does not qualify because resolution above
+            // must have selected the registered Step capability.
+            let value =
+                match admittedFreeCall, target, e with
+                | Some(Ok(Step "checkout")), FreeCall "checkout", EVar "scm"
+                    when not (Map.containsKey "scm" env.Vars)
+                         && not (Map.containsKey "scm" st.Binding) ->
+                    VStr "scm"
+                | _ -> evalExpr st env e
             ensureCanContinue ()
             value
 
@@ -1140,6 +1179,17 @@ module Interpreter =
                         then
                             raise (Stop(CyclicValue HostedArgumentCoercion))
 
+                        if
+                            (positionalArgs |> List.exists Value.containsScmMap)
+                            || (namedArgs |> List.exists (snd >> Value.containsScmMap))
+                        then
+                            raise (
+                                Stop(
+                                    HostedCallRefused
+                                        "passing an SCM return map directly or inside a collection to a hosted step is not modelled"
+                                )
+                            )
+
                         let transportValue = host.Perform phase s positionalArgs namedArgs runBody
                         ensureCanContinue ()
 
@@ -1315,6 +1365,37 @@ module Interpreter =
             r
 
         match name, recv, args with
+        | "get", VScmMap scm, [ VStr key ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            scm.Entries |> Map.tryFind key |> Option.map VStr |> Option.defaultValue VNull
+        | "containsKey", VScmMap scm, [ VStr key ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VBool(Map.containsKey key scm.Entries)
+        | "keySet", VScmMap scm, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            scm.Entries
+            |> Map.toList
+            |> List.map fst
+            |> VScmKeySet
+        | _, VScmMap _, _ ->
+            raise (
+                Stop(
+                    Unsupported
+                        $"method `{name}` is not modelled for an SCM return map; supported methods: get(String), containsKey(String), keySet()"
+                )
+            )
+        | "join", VScmKeySet keys, [ VStr delimiter ]
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VStr(String.concat delimiter keys)
+        | _, VScmKeySet _, _ ->
+            raise (Stop(Unsupported $"method `{name}` is not modelled for an SCM return-map key set; supported method: join(String)"))
+        | ("get" | "containsKey"), _, _ ->
+            // These names are globally admitted by the sandbox only so the
+            // nominal SCM receiver can reach the narrow arms above. Ordinary
+            // maps and free calls remain unmodelled in both strict hosted
+            // scripts and the lax `when` evaluator; falling through to null
+            // there would silently change stage selection.
+            raise (Stop(Unsupported $"method `{name}` is modelled only for an SCM return map"))
         | _, VJUnitSummary _, _ ->
             raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, or skipCount"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
@@ -1359,7 +1440,7 @@ module Interpreter =
                     | Value.Answer r -> r
                     | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
                     | Value.Unmodelled ->
-                        raise (Stop(Unsupported "equality is not modelled for JUnit TestResultSummary")))
+                        raise (Stop(Unsupported "equality is not modelled for nominal Jenkins return values")))
             )
         | "replace", VStr s, [ VStr a; VStr b ] -> VStr(s.Replace(a, b))
         | ("split" | "tokenize"), VStr s, [ VStr d ] ->
@@ -1583,6 +1664,9 @@ module Interpreter =
                         // write the shell never sees
                         host.SetEnv key (scriptDisplay value)
                     | _ -> mr.Value <- Map.add key value mr.Value
+                | VScmMap _, _, _
+                | VScmKeySet _, _, _ ->
+                    raise (Stop(Unsupported "SCM return-map mutation is not modelled"))
                 | VJUnitSummary _, _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary mutation is not modelled"))
                 | VNull, _, _ ->
@@ -1639,6 +1723,9 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | VScmMap _, _
+                | VScmKeySet _, _ ->
+                    raise (Stop(Unsupported "SCM return-map compound index mutation is not modelled"))
                 | VJUnitSummary _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary compound index mutation is not modelled"))
                 | _, _ -> raise (Stop(RejectedIndexOperation "read"))
@@ -1689,6 +1776,9 @@ module Interpreter =
                     (fun _ -> raise (Stop(RejectedIndexOperation "write"))),
                     None
                 | VNull, _ -> raise (Stop(NullReceiverAssignment "index"))
+                | VScmMap _, _
+                | VScmKeySet _, _ ->
+                    raise (Stop(Unsupported "SCM return-map postfix index mutation is not modelled"))
                 | VJUnitSummary _, _ ->
                     raise (Stop(Unsupported "JUnit TestResultSummary postfix index mutation is not modelled"))
                 | _, _ -> raise (Stop(RejectedIndexOperation "read"))
@@ -1756,6 +1846,8 @@ module Interpreter =
                         | BreakSignal -> running <- false)
 
                 cur
+            | VScmKeySet _ ->
+                raise (Stop(Unsupported "iteration over an SCM return-map key set is not modelled; use join(String)"))
             | _ -> env
         | SWhile(c, body) ->
             st.LastValue <- None
@@ -1809,7 +1901,7 @@ module Interpreter =
                         match Value.tryEq v (evalExpr st env case) with
                         | Value.Answer r -> r
                         | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
-                        | Value.Unmodelled -> raise (Stop(Unsupported "switch equality is not modelled for JUnit TestResultSummary"))
+                        | Value.Unmodelled -> raise (Stop(Unsupported "switch equality is not modelled for nominal Jenkins return values"))
                     | None -> false)
                 |> Option.orElseWith (fun () -> arms |> List.tryFindIndex (fst >> Option.isNone))
 
@@ -1850,7 +1942,9 @@ module Interpreter =
         | SThrow e ->
             let thrown = evalExpr st env e
 
-            if Value.containsJUnitSummary thrown then
+            if Value.containsScmMap thrown then
+                raise (Stop(Unsupported "throwing an SCM return map directly or inside a collection is not modelled"))
+            elif Value.containsJUnitSummary thrown then
                 raise (Stop(Unsupported "throwing a JUnit TestResultSummary directly or inside a collection is not modelled"))
             else
                 raise (Stop(Thrown thrown))

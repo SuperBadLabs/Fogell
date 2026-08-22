@@ -1315,6 +1315,210 @@ let hostedSteps =
           }
         ]
 
+let scmMapValues =
+    let scmValue =
+        VScmMap
+            { Entries =
+                Map.ofList
+                    [ "GIT_URL", "file:///fixture.git"
+                      "GIT_COMMIT", "0123456789abcdef"
+                      "GIT_BRANCH", "origin/main" ] }
+
+    let runScmScript source =
+        let performed = ResizeArray<string>()
+
+        let host =
+            { Perform =
+                fun _ name _ _ _ ->
+                    performed.Add name
+                    if name = "source" then scmValue else VNull
+              CanContinue = fun () -> true
+              SetEnv = fun _ _ -> ()
+              CurrentEnv = fun () -> []
+              TakesBlock = fun _ -> false }
+
+        let outcome =
+            Interpreter.runHosted
+                host
+                Budget.defaults
+                (set [ "source"; "sink" ])
+                Env.empty
+                (parseOk source)
+
+        outcome, List.ofSeq performed
+
+    let expectOpaqueRefusal label operation =
+        let source =
+            "def value = source()\n"
+            + $"try {{ {operation}; sink('escaped') }} catch (Exception problem) {{ sink('caught') }}\n"
+
+        let outcome, performed = runScmScript source
+
+        match outcome.Fault with
+        | Some(Denied _)
+        | Some(Unsupported _)
+        | Some(HostedCallRefused _) -> ()
+        | other -> failtestf "%s: expected a catch-opaque modelling refusal, got %A" label other
+
+        Expect.equal performed [ "source" ] $"{label}: neither successor nor catch handler reached the host"
+
+    testList
+        "FG-177 nominal immutable SCM return map"
+        [ test "only the measured string lookup and key-set surface is available" {
+              let source =
+                  "def value = source()\n"
+                  + "def dynamicKey = 'GIT_COMMIT'\n"
+                  + "return [value.GIT_COMMIT, value['GIT_URL'], value[dynamicKey], "
+                  + "value.get('GIT_BRANCH'), value.get('MISSING'), "
+                  + "value.containsKey('GIT_COMMIT'), value.containsKey('MISSING'), "
+                  + "value.MISSING, value['MISSING'], value.keySet().join(',')]\n"
+
+              let outcome, performed =
+                  runScmScript source
+
+              Expect.isNone outcome.Fault "the measured accessors run"
+              Expect.equal performed [ "source" ] "lookup is interpreter-local after the producer returns"
+
+              match outcome.Returned with
+              | Some(VList values) ->
+                  Expect.equal
+                      values.Value
+                      [ VStr "0123456789abcdef"
+                        VStr "file:///fixture.git"
+                        VStr "0123456789abcdef"
+                        VStr "origin/main"
+                        VNull
+                        VBool true
+                        VBool false
+                        VNull
+                        VNull
+                        VStr "GIT_BRANCH,GIT_COMMIT,GIT_URL" ]
+                      "property, string index, get, containsKey, missing lookup and sorted keySet stay exact"
+              | other -> failtestf "expected a list of measured SCM-map answers, got %A" other
+          }
+
+          test "keySet returns a sorted nominal view" {
+              let outcome, performed = runScmScript "return source().keySet()"
+
+              Expect.isNone outcome.Fault "the zero-argument key-set projection runs"
+              Expect.equal performed [ "source" ] "the projection stays interpreter-local"
+              Expect.equal
+                  outcome.Returned
+                  (Some(VScmKeySet [ "GIT_BRANCH"; "GIT_COMMIT"; "GIT_URL" ]))
+                  "the key set is sorted and never represented as a mutable VList"
+          }
+
+          test "unmeasured object operations remain catch-opaque" {
+              let operations =
+                  [ "rendering", "def ignored = \"${value}\""
+                    "nested rendering", "def ignored = \"${[value]}\""
+                    "truthiness", "def ignored = value ? 1 : 0"
+                    "equality", "def ignored = value == value"
+                    "nested equality", "def ignored = [value] == [value]"
+                    "ordering", "def ignored = value < value"
+                    "property mutation", "value.GIT_COMMIT = 'changed'"
+                    "index mutation", "value['GIT_COMMIT'] = 'changed'"
+                    "method mutation", "value.put('GIT_COMMIT', 'changed')"
+                    "compound mutation", "value['GIT_COMMIT'] += 'changed'"
+                    "postfix mutation", "value['GIT_COMMIT']++"
+                    "spread", "def ignored = value*.GIT_COMMIT"
+                    "nested spread", "def ignored = [value]*.GIT_COMMIT"
+                    "wrong index", "def ignored = value[0]"
+                    "null index", "def ignored = value[null]"
+                    "reflection", "def ignored = value.getClass()"
+                    "unsupported method", "def ignored = value.size()"
+                    "get non-string", "def ignored = value.get(0)"
+                    "get named extra", "def ignored = value.get('GIT_COMMIT', extra: 1)"
+                    "get trailing closure", "def ignored = value.get('GIT_COMMIT') { sink('escaped') }"
+                    "containsKey non-string", "def ignored = value.containsKey(0)"
+                    "containsKey named extra", "def ignored = value.containsKey('GIT_COMMIT', extra: 1)"
+                    "containsKey trailing closure", "def ignored = value.containsKey('GIT_COMMIT') { sink('escaped') }"
+                    "keySet argument", "def ignored = value.keySet('extra')"
+                    "keySet named extra", "def ignored = value.keySet(extra: 1)"
+                    "keySet trailing closure", "def ignored = value.keySet() { sink('escaped') }"
+                    "keySet append", "def keys = value.keySet(); keys << 'FAKE'"
+                    "keySet add", "def keys = value.keySet(); keys.add('FAKE')"
+                    "keySet iteration", "def keys = value.keySet(); for (key in keys) { sink('escaped') }"
+                    "keySet rendering", "def ignored = \"${value.keySet()}\""
+                    "keySet hosted argument", "sink(value.keySet())"
+                    "keySet join named extra", "def ignored = value.keySet().join(',', extra: 1)"
+                    "keySet join trailing closure", "def ignored = value.keySet().join(',') { sink('escaped') }"
+                    "throw", "throw value"
+                    "nested throw", "throw [value]"
+                    "hosted argument", "sink(value)"
+                    "nested hosted argument", "sink([value])" ]
+
+              for label, operation in operations do
+                  expectOpaqueRefusal label operation
+          }
+
+          test "nested SCM-map containment is identity-aware and stack-safe" {
+              let mutable ordinary = VInt 0L
+              let mutable nested = scmValue
+
+              for _ in 1..20000 do
+                  ordinary <- VList(ref [ ordinary ])
+                  nested <- VList(ref [ nested ])
+
+              Expect.isFalse (Value.containsScmMap ordinary) "a deep ordinary value is not misclassified"
+              Expect.isTrue (Value.containsScmMap nested) "a deeply wrapped SCM map is still found"
+
+              let cycle = ref []
+              let cyclic = VList cycle
+              cycle.Value <- [ cyclic; scmValue ]
+              Expect.isTrue (Value.containsScmMap cyclic) "a cyclic wrapper terminates and retains the nominal child"
+          }
+
+          test "checkout scm token never overrides lexical or binding shadowing" {
+              let cases =
+                  [ "local", "def scm = 'local-shadow'\ncheckout(scm)", "local-shadow"
+                    "helper parameter", "def useScm(scm) { checkout(scm) }\nuseScm('helper-shadow')", "helper-shadow"
+                    "script binding", "scm = 'binding-shadow'\ncheckout(scm)", "binding-shadow" ]
+
+              for label, source, expected in cases do
+                  let seen = ResizeArray<Value list>()
+
+                  let host =
+                      { Perform =
+                          fun _ name positional _ _ ->
+                              if name = "checkout" then seen.Add positional
+                              VNull
+                        CanContinue = fun () -> true
+                        SetEnv = fun _ _ -> ()
+                        CurrentEnv = fun () -> []
+                        TakesBlock = fun _ -> false }
+
+                  let outcome =
+                      Interpreter.runHosted
+                          host
+                          Budget.defaults
+                          (set [ "checkout" ])
+                          Env.empty
+                          (parseOk source)
+
+                  Expect.isNone outcome.Fault $"{label}: the shadowing expression evaluates normally"
+                  Expect.equal
+                      (List.ofSeq seen)
+                      [ [ VStr expected ] ]
+                      $"{label}: the real shadowing value reaches validation, never the injected scm token"
+          }
+
+          test "SCM accessor names reject non-SCM receivers in the lax evaluator" {
+              let cases =
+                  [ "ordinary map containsKey", "def value = [GIT_COMMIT: 'fake']\nreturn value.containsKey('GIT_COMMIT')"
+                    "ordinary map get", "def value = [GIT_COMMIT: 'fake']\nreturn value.get('GIT_COMMIT')"
+                    "free containsKey", "return containsKey('GIT_COMMIT')" ]
+
+              for label, source in cases do
+                  let outcome =
+                      Interpreter.run Budget.defaults Set.empty Env.empty (parseOk source)
+
+                  match outcome.Fault with
+                  | Some(Unsupported message) ->
+                      Expect.stringContains message "only for an SCM return map" $"{label}: stable refusal"
+                  | other -> failtestf "%s: expected an explicit lax-path refusal, got %A" label other
+          } ]
+
 /// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are
 /// asserted TOGETHER because three refusals were added one at a time, each looking
 /// complete, and the fourth was found inside the guard written for the third — a
@@ -2534,4 +2738,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; callableResolution; mapIdentity; cyclicValues ])

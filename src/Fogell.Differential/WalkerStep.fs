@@ -284,6 +284,11 @@ module WalkerStep =
                                       FailCount = int64 failed
                                       SkipCount = int64 skipped }))
                 | None -> ()
+            // The SCM executor/result-history slice publishes the nominal map.
+            // This arm is intentionally a no-op here: fabricating even the base
+            // keys from rendered arguments would erase the measured distinction
+            // between current, previous-built and previous-successful revisions.
+            | WalkerRules.ScmMap -> ()
             // Wrapper bodies never pass through Executor. Their typed result is
             // captured by the interpreter when the walker invokes the body thunk.
             | WalkerRules.BodyResult

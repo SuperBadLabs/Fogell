@@ -1703,19 +1703,29 @@ module WalkerOrchestration =
                 match deps.Scm with
                 | Some spec ->
                     // an EXPLICIT `checkout scm` does not re-wrap later stages
-                    // in GIT_* env (only the Declarative auto-checkout does) —
-                    // the returned sha is deliberately dropped
-                    WalkerGit.runCheckout
-                        runCtx
-                        ctx
-                        cwd
-                        deadline
-                        (envForWith ctx.EnvOverlay stage)
-                        artifactRoot
-                        jobName
-                        deps.BuildNumber
-                        spec
-                    |> ignore
+                    // in GIT_* env (only the Declarative auto-checkout does).
+                    // Its nominal return map is published only when a hosted
+                    // caller is listening; an ordinary stage step keeps the
+                    // same unit-shaped orchestration path.
+                    let checkout =
+                        WalkerGit.runCheckout
+                            runCtx
+                            ctx
+                            cwd
+                            deadline
+                            (envForWith ctx.EnvOverlay stage)
+                            artifactRoot
+                            jobName
+                            deps.BuildNumber
+                            spec
+
+                    match checkout, ctx.HostedResult with
+                    | Some completed, Some slot ->
+                        slot.Value <-
+                            Some(
+                                VScmMap
+                                    { Entries = completed.Entries })
+                    | _ -> ()
                 | None ->
                     emit "ERROR: checkout scm is only available when the pipeline came from SCM"
                     ctx.Failed.Value <- true
@@ -1760,17 +1770,26 @@ module WalkerOrchestration =
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 | Some u, None ->
-                    WalkerGit.runStep
-                        runCtx
-                        ctx
-                        cwd
-                        deadline
-                        (envForWith ctx.EnvOverlay stage)
-                        artifactRoot
-                        jobName
-                        deps.BuildNumber
-                        u
-                        branch
+                    let checkout =
+                        WalkerGit.runStep
+                            runCtx
+                            ctx
+                            cwd
+                            deadline
+                            (envForWith ctx.EnvOverlay stage)
+                            artifactRoot
+                            jobName
+                            deps.BuildNumber
+                            u
+                            branch
+
+                    match checkout, ctx.HostedResult with
+                    | Some completed, Some slot ->
+                        slot.Value <-
+                            Some(
+                                VScmMap
+                                    { Entries = completed.Entries })
+                    | _ -> ()
 
             // FG-047. `stash` / `unstash`. Storage is controller-side — under the
             // artifact root, NOT the workspace — which is what makes a stash survive

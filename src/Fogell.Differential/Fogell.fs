@@ -831,7 +831,7 @@ module FogellSide =
                     // its banner prints AFTER the checkout — MEASURED (receipt
                     // `checkout-scm-timeout-env`) — hence deadline None here
                     // and the deadline computation BELOW this block.
-                    let sha =
+                    let checkout =
                         WalkerGit.runCheckout
                             runCtx
                             root
@@ -852,9 +852,9 @@ module FogellSide =
                         // every user stage and the pipeline post, exactly the
                         // withEnv wrapper Jenkins inserts.
                         scmWrapperEnv <-
-                            match sha with
-                            | Some s ->
-                                [ "GIT_COMMIT", s
+                            match checkout with
+                            | Some completed ->
+                                [ "GIT_COMMIT", completed.Revision
                                   "GIT_BRANCH", $"origin/{spec.Branch}"
                                   "GIT_URL", spec.Url ]
                             | None -> []
@@ -1081,8 +1081,10 @@ module FogellSide =
                     envReplacements
                     (runCtx.Output())
 
-            Result.Ok
-                { Result = BuildStatus.toWireString (runCtx.Status())
+            let terminalStatus = runCtx.Status()
+
+            let trace =
+                { Result = BuildStatus.toWireString terminalStatus
                   EngineNotes = runCtx.EngineNotes()
                   Output = outputLines
                   WorkspaceHash = workspaceHash
@@ -1097,6 +1099,16 @@ module FogellSide =
                             0),
                        List.length outputLines)
                   ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
+
+            // FG-177. Checkout writes only a provisional revision record. The
+            // build's FINAL status is knowable here: stages and pipeline post
+            // have finished, the workspace/trace snapshot exists, and the raw
+            // secret-leak guard above has passed. Publishing earlier would turn
+            // a build that checked out successfully and then failed into a
+            // previous-successful build. A crash before this call leaves no
+            // finalized marker, so later history refuses to invent one.
+            WalkerGit.finalizeBuild artifactRoot jobName buildNumber terminalStatus
+            Result.Ok trace
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
@@ -1173,17 +1185,17 @@ module FogellSide =
         with ex ->
             Result.Error ex.Message
 
-    /// FG-110. Run a SEQUENCE of builds of one job: the workspace persists
-    /// across builds (build 1 starts clean) and each build's terminal result is
-    /// the next build's `previous` — what `changed`/`fixed`/`regression` select
-    /// against. Fail closed: a build the harness could not run at all stops the
-    /// sequence, and every later build reports that error rather than running
-    /// against an invented history.
-    let runMany
+    /// FG-110/FG-177. The one retained-job fold. Each item carries the script
+    /// and, when present, the SCM definition for that build. Keeping both
+    /// public sequence entries on this fold matters: build numbering,
+    /// workspace retention, terminal-result carry-forward, and fail-closed
+    /// halting must not acquire a second implementation just because an SCM
+    /// branch changes between builds.
+    let private runSequence
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
-        (scripts: string list)
+        (builds: (ScmSpec option * string) list)
         : Result<Trace, string> list =
         // FG-103: an unmappable terminal result must HALT the sequence by name,
         // never quietly become None — None means "no history" (build-#1
@@ -1197,9 +1209,9 @@ module FogellSide =
             | "aborted" -> Ok BuildStatus.Aborted
             | other -> Result.Error $"build produced a result this sequence cannot carry forward: '{other}'"
 
-        scripts
+        builds
         |> List.fold
-            (fun (acc, previous, halted) script ->
+            (fun (acc, previous, halted) (scm, script) ->
                 match halted with
                 | Some why -> (Result.Error $"sequence halted: {why}" :: acc, previous, halted)
                 | None ->
@@ -1212,7 +1224,7 @@ module FogellSide =
                                 (List.length acc + 1)
                                 previous
                                 (List.isEmpty acc)
-                                None
+                                scm
                                 None
                                 script
                         with ex ->
@@ -1226,3 +1238,27 @@ module FogellSide =
                     | Result.Error why -> (r :: acc, previous, Some $"a prior build failed to run ({why})"))
             ([], None, None)
         |> fun (acc, _, _) -> List.rev acc
+
+    /// FG-110. Run a SEQUENCE of inline-script builds of one retained job.
+    let runMany
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scripts: string list)
+        : Result<Trace, string> list =
+        scripts
+        |> List.map (fun script -> None, script)
+        |> runSequence envReplacements workspaceRoot jobName
+
+    /// FG-177. Run a SEQUENCE of SCM-defined builds of one retained job. The
+    /// per-build spec is intentional: the measured schedule switches between
+    /// main and feature, then back to main, while retaining one Jenkins job.
+    let runScmMany
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (builds: (ScmSpec * string) list)
+        : Result<Trace, string> list =
+        builds
+        |> List.map (fun (scm, script) -> Some scm, script)
+        |> runSequence envReplacements workspaceRoot jobName

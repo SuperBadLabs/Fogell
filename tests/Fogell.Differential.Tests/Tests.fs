@@ -1333,17 +1333,13 @@ let stepDescriptorValidation =
                   "one row, no schema-less fallback"
           }
 
-          test "return shapes partition null, body, JUnit summary, and deferred SCM rows" {
+          test "return shapes partition null, body, JUnit summary, and nominal SCM rows" {
               let genuineNull =
                   set [ "sh"; "echo"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
 
               let bodyResult = set [ "dir"; "timeout"; "retry"; "withEnv" ]
               let junitSummary = set [ "junit" ]
-
-              let expectedUnsupported =
-                  Map.ofList
-                      [ "git", WalkerRules.ScmMap
-                        "checkout", WalkerRules.ScmMap ]
+              let scmMap = set [ "git"; "checkout" ]
 
               for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
                   if genuineNull.Contains name then
@@ -1361,18 +1357,16 @@ let stepDescriptorValidation =
                       Expect.isTrue
                           (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
                           "the measured JUnit count projection is safe in a value position"
-                  else
-                      let unsupported = Map.find name expectedUnsupported
-                      Expect.equal
-                          descriptor.ReturnValue
-                          (WalkerRules.UnsupportedValue unsupported)
-                          $"{name} remains in its explicit later slice"
-                      Expect.isFalse
+                  elif scmMap.Contains name then
+                      Expect.equal descriptor.ReturnValue WalkerRules.ScmMap $"{name} returns the nominal SCM map"
+                      Expect.isTrue
                           (WalkerRules.returnValueIsModelled descriptor.ReturnValue)
-                          $"{name} value use stays refused"
+                          $"{name} measured map projection is safe in a value position"
+                  else
+                      failtestf "unclassified return contract for %s" name
 
               Expect.equal
-                  (Set.unionMany [ genuineNull; bodyResult; junitSummary; expectedUnsupported |> Map.keys |> Set.ofSeq ])
+                  (Set.unionMany [ genuineNull; bodyResult; junitSummary; scmMap ])
                   WalkerRules.scriptStepVocabulary
                   "the classifications partition all 14 descriptors"
           }
@@ -1791,22 +1785,6 @@ let genuineNullRuntime =
                           $"{file}: a fault never became a null result")
           }
 
-          test "SCM map values remain refused before execution" {
-              let unsupported =
-                  [ "git", "def got = git(url: 'file:///tmp/repo.git')"
-                    "checkout", "def got = checkout(scm)" ]
-
-              for step, body in unsupported do
-                  withWorkspace (fun root workspace ->
-                      match FogellSide.run [] root "job" (pipeline (body + "; sh 'touch escaped.txt'")) with
-                      | Error why -> failtestf "%s pipeline failed before the walker: %s" step why
-                      | Ok trace ->
-                          Expect.equal trace.Result "failure" $"{step}: unsupported return fails closed"
-                          Expect.isFalse
-                              (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
-                              $"{step}: the script never began executing")
-          }
-
           test "JUnit containment is stack-safe for deeply nested script collections" {
               let mutable withoutSummary = Fogell.Groovy.Interpreter.VInt 0L
 
@@ -1898,6 +1876,273 @@ let genuineNullRuntime =
                       "pass"
                       "all four wrapper results reached Groovy with the measured values")
           } ]
+
+/// FG-177. The retained six-build oracle schedule, executed against Fogell's
+/// real Git walker for BOTH producers. The remote refs advance from pipeline
+/// post so the next retained build sees a new revision while one job, its
+/// controller-side history, and its workspace survive.
+let scmReturnMapRuntime =
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+        start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+        start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+        start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+        for arg in args do
+            start.ArgumentList.Add arg
+
+        use child = Diagnostics.Process.Start start
+        let stdout = child.StandardOutput.ReadToEnd()
+        let stderr = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+
+        if child.ExitCode <> 0 then
+            let command = String.concat " " args
+            failwith $"git {command} failed ({child.ExitCode}): {stderr}"
+
+        stdout.Trim()
+
+    let expectedKeys producer hasHistory =
+        let baseKeys =
+            if producer = "git" then
+                [ "GIT_BRANCH"; "GIT_COMMIT"; "GIT_LOCAL_BRANCH"; "GIT_URL" ]
+            else
+                [ "GIT_BRANCH"; "GIT_COMMIT"; "GIT_URL" ]
+
+        if hasHistory then
+            baseKeys @ [ "GIT_PREVIOUS_COMMIT"; "GIT_PREVIOUS_SUCCESSFUL_COMMIT" ]
+        else
+            baseKeys
+        |> List.sort
+        |> String.concat ","
+
+    test "git and checkout scm return exact retained per-branch history maps" {
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-scm-map-runtime-" + Guid.NewGuid().ToString("N"))
+        let source = IO.Path.Combine(root, "source")
+        let bare = IO.Path.Combine(root, "fixture.git")
+        let control = IO.Path.Combine(root, "control")
+        let workspaceRoot = IO.Path.Combine(root, "workspaces")
+
+        IO.Directory.CreateDirectory source |> ignore
+        IO.Directory.CreateDirectory control |> ignore
+        IO.Directory.CreateDirectory workspaceRoot |> ignore
+
+        let advancePost =
+            "post { always { sh '''if [ -f \""
+            + control
+            + "/$BUILD_NUMBER.ref\" ]; then read branch sha < \""
+            + control
+            + "/$BUILD_NUMBER.ref\"; git --git-dir=\""
+            + bare
+            + "\" update-ref \"refs/heads/$branch\" \"$sha\"; fi''' } }"
+
+        let pipeline producer branch =
+            let producerCall =
+                if producer = "checkout-scm" then
+                    "checkout(scm)"
+                else
+                    "git(url: '" + bare + "', branch: '" + branch + "')"
+
+            "pipeline { agent any options { skipDefaultCheckout() } stages { stage('capture') { steps { script { "
+            + "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = "
+            + producerCall
+            + "; echo \"FG177-RUNTIME:${env.BUILD_NUMBER}:${value.keySet().join(',')}:${value.GIT_COMMIT}:${value.GIT_PREVIOUS_COMMIT}:${value.GIT_PREVIOUS_SUCCESSFUL_COMMIT}\"; "
+            + "if (env.BUILD_NUMBER == '2') { sh 'exit 7' }"
+            + " } } } } "
+            + advancePost
+            + " }"
+
+        let checkoutScript = pipeline "checkout-scm" "main"
+
+        let commit label =
+            IO.File.WriteAllText(IO.Path.Combine(source, "payload.txt"), label + "\n")
+            runGit source [ "add"; "Jenkinsfile"; "payload.txt" ] |> ignore
+            runGit source [ "commit"; "-m"; label ] |> ignore
+            runGit source [ "rev-parse"; "HEAD" ]
+
+        try
+            runGit source [ "init"; "-b"; "main" ] |> ignore
+            IO.File.WriteAllText(IO.Path.Combine(source, "Jenkinsfile"), checkoutScript + "\n")
+            let a = commit "A"
+            let b = commit "B"
+            let c = commit "C"
+            let d = commit "D"
+            runGit source [ "switch"; "--detach"; a ] |> ignore
+            runGit source [ "switch"; "-c"; "feature" ] |> ignore
+            let f = commit "F"
+            let g = commit "G"
+
+            runGit root [ "init"; "--bare"; bare ] |> ignore
+            runGit source [ "push"; bare; "--all" ] |> ignore
+
+            let setRef branch revision =
+                runGit root [ "--git-dir"; bare; "update-ref"; $"refs/heads/{branch}"; revision ] |> ignore
+
+            let resetRefs () =
+                setRef "main" a
+                setRef "feature" f
+
+            let writeAdvance build branch revision =
+                IO.File.WriteAllText(IO.Path.Combine(control, $"{build}.ref"), $"{branch} {revision}\n")
+
+            writeAdvance 1 "main" b
+            writeAdvance 2 "main" c
+            writeAdvance 4 "feature" g
+            writeAdvance 5 "main" d
+
+            let schedule =
+                [ "main", a, None, None
+                  "main", b, Some a, Some a
+                  "main", c, Some b, Some a
+                  "feature", f, None, None
+                  "feature", g, Some f, Some f
+                  "main", d, Some c, Some c ]
+
+            let assertSchedule (producer: string) (results: Result<Trace, string> list) =
+                Expect.equal results.Length 6 $"{producer}: all retained builds ran"
+
+                (schedule, results)
+                ||> List.iter2 (fun (branch, revision, previous, previousSuccessful) result ->
+                    let trace =
+                        match result with
+                        | Ok trace -> trace
+                        | Error why -> failtestf "%s retained build failed to run: %s" producer why
+
+                    let build =
+                        schedule
+                        |> List.findIndex (fun item -> item = (branch, revision, previous, previousSuccessful))
+                        |> (+) 1
+
+                    Expect.equal
+                        trace.Result
+                        (if build = 2 then "failure" else "success")
+                        $"{producer} build {build}: terminal result"
+
+                    let valueOrNull = Option.defaultValue "null"
+                    let expected =
+                        $"FG177-RUNTIME:{build}:{expectedKeys producer previous.IsSome}:{revision}:{valueOrNull previous}:{valueOrNull previousSuccessful}"
+
+                    Expect.contains trace.Output expected $"{producer} build {build}: exact map projection")
+
+            resetRefs ()
+            let checkoutBuilds =
+                schedule
+                |> List.map (fun (branch, _, _, _) -> ({ Url = bare; Branch = branch }, checkoutScript))
+
+            FogellSide.runScmMany [] workspaceRoot "checkout-job" checkoutBuilds
+            |> assertSchedule "checkout-scm"
+
+            resetRefs ()
+            let gitBuilds = schedule |> List.map (fun (branch, _, _, _) -> pipeline "git" branch)
+            FogellSide.runMany [] workspaceRoot "git-job" gitBuilds
+            |> assertSchedule "git"
+
+            // A freshly recreated job with the SAME name must erase the six
+            // retained builds above. Build 1 returns the narrow base map again,
+            // not D/C/C inherited from the deleted job.
+            resetRefs ()
+            let freshAgain = FogellSide.runMany [] workspaceRoot "git-job" [ pipeline "git" "main" ]
+            match freshAgain with
+            | [ Ok trace ] ->
+                let baseKeys = expectedKeys "git" false
+                let expected = $"FG177-RUNTIME:1:{baseKeys}:{a}:null:null"
+                Expect.equal trace.Result "success" "recreated job build 1 succeeds"
+                Expect.contains trace.Output expected "recreated job has no retained history"
+            | other -> failtestf "recreated job did not run exactly once: %A" other
+
+            // The retained oracle did not license a history with previous but
+            // no previous-successful, nor one whose latest predecessor is
+            // unstable. Both refuse before the silent repository discriminator
+            // or any fetch/workspace mutation can run.
+            resetRefs ()
+            let firstFailureScript =
+                (pipeline "git" "main").Replace(
+                    "env.BUILD_NUMBER == '2') { sh 'exit 7'",
+                    "env.BUILD_NUMBER == '1') { sh 'exit 7'"
+                )
+
+            let firstFailure =
+                FogellSide.runMany [] workspaceRoot "first-failure-job" [ firstFailureScript; firstFailureScript ]
+
+            let firstFailureTraces =
+                firstFailure
+                |> List.map (function Ok trace -> trace | Error why -> failtestf "first-failure run error: %s" why)
+
+            Expect.equal (firstFailureTraces |> List.map (fun trace -> trace.Result)) [ "failure"; "failure" ] "partial history refuses"
+            Expect.isFalse
+                (firstFailureTraces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
+                "partial history refuses before the first Git narration"
+
+            resetRefs ()
+            let unstableScript =
+                (pipeline "git" "main").Replace(
+                    "if (env.BUILD_NUMBER == '2') { sh 'exit 7' }",
+                    "unstable(message: 'measured predecessor')"
+                )
+
+            let unstable =
+                FogellSide.runMany [] workspaceRoot "unstable-history-job" [ unstableScript; unstableScript ]
+                |> List.map (function Ok trace -> trace | Error why -> failtestf "unstable-history run error: %s" why)
+
+            Expect.equal (unstable |> List.map (fun trace -> trace.Result)) [ "unstable"; "failure" ] "unstable history refuses"
+            Expect.isFalse
+                (unstable.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
+                "unstable predecessor refuses before the first Git narration"
+
+            // A provisional or damaged controller-side record is evidence of
+            // interrupted/corrupt history, never permission to fall back to an
+            // older SHA (or to pretend this is the branch's first observation).
+            // Damage happens in build 2 immediately before its git step so the
+            // public retained runner exercises the production read boundary.
+            let assertDamagedHistory (label: string) (jobName: string) (damage: string) =
+                resetRefs ()
+                let damaged =
+                    (pipeline "git" "main").Replace(
+                        "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = ",
+                        $"if (env.BUILD_NUMBER == '2') {{ sh '{damage}'; deleteDir() }}; def value = "
+                    )
+
+                let traces =
+                    FogellSide.runMany [] workspaceRoot jobName [ damaged; damaged ]
+                    |> List.map (function Ok trace -> trace | Error why -> failtestf "%s run error: %s" label why)
+
+                Expect.equal (traces |> List.map (fun trace -> trace.Result)) [ "success"; "failure" ] $"{label}: damaged history refuses"
+                Expect.isFalse
+                    (traces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
+                    $"{label}: refusal precedes the first Git narration"
+
+            let scmHistoryDir jobName =
+                IO.Path.Combine(workspaceRoot, "_artifacts", "_scm", jobName)
+
+            let missingDir = scmHistoryDir "missing-marker-job"
+            let missingMarker = IO.Path.Combine(missingDir, "build@1.result")
+            assertDamagedHistory
+                "missing marker"
+                "missing-marker-job"
+                $"rm -f {missingMarker}"
+
+            let corruptDir = scmHistoryDir "corrupt-marker-job"
+            let corruptMarker = IO.Path.Combine(corruptDir, "build@1.result")
+            assertDamagedHistory
+                "corrupt marker"
+                "corrupt-marker-job"
+                $"printf corrupt > {corruptMarker}"
+
+            let revisionDir = scmHistoryDir "invalid-revision-job"
+            assertDamagedHistory
+                "invalid revision"
+                "invalid-revision-job"
+                $"for f in {revisionDir}/*.revision; do printf not-a-sha > \"$f\"; done"
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+    }
 
 /// FG-014 residual slice. Balanced named collections are admitted as source expressions,
 /// not interpreted as runtime values. These real run entry points prove the shared
@@ -2855,6 +3100,7 @@ let main argv =
             [ hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
+              scmReturnMapRuntime
               jenkinsBuildDataAttestation
               unsupportedNamedCollections
               unsupportedDeclarativeAgents
