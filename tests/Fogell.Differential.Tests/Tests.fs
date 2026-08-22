@@ -1826,6 +1826,9 @@ let unsupportedNamedCollections =
     let positionalCollectionControl =
         "pipeline { agent any stages { stage('a') { steps { withEnv(['A=one']) { sh 'echo $A > ran.txt' } } } } }"
 
+    let rateLimitBuildsControl =
+        "pipeline { agent any options { rateLimitBuilds(throttle: [count: 10, durationName: 'hour', userBoost: true]) } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+
     let withWorkspace (f: string -> string -> unit) =
         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-named-collection-preflight-" + Guid.NewGuid().ToString("N"))
         let job = "job"
@@ -1841,8 +1844,47 @@ let unsupportedNamedCollections =
                 IO.Directory.Delete(root, true)
 
     testList
-        "FG-014 named collection admission fails closed before execution"
-        [ test "stage, parameter, nested and post collections refuse before effects or workspace preparation" {
+        "FG-014 named collection execution contract"
+        [ test "the descriptor-declared pipeline rateLimitBuilds throttle collection remains executable" {
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" rateLimitBuildsControl with
+                  | Error why -> failtestf "rateLimitBuilds control was refused: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "the inert single-build option remains accepted"
+
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "ran.txt")).Trim())
+                      "ran"
+                      "the pipeline reached its executor effect")
+          }
+
+          test "the collection exception is closed over option name, argument name and pipeline scope" {
+              for label, source, occurrence in
+                  [ "different option",
+                    "pipeline { agent any options { quietPeriod(throttle: [count: 10]) } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }",
+                    "step 'quietPeriod' argument `throttle`"
+                    "different argument",
+                    "pipeline { agent any options { rateLimitBuilds(policy: [count: 10]) } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }",
+                    "step 'rateLimitBuilds' argument `policy`"
+                    "stage option scope",
+                    "pipeline { agent any stages { stage('a') { options { rateLimitBuilds(throttle: [count: 10]) } steps { sh 'echo ran > ran.txt' } } } }",
+                    "step 'rateLimitBuilds' argument `throttle`" ] do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringStarts why "unsupported_named_collection:" $"{label}: stable named reason"
+                          Expect.stringContains why occurrence $"{label}: offending argument named"
+
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                          $"{label}: workspace preparation was not reached"
+
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
+                          $"{label}: executor effect was not reached")
+          }
+
+          test "stage, parameter, nested and post collections refuse before effects or workspace preparation" {
               for label, source, occurrence in
                   [ "stage map", stageMap, "step 'publishHTML' argument `target`"
                     "parameter list", parameterList, "step 'choice' argument `choices`"
