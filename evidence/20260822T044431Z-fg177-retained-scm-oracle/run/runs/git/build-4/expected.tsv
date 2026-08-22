@@ -1,0 +1,9 @@
+build	4
+branch	fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/feature
+label	F
+sha	6db6d42e4cc1bd1e2a1fa40e7fc364c855f53aac
+result	SUCCESS
+previous	-
+previous-successful	-
+payload	F
+clone-url	git://100.105.179.51/repo.git

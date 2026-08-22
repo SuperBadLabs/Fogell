@@ -1,0 +1,21 @@
+Started by user unknown or anonymous
+Checking out git git://100.105.179.51/repo.git into /var/jenkins_home/workspace/fg177-20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2-checkout-scm@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 to read Jenkinsfile
+Selected Git installation does not exist. Using Default
+The recommended git tool is: NONE
+No credentials specified
+Cloning the remote Git repository
+Cloning repository git://100.105.179.51/repo.git
+ > git init /var/jenkins_home/workspace/fg177-20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2-checkout-scm@script/8db70904c58e852eb4f5ca5be9790e23f530e8b5e9a0a941e9d02584a89ecaa9 # timeout=10
+Fetching upstream changes from git://100.105.179.51/repo.git
+ > git --version # timeout=10
+ > git --version # 'git version 2.47.3'
+ > git fetch --tags --force --progress -- git://100.105.179.51/repo.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+ > git config remote.origin.url git://100.105.179.51/repo.git # timeout=10
+ > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+Avoid second fetch
+ > git rev-parse refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main^{commit} # timeout=10
+Checking out Revision 2a89cb54588f67fa8b29d98e88b43eb1c9b12d02 (refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main)
+ > git config core.sparsecheckout # timeout=10
+ > git checkout -f 2a89cb54588f67fa8b29d98e88b43eb1c9b12d02 # timeout=10
+Commit message: "FG-177 fixture A"
+First time build. Skipping changelog.

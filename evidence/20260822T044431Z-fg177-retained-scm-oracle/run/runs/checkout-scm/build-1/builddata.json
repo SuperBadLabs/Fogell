@@ -1,0 +1,43 @@
+[
+  {
+    "_class": "hudson.plugins.git.util.BuildData",
+    "buildsByBranchName": {
+      "refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main": {
+        "_class": "hudson.plugins.git.util.Build",
+        "buildNumber": 1,
+        "buildResult": null,
+        "marked": {
+          "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+          "branch": [
+            {
+              "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+              "name": "refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main"
+            }
+          ]
+        },
+        "revision": {
+          "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+          "branch": [
+            {
+              "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+              "name": "refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main"
+            }
+          ]
+        }
+      }
+    },
+    "lastBuiltRevision": {
+      "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+      "branch": [
+        {
+          "SHA1": "2a89cb54588f67fa8b29d98e88b43eb1c9b12d02",
+          "name": "refs/remotes/origin/fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main"
+        }
+      ]
+    },
+    "remoteUrls": [
+      "git://100.105.179.51/repo.git"
+    ],
+    "scmName": ""
+  }
+]

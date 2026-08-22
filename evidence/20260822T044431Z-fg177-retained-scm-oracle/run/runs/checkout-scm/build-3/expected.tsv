@@ -1,0 +1,9 @@
+build	3
+branch	fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/checkout-scm/main
+label	C
+sha	19d8595d58deb010546852e60393860e4b0fb82a
+result	SUCCESS
+previous	ee2e8410ad4d2dc787bc256d3e9d784508a08537
+previous-successful	2a89cb54588f67fa8b29d98e88b43eb1c9b12d02
+payload	C
+clone-url	git://100.105.179.51/repo.git

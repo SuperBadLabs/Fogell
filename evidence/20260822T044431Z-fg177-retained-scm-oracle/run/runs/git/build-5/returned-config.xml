@@ -1,0 +1,52 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<flow-definition plugin="workflow-job@1590.v49101d088542">
+  <actions/>
+  <description>FG-177 retained SCM oracle</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@4357.vd3195c6b_d381">
+    <script>pipeline {
+  agent any
+  options { skipDefaultCheckout() }
+  stages {
+    stage(&apos;probe&apos;) {
+      steps {
+        script {
+          def selectedBranch = (env.BUILD_NUMBER in [&apos;4&apos;, &apos;5&apos;]) ? &apos;fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/feature&apos; : &apos;fg177-retained/20260822T052303Z-dec17753c7f1fb186faf05cc5b7feeb2/git/main&apos;
+          dir(&apos;checkout&apos;) {
+            def value = git(url: &apos;git://100.105.179.51/repo.git&apos;, branch: selectedBranch)
+            fg177Probe(value, &apos;git&apos;)
+          }
+          if (env.BUILD_NUMBER == &apos;2&apos;) { error(&apos;FG177 intentional post-capture failure&apos;) }
+        }
+      }
+    }
+  }
+  post { always { archiveArtifacts artifacts: &apos;checkout/fg177-workspace-*.txt&apos;, allowEmptyArchive: false } }
+}
+
+void fg177Probe(def value, String producer) {
+  String revision = sh(script: &apos;git rev-parse HEAD&apos;, returnStdout: true).trim()
+  writeFile file: &apos;fg177-workspace-revision.txt&apos;, text: revision + &apos;\n&apos;
+  sh &apos;cp payload.txt fg177-workspace-payload.txt&apos;
+  echo &quot;FG177 MAP PRODUCER=${producer} BUILD=${env.BUILD_NUMBER} CLASS=${value == null ? &apos;null&apos; : value.getClass().getName()}&quot;
+  echo &quot;FG177 MAP RENDER=${value}&quot;
+  echo &quot;FG177 MAP KEYS=${value.keySet().sort().join(&apos;,&apos;)}&quot;
+  value.keySet().sort().each { key -&gt; echo &quot;FG177 MAP ENTRY=${key}|${value[key].getClass().getName()}|${value[key]}&quot; }
+  [&apos;GIT_PREVIOUS_COMMIT&apos;, &apos;GIT_PREVIOUS_SUCCESSFUL_COMMIT&apos;].each { key -&gt;
+    echo &quot;FG177 HISTORY KEY=${key}|PRESENT=${value.containsKey(key)}|VALUE=${value[key]}&quot;
+  }
+  def dynamicKey = &apos;GIT_COMMIT&apos;
+  echo &quot;FG177 ACCESS PROPERTY=${value.GIT_COMMIT}|INDEX=${value[&apos;GIT_COMMIT&apos;]}|DYNAMIC=${value[dynamicKey]}&quot;
+  echo &quot;FG177 MISSING PROPERTY=${value.FG177_MISSING}|INDEX=${value[&apos;FG177_MISSING&apos;]}|GET=${value.get(&apos;FG177_MISSING&apos;)}|CONTAINS=${value.containsKey(&apos;FG177_MISSING&apos;)}&quot;
+  [&apos;integer&apos;: 0, &apos;null&apos;: null].each { label, index -&gt;
+    try { echo &quot;FG177 WRONG-INDEX ${label}=VALUE:${value[index]}&quot; }
+    catch (Throwable problem) { echo &quot;FG177 WRONG-INDEX ${label}=THREW:${problem.getClass().getName()}&quot; }
+  }
+}
+</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
