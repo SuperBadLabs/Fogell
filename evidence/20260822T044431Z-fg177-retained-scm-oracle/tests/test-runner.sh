@@ -123,6 +123,15 @@ if python3 "$here/validate-retained-scm-run.py" --hermetic "$tmp/bad-history" >"
   echo 'ERROR: validator accepted missing history evidence' >&2; exit 1
 fi
 
+cp -R "$out" "$tmp/bad-key-overshoot"
+sed -i.bak '/^FG177 MAP KEYS=/ s/$/,UNMEASURED_KEY/' "$tmp/bad-key-overshoot/runs/git/build-1/console.txt"
+rm "$tmp/bad-key-overshoot/runs/git/build-1/console.txt.bak"
+printf '%s\n' 'FG177 MAP ENTRY=UNMEASURED_KEY|java.lang.String|unmeasured' >> "$tmp/bad-key-overshoot/runs/git/build-1/console.txt"
+rehash "$tmp/bad-key-overshoot"
+if python3 "$here/validate-retained-scm-run.py" --hermetic "$tmp/bad-key-overshoot" >"$tmp/bad-key-overshoot.log" 2>&1; then
+  echo 'ERROR: validator accepted an overshot key/entry surface' >&2; exit 1
+fi
+
 cp -R "$out" "$tmp/bad-surface"
 printf 'drift\n' >> "$tmp/bad-surface/surface-after/git-plugin.tsv"; rehash "$tmp/bad-surface"
 if python3 "$here/validate-retained-scm-run.py" --hermetic "$tmp/bad-surface" >"$tmp/bad-surface.log" 2>&1; then

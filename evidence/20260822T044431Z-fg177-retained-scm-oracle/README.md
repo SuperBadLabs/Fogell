@@ -90,10 +90,10 @@ python3 validate-retained-scm-run.py --hermetic /new/test-output
 
 The default validator rejects every `capture-mode.txt` other than
 `production`. Conversely, `--hermetic` accepts only an explicitly hermetic
-bundle and rejects contamination by production oracle artifacts. Hermetic tests
-must therefore be updated to set `FG177_HERMETIC=1`, implement driver
-`assert-absent`, accept the configure build-directory argument, emit
-`submitted-config.xml`/`returned-config.xml`, and invoke the validator with
+bundle and rejects contamination by production oracle artifacts. The retained
+hermetic test does this explicitly: it sets `FG177_HERMETIC=1`, uses a driver
+with `assert-absent`, passes the configure build-directory argument, emits
+`submitted-config.xml`/`returned-config.xml`, and invokes the validator with
 `--hermetic`.
 
 The retained production run proves both steps return `java.util.TreeMap`. A

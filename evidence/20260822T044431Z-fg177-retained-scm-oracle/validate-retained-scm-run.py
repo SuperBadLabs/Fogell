@@ -307,14 +307,8 @@ def validate_build(root: pathlib.Path, producer: str, number: int, commits: dict
     if not matching_actions:
         fail(f"{producer} build {number}: no BuildData action binds current revision, branch, and remote")
     console = (directory / "console.txt").read_text()
-    if f"FG177 MAP PRODUCER={producer} BUILD={number} CLASS=java.util.TreeMap" not in console:
-        fail(f"{producer} build {number}: return class marker absent")
-    if "FG177 MAP RENDER=" not in console:
-        fail(f"{producer} build {number}: raw render measurement absent")
     history = number in (2, 3, 5, 6)
     keys = list(BASE[producer]) + (["GIT_PREVIOUS_COMMIT", "GIT_PREVIOUS_SUCCESSFUL_COMMIT"] if history else [])
-    if "FG177 MAP KEYS=" + ",".join(sorted(keys)) not in console:
-        fail(f"{producer} build {number}: exact key set mismatch")
     entries = {
         "GIT_BRANCH": f"origin/{expected['branch']}",
         "GIT_COMMIT": expected["sha"],
@@ -325,23 +319,28 @@ def validate_build(root: pathlib.Path, producer: str, number: int, commits: dict
     if history:
         entries["GIT_PREVIOUS_COMMIT"] = expected["previous"]
         entries["GIT_PREVIOUS_SUCCESSFUL_COMMIT"] = expected["previous-successful"]
-    for key, value in entries.items():
-        if f"FG177 MAP ENTRY={key}|java.lang.String|{value}" not in console:
-            fail(f"{producer} build {number}: entry mismatch for {key}")
+    expected_markers = [
+        f"FG177 MAP PRODUCER={producer} BUILD={number} CLASS=java.util.TreeMap",
+        "FG177 MAP RENDER=[" + ", ".join(f"{key}:{entries[key]}" for key in sorted(entries)) + "]",
+        "FG177 MAP KEYS=" + ",".join(sorted(keys)),
+        *(f"FG177 MAP ENTRY={key}|java.lang.String|{entries[key]}" for key in sorted(entries)),
+    ]
     for key, expectation_key in (("GIT_PREVIOUS_COMMIT", "previous"), ("GIT_PREVIOUS_SUCCESSFUL_COMMIT", "previous-successful")):
         present = expected[expectation_key] != "-"
         value = expected[expectation_key] if present else "null"
-        if f"FG177 HISTORY KEY={key}|PRESENT={str(present).lower()}|VALUE={value}" not in console:
-            fail(f"{producer} build {number}: history presence/value mismatch")
+        expected_markers.append(
+            f"FG177 HISTORY KEY={key}|PRESENT={str(present).lower()}|VALUE={value}"
+        )
     commit = expected["sha"]
-    fixed = (
+    expected_markers.extend((
         f"FG177 ACCESS PROPERTY={commit}|INDEX={commit}|DYNAMIC={commit}",
         "FG177 MISSING PROPERTY=null|INDEX=null|GET=null|CONTAINS=false",
-        "FG177 WRONG-INDEX integer=",
-        "FG177 WRONG-INDEX null=",
-    )
-    if any(marker not in console for marker in fixed):
-        fail(f"{producer} build {number}: map-surface marker absent")
+        "FG177 WRONG-INDEX integer=THREW:java.lang.ClassCastException",
+        "FG177 WRONG-INDEX null=THREW:java.lang.NullPointerException",
+    ))
+    observed_markers = [line for line in console.splitlines() if line.startswith("FG177 ")]
+    if observed_markers != expected_markers:
+        fail(f"{producer} build {number}: exact ordered FG177 marker set mismatch")
     artifact_dir = directory / "artifacts"
     if (artifact_dir / "fg177-workspace-revision.txt").read_text().strip() != commit:
         fail(f"{producer} build {number}: workspace revision artifact mismatch")
