@@ -635,7 +635,7 @@ module WalkerGit =
                 | Ok _ ->
                     checkCancelled ()
                     deleteExistingLocalBranch <- not cancelled
-                | Result.Error e when e.StartsWith "exit " -> checkCancelled ()
+                | Result.Error "exit 1" -> checkCancelled ()
                 | Result.Error e ->
                     checkCancelled ()
                     if not cancelled then failure <- Some $"git show-ref local branch ({e})"
