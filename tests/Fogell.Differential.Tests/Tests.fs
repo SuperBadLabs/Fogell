@@ -1933,7 +1933,7 @@ let genuineNullRuntime =
           test "JUnit build-instability suppression uses bare boolean provenance outside script" {
               let source =
                   "pipeline { agent any stages { stage('probe') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true; "
                   + "sh 'touch declarative-suppressed.txt' } } } }"
 
@@ -1978,7 +1978,7 @@ let genuineNullRuntime =
           test "JUnit accepts typed scripted booleans for both independent instability channels" {
               let source =
                   "pipeline { agent any stages { stage('probe') { steps { script { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"2\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"2\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def suppressBuild = true; def suppressStage = false; "
                   + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: suppressBuild, skipMarkingStageUnstable: suppressStage); "
                   + "if (got.totalCount == 2 && got.failCount == 1) { sh 'touch scripted-summary.txt' } "
@@ -2029,7 +2029,7 @@ let genuineNullRuntime =
               for label, flags, expectedResult, expectedStagePost, expectedPipelinePost in rows do
                   let source =
                       "pipeline { agent any stages { stage('probe') { steps { "
-                      + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                      + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                       + $"junit testResults: 'reports/summary.xml'{flags}; sh 'touch successor.txt' "
                       + "} post { unstable { sh 'touch stage-unstable.txt' } success { sh 'touch stage-success.txt' } } } } "
                       + "post { unstable { sh 'touch pipeline-unstable.txt' } success { sh 'touch pipeline-success.txt' } } }"
@@ -2069,7 +2069,7 @@ let genuineNullRuntime =
           test "a nested sequential JUnit warning selects child and enclosing stage post without marking the build" {
               let source =
                   "pipeline { agent any stages { stage('parent') { stages { stage('child') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
                   + "sh 'touch child-successor.txt' "
                   + "} post { unstable { sh 'touch child-unstable.txt' } success { sh 'touch wrong-child-success.txt' } } } } "
@@ -2106,7 +2106,7 @@ let genuineNullRuntime =
               let source =
                   "pipeline { agent any stages { stage('fanout') { parallel { "
                   + "stage('warned') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/warned.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/warned.xml\"; "
                   + "junit testResults: 'reports/warned.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
                   + "sh 'touch warned-successor.txt' "
                   + "} post { unstable { sh 'touch warned-unstable.txt' } success { sh 'touch wrong-warned-success.txt' } } } "

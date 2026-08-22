@@ -802,6 +802,82 @@ let externalInterrupt =
                   Expect.equal observed.TestTotals (Some(2, 1, 0)) $"{label}: suppression never erases counts"
           }
 
+          test "junit derives totals from direct testcase children through nested suites" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let junit pattern =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ] }
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "children.xml"),
+                  "<testsuites tests=\"not-a-number\" failures=\"-7\" errors=\"2147483648\" skipped=\"99\">"
+                  + "<testsuite name=\"outer\">"
+                  + "<testcase name=\"pass\"/>"
+                  + "<testcase name=\"failure\"><failure/></testcase>"
+                  + "<testcase name=\"both-failures\"><failure/><error/></testcase>"
+                  + "<testsuite name=\"inner\" tests=\"999\" failures=\"bad\" errors=\"-1\" skipped=\"88\">"
+                  + "<testcase name=\"error\"><error/></testcase>"
+                  + "<testcase name=\"skip\"><skipped/></testcase>"
+                  + "<testcase name=\"skip-wins\"><failure/><error/><skipped/></testcase>"
+                  + "</testsuite>"
+                  + "<testsuite name=\"suite-error\"><error message=\"setup failed\"/></testsuite>"
+                  + "</testsuite></testsuites>")
+
+              let children = junit "children.xml"
+              Expect.equal children.Status Unstable "child failures, not hostile aggregate attributes, mark the build"
+              Expect.equal children.TestTotals (Some(7, 4, 2)) "nested direct cases, one suite error, and marker precedence determine exact totals"
+              Expect.equal children.StageWarning (Some Unstable) "child-derived failures decorate the stage"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "suite-markers.xml"),
+                  "<testsuites>"
+                  + "<testsuite name=\"error-then-skipped\"><error/><skipped/></testsuite>"
+                  + "<testsuite name=\"skipped-then-error\"><skipped/><error/></testsuite>"
+                  + "<testsuite name=\"error-only\"><error/></testsuite>"
+                  + "<testsuite name=\"skipped-only\"><skipped/></testsuite>"
+                  + "<testsuite name=\"inert-suite-markers\"><failure/><skipped/><testcase name=\"pass\"/></testsuite>"
+                  + "</testsuites>")
+
+              let suiteMarkers = junit "suite-markers.xml"
+              Expect.equal suiteMarkers.Status Unstable "only the error-only synthetic case fails"
+              Expect.equal suiteMarkers.TestTotals (Some(4, 1, 2)) "suite synthetic cases use skipped-first classification in either XML order"
+              Expect.equal suiteMarkers.StageWarning (Some Unstable) "the unsuppressed error-only suite decorates the stage"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "mixed-valid.xml"),
+                  "<arbitrary><testsuite tests=\"500\" failures=\"500\"><testcase name=\"only-real-case\"/></testsuite></arbitrary>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "mixed-zero.xml"),
+                  "<arbitrary><testcase name=\"not-a-result\"/></arbitrary>")
+
+              let mixed = junit "mixed-*.xml"
+              Expect.equal mixed.Status Success "a zero-result sibling does not poison an aggregate containing a real case"
+              Expect.equal mixed.TestTotals (Some(1, 0, 0)) "an arbitrary root exposes direct suites but does not own direct testcases"
+              Expect.isNone mixed.StageWarning "the sole recognized case passed"
+
+              let depth = 10_000
+              let deepXml = Text.StringBuilder(depth * 24)
+
+              for _ in 1..depth do
+                  deepXml.Append("<testsuite>") |> ignore
+
+              deepXml.Append("<testcase name=\"deep-pass\"/>") |> ignore
+
+              for _ in 1..depth do
+                  deepXml.Append("</testsuite>") |> ignore
+
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "deep.xml"), deepXml.ToString())
+              let deeplyNested = junit "deep.xml"
+              Expect.equal deeplyNested.Status Success "deep suite nesting does not consume the native call stack"
+              Expect.equal deeplyNested.TestTotals (Some(1, 0, 0)) "the deepest direct testcase is counted once"
+              Expect.isNone deeplyNested.StageWarning "the deeply nested case passed"
+          }
+
           test "junit synthesizes failed tests for malformed XML while real unreadability and interruption remain terminal" {
               let root = tempRoot ()
               let baseRequest = request root ""
@@ -870,13 +946,13 @@ let externalInterrupt =
               Expect.equal multiple.StageWarning (Some Unstable) "multiple synthetic failures remain an ordinary warning"
 
               File.WriteAllText(
-                  Path.Combine(baseRequest.Workspace, "overflow-valid.xml"),
+                  Path.Combine(baseRequest.Workspace, "attributes-only.xml"),
                   "<testsuite tests=\"2147483647\" failures=\"2147483647\" errors=\"0\" skipped=\"0\"/>")
-              File.WriteAllText(Path.Combine(baseRequest.Workspace, "overflow-bad.xml"), "not xml")
-              let overflow = junit "overflow-*.xml" false false None
-              Expect.equal overflow.Status Failure "synthetic addition cannot wrap the Integer summary surface"
-              Expect.isNone overflow.TestTotals "an out-of-range aggregate publishes no wrapped counts"
-              Expect.isNone overflow.StageWarning "overflow cannot masquerade as successful test execution"
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "attributes-malformed.xml"), "not xml")
+              let overflow = junit "attributes-*.xml" false false None
+              Expect.equal overflow.Status Unstable "suite aggregate attributes cannot manufacture overflow"
+              Expect.equal overflow.TestTotals (Some(1, 1, 0)) "only the malformed sibling's synthetic case contributes"
+              Expect.equal overflow.StageWarning (Some Unstable) "the real synthetic failure remains an ordinary warning"
 
               let nonXml = Path.Combine(baseRequest.Workspace, "report.txt")
               File.WriteAllText(nonXml, "not xml")
