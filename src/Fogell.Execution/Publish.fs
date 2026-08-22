@@ -120,8 +120,11 @@ module Publish =
     let archive store buildKey workspace patterns =
         archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
 
-    /// Parse JUnit XML totals. Reads only the attributes every producer emits;
-    /// a malformed report is reported, not silently counted as zero.
+    /// Parse JUnit XML totals. Reads only the attributes every producer emits.
+    /// The pinned JUnit plugin turns a syntactically malformed `.xml` report into
+    /// one synthetic failed test (`[failed-to-read]`) and continues aggregating
+    /// the other matched reports. Preserve that narrow compatibility rule while
+    /// keeping nonzero-file open failures and malformed non-XML inputs unreadable.
     /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
@@ -142,10 +145,13 @@ module Publish =
         elif List.isEmpty files then
             Error(Unreadable "no test report matched the pattern")
         else
-            let mutable total = 0
-            let mutable failed = 0
-            let mutable skipped = 0
-            let mutable malformed = []
+            // Accumulate wider than the Java summary surface. A valid sibling can
+            // already publish Int32.MaxValue; adding one synthetic failure must not
+            // wrap both counters negative and make Executor classify the run SUCCESS.
+            let mutable total = 0L
+            let mutable failed = 0L
+            let mutable skipped = 0L
+            let mutable unreadable = []
 
             let mutable aborted = false
 
@@ -155,35 +161,59 @@ module Publish =
                     aborted <- true
                 else
                 try
-                    let doc = Xml.Linq.XDocument.Load(Path.Combine(workspace, relative))
+                    // Jenkins calls File.length() before opening or parsing. Java
+                    // returns zero both for a zero-byte file and for a path which
+                    // vanished after glob expansion, so both become one synthetic
+                    // `[empty]` failure without an open attempt. A non-empty parse
+                    // failure is recovered only for an exact lowercase `.xml` path.
+                    let report = FileInfo(Path.Combine(workspace, relative))
 
-                    // Sum over <testsuite> elements; a <testsuites> wrapper is
-                    // common, and counting both would double every figure.
-                    let suites =
-                        doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
+                    if not report.Exists || report.Length = 0L then
+                        total <- total + 1L
+                        failed <- failed + 1L
+                    else
+                        use stream = report.OpenRead()
+                        let doc = Xml.Linq.XDocument.Load(stream)
 
-                    let readInt (e: Xml.Linq.XElement) name =
-                        match e.Attribute(Xml.Linq.XName.Get name) with
-                        | null -> 0
-                        | a ->
-                            match Int32.TryParse a.Value with
-                            | true, v -> v
-                            | _ -> 0
+                        // Sum over <testsuite> elements; a <testsuites> wrapper is
+                        // common, and counting both would double every figure.
+                        let suites =
+                            doc.Descendants(Xml.Linq.XName.Get "testsuite") |> Seq.toList
 
-                    for suite in suites do
-                        total <- total + readInt suite "tests"
-                        failed <- failed + readInt suite "failures" + readInt suite "errors"
-                        skipped <- skipped + readInt suite "skipped"
-                with ex ->
-                    malformed <- $"{relative}: {ex.GetType().Name}" :: malformed
+                        let readInt (e: Xml.Linq.XElement) name =
+                            match e.Attribute(Xml.Linq.XName.Get name) with
+                            | null -> 0L
+                            | a ->
+                                match Int32.TryParse a.Value with
+                                | true, v -> int64 v
+                                | _ -> 0L
+
+                        for suite in suites do
+                            total <- total + readInt suite "tests"
+                            failed <- failed + readInt suite "failures" + readInt suite "errors"
+                            skipped <- skipped + readInt suite "skipped"
+                with
+                | :? System.Xml.XmlException
+                    when relative.EndsWith(".xml", StringComparison.Ordinal) ->
+                    // Pinned junit-plugin 1416.vd753e036de5e:
+                    // TestResult.parse(File, ...) catches DocumentException for a
+                    // `.xml` path and adds one failed `[failed-to-read]` case. Empty
+                    // files took the earlier extension-independent `[empty]` arm.
+                    total <- total + 1L
+                    failed <- failed + 1L
+                | ex -> unreadable <- $"{relative}: {ex.GetType().Name}" :: unreadable
 
             // Same rule as the archive path: once a report has been parsed, an
             // interruption observed afterwards still counts.
             if not aborted && abort () then aborted <- true
 
-            match aborted, malformed with
+            match aborted, unreadable with
             | true, _ -> Error Interrupted
-            | false, [] -> Ok(total, failed, skipped)
+            | false, []
+                when [ total; failed; skipped ]
+                     |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
+                Ok(int total, int failed, int skipped)
+            | false, [] -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
             | false, errs -> Error(Unreadable("unparsable test report(s): " + String.concat "; " errs))
 
     let parseJUnit (workspace: string) (patterns: string list) =

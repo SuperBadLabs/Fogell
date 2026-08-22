@@ -1840,6 +1840,55 @@ let genuineNullRuntime =
                       "passCount preserves Integer-only provenance while subtracting both failure classes and skips")
           }
 
+          test "JUnit malformed XML becomes one synthetic failed test and returns its typed summary" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' 'not-xml' > reports/malformed.xml\"; "
+                  + "def got = junit(testResults: 'reports/malformed.xml'); "
+                  + "def passes = got.passCount; "
+                  + "if (got.totalCount == 1 && got.failCount == 1 && got.skipCount == 0 && passes == 0 "
+                  + "&& passes instanceof Integer && !(passes instanceof Long)) { "
+                  + "sh 'printf 1,1,0,0,Integer > malformed-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "the synthetic failed test is ordinary JUnit instability"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "malformed-summary.txt")))
+                      "1,1,0,0,Integer"
+                      "the returned summary carries all four exact counts and Integer-not-Long passCount provenance")
+          }
+
+          test "JUnit empty reports synthesize failures before extension gating" {
+              let body =
+                  "sh \"rm -rf reports empty-summary.txt; mkdir -p reports; : > reports/empty.txt; : > reports/empty.XML\"; "
+                  + "def got = junit(testResults: 'reports/*'); "
+                  + "def passes = got.passCount; "
+                  + "if (got.totalCount == 2 && got.failCount == 2 && got.skipCount == 0 && passes == 0 "
+                  + "&& passes instanceof Integer && !(passes instanceof Long)) { "
+                  + "sh 'printf 2,2,0,0,Integer > empty-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "two empty reports are ordinary JUnit instability"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "empty-summary.txt")))
+                      "2,2,0,0,Integer"
+                      "empty .txt and uppercase .XML reports each synthesize one failure before extension gating")
+          }
+
+          test "JUnit aggregates valid cases with one synthetic failure per malformed XML file" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/valid.xml; printf '%s' 'not-xml' > reports/malformed.xml\"; "
+                  + "def got = junit(testResults: 'reports/*.xml'); "
+                  + "if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0 && got.passCount == 1) { "
+                  + "sh 'printf 2,1,0,1 > mixed-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "the valid pass and synthetic failure aggregate"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "mixed-summary.txt")))
+                      "2,1,0,1"
+                      "valid report counts survive beside the synthetic malformed-report case")
+          }
+
           test "JUnit passCount arithmetic fails closed until promotion and decimal types are modelled" {
               let operations =
                   [ "unary-minus", "-passes"

@@ -802,33 +802,130 @@ let externalInterrupt =
                   Expect.equal observed.TestTotals (Some(2, 1, 0)) $"{label}: suppression never erases counts"
           }
 
-          test "junit stage suppression never masks malformed or interrupted report failures" {
+          test "junit synthesizes failed tests for malformed XML while real unreadability and interruption remain terminal" {
               let root = tempRoot ()
               let baseRequest = request root ""
               let report = Path.Combine(baseRequest.Workspace, "report.xml")
 
-              let junit deadlineExpired =
+              let junit pattern skipBuild skipStage deadlineExpired =
                   Executor.runStep
                       { baseRequest with
                           Name = "junit"
                           Script = None
-                          Named = [ "testResults", "report.xml" ]
-                          JUnitSkipMarkingBuildUnstable = true
-                          JUnitSkipMarkingStageUnstable = true
+                          Named = [ "testResults", pattern ]
+                          JUnitSkipMarkingBuildUnstable = skipBuild
+                          JUnitSkipMarkingStageUnstable = skipStage
                           DeadlineExpired = deadlineExpired }
 
               File.WriteAllText(report, "not xml")
-              let malformed = junit None
-              Expect.equal malformed.Status Failure "the option cannot suppress an unreadable report"
-              Expect.isNone malformed.TestTotals "a malformed report never fabricates counts"
-              Expect.isNone malformed.StageWarning "a malformed report is not a test-failure stage warning"
+              let malformed = junit "report.xml" false false None
+              Expect.equal malformed.Status Unstable "a malformed .xml report is one synthetic failed test"
+              Expect.equal malformed.TestTotals (Some(1, 1, 0)) "the synthetic case contributes exact counts"
+              Expect.equal malformed.StageWarning (Some Unstable) "the synthetic failure decorates the stage"
+
+              let suppressed = junit "report.xml" true true None
+              Expect.equal suppressed.Status Success "ordinary JUnit marking flags suppress the synthetic failure's result channels"
+              Expect.equal suppressed.TestTotals (Some(1, 1, 0)) "suppression never erases the synthetic counts"
+              Expect.isNone suppressed.StageWarning "stage suppression removes only the warning"
+
+              File.WriteAllText(report, "")
+              let empty = junit "report.xml" false false None
+              Expect.equal empty.Status Unstable "an empty report is the plugin's sibling synthetic failed case"
+              Expect.equal empty.TestTotals (Some(1, 1, 0)) "the empty-report case contributes the same summary counts"
+              Expect.equal empty.StageWarning (Some Unstable) "the empty-report failure decorates the stage"
+
+              let emptyText = Path.Combine(baseRequest.Workspace, "empty.txt")
+              File.WriteAllText(emptyText, "")
+              let emptyTextResult = junit "empty.txt" false false None
+              Expect.equal emptyTextResult.Status Unstable "zero-byte detection precedes the malformed-report extension gate"
+              Expect.equal emptyTextResult.TestTotals (Some(1, 1, 0)) "an empty non-XML report contributes the synthetic case"
+              Expect.equal emptyTextResult.StageWarning (Some Unstable) "an empty non-XML report is an ordinary test warning"
+
+              let emptyUppercase = Path.Combine(baseRequest.Workspace, "empty.XML")
+              File.WriteAllText(emptyUppercase, "")
+              let emptyUppercaseResult = junit "empty.XML" false false None
+              Expect.equal emptyUppercaseResult.Status Unstable "empty uppercase .XML is recovered before case-sensitive parsing"
+              Expect.equal emptyUppercaseResult.TestTotals (Some(1, 1, 0)) "empty uppercase .XML contributes the synthetic case"
+              Expect.equal emptyUppercaseResult.StageWarning (Some Unstable) "empty uppercase .XML is an ordinary test warning"
+
+              File.Delete emptyText
+              File.Delete emptyUppercase
+
+              File.WriteAllText(report, "not xml")
 
               File.WriteAllText(
-                  report,
+                  Path.Combine(baseRequest.Workspace, "valid.xml"),
                   "<testsuite tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/></testsuite>")
 
-              let interrupted = junit (Some(fun () -> true))
-              Expect.equal interrupted.Status Aborted "the option cannot suppress an interrupted scan"
+              let mixed = junit "*.xml" false false None
+              Expect.equal mixed.Status Unstable "a malformed file does not discard valid sibling reports"
+              Expect.equal mixed.TestTotals (Some(2, 1, 0)) "valid totals and one synthetic failure aggregate"
+              Expect.equal mixed.StageWarning (Some Unstable) "the mixed aggregate remains a test-failure warning"
+
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "multi-a.xml"), "not xml")
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "multi-b.xml"), "<testsuite>")
+              let multiple = junit "multi-*.xml" false false None
+              Expect.equal multiple.Status Unstable "each malformed XML file contributes independently"
+              Expect.equal multiple.TestTotals (Some(2, 2, 0)) "synthesis is once per file, not once per invocation"
+              Expect.equal multiple.StageWarning (Some Unstable) "multiple synthetic failures remain an ordinary warning"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "overflow-valid.xml"),
+                  "<testsuite tests=\"2147483647\" failures=\"2147483647\" errors=\"0\" skipped=\"0\"/>")
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "overflow-bad.xml"), "not xml")
+              let overflow = junit "overflow-*.xml" false false None
+              Expect.equal overflow.Status Failure "synthetic addition cannot wrap the Integer summary surface"
+              Expect.isNone overflow.TestTotals "an out-of-range aggregate publishes no wrapped counts"
+              Expect.isNone overflow.StageWarning "overflow cannot masquerade as successful test execution"
+
+              let nonXml = Path.Combine(baseRequest.Workspace, "report.txt")
+              File.WriteAllText(nonXml, "not xml")
+              let unreadable = junit "report.txt" true true None
+              Expect.equal unreadable.Status Failure "the plugin's synthetic rule is restricted to .xml paths"
+              Expect.isNone unreadable.TestTotals "a genuinely unreadable input publishes no counts"
+              Expect.isNone unreadable.StageWarning "unreadability is not a test-failure warning"
+
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "report.XML"), "not xml")
+              let uppercase = junit "report.XML" true true None
+              Expect.equal uppercase.Status Failure "the non-empty malformed-report extension gate is case-sensitive"
+              Expect.isNone uppercase.TestTotals "non-empty uppercase .XML does not acquire synthetic counts"
+              Expect.isNone uppercase.StageWarning "non-empty uppercase .XML failure is not a test warning"
+
+              let ioReport = Path.Combine(baseRequest.Workspace, "io.xml")
+              File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
+              let vanishedPolls = ref 0
+
+              let deleteAfterGlob () =
+                  vanishedPolls.Value <- vanishedPolls.Value + 1
+                  if vanishedPolls.Value = 1 then File.Delete ioReport
+                  false
+
+              let vanished = junit "io.xml" false false (Some deleteAfterGlob)
+              Expect.equal vanished.Status Unstable "a report vanished after glob expansion follows Java File.length zero semantics"
+              Expect.equal vanished.TestTotals (Some(1, 1, 0)) "a vanished matched path contributes one synthetic empty case"
+              Expect.equal vanished.StageWarning (Some Unstable) "a vanished matched path remains an ordinary test warning"
+
+              File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
+
+              use heldOpen =
+                  File.Open(ioReport, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+              let ioFailure = junit "io.xml" true true None
+              Expect.equal ioFailure.Status Failure "a nonzero report which cannot be opened remains terminal"
+              Expect.isNone ioFailure.TestTotals "a genuine open failure publishes no summary"
+              Expect.isNone ioFailure.StageWarning "a genuine open failure is not a test-failure warning"
+
+              let postScanReport = Path.Combine(baseRequest.Workspace, "postscan.xml")
+              File.WriteAllText(postScanReport, "not xml")
+              let postScanPolls = ref 0
+
+              let abortAfterScan () =
+                  postScanPolls.Value <- postScanPolls.Value + 1
+                  postScanPolls.Value = 3
+
+              let interrupted = junit "postscan.xml" true true (Some abortAfterScan)
+              Expect.equal postScanPolls.Value 3 "the interrupt fired only at the final post-scan poll"
+              Expect.equal interrupted.Status Aborted "post-scan interruption overrides a recoverable synthetic result"
               Expect.isNone interrupted.TestTotals "an interrupted scan never publishes counts"
               Expect.isNone interrupted.StageWarning "an interrupted scan does not decorate the stage as unstable"
           }

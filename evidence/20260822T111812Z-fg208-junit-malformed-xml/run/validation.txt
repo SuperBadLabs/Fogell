@@ -1,0 +1,5 @@
+seal verification: 3 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved

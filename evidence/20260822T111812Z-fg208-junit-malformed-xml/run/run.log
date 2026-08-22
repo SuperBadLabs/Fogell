@@ -1,0 +1,9 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg208-junit-malformed-xml.Jenkinsfile          PROVEN           fg208-junit-malformed-xml.receipt.txt
+  fg208-junit-malformed-mixed.Jenkinsfile        PROVEN           fg208-junit-malformed-mixed.receipt.txt
+  fg208-junit-empty-any-extension.Jenkinsfile    PROVEN           fg208-junit-empty-any-extension.receipt.txt
+
+tier-1 proven (incl. workspace): 3 / 3
+proven-partial (result+output):  0 / 3
