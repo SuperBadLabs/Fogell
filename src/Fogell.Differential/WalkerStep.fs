@@ -147,14 +147,66 @@ module WalkerStep =
 
         let wantsStatus = contract = WalkerRules.ExitStatus
 
+        // FG-177. The JUnit flag is a typed boolean setter just like the shell
+        // return flags above. Resolve it before dispatch, while the parser's
+        // ExpressionArgs or the scripted host's typed HostedArgs can still tell
+        // bare `true` from the string `'true'`; StepRequest.Named cannot.
+        let junitSkipMarkingBuildUnstableState =
+            if step.Name = "junit" then
+                let suppliedAsBooleanValue =
+                    match ctx.HostedArgs with
+                    | Some(_, named) ->
+                        named
+                        |> List.exists (fun (key, value) ->
+                            key = "skipMarkingBuildUnstable"
+                            && match value with
+                               | VBool _ -> true
+                               | _ -> false)
+                    | None ->
+                        step.ExpressionArgs.Contains "skipMarkingBuildUnstable"
+                        && (step.Named
+                            |> List.exists (fun (key, raw) ->
+                                key = "skipMarkingBuildUnstable"
+                                && (raw = "true" || raw = "false")))
+
+                renderedNamed
+                |> List.choose (fun (key, rendered) ->
+                    if key = "skipMarkingBuildUnstable" then Some rendered else None)
+                |> function
+                    | [] -> None
+                    | [ "true" ] when suppliedAsBooleanValue ->
+                        Some WalkerRules.FlagOn
+                    | [ "false" ] when suppliedAsBooleanValue ->
+                        Some WalkerRules.FlagOff
+                    | [ rendered ] ->
+                        Some(
+                            WalkerRules.FlagRejected
+                                $"expects a boolean value, not rendered text `{rendered}`; Fogell refuses unmeasured JUnit coercion before scanning reports")
+                    | _ ->
+                        Some(
+                            WalkerRules.FlagRejected
+                                "was supplied more than once; Fogell refuses unmeasured duplicate-key binding before scanning reports")
+            else
+                None
+
+        let junitFlagRejection =
+            match junitSkipMarkingBuildUnstableState with
+            | Some(WalkerRules.FlagRejected why) ->
+                Some $"step 'junit' argument `skipMarkingBuildUnstable` {why}"
+            | _ -> None
+
+        let junitSkipMarkingBuildUnstable =
+            junitSkipMarkingBuildUnstableState = Some WalkerRules.FlagOn
+
         let result =
-            match flagRejection with
+            match flagRejection, junitFlagRejection with
             // REFUSED WITHOUT RUNNING. `Executor.runStep` is not reached, so no shell
             // starts and no file is written — which is the observable part: Jenkins
             // leaves the workspace EMPTY here, so an engine that ran the shell first and
             // complained afterwards would still differ on the workspace hash.
-            | Some why -> Executor.refusedBeforeRunning why
-            | None ->
+            | Some why, _
+            | None, Some why -> Executor.refusedBeforeRunning why
+            | None, None ->
 
             Executor.runStep
                 { Name = step.Name
@@ -167,6 +219,7 @@ module WalkerStep =
                   // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
                   // deliberately not part of this condition.
                   CaptureStdout = wantsStdout
+                  JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
                   // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
                   // default. A 120 s constant sat here and aborted any step
                   // outliving two minutes, invisible to every case that

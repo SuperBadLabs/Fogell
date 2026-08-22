@@ -1,0 +1,13 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+Compiled from "TestResultSummary.java"
+public class hudson.tasks.junit.TestResultSummary implements java.io.Serializable {
+  public hudson.tasks.junit.TestResultSummary();
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int);
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int, float);
+  public hudson.tasks.junit.TestResultSummary(hudson.tasks.junit.TestResult);
+  public int getFailCount();
+  public int getSkipCount();
+  public int getPassCount();
+  public int getTotalCount();
+  public float getDuration();
+}
