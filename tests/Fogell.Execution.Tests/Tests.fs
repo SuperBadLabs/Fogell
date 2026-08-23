@@ -1207,6 +1207,73 @@ let externalInterrupt =
                   "the shared archive/stash matcher still returns a default-excluded path"
           }
 
+          test "junit collapses repeated report-pattern separators without changing shared matching" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let writeReport (relative: string) (xml: string) =
+                  let path = Path.Combine(baseRequest.Workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, xml)
+
+              let passing name time =
+                  $"<testsuite name=\"{name}\"><testcase name=\"pass\" time=\"{time}\"/></testsuite>"
+
+              let failing name =
+                  $"<testsuite name=\"{name}\"><testcase name=\"fail\"><failure/></testcase></testsuite>"
+
+              writeReport "reports/result.xml" (passing "literal" "1.25")
+              writeReport "module/service-target/surefire-reports/TEST-result.xml" (passing "corpus" "2.5")
+              writeReport "module/service-target/surefire-reports/test-decoy.xml" (failing "case-decoy")
+              writeReport "module/.svn/service-target/surefire-reports/TEST-hidden.xml" (failing "excluded")
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = allowEmpty
+                          Named = [ "testResults", pattern ] }
+
+              let literal = junit "reports//result.xml" false
+              Expect.equal literal.Status Success "a doubled internal separator selects the literal report"
+              Expect.equal literal.TestTotals (Some(1, 0, 0)) "the literal report contributes one pass"
+              Expect.equal literal.TestDuration (Some 1.25f) "the literal report duration is preserved"
+
+              let many = junit "reports////result.xml" false
+              Expect.equal many.TestTotals literal.TestTotals "three or more adjacent separators collapse identically"
+              Expect.equal many.TestDuration literal.TestDuration "separator-run width does not change duration"
+
+              let corpusPattern = "**//*target/surefire-reports/TEST-*.xml"
+              let corpus = junit corpusPattern false
+              Expect.equal corpus.Status Success "the exact admitted-corpus spelling selects the nested report"
+              Expect.equal corpus.TestTotals (Some(1, 0, 0)) "case and default-exclude controls stay inert"
+              Expect.equal corpus.TestDuration (Some 2.5f) "only the selected visible report contributes duration"
+
+              let widerRuns = junit "**////*target//surefire-reports///TEST-*.xml" false
+              Expect.equal widerRuns.TestTotals corpus.TestTotals "multiple internal runs tokenize like single separators"
+              Expect.equal widerRuns.TestDuration corpus.TestDuration "multiple internal runs preserve the same summary"
+
+              let caseMiss = junit "reports//Result.xml" false
+              Expect.equal caseMiss.Status Failure "separator normalization does not weaken case sensitivity"
+              Expect.equal
+                  caseMiss.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "a case-only miss retains the existing no-report diagnostic"
+
+              let allowedCaseMiss = junit "reports//Result.xml" true
+              Expect.equal allowedCaseMiss.Status Success "allowEmptyResults still permits the normalized case miss"
+              Expect.equal allowedCaseMiss.TestTotals (Some(0, 0, 0)) "the permitted miss returns zero counts"
+
+              let rooted = junit "//reports/result.xml" true
+              Expect.equal rooted.TestTotals (Some(0, 0, 0)) "collapsing separators does not relativize a rooted include"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "reports//result.xml")
+                  []
+                  "the shared archive/stash matcher retains its existing repeated-separator behavior"
+          }
+
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""

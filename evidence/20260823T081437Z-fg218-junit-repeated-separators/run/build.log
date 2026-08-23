@@ -1,0 +1,18 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Fogell.Domain -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Groovy -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
+  Fogell.Admission -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Groovy.Parser -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Execution -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Differential -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Differential.Cli -> /home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.64
