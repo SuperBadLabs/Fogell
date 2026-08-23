@@ -25,6 +25,7 @@ type ArtifactStore =
 type JUnitProblem =
     | Interrupted
     | NoReports
+    | MissingIdentity
     | Unreadable of string
 
 /// FG-047. Controller-side stash storage.
@@ -38,6 +39,9 @@ type StashStore =
     static member under (root: string) = { Root = root }
 
 module Publish =
+
+    type private MissingJUnitIdentityException() =
+        inherit IOException("JUnit testcase has no resolvable class identity")
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
@@ -157,6 +161,7 @@ module Publish =
             let mutable failed = 0L
             let mutable skipped = 0L
             let mutable unreadable = []
+            let mutable missingIdentity = false
 
             let mutable aborted = false
 
@@ -184,6 +189,25 @@ module Publish =
 
                         let hasDirectChild name (element: Xml.Linq.XElement) =
                             not (isNull (element.Element(xmlName name)))
+
+                        let hasAttribute name (element: Xml.Linq.XElement) =
+                            not (isNull (element.Attribute(xmlName name)))
+
+                        let hasCaseIdentity
+                            (owner: Xml.Linq.XElement)
+                            (testCase: Xml.Linq.XElement)
+                            =
+                            // SuiteResult first uses testcase@classname, then the
+                            // owning element's name. CaseResult has one final legacy
+                            // fallback: a dotted testcase name supplies its class
+                            // prefix. Attribute presence is the boundary; Java keeps
+                            // an explicitly empty classname/name rather than treating
+                            // it as missing.
+                            hasAttribute "classname" testCase
+                            || hasAttribute "name" owner
+                            || match testCase.Attribute(xmlName "name") with
+                               | null -> false
+                               | testName -> testName.Value.Contains(".", StringComparison.Ordinal)
 
                         let tallyCase (element: Xml.Linq.XElement) =
                             total <- total + 1L
@@ -213,18 +237,24 @@ module Publish =
                                 for nested in element.Elements(xmlName "testsuite") do
                                     pending.Push nested
 
-                                // Only an actual suite owns testcase and suite-error
-                                // children; arbitrary wrappers do not own direct cases.
-                                if element.Name = xmlName "testsuite" then
-                                    // A suite-level error is represented as one synthetic
-                                    // case in addition to ordinary testcase children.
-                                    // It is still skipped when that same suite element
-                                    // carries a direct skipped marker.
-                                    if hasDirectChild "error" element then
-                                        tallyCase element
+                                // parseSuite owns direct cases/errors on every element
+                                // it reaches: the document root plus descendants reached
+                                // exclusively through direct testsuite edges. It does not
+                                // require the owner itself to be named testsuite.
+                                // A direct owner error is one synthetic case and remains
+                                // skipped when that owner also has a direct skipped marker.
+                                if hasDirectChild "error" element then
+                                    tallyCase element
 
-                                    for testCase in element.Elements(xmlName "testcase") do
-                                        tallyCase testCase
+                                for testCase in element.Elements(xmlName "testcase") do
+                                    if not (hasCaseIdentity element testCase) then
+                                        // The pinned plugin leaves CaseResult.className
+                                        // null and terminates while building/tallying the
+                                        // result. Keep this distinct from aggregate zero:
+                                        // allowEmptyResults must not suppress it.
+                                        raise (MissingJUnitIdentityException())
+
+                                    tallyCase testCase
                 with
                 | :? System.Xml.XmlException
                     when relative.EndsWith(".xml", StringComparison.Ordinal) ->
@@ -234,26 +264,34 @@ module Publish =
                     // files took the earlier extension-independent `[empty]` arm.
                     total <- total + 1L
                     failed <- failed + 1L
+                | :? MissingJUnitIdentityException ->
+                    // This is a pinned CaseResult null-className failure, not a
+                    // generic report-read failure. Preserve it as its own problem
+                    // so the executor can publish Jenkins' exact raw diagnostic.
+                    missingIdentity <- true
                 | ex -> unreadable <- $"{relative}: {ex.GetType().Name}" :: unreadable
 
             // Same rule as the archive path: once a report has been parsed, an
             // interruption observed afterwards still counts.
             if not aborted && abort () then aborted <- true
 
-            match aborted, unreadable with
-            | true, _ -> Error Interrupted
-            | false, []
+            match aborted, missingIdentity, unreadable with
+            | true, _, _ -> Error Interrupted
+            | false, _, first :: rest ->
+                Error(Unreadable("unparsable test report(s): " + String.concat "; " (first :: rest)))
+            | false, true, _ -> Error MissingIdentity
+            | false, false, []
                 when [ total; failed; skipped ]
                      |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
                 Ok(int total, int failed, int skipped)
-            | false, [] -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
-            | false, errs -> Error(Unreadable("unparsable test report(s): " + String.concat "; " errs))
+            | false, false, [] -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
 
     let parseJUnit (workspace: string) (patterns: string list) =
         match parseJUnitWithAbort workspace patterns (fun () -> false) with
         | Ok v -> Ok v
         | Error Interrupted -> Error "interrupted"
         | Error NoReports -> Error "no test report matched the pattern"
+        | Error MissingIdentity -> Error "JUnit testcase has no resolvable class identity"
         | Error(Unreadable m) -> Error m
 
 module Stash =
