@@ -1,0 +1,25 @@
+<flow-definition plugin="workflow-job">
+  <description>FG-215 disposable attribute identity oracle</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script><![CDATA[pipeline {
+    agent any
+    stages {
+        stage('probe') {
+            steps {
+                script {
+                    sh "rm -rf reports continued.txt; mkdir -p reports; printf '%s' '<j:testsuites xmlns:j=\"urn:fg215:element\" xmlns:a=\"urn:fg215:attr\"><j:testsuite name=\"plain-suite-a\" a:name=\"pref-suite-a\" time=\"4\" a:time=\"40\"><j:testcase classname=\"pkg.PlainA\" a:classname=\"pkg.PrefA\" name=\"plain-case-a\" a:name=\"pref-case-a\" time=\"1\" a:time=\"9\"/></j:testsuite><j:testsuite name=\"plain-suite-b\" a:name=\"pref-suite-b\"><j:testcase classname=\"pkg.PlainB\" a:classname=\"pkg.PrefB\" name=\"plain-case-b\" a:name=\"pref-case-b\" time=\"1\" a:time=\"9\"/></j:testsuite></j:testsuites>' > reports/result.xml"
+                    def summary = junit(testResults: 'reports/result.xml')
+                    echo "FG215_IDENTITY=plain-first;SUMMARY=${summary.totalCount},${summary.failCount},${summary.skipCount},${summary.passCount};DURATION=${summary.duration};STATUS=${currentBuild.currentResult}"
+                    sh 'printf continued > continued.txt'
+                }
+            }
+        }
+    }
+}]]></script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

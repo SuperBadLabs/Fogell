@@ -1,0 +1,8 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg215-junit-namespaced-local-names-positive.   PROVEN           fg215-junit-namespaced-local-names-positive.receipt.txt
+  fg215-junit-namespace-declaration-not-attrib   PROVEN           fg215-junit-namespace-declaration-not-attribute.receipt.txt
+
+tier-1 proven (incl. workspace): 2 / 2
+proven-partial (result+output):  0 / 2

@@ -1,0 +1,10 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+3fae79e081096e1410645eb3557c63b79ca266d510ab479889511109becd1690  /var/jenkins_home/war/WEB-INF/lib/dom4j-2.2.0.jar
+  public org.dom4j.Element element(java.lang.String);
+  public java.util.List<org.dom4j.Element> elements(java.lang.String);
+  public org.dom4j.Attribute attribute(java.lang.String);
+  public java.lang.String attributeValue(java.lang.String);
+seal verification: 2 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved

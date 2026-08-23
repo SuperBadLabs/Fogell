@@ -202,13 +202,28 @@ module Publish =
                         use stream = report.OpenRead()
                         let doc = Xml.Linq.XDocument.Load(stream)
 
-                        let xmlName name = Xml.Linq.XName.Get name
+                        let directElements name (element: Xml.Linq.XElement) =
+                            // dom4j's Element.elements(String)/element(String)
+                            // compare the exact, case-sensitive local name. The
+                            // namespace URI and prefix are not part of the match.
+                            element.Elements()
+                            |> Seq.filter (fun child -> child.Name.LocalName = name)
+
+                        let firstAttribute name (element: Xml.Linq.XElement) =
+                            // dom4j stores namespace declarations as Namespace
+                            // nodes, not Attributes. LINQ exposes them as
+                            // attributes, so exclude them before matching the
+                            // same exact local-name contract in document order.
+                            element.Attributes()
+                            |> Seq.tryFind (fun attribute ->
+                                not attribute.IsNamespaceDeclaration
+                                && attribute.Name.LocalName = name)
 
                         let hasDirectChild name (element: Xml.Linq.XElement) =
-                            not (isNull (element.Element(xmlName name)))
+                            directElements name element |> Seq.isEmpty |> not
 
                         let hasAttribute name (element: Xml.Linq.XElement) =
-                            not (isNull (element.Attribute(xmlName name)))
+                            firstAttribute name element |> Option.isSome
 
                         let parseDuration (raw: string) =
                             // Pinned TimeToFloat removes commas, tries
@@ -340,9 +355,9 @@ module Publish =
                             // it as missing.
                             hasAttribute "classname" testCase
                             || hasAttribute "name" owner
-                            || match testCase.Attribute(xmlName "name") with
-                               | null -> false
-                               | testName -> testName.Value.Contains(".", StringComparison.Ordinal)
+                            || match firstAttribute "name" testCase with
+                               | None -> false
+                               | Some testName -> testName.Value.Contains(".", StringComparison.Ordinal)
 
                         let tallyCase (element: Xml.Linq.XElement) =
                             total <- total + 1L
@@ -376,7 +391,7 @@ module Publish =
                                     // require the owner itself to be named testsuite.
                                     // A direct owner error is one synthetic case and remains
                                     // skipped when that owner also has a direct skipped marker.
-                                    let directCases = element.Elements(xmlName "testcase") |> Seq.toArray
+                                    let directCases = directElements "testcase" element |> Seq.toArray
                                     let hasDirectError = hasDirectChild "error" element
 
                                     if hasDirectError then
@@ -418,17 +433,17 @@ module Publish =
                                     // visited and added child-first.
                                     if hasDirectError || directCases.Length > 0 then
                                         let suiteDuration =
-                                            match element.Attribute(xmlName "time") with
-                                            | null ->
+                                            match firstAttribute "time" element with
+                                            | None ->
                                                 directCases
                                                 |> Array.fold (fun total testCase ->
-                                                    match testCase.Attribute(xmlName "time") with
-                                                    | null -> total
-                                                    | time ->
+                                                    match firstAttribute "time" testCase with
+                                                    | None -> total
+                                                    | Some time ->
                                                         match total, parseDuration time.Value with
                                                         | Some aggregate, Some value -> Some(aggregate + value)
                                                         | _ -> None) (Some 0.0f)
-                                            | time -> parseDuration time.Value
+                                            | Some time -> parseDuration time.Value
 
                                         addDuration suiteDuration
                                 else
@@ -440,7 +455,7 @@ module Publish =
                                     // the native call stack.
                                     pending.Push(element, true)
 
-                                    element.Elements(xmlName "testsuite")
+                                    directElements "testsuite" element
                                     |> Seq.toArray
                                     |> Array.rev
                                     |> Array.iter (fun nested -> pending.Push(nested, false))

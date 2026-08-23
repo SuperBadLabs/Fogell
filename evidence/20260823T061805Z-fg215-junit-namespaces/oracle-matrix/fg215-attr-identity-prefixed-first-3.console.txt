@@ -1,0 +1,28 @@
+Started by user unknown or anonymous
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins in /var/jenkins_home/workspace/fg215-attr-identity-prefixed-first
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (probe)
+[Pipeline] script
+[Pipeline] {
+[Pipeline] sh
++ rm -rf reports continued.txt
++ mkdir -p reports
++ printf %s <j:testsuites xmlns:j="urn:fg215:element" xmlns:a="urn:fg215:attr"><j:testsuite a:name="pref-suite-a" name="plain-suite-a" a:time="40" time="4"><j:testcase a:classname="pkg.PrefA" classname="pkg.PlainA" a:name="pref-case-a" name="plain-case-a" a:time="9" time="1"/></j:testsuite><j:testsuite a:name="pref-suite-b" name="plain-suite-b"><j:testcase a:classname="pkg.PrefB" classname="pkg.PlainB" a:name="pref-case-b" name="plain-case-b" a:time="9" time="1"/></j:testsuite></j:testsuites>
+[Pipeline] junit
+Recording test results
+[Checks API] No suitable checks publisher found.
+[Pipeline] echo
+FG215_IDENTITY=prefixed-first;SUMMARY=2,0,0,2;DURATION=49.0;STATUS=SUCCESS
+[Pipeline] sh
++ printf continued
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+Finished: SUCCESS
