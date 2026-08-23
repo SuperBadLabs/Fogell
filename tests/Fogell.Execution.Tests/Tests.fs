@@ -1274,6 +1274,89 @@ let externalInterrupt =
                   "the shared archive/stash matcher retains its existing repeated-separator behavior"
           }
 
+          test "junit expands trailing report-pattern separators as recursive directory shorthand" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let writeReport (relative: string) (xml: string) =
+                  let path = Path.Combine(baseRequest.Workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, xml)
+
+              let passing name time =
+                  $"<testsuite name=\"{name}\" time=\"{time}\"><testcase name=\"pass\"/></testsuite>"
+
+              let failing name time =
+                  $"<testsuite name=\"{name}\" time=\"{time}\"><testcase name=\"fail\"><failure/></testcase></testsuite>"
+
+              writeReport "reports/top.xml" (passing "top" "1.25")
+              writeReport "reports/deep/result.xml" (failing "deep" "2.5")
+              writeReport "reports/.git/hidden.xml" (failing "excluded" "9")
+              writeReport "outside/result.xml" (failing "outside" "11")
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = allowEmpty
+                          Named = [ "testResults", pattern ] }
+
+              let assertRecursive label observed =
+                  Expect.equal observed.Status Unstable $"{label} selects the failing nested report"
+                  Expect.equal observed.TestTotals (Some(2, 1, 0)) $"{label} selects direct and nested reports only"
+                  Expect.equal observed.TestDuration (Some 3.75f) $"{label} excludes hidden and outside durations"
+
+              assertRecursive "a singular trailing separator" (junit "reports/" false)
+              assertRecursive "repeated trailing separators" (junit "reports////" false)
+              assertRecursive "a trailing backslash separator" (junit "reports\\" false)
+              assertRecursive "the existing comma-token trim" (junit "reports/ " false)
+
+              let wildcardDirectory = junit "reports/*/" false
+              assertRecursive "terminal double-star's zero-component arm" wildcardDirectory
+
+              let exact = junit "reports/top.xml" false
+              Expect.equal exact.Status Success "an exact non-trailing include retains its existing behavior"
+              Expect.equal exact.TestTotals (Some(1, 0, 0)) "the exact include selects only its report"
+
+              let literalFileWithSeparator = junit "reports/top.xml/" false
+              Expect.equal
+                  literalFileWithSeparator.Status
+                  Failure
+                  "a literal file path does not acquire the wildcard zero-component arm"
+              Expect.equal
+                  literalFileWithSeparator.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "a trailing separator keeps a wholly literal prefix as a directory lookup"
+
+              let caseMiss = junit "Reports/" false
+              Expect.equal caseMiss.Status Failure "directory shorthand remains case-sensitive"
+              Expect.equal
+                  caseMiss.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "a shorthand case miss retains the no-report diagnostic"
+
+              let allowedMiss = junit "Reports/" true
+              Expect.equal allowedMiss.Status Success "allowEmptyResults permits the shorthand case miss"
+              Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted case miss returns zero counts"
+
+              for boundaryPattern in [ "/"; "//"; ""; "./reports/" ] do
+                  let observed = junit boundaryPattern true
+                  Expect.equal
+                      observed.TestTotals
+                      (Some(0, 0, 0))
+                      $"boundary control '{boundaryPattern}' does not become scanner-relative shorthand"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "reports/")
+                  []
+                  "the shared archive/stash matcher retains its trailing-separator behavior"
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "reports//")
+                  []
+                  "the shared matcher also retains its repeated trailing-separator behavior"
+          }
+
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""

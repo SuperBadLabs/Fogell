@@ -1,0 +1,14 @@
+corpus verified: 228/228 files match the pinned manifest
+4f6561bd2bbbad86a447d9ff0bebb093a93b659a4ebc061765ea3c14a3e8e0a0  /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_jenkins.Jenkinsfile
+direct-junit-calls=36
+junit-trailing-includes=0
+archive-stash-trailing-includes=0
+              archiveArtifacts(
+                  artifacts: "**/*$changelist/*$changelist*",
+                  excludes: '**/*.lastUpdated,**/jenkins-coverage*/,**/jenkins-test*/',
+                  allowEmptyArchive: true, // in case we forgot to reincrementalify
+                  fingerprint: true
+                  )
+archive-exclude-trailing-components=2
+/home/srikanth/projects/fogell-worktrees/fg-219-junit-trailing-directory-shorthand/corpus/BASELINE-DECLARATIVE-SCORE.tsv:118:jenkinsci_jenkins.Jenkinsfile	scripted-err	malformed_syntax	-	-	'true', 'try', 'while', '{', '||' or '}' @62:28
+/home/srikanth/projects/fogell-worktrees/fg-219-junit-trailing-directory-shorthand/docs/COMPATIBILITY-LEDGER.tsv:123:jenkinsci_jenkins.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: any char in ‘ ’, '/*' or '//' @62:28
