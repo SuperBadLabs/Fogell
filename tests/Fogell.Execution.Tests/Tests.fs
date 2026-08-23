@@ -966,6 +966,102 @@ let externalInterrupt =
               Expect.isNone deeplyNested.StageWarning "the deeply nested case passed"
           }
 
+          test "junit matches exact element local names across XML namespaces" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = allowEmpty
+                          Named = [ "testResults", pattern ] }
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "namespace-default.xml"),
+                  "<testsuite xmlns=\"urn:fg215:default\" name=\"default\"><testcase name=\"pass\"/></testsuite>")
+              let defaultNamespace = junit "namespace-default.xml" false
+              Expect.equal defaultNamespace.Status Success "a default namespace does not hide exact local names"
+              Expect.equal defaultNamespace.TestTotals (Some(1, 0, 0)) "the default-namespaced testcase is counted"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "namespace-prefixed.xml"),
+                  "<j:testsuite xmlns:j=\"urn:fg215:prefixed\" name=\"prefixed\"><j:testcase name=\"failure\"><j:failure/></j:testcase></j:testsuite>")
+              let prefixed = junit "namespace-prefixed.xml" false
+              Expect.equal prefixed.Status Unstable "a prefixed failure retains its build contribution"
+              Expect.equal prefixed.TestTotals (Some(1, 1, 0)) "prefixed suite, case, and marker names match by local name"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "namespace-mixed.xml"),
+                  "<w:results xmlns:w=\"urn:fg215:wrapper\" xmlns:a=\"urn:fg215:a\" xmlns:b=\"urn:fg215:b\">"
+                  + "<testsuite name=\"plain-suite\"><a:testcase name=\"pass\"/></testsuite>"
+                  + "<b:testsuite name=\"prefixed-suite\"><testcase name=\"error\"><b:error/></testcase>"
+                  + "<b:testcase name=\"skip\"><a:skipped/></b:testcase></b:testsuite></w:results>")
+              let mixed = junit "namespace-mixed.xml" false
+              Expect.equal mixed.Status Unstable "mixed namespaces preserve the failing aggregate"
+              Expect.equal mixed.TestTotals (Some(3, 1, 1)) "wrapper, suite, case, and marker prefixes vary independently"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "namespace-uppercase.xml"),
+                  "<testsuites><TESTSUITE name=\"upper\"><TESTCASE name=\"ignored\"/></TESTSUITE></testsuites>")
+              let uppercase = junit "namespace-uppercase.xml" true
+              Expect.equal uppercase.Status Success "allowEmpty permits exact-case misses"
+              Expect.equal uppercase.TestTotals (Some(0, 0, 0)) "local-name matching remains case-sensitive"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "namespace-nonexact.xml"),
+                  "<testsuites><testsuite-extra name=\"extra\"><testcase-extra name=\"ignored\"/></testsuite-extra></testsuites>")
+              let nonexact = junit "namespace-nonexact.xml" true
+              Expect.equal nonexact.Status Success "allowEmpty permits longer lookalikes"
+              Expect.equal nonexact.TestTotals (Some(0, 0, 0)) "local-name matching remains text-exact"
+          }
+
+          test "junit matches ordered attribute local names but excludes namespace declarations" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let junit pattern =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = false
+                          Named = [ "testResults", pattern ] }
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "attribute-prefixed.xml"),
+                  "<a:testsuite xmlns:a=\"urn:fg215:a\" xmlns:b=\"urn:fg215:b\" a:name=\"suite\" a:time=\"4\">"
+                  + "<b:testcase b:name=\"plain\" b:classname=\"matrix.Case\" b:time=\"99\"/></a:testsuite>")
+              let prefixed = junit "attribute-prefixed.xml"
+              Expect.equal prefixed.Status Success "prefixed identity attributes admit the case"
+              Expect.equal prefixed.TestTotals (Some(1, 0, 0)) "prefixed name and classname are matched by local name"
+              Expect.equal prefixed.TestDuration (Some 4.0f) "the prefixed suite time is authoritative"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "attribute-first-a.xml"),
+                  "<testsuite xmlns:a=\"urn:fg215:a\" xmlns:b=\"urn:fg215:b\" name=\"suite\" a:time=\"1.25\" b:time=\"9\">"
+                  + "<testcase name=\"pass\"/></testsuite>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "attribute-first-b.xml"),
+                  "<testsuite xmlns:a=\"urn:fg215:a\" xmlns:b=\"urn:fg215:b\" name=\"suite\" b:time=\"9\" a:time=\"1.25\">"
+                  + "<testcase name=\"pass\"/></testsuite>")
+              Expect.equal (junit "attribute-first-a.xml").TestDuration (Some 1.25f) "the first local time wins in one order"
+              Expect.equal (junit "attribute-first-b.xml").TestDuration (Some 9.0f) "the first local time wins in reverse order"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "attribute-xmlns-decoy.xml"),
+                  "<n:testsuite xmlns:n=\"urn:fg215:n\" xmlns:name=\"urn:fg215:decoy\">"
+                  + "<n:testcase n:name=\"plain\"/></n:testsuite>")
+              let declarationDecoy = junit "attribute-xmlns-decoy.xml"
+              Expect.equal declarationDecoy.Status Failure "a namespace declaration cannot supply the owner name"
+              Expect.equal
+                  declarationDecoy.Diagnostic
+                  (Some "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null")
+                  "the xmlns:name decoy stays on the missing-identity path"
+              Expect.isNone declarationDecoy.TestTotals "the terminal identity failure publishes no partial counts"
+          }
+
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""
