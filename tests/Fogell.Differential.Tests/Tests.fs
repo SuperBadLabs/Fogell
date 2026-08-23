@@ -61,6 +61,29 @@ let userOutputSurvives =
               Expect.equal kept [ "real build output" ] "the whole trace is narration, the output is not"
           }
 
+          test "Caused heads remain contextual and wrapper-shaped output compares" {
+              let userLines =
+                  [ "Failed to read my own report"
+                    "ordinary next line"
+                    "Caused: java.io.IOException: printed by my build"
+                    "not a stack frame" ]
+
+              let kept = Trace.normaliseOutput userLines
+              Expect.contains kept "Failed to read my own report" "a standalone wrapper-shaped line compares"
+              Expect.contains kept "Caused: java.io.IOException: printed by my build" "a head without a frame compares"
+
+              let causedTrace =
+                  [ "Caused: java.io.IOException: engine failure"
+                    "at PluginClassLoader for junit//hudson.tasks.junit.TestResult.parse(TestResult.java:618)" ]
+
+              Expect.isEmpty
+                  (Trace.normaliseOutput causedTrace)
+                  "a Caused head followed by a real Java frame is contextual narration"
+              Expect.isTrue
+                  (Trace.reportedFailureReason causedTrace)
+                  "the confirmed Caused trace explains the failure"
+          }
+
           test "a build may print the secret-interpolation warning's words" {
               // SIXTH instance of this class, and I introduced it in the same PR that added
               // these tests. Jenkins' warning is a three-line SEQUENCE; each line alone is
@@ -100,6 +123,17 @@ let userOutputSurvives =
 
               Expect.isTrue (Trace.reportedFailureReason jenkinsFailure) "the trace IS the explanation"
               Expect.isEmpty (Trace.normaliseOutput jenkinsFailure) "and it is not compared as output"
+
+              let causedFailure =
+                  [ "Caused: java.io.IOException: report ingest failed"
+                    "at PluginClassLoader for x//org.Foo.bar(Foo.java:1)" ]
+
+              Expect.isTrue
+                  (Trace.reportedFailureReason causedFailure)
+                  "a nested-cause trace is the same reason class"
+              Expect.isEmpty
+                  (Trace.normaliseOutput causedFailure)
+                  "a nested-cause head and its frames are not compared verbatim"
 
               // A build merely printing the class name explains nothing.
               Expect.isFalse
@@ -1720,6 +1754,8 @@ let genuineNullRuntime =
             | Ok trace -> check workspace trace)
 
     let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+    let missingTestName =
+        Fogell.Execution.JUnitDiagnostics.MissingTestNameMessage
 
     testList
         "FG-177 genuine-null runtime publication"
@@ -1886,6 +1922,152 @@ let genuineNullRuntime =
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, $"same-xml-{label}-successor.txt")))
                           $"{label}: neither XML order nor allowEmptyResults permits the successor")
+          }
+
+          test "JUnit admits missing testcase names only when a class fallback exists" {
+              let body =
+                  "sh \"mkdir -p reports; "
+                  + "printf '%s' '<arbitrary><testcase classname=\\\"matrix.Pass\\\"/><testcase classname=\\\"matrix.Fail\\\"><failure/></testcase><testcase classname=\\\"matrix.Error\\\"><error/></testcase><testcase classname=\\\"matrix.Skip\\\"><skipped/></testcase></arbitrary>' > reports/a-classname.xml; "
+                  + "printf '%s' '<arbitrary name=\\\"Owner\\\"><testcase/><testsuite name=\\\"Suite\\\"><testcase/></testsuite></arbitrary>' > reports/b-owner.xml\"; "
+                  + "def got = junit(testResults: 'reports/*.xml'); "
+                  + "if (got.totalCount == 6 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 3) { "
+                  + "sh 'touch missing-name-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "ordinary marker classification survives absent testcase names"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "missing-name-summary.txt")))
+                      "classname and owner-name fallbacks both publish the exact typed summary")
+          }
+
+          test "JUnit missing and empty testcase names retain distinct terminal diagnostics" {
+              for label, testcase, expected in
+                  [ "missing", "<testcase/>", missingTestName
+                    "empty", "<testcase name=\\\"\\\"/>", missingIdentity ] do
+                  let body =
+                      $"sh \"mkdir -p reports; printf '%%s' '<arbitrary>{testcase}</arbitrary>' > reports/result.xml\"; "
+                      + "junit(testResults: 'reports/result.xml', allowEmptyResults: true); "
+                      + $"sh 'touch {label}-name-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: the parser fault is terminal"
+                      let comparedDiagnostics =
+                          trace.Output
+                          |> List.filter (fun line -> line = missingTestName || line = missingIdentity)
+
+                      let expectedCompared =
+                          if label = "missing" then [] else [ missingIdentity ]
+
+                      Expect.equal
+                          comparedDiagnostics
+                          expectedCompared
+                          $"{label}: only Jenkins-direct diagnostics remain in compared output"
+                      let reportWrapper = "Failed to read ${WORKSPACE}/reports/result.xml"
+
+                      if label = "missing" then
+                          Expect.contains
+                              trace.Output
+                              reportWrapper
+                              "missing: the Jenkins-visible report wrapper compares on both engines"
+                      else
+                          Expect.isFalse
+                              (List.contains reportWrapper trace.Output)
+                              "empty: FG-211 retains its direct diagnostic without the FG-212 wrapper"
+
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the terminal fault remains visibly explained"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-name-successor.txt")))
+                          $"{label}: allowEmptyResults cannot permit the successor")
+          }
+
+          test "JUnit construction faults precede deferred identity tally across one report" {
+              for label, xml, expected in
+                  [ "missing-first",
+                    "<testsuites><testsuite><testcase/></testsuite><testsuite><testcase name=\\\"simple\\\"/></testsuite></testsuites>",
+                    missingTestName
+                    "identity-first",
+                    "<testsuites><testsuite><testcase name=\\\"simple\\\"/></testsuite><testsuite><testcase/></testsuite></testsuites>",
+                    missingTestName
+                    "child-before-owner",
+                    "<testsuites><testcase/><testsuite><testcase name=\\\"simple\\\"/></testsuite></testsuites>",
+                    missingTestName
+                    "same-owner-missing-first",
+                    "<testsuite><testcase/><testcase name=\\\"simple\\\"/></testsuite>",
+                    missingTestName
+                    "same-owner-identity-first",
+                    "<testsuite><testcase name=\\\"simple\\\"/><testcase/></testsuite>",
+                    missingTestName ] do
+                  let body =
+                      $"sh \"mkdir -p reports; printf '%%s' '{xml}' > reports/result.xml\"; "
+                      + "junit(testResults: 'reports/result.xml', allowEmptyResults: true); "
+                      + $"sh 'touch {label}-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: the winning parser fault is terminal"
+
+                      let expectedCompared =
+                          if expected = missingTestName then [] else [ missingIdentity ]
+
+                      Expect.equal
+                          (trace.Output |> List.filter (fun line -> line = missingTestName || line = missingIdentity))
+                          expectedCompared
+                          $"{label}: only Jenkins-direct child-first diagnostics remain compared"
+                      let reportWrapper = "Failed to read ${WORKSPACE}/reports/result.xml"
+
+                      if expected = missingTestName then
+                          Expect.contains
+                              trace.Output
+                              reportWrapper
+                              $"{label}: the selected missing-name fault compares its report wrapper"
+                      else
+                          Expect.isFalse
+                              (List.contains reportWrapper trace.Output)
+                              $"{label}: the selected FG-211 fault retains its direct diagnostic"
+
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the winning fault remains visibly explained"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-successor.txt")))
+                          $"{label}: the successor remains suppressed")
+          }
+
+          test "JUnit construction faults use global sorted-file order before deferred identity tally" {
+              let assertCrossFile label setup pattern expectedWrappers =
+                  let body =
+                      $"sh \"mkdir -p reports; {setup}\"; "
+                      + $"junit(testResults: '{pattern}', allowEmptyResults: true); "
+                      + $"sh 'touch {label}-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: the selected global fault is terminal"
+
+                      let wrappers =
+                          trace.Output
+                          |> List.filter (fun line ->
+                              line.StartsWith("Failed to read ", System.StringComparison.Ordinal))
+
+                      Expect.equal wrappers expectedWrappers $"{label}: only the winning immediate wrapper compares"
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the selected fault remains explained"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-successor.txt")))
+                          $"{label}: the successor remains suppressed")
+
+              assertCrossFile
+                  "identity-then-missing"
+                  "printf '%s' '<arbitrary><testcase name=\\\"simple\\\"/></arbitrary>' > reports/a-identity.xml; printf '%s' '<arbitrary><testcase/></arbitrary>' > reports/b-missing.xml"
+                  "reports/*.xml"
+                  [ "Failed to read ${WORKSPACE}/reports/b-missing.xml" ]
+
+              assertCrossFile
+                  "missing-then-unreadable"
+                  "printf '%s' '<arbitrary><testcase/></arbitrary>' > reports/a-missing.xml; printf '%s' 'not xml' > reports/b-unreadable.XML"
+                  "reports/b-unreadable.XML,reports/a-missing.xml"
+                  [ "Failed to read ${WORKSPACE}/reports/a-missing.xml" ]
+
+              assertCrossFile
+                  "unreadable-then-missing"
+                  "printf '%s' 'not xml' > reports/a-unreadable.XML; printf '%s' '<arbitrary><testcase/></arbitrary>' > reports/b-missing.xml"
+                  "reports/b-missing.xml,reports/a-unreadable.XML"
+                  []
           }
 
           test "JUnit aggregate-zero is terminal by default and with explicit false" {

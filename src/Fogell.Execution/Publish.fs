@@ -25,8 +25,17 @@ type ArtifactStore =
 type JUnitProblem =
     | Interrupted
     | NoReports
+    | MissingTestName of report: string
     | MissingIdentity
     | Unreadable of string
+
+module JUnitDiagnostics =
+
+    /// FG-212. Literal line captured from the pinned Jenkins/JUnit oracle. The
+    /// enhanced-NPE local name belongs to that exact runtime build.
+    [<Literal>]
+    let MissingTestNameMessage =
+        "Cannot invoke \"String.contains(java.lang.CharSequence)\" because \"nameAttr\" is null"
 
 /// FG-047. Controller-side stash storage.
 ///
@@ -40,8 +49,8 @@ type StashStore =
 
 module Publish =
 
-    type private MissingJUnitIdentityException() =
-        inherit IOException("JUnit testcase has no resolvable class identity")
+    type private MissingJUnitTestNameException() =
+        inherit IOException("JUnit testcase has no name attribute or class fallback")
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
@@ -141,7 +150,11 @@ module Publish =
         (patterns: string list)
         (abort: unit -> bool)
         : Result<int * int * int, JUnitProblem> =
-        let files = patterns |> List.collect (expandGlob workspace) |> List.distinct
+        let files =
+            patterns
+            |> List.collect (expandGlob workspace)
+            |> List.distinct
+            |> List.sort
 
         // REVIEW FIX (Codex, PR #14 round 12): the mirror of the archive zero-match
         // case. With no matching report the scan can still have been long, and an
@@ -160,13 +173,13 @@ module Publish =
             let mutable total = 0L
             let mutable failed = 0L
             let mutable skipped = 0L
-            let mutable unreadable = []
-            let mutable missingIdentity = false
+            let mutable immediateProblem: JUnitProblem option = None
+            let mutable sawMissingIdentity = false
 
             let mutable aborted = false
 
             for relative in files do
-              if not aborted then
+              if not aborted && Option.isNone immediateProblem then
                 if abort () then
                     aborted <- true
                 else
@@ -226,35 +239,63 @@ module Publish =
                             // SuiteResult.parse walks direct nested <testsuite>
                             // elements. Use an explicit work stack: report nesting is
                             // untrusted input and must not consume the native call stack.
-                            let pending = System.Collections.Generic.Stack<Xml.Linq.XElement>()
-                            pending.Push root
+                            let pending =
+                                System.Collections.Generic.Stack<Xml.Linq.XElement * bool>()
+
+                            pending.Push(root, false)
 
                             while pending.Count > 0 do
-                                let element = pending.Pop()
+                                let element, visitOwner = pending.Pop()
 
-                                // Only direct suite edges are traversed. Stack order is
-                                // unobservable because the published values are totals.
-                                for nested in element.Elements(xmlName "testsuite") do
-                                    pending.Push nested
+                                if visitOwner then
+                                    // parseSuite owns direct cases/errors on every element
+                                    // it reaches: the document root plus descendants reached
+                                    // exclusively through direct testsuite edges. It does not
+                                    // require the owner itself to be named testsuite.
+                                    // A direct owner error is one synthetic case and remains
+                                    // skipped when that owner also has a direct skipped marker.
+                                    if hasDirectChild "error" element then
+                                        tallyCase element
 
-                                // parseSuite owns direct cases/errors on every element
-                                // it reaches: the document root plus descendants reached
-                                // exclusively through direct testsuite edges. It does not
-                                // require the owner itself to be named testsuite.
-                                // A direct owner error is one synthetic case and remains
-                                // skipped when that owner also has a direct skipped marker.
-                                if hasDirectChild "error" element then
-                                    tallyCase element
+                                    for testCase in element.Elements(xmlName "testcase") do
+                                        let hasClassFallback =
+                                            hasAttribute "classname" testCase
+                                            || hasAttribute "name" element
 
-                                for testCase in element.Elements(xmlName "testcase") do
-                                    if not (hasCaseIdentity element testCase) then
-                                        // The pinned plugin leaves CaseResult.className
-                                        // null and terminates while building/tallying the
-                                        // result. Keep this distinct from aggregate zero:
-                                        // allowEmptyResults must not suppress it.
-                                        raise (MissingJUnitIdentityException())
+                                        // CaseResult reads testcase@name only when both
+                                        // class fallbacks are absent. A missing attribute
+                                        // faults at String.contains before the later
+                                        // null-className failure; name="" is present and
+                                        // therefore stays on FG-211's later identity path.
+                                        if
+                                            not hasClassFallback
+                                            && not (hasAttribute "name" testCase)
+                                        then
+                                            raise (MissingJUnitTestNameException())
 
-                                    tallyCase testCase
+                                        if not (hasCaseIdentity element testCase) then
+                                            // CaseResult construction succeeds with a null
+                                            // className. The pinned plugin does not fault until
+                                            // the global tally/package pass, after every matched
+                                            // report has completed construction. Remember the
+                                            // deferred fault while continuing to expose any later
+                                            // construction-time missing-name/read failure.
+                                            sawMissingIdentity <- true
+
+                                        tallyCase testCase
+                                else
+                                    // The pinned recursive parser visits direct suite
+                                    // children first, in document order, and only then
+                                    // constructs the current owner. Push the continuation
+                                    // first and children in reverse so this iterative walk
+                                    // preserves that construction order without using
+                                    // the native call stack.
+                                    pending.Push(element, true)
+
+                                    element.Elements(xmlName "testsuite")
+                                    |> Seq.toArray
+                                    |> Array.rev
+                                    |> Array.iter (fun nested -> pending.Push(nested, false))
                 with
                 | :? System.Xml.XmlException
                     when relative.EndsWith(".xml", StringComparison.Ordinal) ->
@@ -264,33 +305,32 @@ module Publish =
                     // files took the earlier extension-independent `[empty]` arm.
                     total <- total + 1L
                     failed <- failed + 1L
-                | :? MissingJUnitIdentityException ->
-                    // This is a pinned CaseResult null-className failure, not a
-                    // generic report-read failure. Preserve it as its own problem
-                    // so the executor can publish Jenkins' exact raw diagnostic.
-                    missingIdentity <- true
-                | ex -> unreadable <- $"{relative}: {ex.GetType().Name}" :: unreadable
+                | :? MissingJUnitTestNameException ->
+                    immediateProblem <- Some(MissingTestName relative)
+                | ex ->
+                    immediateProblem <-
+                        Some(Unreadable($"unparsable test report(s): {relative}: {ex.GetType().Name}"))
 
             // Same rule as the archive path: once a report has been parsed, an
             // interruption observed afterwards still counts.
             if not aborted && abort () then aborted <- true
 
-            match aborted, missingIdentity, unreadable with
+            match aborted, immediateProblem, sawMissingIdentity with
             | true, _, _ -> Error Interrupted
-            | false, _, first :: rest ->
-                Error(Unreadable("unparsable test report(s): " + String.concat "; " (first :: rest)))
-            | false, true, _ -> Error MissingIdentity
-            | false, false, []
+            | false, Some problem, _ -> Error problem
+            | false, None, true -> Error MissingIdentity
+            | false, None, false
                 when [ total; failed; skipped ]
                      |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
                 Ok(int total, int failed, int skipped)
-            | false, false, [] -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
+            | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
 
     let parseJUnit (workspace: string) (patterns: string list) =
         match parseJUnitWithAbort workspace patterns (fun () -> false) with
         | Ok v -> Ok v
         | Error Interrupted -> Error "interrupted"
         | Error NoReports -> Error "no test report matched the pattern"
+        | Error(MissingTestName _) -> Error JUnitDiagnostics.MissingTestNameMessage
         | Error MissingIdentity -> Error "JUnit testcase has no resolvable class identity"
         | Error(Unreadable m) -> Error m
 

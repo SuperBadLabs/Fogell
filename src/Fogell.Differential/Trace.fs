@@ -209,6 +209,12 @@ module Trace =
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
 
+    let private isErrorActionIdDiagnostic (t: string) =
+        Text.RegularExpressions.Regex.IsMatch(
+            t,
+            @"^(Also:\s+)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        )
+
     let isDiagnosticLine (t: string) =
         t.StartsWith "ERROR:"
         // FG-044. Jenkins narrates credential masking as one line naming every bound
@@ -254,10 +260,25 @@ module Trace =
         // The timeout plugin appends an opaque correlation id. It carries no
         // semantics and its value changes every run, so it could never be
         // compared even in principle.
-        || Text.RegularExpressions.Regex.IsMatch(
-            t,
-            @"^(Also:\s+)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        )
+        || isErrorActionIdDiagnostic t
+
+    let private isStackFrame (line: string) =
+        line.StartsWith "at " && line.Contains "("
+
+    /// A Java exception head, optionally introduced by the standard nested-cause
+    /// prefix. This helper deliberately does not decide whether the line is engine
+    /// narration: only a following stack frame supplies that context.
+    let private tryStackTraceHeadMessage (line: string) =
+        let matched =
+            Text.RegularExpressions.Regex.Match(
+                line,
+                @"^(?:Caused:\s+)?[\w.$]+(?:Exception|Error)\b(?::\s*(.*))?$"
+            )
+
+        if matched.Success then Some matched.Groups[1].Value else None
+
+    let private startsStackTrace (head: string) (next: string) =
+        Option.isSome (tryStackTraceHeadMessage head) && isStackFrame next
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
@@ -431,10 +452,7 @@ module Trace =
 
         let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
 
-        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
-
-        let looksLikeExceptionHead (l: string) =
-            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
+        let cleaned = all |> Array.map clean
 
         // The secret-interpolation warning is a SEQUENCE — Jenkins emits head+body+tail,
         // Fogell emits the same head+body — and every line of it is text a build could
@@ -459,20 +477,23 @@ module Trace =
         // prints, not by any bracketed shape — a lone spoofed `[Pipeline] echo` on
         // the Fogell side must not switch suppression on for its own trace.
         let hasAnnotations =
-            all |> Array.exists (fun l -> clean l = "[Pipeline] Start of Pipeline")
+            cleaned |> Array.exists ((=) "[Pipeline] Start of Pipeline")
+
         let mutable prevRaw = ""
         let mutable inSecretWarning = false
 
         [ for i in 0 .. all.Length - 1 do
-            let raw = clean all[i]
-            let next = if i + 1 < all.Length then clean all[i + 1] else ""
+            let raw = cleaned[i]
+            let next = if i + 1 < cleaned.Length then cleaned[i + 1] else ""
+
+            let headStartsTrace = startsStackTrace raw next
 
             // A head only opens the window when a frame really follows it.
-            if looksLikeExceptionHead raw && isFrame next then inStackTrace <- true
-            elif not (isFrame raw) then inStackTrace <- false
+            if headStartsTrace then inStackTrace <- true
+            elif not (isStackFrame raw) then inStackTrace <- false
 
             let suppress =
-                (isFrame raw && inStackTrace)
+                (isStackFrame raw && inStackTrace)
                 || (hasAnnotations && isGraphAnnotation raw)
                 // `dir()`'s banner, by CONTEXT: `Running in <abs path>` counts as the
                 // banner only immediately after the `[Pipeline] dir` annotation — a
@@ -480,7 +501,7 @@ module Trace =
                 // workspace paths and all.
                 || (Text.RegularExpressions.Regex.IsMatch(raw, @"^Running in (/|\$\{WORKSPACE\})")
                     && prevRaw.StartsWith "[Pipeline] dir")
-                || (looksLikeExceptionHead raw && isFrame next)
+                || headStartsTrace
                 || (isWarnHead raw && isWarnBody next)
                 || ((isWarnBody raw || isWarnTail raw) && inSecretWarning)
 
@@ -594,17 +615,12 @@ module Trace =
 
         let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
 
-        let isFrame (l: string) = l.StartsWith "at " && l.Contains "("
-
-        let looksLikeExceptionHead (l: string) =
-            Text.RegularExpressions.Regex.IsMatch(l, @"^[\w.$]+(Exception|Error)\b")
-
         let hasStackTrace =
             all
             |> Array.mapi (fun i l ->
                 let raw = clean l
                 let next = if i + 1 < all.Length then clean all[i + 1] else ""
-                looksLikeExceptionHead raw && isFrame next)
+                startsStackTrace raw next)
             |> Array.exists id
 
         hasStackTrace
