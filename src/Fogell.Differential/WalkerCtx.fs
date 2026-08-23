@@ -71,6 +71,14 @@ type WalkerCtx =
       /// One clock for the whole build, so a `timeout` deadline is an absolute
       /// point in time rather than a per-step budget.
       RunClock: Diagnostics.Stopwatch
+      /// FG-220. One wall-clock origin captured when the build walk begins.
+      /// JUnit `skipOldReports` compares every report against this origin, never
+      /// against the later step-invocation time.
+      BuildStartTimeInMillis: int64
+      /// A resumed persisted attempt cannot recapture Jenkins' original build
+      /// timestamp. FG-220 uses this to refuse skipOldReports rather than apply
+      /// a silently newer cutoff.
+      IsRestartedRun: bool
       /// Mint a live deadline with a fresh token. The token is the DECLARING
       /// SCOPE's identity: two scopes can declare the same absolute
       /// millisecond, and nudging the value to disambiguate (the previous
@@ -143,7 +151,7 @@ module WalkerCtx =
 
     /// Build the run-scoped state. Everything mutable lives inside this call's
     /// closures; the returned record is the only handle.
-    let create () : WalkerCtx =
+    let create (buildStartTimeInMillis: int64) (isRestartedRun: bool) : WalkerCtx =
         let output = System.Collections.Generic.List<string>()
         // Parallel branches append from several threads at once; this one lock
         // also orders output against secret registration and the fired-set.
@@ -233,6 +241,8 @@ module WalkerCtx =
           Bump = fun s -> lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
           Status = fun () -> lock statusLock (fun () -> status)
           RunClock = Diagnostics.Stopwatch.StartNew()
+          BuildStartTimeInMillis = buildStartTimeInMillis
+          IsRestartedRun = isRestartedRun
           MkDeadline =
             fun absMs ->
                 let token = System.Threading.Interlocked.Increment &nextDeadlineToken.contents

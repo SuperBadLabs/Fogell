@@ -229,6 +229,7 @@ module Publish =
     let parseJUnitWithAbort
         (workspace: string)
         (patterns: string list)
+        (skipOldReportsSince: int64 option)
         (abort: unit -> bool)
         : Result<int * int * int * single option, JUnitProblem> =
         let files =
@@ -263,10 +264,43 @@ module Publish =
 
             let mutable aborted = false
 
+            // Pinned JUnit 1416 uses the build timestamp, not the time the
+            // `junit` step begins, and tolerates the filesystem's timestamp
+            // precision by 3000 ms. A report exactly on the adjusted boundary
+            // is retained; only a strict older value is skipped. Filtering is
+            // before length/XML/identity construction, as in TestResult.parse.
+            let isOldReport relative =
+                match skipOldReportsSince with
+                | None -> false
+                | Some buildStartTimeInMillis ->
+                    let fullPath = Path.Combine(workspace, relative)
+
+                    try
+                        // One refreshed FileInfo snapshot mirrors Java's one
+                        // Files.getLastModifiedTime lookup. It also avoids a
+                        // File.Exists/GetLastWriteTimeUtc race whose second call
+                        // can return the 1601 sentinel for a vanished path.
+                        let reportInfo = FileInfo fullPath
+                        reportInfo.Refresh()
+
+                        if not reportInfo.Exists then
+                            raise (FileNotFoundException("selected JUnit report vanished before timestamp inspection", fullPath))
+
+                        let modified = DateTimeOffset(reportInfo.LastWriteTimeUtc).ToUnixTimeMilliseconds()
+                        modified < buildStartTimeInMillis - 3000L
+                    with ex ->
+                        immediateProblem <-
+                            Some(Unreadable($"unparsable test report(s): {relative}: {ex.GetType().Name}"))
+                        false
+
             for relative in files do
               if not aborted && Option.isNone immediateProblem then
                 if abort () then
                     aborted <- true
+                elif isOldReport relative then
+                    ()
+                elif Option.isSome immediateProblem then
+                    ()
                 else
                 try
                     // Jenkins calls File.length() before opening or parsing. Java
@@ -570,7 +604,7 @@ module Publish =
             | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
 
     let parseJUnit (workspace: string) (patterns: string list) =
-        match parseJUnitWithAbort workspace patterns (fun () -> false) with
+        match parseJUnitWithAbort workspace patterns None (fun () -> false) with
         | Ok(total, failed, skipped, _) -> Ok(total, failed, skipped)
         | Error Interrupted -> Error "interrupted"
         | Error NoReports -> Error "no test report matched the pattern"

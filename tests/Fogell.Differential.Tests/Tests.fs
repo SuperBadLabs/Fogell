@@ -1642,6 +1642,7 @@ let stepDescriptorValidation =
                     "healthScaleFactor", Fogell.Groovy.Interpreter.VInt 1L
                     "keepProperties", Fogell.Groovy.Interpreter.VBool true
                     "keepTestNames", Fogell.Groovy.Interpreter.VBool true
+                    "skipOldReports", Fogell.Groovy.Interpreter.VBool true
                     "skipMarkingStageUnstable", Fogell.Groovy.Interpreter.VBool true ]
 
               match WalkerRules.validateHostedCall "junit" [] junitKeys with
@@ -2292,9 +2293,9 @@ let genuineNullRuntime =
           test "JUnit accepts typed scripted booleans for both independent instability channels" {
               let source =
                   "pipeline { agent any stages { stage('probe') { steps { script { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"scripted-flags\\\" tests=\\\"2\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
-                  + "def suppressBuild = true; def suppressStage = false; "
-                  + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: suppressBuild, skipMarkingStageUnstable: suppressStage); "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"scripted-flags\\\" tests=\\\"2\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml; touch -d '2000-01-01 UTC' reports/summary.xml\"; "
+                  + "def suppressBuild = true; def suppressStage = false; def keepOldReports = false; "
+                  + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: suppressBuild, skipMarkingStageUnstable: suppressStage, skipOldReports: keepOldReports); "
                   + "if (got.totalCount == 2 && got.failCount == 1) { sh 'touch scripted-summary.txt' } "
                   + "} } post { unstable { sh 'touch stage-unstable.txt' } success { sh 'touch wrong-stage-success.txt' } } } } "
                   + "post { success { sh 'touch pipeline-success.txt' } unstable { sh 'touch wrong-pipeline-unstable.txt' } } }"
@@ -2314,6 +2315,24 @@ let genuineNullRuntime =
                           Expect.isFalse
                               (IO.File.Exists(IO.Path.Combine(workspace, file)))
                               $"{file}: build and stage outcomes must not be conflated")
+          }
+
+          test "JUnit skipOldReports uses build entry rather than step invocation time" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"early\\\" time=\\\"1\\\"><testcase name=\\\"pass\\\"/></testsuite>' > reports/early.xml; sleep 4\"; "
+                  + "def summary = junit(testResults: 'reports/early.xml', skipOldReports: true); "
+                  + "if (summary.totalCount == 1 && summary.passCount == 1) { sh 'touch retained-early-report.txt' } "
+                  + "} } } } }"
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "build-entry freshness case was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "an early-build report remains fresh after a delayed junit call"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "retained-early-report.txt")))
+                          "a future invocation-time cutoff would have skipped this report")
           }
 
           test "JUnit's two boolean flags preserve the measured build/stage result matrix" {
@@ -2459,7 +2478,11 @@ let genuineNullRuntime =
           }
 
           test "JUnit boolean options refuse text, dynamic direct expressions and duplicates before report scanning" {
-              for key in [ "skipMarkingBuildUnstable"; "skipMarkingStageUnstable"; "allowEmptyResults" ] do
+              for key in
+                  [ "skipMarkingBuildUnstable"
+                    "skipMarkingStageUnstable"
+                    "allowEmptyResults"
+                    "skipOldReports" ] do
                   let scriptedText =
                       "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" skipped=\\\"0\\\"/>' > reports/summary.xml\"; "
                       + $"junit(testResults: 'reports/summary.xml', {key}: 'true'); "
