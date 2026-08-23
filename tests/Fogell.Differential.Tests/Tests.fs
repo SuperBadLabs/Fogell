@@ -1719,6 +1719,8 @@ let genuineNullRuntime =
             | Error why -> failtestf "genuine-null pipeline refused: %s" why
             | Ok trace -> check workspace trace)
 
+    let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+
     testList
         "FG-177 genuine-null runtime publication"
         [ test "plain and false-flag sh, echo and successful unstable publish VNull" {
@@ -1816,7 +1818,7 @@ let genuineNullRuntime =
 
           test "JUnit publishes all four measured integer count properties and remains nonterminal when unstable" {
               let body =
-                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"summary\\\" tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def got = junit(testResults: 'reports/summary.xml'); "
                   + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 1) { sh 'touch summary-ok.txt' }"
 
@@ -1825,6 +1827,65 @@ let genuineNullRuntime =
                   Expect.isTrue
                       (IO.File.Exists(IO.Path.Combine(workspace, "summary-ok.txt")))
                       "all four typed count properties drove the measured branch")
+          }
+
+          test "JUnit counts direct cases on reached roots with all measured identity fallbacks" {
+              let body =
+                  "sh \"mkdir -p reports; "
+                  + "printf '%s' '<arbitrary><testcase classname=\\\"\\\" name=\\\"pass\\\"/><testcase classname=\\\"matrix.Case\\\" name=\\\"failure\\\"><failure/></testcase><testcase classname=\\\"matrix.Case\\\" name=\\\"error\\\"><error/></testcase><testcase classname=\\\"matrix.Case\\\" name=\\\"skip\\\"><skipped/></testcase></arbitrary>' > reports/a-classname.xml; "
+                  + "printf '%s' '<arbitrary name=\\\"\\\"><testcase name=\\\"owner-fallback\\\"/><testsuite name=\\\"SuiteFallback\\\"><testcase name=\\\"suite-fallback\\\"/></testsuite></arbitrary>' > reports/b-owner.xml; "
+                  + "printf '%s' '<arbitrary><testcase name=\\\"matrix.Root.dotted-fallback\\\"/><testsuite><testcase name=\\\"matrix.Suite.dotted-fallback\\\"/></testsuite></arbitrary>' > reports/c-dotted.xml\"; "
+                  + "def got = junit(testResults: 'reports/*.xml'); "
+                  + "if (got.totalCount == 8 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 5) { "
+                  + "sh 'touch reached-root-summary.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "root-owned failure and error cases mark the build unstable"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "reached-root-summary.txt")))
+                      "classname, empty owner-name, and dotted-name identities all contributed exact counts")
+          }
+
+          test "JUnit unresolved class identity is terminal even when empty results are allowed" {
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<arbitrary><testcase name=\\\"simple\\\"/></arbitrary>' > reports/invalid.xml\"; "
+                  + "junit(testResults: 'reports/invalid.xml', allowEmptyResults: true); "
+                  + "sh 'touch invalid-identity-successor.txt'"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "failure" "an unresolved recognized testcase is unreadable, not aggregate zero"
+                  Expect.equal
+                      (trace.Output |> List.filter ((=) missingIdentity))
+                      [ missingIdentity ]
+                      "the exact Jenkins null-className line is emitted once"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "invalid-identity-successor.txt")))
+                      "allowEmptyResults cannot suppress an identity fault")
+          }
+
+          test "JUnit invalid direct-suite sibling poisons one report in both XML orders" {
+              let validSuite = "<testsuite><testcase name=\\\"matrix.Valid.case\\\"/></testsuite>"
+              let invalidSuite = "<testsuite><testcase name=\\\"simple\\\"/></testsuite>"
+
+              for label, xml, option in
+                  [ "invalid-first", "<testsuites>" + invalidSuite + validSuite + "</testsuites>", ""
+                    "invalid-last-allowed",
+                    "<testsuites>" + validSuite + invalidSuite + "</testsuites>",
+                    ", allowEmptyResults: true" ] do
+                  let body =
+                      $"sh \"mkdir -p reports; printf '%%s' '{xml}' > reports/same.xml\"; "
+                      + $"junit(testResults: 'reports/same.xml'{option}); "
+                      + $"sh 'touch same-xml-{label}-successor.txt'"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: one invalid suite poisons its valid same-report sibling"
+                      Expect.equal
+                          (trace.Output |> List.filter ((=) missingIdentity))
+                          [ missingIdentity ]
+                          $"{label}: both XML orders emit the exact Jenkins null-className line once"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"same-xml-{label}-successor.txt")))
+                          $"{label}: neither XML order nor allowEmptyResults permits the successor")
           }
 
           test "JUnit aggregate-zero is terminal by default and with explicit false" {
@@ -1942,7 +2003,7 @@ let genuineNullRuntime =
 
           test "JUnit aggregates valid cases with one synthetic failure per malformed XML file" {
               let body =
-                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/valid.xml; printf '%s' 'not-xml' > reports/malformed.xml\"; "
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"valid\\\" tests=\\\"1\\\" failures=\\\"0\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/valid.xml; printf '%s' 'not-xml' > reports/malformed.xml\"; "
                   + "def got = junit(testResults: 'reports/*.xml'); "
                   + "if (got.totalCount == 2 && got.failCount == 1 && got.skipCount == 0 && got.passCount == 1) { "
                   + "sh 'printf 2,1,0,1 > mixed-summary.txt' }"
@@ -1968,7 +2029,7 @@ let genuineNullRuntime =
 
               for label, expression in operations do
                   let body =
-                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"arithmetic\\\" tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
                       + "def got = junit(testResults: 'reports/summary.xml'); "
                       + "def passes = got.passCount; def other = got.passCount; "
                       + $"try {{ def ignored = {expression}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
@@ -1985,7 +2046,7 @@ let genuineNullRuntime =
 
           test "JUnit build-instability suppression preserves the typed summary in scripted calls" {
               let body =
-                  "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"suppressed-summary\\\" tests=\\\"4\\\" failures=\\\"1\\\" errors=\\\"1\\\" skipped=\\\"1\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true); "
                   + "if (got.totalCount == 4 && got.failCount == 2 && got.skipCount == 1 && got.passCount == 1) { sh 'touch suppressed-summary-ok.txt' }"
 
@@ -1999,7 +2060,7 @@ let genuineNullRuntime =
           test "JUnit build-instability suppression uses bare boolean provenance outside script" {
               let source =
                   "pipeline { agent any stages { stage('probe') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"declarative-suppressed\\\" tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true; "
                   + "sh 'touch declarative-suppressed.txt' } } } }"
 
@@ -2044,7 +2105,7 @@ let genuineNullRuntime =
           test "JUnit accepts typed scripted booleans for both independent instability channels" {
               let source =
                   "pipeline { agent any stages { stage('probe') { steps { script { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"2\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"scripted-flags\\\" tests=\\\"2\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "def suppressBuild = true; def suppressStage = false; "
                   + "def got = junit(testResults: 'reports/summary.xml', skipMarkingBuildUnstable: suppressBuild, skipMarkingStageUnstable: suppressStage); "
                   + "if (got.totalCount == 2 && got.failCount == 1) { sh 'touch scripted-summary.txt' } "
@@ -2095,7 +2156,7 @@ let genuineNullRuntime =
               for label, flags, expectedResult, expectedStagePost, expectedPipelinePost in rows do
                   let source =
                       "pipeline { agent any stages { stage('probe') { steps { "
-                      + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
+                      + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"marking-matrix\\\" tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                       + $"junit testResults: 'reports/summary.xml'{flags}; sh 'touch successor.txt' "
                       + "} post { unstable { sh 'touch stage-unstable.txt' } success { sh 'touch stage-success.txt' } } } } "
                       + "post { unstable { sh 'touch pipeline-unstable.txt' } success { sh 'touch pipeline-success.txt' } } }"
@@ -2135,7 +2196,7 @@ let genuineNullRuntime =
           test "a nested sequential JUnit warning selects child and enclosing stage post without marking the build" {
               let source =
                   "pipeline { agent any stages { stage('parent') { stages { stage('child') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"nested-warning\\\" tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
                   + "junit testResults: 'reports/summary.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
                   + "sh 'touch child-successor.txt' "
                   + "} post { unstable { sh 'touch child-unstable.txt' } success { sh 'touch wrong-child-success.txt' } } } } "
@@ -2172,7 +2233,7 @@ let genuineNullRuntime =
               let source =
                   "pipeline { agent any stages { stage('fanout') { parallel { "
                   + "stage('warned') { steps { "
-                  + "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/warned.xml\"; "
+                  + "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"parallel-warning\\\" tests=\\\"1\\\" failures=\\\"1\\\" errors=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"bad\\\"><failure/></testcase></testsuite>' > reports/warned.xml\"; "
                   + "junit testResults: 'reports/warned.xml', skipMarkingBuildUnstable: true, skipMarkingStageUnstable: false; "
                   + "sh 'touch warned-successor.txt' "
                   + "} post { unstable { sh 'touch warned-unstable.txt' } success { sh 'touch wrong-warned-success.txt' } } } "
@@ -2280,7 +2341,7 @@ let genuineNullRuntime =
 
               for label, operation in operations do
                   let body =
-                      "sh \"mkdir -p reports; printf '%s' '<testsuite tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"object-surface\\\" tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
                       + "def got = junit(testResults: 'reports/summary.xml'); "
                       + $"try {{ {operation}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
 

@@ -488,6 +488,7 @@ module Executor =
 
             let noReports = "No test report files were found. Configuration error?"
             let noResults = "None of the test reports contained any result"
+            let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
 
             let emptySummary (messages: string list) =
                 messages
@@ -512,6 +513,9 @@ module Executor =
                 else
                     request.OnLine |> Option.iter (fun emit -> emit noReports)
                     { ok Failure with Diagnostic = Some noReports }
+            | Result.Error MissingIdentity ->
+                request.OnLine |> Option.iter (fun emit -> emit missingIdentity)
+                { ok Failure with Diagnostic = Some missingIdentity }
             | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
             | Result.Ok(total, _, _) when total = 0 ->
                 if request.JUnitAllowEmptyResults then

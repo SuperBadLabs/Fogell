@@ -775,7 +775,7 @@ let externalInterrupt =
 
               File.WriteAllText(
                   report,
-                  "<testsuite tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/><testcase name=\"bad\"><failure message=\"boom\"/></testcase></testsuite>")
+                  "<testsuite name=\"suppression\" tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/><testcase name=\"bad\"><failure message=\"boom\"/></testcase></testsuite>")
 
               let junit skipBuild skipStage =
                   Executor.runStep
@@ -853,14 +853,14 @@ let externalInterrupt =
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "mixed-valid.xml"),
-                  "<arbitrary><testsuite tests=\"500\" failures=\"500\"><testcase name=\"only-real-case\"/></testsuite></arbitrary>")
+                  "<arbitrary><testsuite name=\"real-suite\" tests=\"500\" failures=\"500\"><testcase name=\"only-real-case\"/></testsuite></arbitrary>")
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "mixed-zero.xml"),
-                  "<arbitrary><testcase name=\"not-a-result\"/></arbitrary>")
+                  "<arbitrary><wrapper><testcase classname=\"ignored.Case\" name=\"not-a-result\"/></wrapper></arbitrary>")
 
               let mixed = junit "mixed-*.xml"
               Expect.equal mixed.Status Success "a zero-result sibling does not poison an aggregate containing a real case"
-              Expect.equal mixed.TestTotals (Some(1, 0, 0)) "an arbitrary root exposes direct suites but does not own direct testcases"
+              Expect.equal mixed.TestTotals (Some(1, 0, 0)) "arbitrary nested wrappers remain outside the direct-testsuite traversal"
               Expect.isNone mixed.StageWarning "the sole recognized case passed"
 
               let depth = 10_000
@@ -869,7 +869,7 @@ let externalInterrupt =
               for _ in 1..depth do
                   deepXml.Append("<testsuite>") |> ignore
 
-              deepXml.Append("<testcase name=\"deep-pass\"/>") |> ignore
+              deepXml.Append("<testcase classname=\"deep.Case\" name=\"deep-pass\"/>") |> ignore
 
               for _ in 1..depth do
                   deepXml.Append("</testsuite>") |> ignore
@@ -879,6 +879,132 @@ let externalInterrupt =
               Expect.equal deeplyNested.Status Success "deep suite nesting does not consume the native call stack"
               Expect.equal deeplyNested.TestTotals (Some(1, 0, 0)) "the deepest direct testcase is counted once"
               Expect.isNone deeplyNested.StageWarning "the deeply nested case passed"
+          }
+
+          test "junit recognizes every reached owner and requires a resolvable testcase identity" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let emitted = ResizeArray<string>()
+              let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+
+              let junitWithOutput pattern allowEmpty =
+                  emitted.Clear()
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", pattern ]
+                              JUnitAllowEmptyResults = allowEmpty
+                              OnLine = Some emitted.Add }
+
+                  observed, List.ofSeq emitted
+
+              let junit pattern allowEmpty = junitWithOutput pattern allowEmpty |> fst
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-classname.xml"),
+                  "<arbitrary>"
+                  + "<testcase classname=\"\" name=\"pass\"/>"
+                  + "<testcase classname=\"matrix.Case\" name=\"failure\"><failure/></testcase>"
+                  + "<testcase classname=\"matrix.Case\" name=\"error\"><error/></testcase>"
+                  + "<testcase classname=\"matrix.Case\" name=\"skip\"><failure/><error/><skipped/></testcase>"
+                  + "</arbitrary>")
+
+              let classnamed = junit "root-classname.xml" false
+              Expect.equal classnamed.Status Unstable "the document root owns its direct classnamed cases"
+              Expect.equal classnamed.TestTotals (Some(4, 2, 1)) "empty classname is present and testcase markers retain skipped-first precedence"
+              Expect.equal classnamed.StageWarning (Some Unstable) "root-owned failures decorate the stage"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-owner-name.xml"),
+                  "<arbitrary name=\"\"><testcase name=\"owner-fallback\"/>"
+                  + "<testsuite name=\"SuiteFallback\"><testcase name=\"suite-fallback\"/></testsuite>"
+                  + "</arbitrary>")
+
+              let ownerNamed = junit "root-owner-name.xml" false
+              Expect.equal ownerNamed.Status Success "an explicitly empty owner name is still a present class fallback"
+              Expect.equal ownerNamed.TestTotals (Some(2, 0, 0)) "root and reached-suite owner names each supply one pass"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-dotted-name.xml"),
+                  "<arbitrary><testcase name=\"matrix.Root.dotted-fallback\"/>"
+                  + "<testsuite><testcase name=\"matrix.Suite.dotted-fallback\"/></testsuite>"
+                  + "</arbitrary>")
+
+              let dotted = junit "root-dotted-name.xml" false
+              Expect.equal dotted.Status Success "a dotted testcase name supplies the final class fallback"
+              Expect.equal dotted.TestTotals (Some(2, 0, 0)) "root and reached-suite dotted names each supply one pass"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-error.xml"),
+                  "<arbitrary><error/><skipped/></arbitrary>")
+
+              let rootError = junit "root-error.xml" false
+              Expect.equal rootError.Status Success "a reached root owns its direct synthetic error case"
+              Expect.equal rootError.TestTotals (Some(1, 0, 1)) "the owner's direct skipped marker outranks its synthetic error"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-error-only.xml"),
+                  "<arbitrary><error/></arbitrary>")
+
+              let rootErrorOnly = junit "root-error-only.xml" false
+              Expect.equal rootErrorOnly.Status Unstable "a root-direct error alone is one synthetic failure"
+              Expect.equal rootErrorOnly.TestTotals (Some(1, 1, 0)) "the error-only root contributes exact failed counts"
+              Expect.equal rootErrorOnly.StageWarning (Some Unstable) "the root synthetic failure decorates the stage"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "root-skipped-error.xml"),
+                  "<arbitrary><skipped/><error/></arbitrary>")
+
+              let rootSkippedError = junit "root-skipped-error.xml" false
+              Expect.equal rootSkippedError.Status Success "root synthetic classification is XML-order independent"
+              Expect.equal rootSkippedError.TestTotals (Some(1, 0, 1)) "skipped still outranks error in reverse XML order"
+              Expect.isNone rootSkippedError.StageWarning "the reverse-order skipped synthetic case has no warning"
+
+              let valid = "<arbitrary><testcase classname=\"matrix.Valid\" name=\"pass\"/></arbitrary>"
+              let invalidRoot = "<arbitrary><testcase name=\"simple\"/></arbitrary>"
+              let invalidSuite = "<testsuite><testcase name=\"simple\"/></testsuite>"
+              let validSuite = "<testsuite name=\"valid\"><testcase name=\"pass\"/></testsuite>"
+
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "identity-a-0-invalid.xml"), invalidRoot)
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "identity-a-1-valid.xml"), valid)
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "identity-b-0-valid.xml"), valid)
+              File.WriteAllText(Path.Combine(baseRequest.Workspace, "identity-b-1-invalid.xml"), invalidSuite)
+
+              for label, pattern, allowEmpty in
+                  [ "invalid-first", "identity-a-*.xml", false
+                    "invalid-last-allowed", "identity-b-*.xml", true ] do
+                  let observed, output = junitWithOutput pattern allowEmpty
+                  Expect.equal observed.Status Failure $"{label}: an unresolved class identity poisons the aggregate"
+                  Expect.isNone observed.TestTotals $"{label}: terminal unreadability publishes no partial counts"
+                  Expect.isNone observed.StageWarning $"{label}: unreadability is not a test-failure warning"
+                  Expect.equal observed.Diagnostic (Some missingIdentity) $"{label}: the raw Jenkins reason remains durable"
+                  Expect.equal
+                      output
+                      [ "Recording test results"; missingIdentity ]
+                      $"{label}: the exact Jenkins null-className line follows the recording notice"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "same-xml-invalid-first.xml"),
+                  "<testsuites>" + invalidSuite + validSuite + "</testsuites>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "same-xml-invalid-last.xml"),
+                  "<testsuites>" + validSuite + invalidSuite + "</testsuites>")
+
+              for label, pattern, allowEmpty in
+                  [ "same-xml-invalid-first", "same-xml-invalid-first.xml", false
+                    "same-xml-invalid-last-allowed", "same-xml-invalid-last.xml", true ] do
+                  let observed, output = junitWithOutput pattern allowEmpty
+                  Expect.equal observed.Status Failure $"{label}: an invalid direct-suite sibling poisons its report"
+                  Expect.isNone observed.TestTotals $"{label}: same-report poisoning publishes no partial counts"
+                  Expect.isNone observed.StageWarning $"{label}: same-report identity failure is not a test warning"
+                  Expect.equal observed.Diagnostic (Some missingIdentity) $"{label}: the same-report reason remains durable"
+                  Expect.equal
+                      output
+                      [ "Recording test results"; missingIdentity ]
+                      $"{label}: both XML orders emit the exact Jenkins null-className line"
           }
 
           test "junit fails one aggregate with no recognized result unless typed allowEmptyResults permits it" {
@@ -1041,7 +1167,7 @@ let externalInterrupt =
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "valid.xml"),
-                  "<testsuite tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/></testsuite>")
+                  "<testsuite name=\"valid\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\"><testcase name=\"ok\"/></testsuite>")
 
               let mixed = junit "*.xml" false false None
               Expect.equal mixed.Status Unstable "a malformed file does not discard valid sibling reports"
