@@ -1115,6 +1115,98 @@ let externalInterrupt =
                   "the shared archive/stash glob entry point retains its existing case-insensitive behavior"
           }
 
+          test "junit applies all pinned Ant default excludes without changing shared matching" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let writeReport (relative: string) (xml: string) =
+                  let path = Path.Combine(baseRequest.Workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, xml)
+
+              let passing (name: string) (time: string) =
+                  $"<testsuite name=\"{name}\"><testcase name=\"pass\" time=\"{time}\"/></testsuite>"
+
+              let failing (name: string) =
+                  $"<testsuite name=\"{name}\"><testcase name=\"fail\" time=\"2.5\"><failure/></testcase></testsuite>"
+
+              let excluded =
+                  [ "reports/temp/result.xml~"
+                    "reports/temp/#result.xml#"
+                    "reports/temp/.#result.xml"
+                    "reports/temp/%result.xml%"
+                    "reports/temp/._result.xml"
+                    "reports/files/CVS"
+                    "reports/directories/CVS/hidden.xml"
+                    "reports/meta/.cvsignore"
+                    "reports/files/SCCS"
+                    "reports/directories/SCCS/hidden.xml"
+                    "reports/meta/vssver.scc"
+                    "reports/files/.svn"
+                    "reports/directories/.svn/hidden.xml"
+                    "reports/files/.git"
+                    "reports/directories/.git/hidden.xml"
+                    "reports/meta/.gitattributes"
+                    "reports/meta/.gitignore"
+                    "reports/meta/.gitmodules"
+                    "reports/files/.hg"
+                    "reports/directories/.hg/hidden.xml"
+                    "reports/meta/.hgignore"
+                    "reports/meta/.hgsub"
+                    "reports/meta/.hgsubstate"
+                    "reports/meta/.hgtags"
+                    "reports/files/.bzr"
+                    "reports/directories/.bzr/hidden.xml"
+                    "reports/meta/.bzrignore"
+                    "reports/meta/.DS_Store" ]
+
+              excluded
+              |> List.iteri (fun index relative -> writeReport relative (failing $"excluded-{index}"))
+
+              writeReport "reports/visible.xml" (passing "visible" "1.25")
+
+              let controls =
+                  [ "reports/.SVN/control.xml"
+                    "reports/.gitx/control.xml"
+                    "reports/CVSx/control.xml"
+                    "reports/result.xml.bak" ]
+
+              controls
+              |> List.iteri (fun index relative -> writeReport relative (passing $"control-{index}" "0.25"))
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = allowEmpty
+                          Named = [ "testResults", pattern ] }
+
+              let broad = junit "**/*" false
+              Expect.equal broad.Status Success "all 28 excluded witnesses remain inert"
+              Expect.equal broad.TestTotals (Some(5, 0, 0)) "only the visible report and four near-miss controls contribute"
+              Expect.equal broad.TestDuration (Some 2.25f) "excluded report durations do not leak into the summary"
+
+              let explicit = "reports/directories/.svn/hidden.xml"
+              let explicitMiss = junit explicit false
+              Expect.equal explicitMiss.Status Failure "a literal include cannot override Ant default excludes"
+              Expect.equal
+                  explicitMiss.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "the excluded-only selection follows the existing no-report path"
+              Expect.isNone explicitMiss.TestTotals "the terminal excluded-only invocation publishes no counts"
+
+              let allowedMiss = junit explicit true
+              Expect.equal allowedMiss.Status Success "allowEmptyResults permits an excluded-only selection"
+              Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted excluded-only selection returns zero counts"
+              Expect.equal allowedMiss.TestDuration (Some 0.0f) "the permitted excluded-only selection returns zero duration"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace explicit)
+                  [ explicit ]
+                  "the shared archive/stash matcher still returns a default-excluded path"
+          }
+
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""
