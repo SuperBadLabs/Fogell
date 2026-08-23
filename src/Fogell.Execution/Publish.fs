@@ -52,6 +52,67 @@ module Publish =
     type private MissingJUnitTestNameException() =
         inherit IOException("JUnit testcase has no name attribute or class fallback")
 
+    let private compileGlobRegex (caseSensitive: bool) (pattern: string) =
+        let normalised = pattern.Replace('\\', '/').Trim()
+
+        let escaped =
+            normalised.Split('/')
+            |> Array.map (fun segment ->
+                if segment = "**" then
+                    "(?:.*)"
+                else
+                    segment
+                    |> Regex.Escape
+                    |> fun e -> e.Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]"))
+            |> String.concat "/"
+            // `**/x` must also match a bare `x` at the root
+            |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
+
+        let options =
+            if caseSensitive then RegexOptions.None else RegexOptions.IgnoreCase
+
+        Regex("^" + escaped + "$", options)
+
+    // Ant 1.10.17 DirectoryScanner.DEFAULTEXCLUDES. JUnit creates a FileSet and
+    // leaves useDefaultExcludes at its true default, so these exclusions remain
+    // active even when an include names one of the paths literally. The pinned
+    // list is case-sensitive and deliberately private to JUnit report selection.
+    let private antDefaultExcludePatterns =
+        [ "**/*~"
+          "**/#*#"
+          "**/.#*"
+          "**/%*%"
+          "**/._*"
+          "**/CVS"
+          "**/CVS/**"
+          "**/.cvsignore"
+          "**/SCCS"
+          "**/SCCS/**"
+          "**/vssver.scc"
+          "**/.svn"
+          "**/.svn/**"
+          "**/.git"
+          "**/.git/**"
+          "**/.gitattributes"
+          "**/.gitignore"
+          "**/.gitmodules"
+          "**/.hg"
+          "**/.hg/**"
+          "**/.hgignore"
+          "**/.hgsub"
+          "**/.hgsubstate"
+          "**/.hgtags"
+          "**/.bzr"
+          "**/.bzr/**"
+          "**/.bzrignore"
+          "**/.DS_Store" ]
+
+    let private antDefaultExcludeRegexes =
+        antDefaultExcludePatterns |> List.map (compileGlobRegex true)
+
+    let private isAntDefaultExcluded (relative: string) =
+        antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
+
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
     /// corpus; anything else is reported rather than silently matching nothing.
@@ -59,26 +120,7 @@ module Publish =
         if not (Directory.Exists workspace) then
             []
         else
-            let normalised = pattern.Replace('\\', '/').Trim()
-
-            let regex =
-                let escaped =
-                    normalised.Split('/')
-                    |> Array.map (fun segment ->
-                        if segment = "**" then
-                            "(?:.*)"
-                        else
-                            segment
-                            |> Regex.Escape
-                            |> fun e -> e.Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]"))
-                    |> String.concat "/"
-                    // `**/x` must also match a bare `x` at the root
-                    |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
-
-                let options =
-                    if caseSensitive then RegexOptions.None else RegexOptions.IgnoreCase
-
-                Regex("^" + escaped + "$", options)
+            let regex = compileGlobRegex caseSensitive pattern
 
             Directory.GetFiles(workspace, "*", SearchOption.AllDirectories)
             |> Array.choose (fun full ->
@@ -94,6 +136,7 @@ module Publish =
 
     let private expandJUnitGlob workspace pattern =
         expandGlobWithCase true workspace pattern
+        |> List.filter (isAntDefaultExcluded >> not)
 
     /// Copy matched files into the artifact store under `buildKey`, preserving
     /// relative layout. Returns the sorted relative paths actually published.
