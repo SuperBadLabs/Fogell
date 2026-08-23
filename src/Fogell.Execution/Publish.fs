@@ -55,7 +55,7 @@ module Publish =
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
     /// corpus; anything else is reported rather than silently matching nothing.
-    let expandGlob (workspace: string) (pattern: string) : string list =
+    let private expandGlobWithCase (caseSensitive: bool) (workspace: string) (pattern: string) : string list =
         if not (Directory.Exists workspace) then
             []
         else
@@ -75,7 +75,10 @@ module Publish =
                     // `**/x` must also match a bare `x` at the root
                     |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
 
-                Regex("^" + escaped + "$", RegexOptions.IgnoreCase)
+                let options =
+                    if caseSensitive then RegexOptions.None else RegexOptions.IgnoreCase
+
+                Regex("^" + escaped + "$", options)
 
             Directory.GetFiles(workspace, "*", SearchOption.AllDirectories)
             |> Array.choose (fun full ->
@@ -83,6 +86,14 @@ module Publish =
                 if regex.IsMatch relative then Some relative else None)
             |> Array.sort
             |> Array.toList
+
+    // Existing archive/stash compatibility is case-insensitive. JUnit's pinned
+    // Ant FileSet keeps DirectoryScanner.caseSensitive at its true default, so
+    // report selection uses a separate exact-case entry point.
+    let expandGlob workspace pattern = expandGlobWithCase false workspace pattern
+
+    let private expandJUnitGlob workspace pattern =
+        expandGlobWithCase true workspace pattern
 
     /// Copy matched files into the artifact store under `buildKey`, preserving
     /// relative layout. Returns the sorted relative paths actually published.
@@ -152,7 +163,7 @@ module Publish =
         : Result<int * int * int * single option, JUnitProblem> =
         let files =
             patterns
-            |> List.collect (expandGlob workspace)
+            |> List.collect (expandJUnitGlob workspace)
             |> List.distinct
             |> List.sort
 

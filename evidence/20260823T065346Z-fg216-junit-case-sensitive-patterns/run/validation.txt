@@ -1,0 +1,13 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+07511327f8f69b4abdab17705f99c5de16bcb751b79e1403f4ac80ac151b3e6c  /var/jenkins_home/war/WEB-INF/lib/jenkins-core-2.568.1.jar
+8be692e02837f41a47a3d21cde6655792142fdf42fe23bcb16d7129cad9b2284  /var/jenkins_home/war/WEB-INF/lib/ant-1.10.17.jar
+  public static org.apache.tools.ant.types.FileSet createFileSet(java.io.File, java.lang.String, java.lang.String);
+  public static org.apache.tools.ant.types.FileSet createFileSet(java.io.File, java.lang.String);
+  private boolean caseSensitive;
+  protected boolean isCaseSensitive;
+workspace cleanup: diff-fg216-junit-pattern-case-sensitive-selection and @tmp absent
+workspace cleanup: diff-fg216-junit-pattern-case-only-miss and @tmp absent
+seal verification: 2 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved
