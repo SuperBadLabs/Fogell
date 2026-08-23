@@ -1,0 +1,35 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+07511327f8f69b4abdab17705f99c5de16bcb751b79e1403f4ac80ac151b3e6c  /var/jenkins_home/war/WEB-INF/lib/jenkins-core-2.568.1.jar
+8be692e02837f41a47a3d21cde6655792142fdf42fe23bcb16d7129cad9b2284  /var/jenkins_home/war/WEB-INF/lib/ant-1.10.17.jar
+  public static org.apache.tools.ant.types.FileSet createFileSet(java.io.File, java.lang.String, java.lang.String);
+  public static org.apache.tools.ant.types.FileSet createFileSet(java.io.File, java.lang.String);
+       9: invokestatic  #62                 // Method hudson/Util.createFileSet:(Ljava/io/File;Ljava/lang/String;)Lorg/apache/tools/ant/types/FileSet;
+  private static java.lang.String normalizePattern(java.lang.String);
+       3: invokestatic  #1                  // Method org/apache/tools/ant/types/selectors/SelectorUtils.tokenizePathAsArray:(Ljava/lang/String;)[Ljava/lang/String;
+    descriptor: (Lorg/apache/tools/ant/types/selectors/TokenizedPath;Z)Z
+    descriptor: (Lorg/apache/tools/ant/types/selectors/TokenizedPath;Z)Z
+       9: invokestatic  #7                  // Method org/apache/tools/ant/types/selectors/SelectorUtils.matchPath:([Ljava/lang/String;[Ljava/lang/String;Z)Z
+    descriptor: (Ljava/lang/String;)[Ljava/lang/String;
+       9: invokestatic  #20                 // Method org/apache/tools/ant/util/FileUtils.isAbsolutePath:(Ljava/lang/String;)Z
+       3: invokestatic  #20                 // Method org/apache/tools/ant/util/FileUtils.isAbsolutePath:(Ljava/lang/String;)Z
+      25: getstatic     #29                 // Field java/io/File.separatorChar:C
+      63: if_icmpeq     69
+      66: iinc          5, 1
+      66: iinc          5, 1
+      66: iinc          5, 1
+     149: if_icmpeq     171
+     156: invokevirtual #33                 // Method java/lang/String.substring:(II)Ljava/lang/String;
+single=true
+doubled=true
+many=true
+case-decoy=false
+rooted=false
+exact-occurrences=2
+exact-files=1
+/home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/corpus/BASELINE-DECLARATIVE-SCORE.tsv:20:Romeh_spring-boot-sample-app.Jenkinsfile	ok	-	9	23	-
+/home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/docs/COMPATIBILITY-LEDGER.tsv:25:Romeh_spring-boot-sample-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+Ant tokenizer: single, doubled, and wider internal runs match; case and rooted controls remain false
+workspace cleanup: diff-fg218-junit-repeated-separators-corpus and @tmp absent
+seal verification: 1 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved

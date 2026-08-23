@@ -134,8 +134,19 @@ module Publish =
     // report selection uses a separate exact-case entry point.
     let expandGlob workspace pattern = expandGlobWithCase false workspace pattern
 
+    // Ant tokenizes include patterns by path component and discards empty tokens,
+    // so repeated separators inside a JUnit include are equivalent to one. Keep
+    // this normalization private to JUnit: archive/stash retain their established
+    // shared matcher. Collapsing instead of removing separators also preserves a
+    // leading/rooted pattern as rooted rather than turning it into a relative one.
+    let private normalizeJUnitPatternSeparators (pattern: string) =
+        pattern.Replace('\\', '/')
+        |> fun normalized -> Regex.Replace(normalized, "/+", "/")
+
     let private expandJUnitGlob workspace pattern =
-        expandGlobWithCase true workspace pattern
+        pattern
+        |> normalizeJUnitPatternSeparators
+        |> expandGlobWithCase true workspace
         |> List.filter (isAntDefaultExcluded >> not)
 
     /// Copy matched files into the artifact store under `buildKey`, preserving

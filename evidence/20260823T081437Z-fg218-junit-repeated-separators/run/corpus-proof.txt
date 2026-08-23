@@ -1,0 +1,8 @@
+corpus verified: 228/228 files match the pinned manifest
+78557a1b98eade3b0ed41d357c06acbaf327e38dccddfe8287de526b080d7634  /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Romeh_spring-boot-sample-app.Jenkinsfile
+29:                        junit '**//*target/surefire-reports/TEST-*.xml'
+35:                        junit '**//*target/surefire-reports/TEST-*.xml'
+exact-occurrences=2
+exact-files=1
+/home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/corpus/BASELINE-DECLARATIVE-SCORE.tsv:20:Romeh_spring-boot-sample-app.Jenkinsfile	ok	-	9	23	-
+/home/srikanth/projects/fogell-worktrees/fg-218-junit-repeated-separators/docs/COMPATIBILITY-LEDGER.tsv:25:Romeh_spring-boot-sample-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
