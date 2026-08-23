@@ -1062,6 +1062,59 @@ let externalInterrupt =
               Expect.isNone declarationDecoy.TestTotals "the terminal identity failure publishes no partial counts"
           }
 
+          test "junit report patterns are case-sensitive without changing shared archive matching" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          JUnitAllowEmptyResults = allowEmpty
+                          Named = [ "testResults", pattern ] }
+
+              File.WriteAllText(
+                  Path.Combine(reports, "Result.XML"),
+                  "<testsuite name=\"exact\" time=\"1.25\"><testcase name=\"pass\"/></testsuite>")
+
+              let exact = junit "reports/Result.XML" false
+              Expect.equal exact.Status Success "an exact-case report path is selected"
+              Expect.equal exact.TestTotals (Some(1, 0, 0)) "the exact-case report contributes one pass"
+              Expect.equal exact.TestDuration (Some 1.25f) "the exact-case report contributes its duration"
+
+              let missed = junit "reports/result.xml" false
+              Expect.equal missed.Status Failure "a case-only mismatch is a no-match by default"
+              Expect.equal
+                  missed.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "the existing no-report diagnostic owns the case-only miss"
+              Expect.isNone missed.TestTotals "a terminal case-only miss publishes no counts"
+
+              let allowedMiss = junit "reports/result.xml" true
+              Expect.equal allowedMiss.Status Success "allowEmptyResults permits the case-only miss"
+              Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted miss returns the zero summary"
+              Expect.equal allowedMiss.TestDuration (Some 0.0f) "the permitted miss returns zero duration"
+
+              File.WriteAllText(
+                  Path.Combine(reports, "result-pass.xml"),
+                  "<testsuite name=\"lower\"><testcase name=\"pass\"/></testsuite>")
+              File.WriteAllText(
+                  Path.Combine(reports, "RESULT-fail.xml"),
+                  "<testsuite name=\"upper\"><testcase name=\"fail\"><failure/></testcase></testsuite>")
+
+              let wildcard = junit "reports/result-*.xml" false
+              Expect.equal wildcard.Status Success "literal segments beside a wildcard retain exact case"
+              Expect.equal wildcard.TestTotals (Some(1, 0, 0)) "the differently cased failing report stays inert"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "reports/RESULT-pass.xml")
+                  [ "reports/result-pass.xml" ]
+                  "the shared archive/stash glob entry point retains its existing case-insensitive behavior"
+          }
+
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""
