@@ -135,18 +135,34 @@ module Publish =
     let expandGlob workspace pattern = expandGlobWithCase false workspace pattern
 
     // Ant tokenizes include patterns by path component and discards empty tokens,
-    // so repeated separators inside a JUnit include are equivalent to one. Keep
-    // this normalization private to JUnit: archive/stash retain their established
-    // shared matcher. Collapsing instead of removing separators also preserves a
-    // leading/rooted pattern as rooted rather than turning it into a relative one.
-    let private normalizeJUnitPatternSeparators (pattern: string) =
-        pattern.Replace('\\', '/')
-        |> fun normalized -> Regex.Replace(normalized, "/+", "/")
+    // so repeated separators inside a JUnit include are equivalent to one. It also
+    // appends `**` when an include ends in a separator. For wildcard-bearing
+    // prefixes, the suffix-free arm below represents terminal `**` consuming zero
+    // components (for example `reports/*/` also selects `reports/result.xml`);
+    // the suffixed arm selects descendants. A wholly literal prefix stays a
+    // directory lookup: Ant does not reinterpret a literal `report.xml/` as the
+    // file `report.xml`.
+    // Keep both rules private to JUnit: archive/stash retain their shared matcher.
+    // Collapsing instead of removing separators preserves rooted patterns as rooted.
+    let private normalizeJUnitPatterns (pattern: string) =
+        let normalized =
+            pattern.Replace('\\', '/')
+            |> fun value -> Regex.Replace(value, "/+", "/")
+
+        if normalized.EndsWith("/", StringComparison.Ordinal) then
+            let prefix = normalized.Substring(0, normalized.Length - 1)
+
+            if prefix.Contains('*') || prefix.Contains('?') then
+                [ prefix; normalized + "**" ]
+            else
+                [ normalized + "**" ]
+        else
+            [ normalized ]
 
     let private expandJUnitGlob workspace pattern =
         pattern
-        |> normalizeJUnitPatternSeparators
-        |> expandGlobWithCase true workspace
+        |> normalizeJUnitPatterns
+        |> List.collect (expandGlobWithCase true workspace)
         |> List.filter (isAntDefaultExcluded >> not)
 
     /// Copy matched files into the artifact store under `buildKey`, preserving

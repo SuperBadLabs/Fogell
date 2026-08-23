@@ -1,0 +1,8 @@
+single=true
+doubled=true
+backslash=true
+wildcard-zero=true
+known-ant=true
+literal-file-empty=true
+case-decoy=true
+rooted=true
