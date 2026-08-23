@@ -31,6 +31,10 @@ type StepRequest =
       /// a matched aggregate containing no recognized result. The walker owns
       /// the typed boolean boundary and supplies the decision before scanning.
       JUnitAllowEmptyResults: bool
+      /// FG-220. When present, `skipOldReports: true` filters against this
+      /// build-start Unix-millisecond origin. None is the default/explicit-false
+      /// path and performs no timestamp read.
+      JUnitSkipOldReportsSince: int64 option
       /// FG-177. `junit(skipMarkingStageUnstable: true)` suppresses the
       /// pipeline-node/stage UNSTABLE decoration independently of the returned
       /// summary. As with the build flag, the walker supplies a typed decision;
@@ -504,7 +508,13 @@ module Executor =
                     TestTotals = Some(0, 0, 0)
                     TestDuration = Some 0.0f }
 
-            match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
+            match
+                Publish.parseJUnitWithAbort
+                    request.Workspace
+                    (patterns raw)
+                    request.JUnitSkipOldReportsSince
+                    abort
+            with
             // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
             // `timeout` ending in `junit` selected `post { failure }` where a shell or
             // archive timeout selects `post { aborted }`. The cause is preserved and

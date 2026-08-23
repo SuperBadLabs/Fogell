@@ -1,0 +1,40 @@
+corpus verified: 228/228 files match the pinned manifest
+direct-junit-calls=36
+direct-junit-skip-old-reports-occurrences=0
+corpus-wide-skip-old-reports-lines=0
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/esign-consulting_logistics.Jenkinsfile:84:        junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/bszeti_kubernetes-integration-test.Jenkinsfile:109:                        junit 'target/surefire-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_docker-inbound-agent.Jenkinsfile:72:                                        junit(allowEmptyResults: true, keepLongStdio: true, testResults: 'target/**/junit-results.xml')
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_performance-plugin.Jenkinsfile:22:        junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/ahmedmourshedi_Automation-Testing-of-ECommerce-WebsiteUsingSelenium.Jenkinsfile:22:      junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkins-infra_pipeline-library.Jenkinsfile:17:          junit(keepLongStdio: true, testResults: 'target/surefire-reports/TEST-*.xml')
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jerearista_python-jenkinsfile-testing.Jenkinsfile:88:                    junit keepLongStdio: true, testResults: 'report/nosetests.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jerearista_python-jenkinsfile-testing.Jenkinsfile:111:                    junit keepLongStdio: true, testResults: 'report/nosetests.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/everflux_angular-jenkinsfile.Jenkinsfile:37:        junit '**/test-results.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/ORCID_ORCID-Source.Jenkinsfile:60:    junit '**/target/surefire-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Romeh_spring-boot-sample-app.Jenkinsfile:29:                        junit '**//*target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Romeh_spring-boot-sample-app.Jenkinsfile:35:                        junit '**//*target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/cloudogu_gitops-build-lib.Jenkinsfile:25:            junit testResults: '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_jenkins.Jenkinsfile:233:          junit testResults: 'target/ath-reports/TEST-*.xml', testDataPublishers: [[$class: 'AttachmentPublisher']]
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/cloudogu_gitops-playground.Jenkinsfile:57:                            junit testResults: '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/cloudogu_gitops-playground.Jenkinsfile:202:                            junit testResults: "**/target/failsafe-reports/TEST-*.xml",
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_docker.Jenkinsfile:89:                                junit(allowEmptyResults: true, keepLongStdio: true, testResults: 'target/**/junit-results.xml')
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_docker.Jenkinsfile:163:                                junit(allowEmptyResults: true, keepLongStdio: true, testResults: 'target/*.xml')
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/macg33zr_pipelineUnit.Jenkinsfile:92:            junit 'build/test-results/**/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/adamrushuk_powershell-pipeline.Jenkinsfile:50:      junit allowEmptyResults: true, testResults: '**/*_pester-test-results.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile:140:                                junit(testResults: '**/reports/report.junit', allowEmptyResults: true)
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/vskurikhin_DayBook3.Jenkinsfile:30:                    junit '**/build/test-results/test/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_docker-agents.Jenkinsfile:128:                                junit(allowEmptyResults: true, keepLongStdio: true, testResults: 'target/**/junit-results*.xml')
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/nikoly_selenium-grid-docker.Jenkinsfile:45:          junit 'reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/arun-gupta_docker-jenkins-pipeline.Jenkinsfile:46:      junit '**/target/surefire-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Romeh_spring-boot-ignite.Jenkinsfile:22:                        junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Romeh_spring-boot-ignite.Jenkinsfile:28:                        junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkins-zh_jenkins-cli.Jenkinsfile:63:            junit allowEmptyResults: true, testResults: "*/**/*.xml"
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/RitheeshBaradwaj_JenkinsPipeline.Jenkinsfile:65:            junit 'test-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/SumanReddy568_Selenium-Python-Pytest-framework.Jenkinsfile:33:                junit '**/reports/test-results.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/maxyermayank_jenkins-pipeline-demo-api.Jenkinsfile:70:                 junit allowEmptyResults: true, testResults: 'target/test-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/jenkinsci_jenkinsfile-runner.Jenkinsfile:34:                        junit '**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/buildit_jenkins-pipeline-libraries.Jenkinsfile:26:          junit 'target/surefire-reports/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/zowe_jenkins-library.Jenkinsfile:119:            junit allowEmptyResults: true, testResults: '**/test-results/**/*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/cloudogu_ces-build-lib.Jenkinsfile:45:            junit allowEmptyResults: true, testResults: '**/target/failsafe-reports/TEST-*.xml,**/target/surefire-reports/TEST-*.xml'
+/sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/charlires_golang-docker-jenkins.Jenkinsfile:15:        junit 'report/report.xml'

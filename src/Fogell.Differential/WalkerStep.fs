@@ -201,14 +201,30 @@ module WalkerStep =
         let junitAllowEmptyResultsState =
             junitBooleanFlagState "allowEmptyResults"
 
-        let junitFlagRejection =
+        let junitSkipOldReportsState =
+            junitBooleanFlagState "skipOldReports"
+
+        let junitArgumentRejection =
             [ "skipMarkingBuildUnstable", junitSkipMarkingBuildUnstableState
               "skipMarkingStageUnstable", junitSkipMarkingStageUnstableState
-              "allowEmptyResults", junitAllowEmptyResultsState ]
+              "allowEmptyResults", junitAllowEmptyResultsState
+              "skipOldReports", junitSkipOldReportsState ]
             |> List.tryPick (fun (key, state) ->
                 match state with
                 | Some(WalkerRules.FlagRejected why) -> Some $"step 'junit' argument `{key}` {why}"
                 | _ -> None)
+
+        let junitResumeRejection =
+            if runCtx.IsRestartedRun && junitSkipOldReportsState = Some WalkerRules.FlagOn then
+                Some
+                    "step 'junit' argument `skipOldReports` requires the original build timestamp; Fogell refuses it on a resumed persisted run rather than applying the newer attempt timestamp"
+            else
+                None
+
+        let junitFlagRejection =
+            match junitArgumentRejection with
+            | Some why -> Some why
+            | None -> junitResumeRejection
 
         let junitSkipMarkingBuildUnstable =
             junitSkipMarkingBuildUnstableState = Some WalkerRules.FlagOn
@@ -218,6 +234,12 @@ module WalkerStep =
 
         let junitAllowEmptyResults =
             junitAllowEmptyResultsState = Some WalkerRules.FlagOn
+
+        let junitSkipOldReportsSince =
+            if junitSkipOldReportsState = Some WalkerRules.FlagOn then
+                Some runCtx.BuildStartTimeInMillis
+            else
+                None
 
         let result =
             match flagRejection, junitFlagRejection with
@@ -242,6 +264,7 @@ module WalkerStep =
                   CaptureStdout = wantsStdout
                   JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
                   JUnitAllowEmptyResults = junitAllowEmptyResults
+                  JUnitSkipOldReportsSince = junitSkipOldReportsSince
                   JUnitSkipMarkingStageUnstable = junitSkipMarkingStageUnstable
                   // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
                   // default. A 120 s constant sat here and aborted any step

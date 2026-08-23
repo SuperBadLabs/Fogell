@@ -30,6 +30,7 @@ let private request root script =
       CaptureStdout = false
       JUnitSkipMarkingBuildUnstable = false
       JUnitAllowEmptyResults = false
+      JUnitSkipOldReportsSince = None
       JUnitSkipMarkingStageUnstable = false
       Interrupt = None
       InterruptBeatsDeadline = None
@@ -714,6 +715,7 @@ let externalInterrupt =
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
                         JUnitAllowEmptyResults = false
+                        JUnitSkipOldReportsSince = None
                         JUnitSkipMarkingStageUnstable = false
                         Interrupt = None
                         InterruptBeatsDeadline = None
@@ -745,6 +747,7 @@ let externalInterrupt =
                         CaptureStdout = false
                         JUnitSkipMarkingBuildUnstable = false
                         JUnitAllowEmptyResults = false
+                        JUnitSkipOldReportsSince = None
                         JUnitSkipMarkingStageUnstable = false
                         TimeoutMs = None
                         Interrupt = None
@@ -1355,6 +1358,96 @@ let externalInterrupt =
                   (Publish.expandGlob baseRequest.Workspace "reports//")
                   []
                   "the shared matcher also retains its repeated trailing-separator behavior"
+          }
+
+          test "junit skipOldReports filters before report construction at the pinned build-time boundary" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let buildStart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+
+              let writeAt (relative: string) (content: string) (modifiedAt: int64) =
+                  let path = Path.Combine(baseRequest.Workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, content)
+                  File.SetLastWriteTimeUtc(path, DateTimeOffset.FromUnixTimeMilliseconds(modifiedAt).UtcDateTime)
+
+              writeAt
+                  "reports/old-failure.xml"
+                  "<testsuite name=\"old\" time=\"2\"><testcase name=\"bad\"><failure/></testcase></testsuite>"
+                  (buildStart - 3001L)
+
+              writeAt "reports/old-malformed.xml" "not xml" (buildStart - 4000L)
+
+              writeAt
+                  "reports/boundary.xml"
+                  "<testsuite name=\"boundary\" time=\"1\"><testcase name=\"pass\"/></testsuite>"
+                  (buildStart - 3000L)
+
+              writeAt
+                  "reports/future.xml"
+                  "<testsuite name=\"future\" time=\"3\"><testcase name=\"skip\"><skipped/></testcase></testsuite>"
+                  (buildStart + 1000L)
+
+              let junit pattern since allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ]
+                          JUnitSkipOldReportsSince = since
+                          JUnitAllowEmptyResults = allowEmpty }
+
+              let unfiltered = junit "reports/*.xml" None false
+              Expect.equal unfiltered.Status Unstable "the omitted/false path performs no mtime filtering"
+              Expect.equal unfiltered.TestTotals (Some(4, 2, 1)) "old valid and malformed reports are constructed"
+              Expect.equal unfiltered.TestDuration (Some 6.0f) "all valid report durations contribute without filtering"
+
+              let filtered = junit "reports/*.xml" (Some buildStart) false
+              Expect.equal filtered.Status Success "old failing and malformed reports are silently skipped"
+              Expect.equal filtered.TestTotals (Some(2, 0, 1)) "cutoff equality and future reports remain"
+              Expect.equal filtered.TestDuration (Some 4.0f) "only retained report durations contribute"
+
+              let allOld = junit "reports/old-*.xml" (Some buildStart) false
+              Expect.equal allOld.Status Failure "matched-but-all-old is the zero-result terminal path"
+              Expect.equal
+                  allOld.Diagnostic
+                  (Some "None of the test reports contained any result")
+                  "all-old remains distinct from a no-match"
+
+              let allowedAllOld = junit "reports/old-*.xml" (Some buildStart) true
+              Expect.equal allowedAllOld.Status Success "allowEmptyResults permits the all-old aggregate"
+              Expect.equal allowedAllOld.TestTotals (Some(0, 0, 0)) "the allowed all-old summary stays typed zero"
+              Expect.equal allowedAllOld.TestDuration (Some 0.0f) "the allowed all-old duration stays Float zero"
+
+              let vanishedPath = Path.Combine(baseRequest.Workspace, "reports/vanished.xml")
+              writeAt
+                  "reports/vanished.xml"
+                  "<testsuite name=\"vanished\"><testcase name=\"pass\"/></testsuite>"
+                  (buildStart + 1000L)
+
+              let mutable polls = 0
+
+              let vanishAfterScan () =
+                  polls <- polls + 1
+
+                  if polls = 2 then
+                      File.Delete vanishedPath
+
+                  false
+
+              match
+                  Publish.parseJUnitWithAbort
+                      baseRequest.Workspace
+                      [ "reports/vanished.xml" ]
+                      (Some buildStart)
+                      vanishAfterScan
+              with
+              | Error(Unreadable message) ->
+                  Expect.stringContains
+                      message
+                      "FileNotFoundException"
+                      "skipOldReports fails a selected report that vanishes before metadata inspection"
+              | other -> failtestf "vanished skipOldReports input returned %A" other
           }
 
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {

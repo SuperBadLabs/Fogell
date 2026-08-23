@@ -1,0 +1,34 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+07511327f8f69b4abdab17705f99c5de16bcb751b79e1403f4ac80ac151b3e6c  /var/jenkins_home/war/WEB-INF/lib/jenkins-core-2.568.1.jar
+         6: invokevirtual #7                  // Method hudson/model/Run.getStartTimeInMillis:()J
+        14: invokevirtual #19                 // Method hudson/model/Run.getTimeInMillis:()J
+        42: invokestatic  #80                 // Method java/lang/Math.min:(JJ)J
+       150: invokestatic  #404                // Method java/lang/Math.min:(JJ)J
+       212: invokestatic  #404                // Method java/lang/Math.min:(JJ)J
+       297: invokestatic  #404                // Method java/lang/Math.min:(JJ)J
+       409: invokestatic  #404                // Method java/lang/Math.min:(JJ)J
+        47: invokestatic  #289                // Method java/nio/file/Files.getLastModifiedTime:(Ljava/nio/file/Path;[Ljava/nio/file/LinkOption;)Ljava/nio/file/attribute/FileTime;
+        95: invokestatic  #289                // Method java/nio/file/Files.getLastModifiedTime:(Ljava/nio/file/Path;[Ljava/nio/file/LinkOption;)Ljava/nio/file/attribute/FileTime;
+        54: getstatic     #301                // Field FILE_TIME_PRECISION_MARGIN:J
+        47: putstatic     #301                // Field FILE_TIME_PRECISION_MARGIN:J
+  #1123 = String             #1124        // \u0001filetime.precision.margin
+  #1124 = Utf8               \u0001filetime.precision.margin
+      #1123 \u0001filetime.precision.margin
+        38: ldc2_w        #842                // long 3000l
+        57: lsub
+        58: lcmp
+        59: ifge          113
+  public final long getStartTimeInMillis();
+  public final long getTimeInMillis();
+system-property=<absent>
+environment-override=<absent>
+direct-junit-calls=36
+direct-junit-skip-old-reports-occurrences=0
+corpus-wide-skip-old-reports-lines=0
+strict skip predicate, 3000 ms default, absent overrides, and corpus-wide 0/36 boundary verified
+workspace cleanup: diff-fg220-junit-skip-old-mixed and @tmp absent
+workspace cleanup: diff-fg220-junit-skip-old-all-allow-empty and @tmp absent
+seal verification: 2 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved

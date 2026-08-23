@@ -329,13 +329,19 @@ module FogellSide =
         (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
+        // FG-220. Jenkins compares report mtimes with the build's persisted
+        // scheduling/start timestamp, never with the later junit invocation.
+        // Capture the closest Fogell analogue at build entry, before preflight.
+        let buildStartTimeInMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        let isRestartedRun = persistence |> Option.exists (fun hooks -> hooks.IsRestartedRun)
+
         match preflightExecution script with
         | Result.Error why -> Result.Error why
         | Result.Ok pipeline ->
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
-            let runCtx = WalkerCtx.create ()
+            let runCtx = WalkerCtx.create buildStartTimeInMillis isRestartedRun
 
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's

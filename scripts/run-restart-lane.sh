@@ -887,5 +887,84 @@ for f in wrong-stage.txt wrong-pipeline.txt; do
 done
 echo "durable warning preceded successful finish; resume selected stage unstable while build and pipeline stayed successful"
 
+echo "=== FG-220: resumed JUnit skipOldReports fails closed without the original cutoff ==="
+SO_LANE="$LANE/fg220-junit-skip-old-resume"
+mkdir -p "$SO_LANE/ws"
+cat > "$SO_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('probe') {
+            steps {
+                sh "mkdir -p reports; printf '%s' '<testsuite name=\"old\" tests=\"1\"><testcase name=\"pass\"/></testsuite>' > reports/old.xml; touch -d '@2' reports/old.xml"
+                junit testResults: 'reports/*.xml', skipOldReports: true, allowEmptyResults: true
+                sh 'printf wrong > should-not-run.txt'
+            }
+        }
+    }
+}
+JF
+
+# A real fresh execution supplies the exact digest/workspace metadata and a
+# durable setup-step prefix.  Resume begins after setup, but before JUnit.
+"${HOST[@]}" "$SO_LANE/Jenkinsfile" "$SO_LANE/ws" fg220true "$SO_LANE/seed.journal" > "$SO_LANE/seed.log" 2>&1
+grep -q 'completed: success' "$SO_LANE/seed.log" || {
+  echo "FAIL: skipOldReports seed run did not complete"; cat "$SO_LANE/seed.log"; exit 1; }
+awk '1; $0 == "step-finished\tprobe\t0\tsuccess" { exit }' \
+  "$SO_LANE/seed.journal" > "$SO_LANE/resume.journal"
+rm -rf "$SO_LANE/ws/fg220true/reports"
+rm -f "$SO_LANE/ws/fg220true/should-not-run.txt"
+
+set +e
+"${HOST[@]}" "$SO_LANE/Jenkinsfile" "$SO_LANE/ws" fg220true "$SO_LANE/resume.journal" > "$SO_LANE/resume.log" 2>&1
+SO_RC=$?
+set -e
+[ "$SO_RC" -eq 1 ] || { echo "FAIL: resumed skipOldReports true exit was $SO_RC, expected 1"; cat "$SO_LANE/resume.log"; exit 1; }
+grep -q $'^step-reason\tprobe\t1\tstep '\''junit'\'' argument `skipOldReports` requires the original build timestamp;' "$SO_LANE/resume.journal" || {
+  echo "FAIL: resumed skipOldReports true did not durably name the missing cutoff"; cat "$SO_LANE/resume.journal"; exit 1; }
+grep -q 'completed: failure' "$SO_LANE/resume.log" || {
+  echo "FAIL: resumed skipOldReports true was not a failed build"; cat "$SO_LANE/resume.log"; exit 1; }
+[ "$(grep -c 'Recording test results' "$SO_LANE/resume.log" || true)" -eq 0 ] || {
+  echo "FAIL: resumed skipOldReports true entered JUnit report scanning"; cat "$SO_LANE/resume.log"; exit 1; }
+[ ! -f "$SO_LANE/ws/fg220true/should-not-run.txt" ] || {
+  echo "FAIL: a successor ran after resumed skipOldReports refusal"; exit 1; }
+
+echo "=== FG-220: resumed omitted and explicit-false JUnit still parse old reports ==="
+SF_LANE="$LANE/fg220-junit-skip-old-false-resume"
+mkdir -p "$SF_LANE/ws"
+cat > "$SF_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    stages {
+        stage('probe') {
+            steps {
+                sh "mkdir -p reports; printf '%s' '<testsuite name=\"old\" tests=\"1\"><testcase name=\"pass\"/></testsuite>' > reports/old.xml; touch -d '@2' reports/old.xml"
+                junit testResults: 'reports/*.xml', skipOldReports: false
+                junit testResults: 'reports/*.xml'
+                sh 'printf continued > continued.txt'
+            }
+        }
+    }
+}
+JF
+"${HOST[@]}" "$SF_LANE/Jenkinsfile" "$SF_LANE/ws" fg220false "$SF_LANE/seed.journal" > "$SF_LANE/seed.log" 2>&1
+grep -q 'completed: success' "$SF_LANE/seed.log" || {
+  echo "FAIL: false/default seed run did not complete"; cat "$SF_LANE/seed.log"; exit 1; }
+awk '1; $0 == "step-finished\tprobe\t0\tsuccess" { exit }' \
+  "$SF_LANE/seed.journal" > "$SF_LANE/resume.journal"
+rm -f "$SF_LANE/ws/fg220false/continued.txt"
+"${HOST[@]}" "$SF_LANE/Jenkinsfile" "$SF_LANE/ws" fg220false "$SF_LANE/resume.journal" > "$SF_LANE/resume.log" 2>&1
+grep -q 'skip (durably finished): probe#0' "$SF_LANE/resume.log" || {
+  echo "FAIL: false/default resume did not skip durable setup"; cat "$SF_LANE/resume.log"; exit 1; }
+grep -q 'completed: success' "$SF_LANE/resume.log" || {
+  echo "FAIL: false/default resume did not parse the old report"; cat "$SF_LANE/resume.log"; exit 1; }
+for i in 1 2; do
+  grep -q "step-finished"$'\t'"probe"$'\t'"$i"$'\t'"success" "$SF_LANE/resume.journal" || {
+    echo "FAIL: resumed JUnit step probe#$i was not durably successful"; cat "$SF_LANE/resume.journal"; exit 1; }
+done
+[ "$(cat "$SF_LANE/ws/fg220false/continued.txt")" = continued ] || {
+  echo "FAIL: false/default resume did not reach its successor"; cat "$SF_LANE/resume.log"; exit 1; }
+echo "resumed true refused before scan; resumed explicit false and default parsed the old report"
+
 LANE_OK=1
 echo "RESTART LANE: ALL ASSERTIONS PASSED"
