@@ -399,21 +399,23 @@ module Interpreter =
     /// no such signature and Groovy throws, while a table that ignores args returned
     /// 3 and let a wrong expression reach a command line.
     let private zeroArgBuiltins =
-        set
-            [ "length"
-              "size"
-              "trim"
-              "toUpperCase"
-              "toLowerCase"
-              "toString"
-              "toInteger"
-              "reverse"
-              "first"
-              "last"
-              "isEmpty"
-              "keySet"
-              "values"
-              "readLines" ]
+        Set.union
+            Sandbox.junitSummaryCountGetters
+            (set
+                [ "length"
+                  "size"
+                  "trim"
+                  "toUpperCase"
+                  "toLowerCase"
+                  "toString"
+                  "toInteger"
+                  "reverse"
+                  "first"
+                  "last"
+                  "isEmpty"
+                  "keySet"
+                  "values"
+                  "readLines" ])
 
     /// Methods whose only Groovy input is the trailing CLOSURE — a positional or
     /// named argument has no matching overload, and the table used to silently
@@ -423,7 +425,16 @@ module Interpreter =
 
     let private (|Integral|_|) = function
         | VInt i
-        | VInteger i -> Some i
+        | VInteger i
+        | VArithmeticInteger i -> Some i
+        | _ -> None
+
+    /// Values which retain the historical VInt operator surface. Keep this
+    /// narrower than Integral: VInteger/passCount deliberately remains outside
+    /// arithmetic and range construction until numeric promotion is measured.
+    let private (|ArithmeticIntegral|_|) = function
+        | VInt i
+        | VArithmeticInteger i -> Some i
         | _ -> None
 
 
@@ -507,6 +518,7 @@ module Interpreter =
             | "-" ->
                 match v with
                 | VInt i -> VInt(-i)
+                | VArithmeticInteger i -> VInt(-i)
                 | _ when st.StrictVars ->
                     raise (Stop(Unsupported "unary '-' is not modelled for this operand type"))
                 | _ -> VNull
@@ -541,9 +553,9 @@ module Interpreter =
             raise (Stop(Unsupported "SCM return-map key-set properties are not modelled; use join(String)"))
         | VJUnitSummary summary ->
             match name with
-            | "totalCount" -> VInt summary.Value.TotalCount
-            | "failCount" -> VInt summary.Value.FailCount
-            | "skipCount" -> VInt summary.Value.SkipCount
+            | "totalCount" -> VArithmeticInteger summary.Value.TotalCount
+            | "failCount" -> VArithmeticInteger summary.Value.FailCount
+            | "skipCount" -> VArithmeticInteger summary.Value.SkipCount
             | "passCount" -> VInteger summary.Value.PassCount
             | _ ->
                 raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount, passCount"))
@@ -618,22 +630,22 @@ module Interpreter =
         | _, VJUnitSummary _, _
         | _, _, VJUnitSummary _ ->
             raise (Stop(Unsupported $"operator '{op}' is not modelled for JUnit TestResultSummary"))
-        | "+", VInt x, VInt y -> VInt(x + y)
+        | "+", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x + y)
         | "+", VStr x, _ -> VStr(x + scriptDisplay b)
         | "+", _, VStr y -> VStr(scriptDisplay a + y)
         | "+", ListLike x, ListLike y -> VList(ref (x.Value @ y.Value))
-        | "-", VInt x, VInt y -> VInt(x - y)
-        | "*", VInt x, VInt y -> VInt(x * y)
-        | "/", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
-        | "/", VInt x, VInt y when x % y = 0L -> VInt(x / y)
-        | "/", VInt _, VInt _ when st.StrictVars ->
+        | "-", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x - y)
+        | "*", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x * y)
+        | "/", ArithmeticIntegral _, ArithmeticIntegral 0L -> raise (Stop(Thrown(VStr "division by zero")))
+        | "/", ArithmeticIntegral x, ArithmeticIntegral y when x % y = 0L -> VInt(x / y)
+        | "/", ArithmeticIntegral _, ArithmeticIntegral _ when st.StrictVars ->
             // Groovy's `/` is DECIMAL: `1 / 2` renders `0.5`. This interpreter has no
             // decimal value, so a non-integral quotient must refuse — truncating to
             // VInt 0 sent `test 0 = 0.5` to a shell where Jenkins sends the truth.
             raise (Stop(Unsupported "non-integral division; Groovy decimals are not modelled"))
-        | "/", VInt x, VInt y -> VInt(x / y)
-        | "%", VInt _, VInt 0L -> raise (Stop(Thrown(VStr "division by zero")))
-        | "%", VInt x, VInt y -> VInt(x % y)
+        | "/", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x / y)
+        | "%", ArithmeticIntegral _, ArithmeticIntegral 0L -> raise (Stop(Thrown(VStr "division by zero")))
+        | "%", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x % y)
         | "<<", VList x, _ ->
             x.Value <- x.Value @ [ b ]
             VList x
@@ -677,13 +689,14 @@ module Interpreter =
                 match a, t with
                 | VStr _, "String" -> true
                 | VInteger _, ("Integer" | "Number") -> true
+                | VArithmeticInteger _, ("Integer" | "Number") -> true
                 | VInt _, ("Integer" | "Long" | "Number") -> true
                 | VList _, ("List" | "Collection" | "ArrayList") -> true
                 | VRange _, ("List" | "Collection" | "Range" | "IntRange") -> true
                 | VMap _, ("Map" | "HashMap" | "LinkedHashMap") -> true
                 | VBool _, "Boolean" -> true
                 | _ -> false)
-        | "..", VInt x, VInt y ->
+        | "..", ArithmeticIntegral x, ArithmeticIntegral y ->
             let distance = System.Numerics.BigInteger.Abs(bigint y - bigint x)
 
             if distance > bigint st.Budget.MaxLoopIterations then
@@ -1403,8 +1416,26 @@ module Interpreter =
             // scripts and the lax `when` evaluator; falling through to null
             // there would silently change stage selection.
             raise (Stop(Unsupported $"method `{name}` is modelled only for an SCM return map"))
+        | "getTotalCount", VJUnitSummary summary, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VArithmeticInteger summary.Value.TotalCount
+        | "getFailCount", VJUnitSummary summary, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VArithmeticInteger summary.Value.FailCount
+        | "getSkipCount", VJUnitSummary summary, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VArithmeticInteger summary.Value.SkipCount
+        | "getPassCount", VJUnitSummary summary, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            VInteger summary.Value.PassCount
+        | getter, _, _ when Set.contains getter Sandbox.junitSummaryCountGetters ->
+            // The names are globally admitted only so the nominal summary can
+            // reach the exact public accessors above. Never let that admission
+            // turn a free call, another receiver, an argument, or a trailing
+            // closure into a guessed null/success path.
+            raise (Stop(Unsupported $"method `{getter}` is modelled only as a zero-argument JUnit TestResultSummary count accessor"))
         | _, VJUnitSummary _, _ ->
-            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read totalCount, failCount, skipCount, or passCount"))
+            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read a count property or call its matching zero-argument getter"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
         // with the same binding rules and refusal contract as `f(x)` — for a closure
         // held in a LOCAL. A closure held in the script BINDING (assigned without

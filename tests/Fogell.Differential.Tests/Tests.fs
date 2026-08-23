@@ -1345,6 +1345,9 @@ let hostedSignatures =
               // retry: named count valid, non-int refused, zero NOT refused (clamps, measured)
               Expect.isNone ((s "retry").Check [] [ "count", Fogell.Groovy.Interpreter.VInt 2L ]) "named count is valid Jenkins"
               Expect.isNone ((s "retry").Check [ Fogell.Groovy.Interpreter.VInt 0L ] []) "retry(0) runs clamped — refusing was the measured false refusal"
+              Expect.isNone
+                  ((s "retry").Check [ Fogell.Groovy.Interpreter.VArithmeticInteger 2L ] [])
+                  "an Integer-provenance compatibility count keeps the VInt retry contract"
               Expect.isSome ((s "retry").Check [ Fogell.Groovy.Interpreter.VStr "nope" ] []) "a non-integer count refuses"
               // withEnv: entry without '=' refused, well-formed passes
               Expect.isSome ((s "withEnv").Check [ Fogell.Groovy.Interpreter.VList(ref [ Fogell.Groovy.Interpreter.VStr "BADENTRY" ]) ] []) "an entry without = refuses"
@@ -2209,21 +2212,22 @@ let genuineNullRuntime =
                     "same-modulo", "passes % other"
                     "range", "passes..other" ]
 
-              for label, expression in operations do
+              for accessor in [ "passCount"; "getPassCount()" ] do
+                for label, expression in operations do
                   let body =
                       "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"arithmetic\\\" tests=\\\"1\\\" failures=\\\"0\\\" skipped=\\\"0\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
                       + "def got = junit(testResults: 'reports/summary.xml'); "
-                      + "def passes = got.passCount; def other = got.passCount; "
+                      + $"def passes = got.{accessor}; def other = got.{accessor}; "
                       + $"try {{ def ignored = {expression}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
 
                   run body (fun workspace trace ->
-                      Expect.equal trace.Result "failure" $"{label}: unmodelled arithmetic fails closed"
+                      Expect.equal trace.Result "failure" $"{accessor} {label}: unmodelled arithmetic fails closed"
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt")))
-                          $"{label}: no successor effect escaped the refusal"
+                          $"{accessor} {label}: no successor effect escaped the refusal"
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt")))
-                          $"{label}: ordinary Groovy catch cannot absorb a modelling refusal")
+                          $"{accessor} {label}: ordinary Groovy catch cannot absorb a modelling refusal")
           }
 
           test "JUnit build-instability suppression preserves the typed summary in scripted calls" {
@@ -2505,11 +2509,90 @@ let genuineNullRuntime =
                               $"{key}: the duplicate call cannot reach its successor")
           }
 
+          test "JUnit count properties and getters preserve positive and zero Integer provenance" {
+              for label, xml, option, expectedResult, expectedCounts in
+                  [ "positive",
+                    "<testsuite name=\\\"accessors\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>",
+                    "",
+                    "unstable",
+                    "[4, 2, 1, 1]"
+                    "zero", "<testsuite name=\\\"zero\\\"/>", ", allowEmptyResults: true", "success", "[0, 0, 0, 0]" ] do
+                  let body =
+                      $"sh \"mkdir -p reports; printf '%%s' '{xml}' > reports/summary.xml\"; "
+                      + $"def got = junit(testResults: 'reports/summary.xml'{option}); "
+                      + "def properties = [got.totalCount, got.failCount, got.skipCount, got.passCount]; "
+                      + "def getters = [got.getTotalCount(), got.getFailCount(), got.getSkipCount(), got.getPassCount()]; "
+                      + $"if (properties == {expectedCounts} && properties == getters "
+                      + "&& properties.every { it instanceof Integer && !(it instanceof Long) }) { "
+                      + $"sh 'touch {label}-count-accessors.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result expectedResult $"{label}: the report result remains unchanged"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-count-accessors.txt")))
+                          $"{label}: property/getter parity and Integer-only provenance hold")
+          }
+
+          test "JUnit compatibility integers retain Java type naming and retry-count use" {
+              Expect.equal
+                  (GString.javaTypeName (Fogell.Groovy.Interpreter.VArithmeticInteger 2L))
+                  "Integer"
+                  "the def-keyword advisory sees the measured Java Integer provenance"
+
+              let body =
+                  "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"retry-counts\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase></testsuite>' > reports/summary.xml\"; "
+                  + "def got = junit(testResults: 'reports/summary.xml'); "
+                  + "retry(count: got.totalCount) { sh 'touch retry-property.txt' }; "
+                  + "retry(count: got.getFailCount()) { sh 'touch retry-getter.txt' }"
+
+              run body (fun workspace trace ->
+                  Expect.equal trace.Result "unstable" "the count consumers do not alter the report result"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "retry-property.txt")))
+                      "a totalCount property value passes the retained retry integer guard"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "retry-getter.txt")))
+                      "a getFailCount() value passes the same retry integer guard")
+          }
+
+          test "JUnit total fail and skip accessors retain the established arithmetic surface" {
+              for accessor, expected in
+                  [ "totalCount", 4
+                    "failCount", 2
+                    "skipCount", 1
+                    "getTotalCount()", 4
+                    "getFailCount()", 2
+                    "getSkipCount()", 1 ] do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"compat\\\"><testcase name=\\\"pass\\\"/><testcase name=\\\"fail\\\"><failure/></testcase><testcase name=\\\"error\\\"><error/></testcase><testcase name=\\\"skip\\\"><skipped/></testcase></testsuite>' > reports/summary.xml\"; "
+                      + "def got = junit(testResults: 'reports/summary.xml'); "
+                      + $"def count = got.{accessor}; "
+                      + "def results = [-count, count + 1, count - 1, count * 2, count / 1, count % 2, count >= 0, "
+                      + $"count == {expected}, (count ? 1 : 0), count..(count + 1)]; "
+                      + $"if (results == [{-expected}, {expected + 1}, {expected - 1}, {expected * 2}, {expected}, {expected % 2}, true, true, 1, [{expected}, {expected + 1}]]) {{ "
+                      + "sh 'touch arithmetic-compatible.txt' }"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "unstable" $"{accessor}: report result remains ordinary instability"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "arithmetic-compatible.txt")))
+                          $"{accessor}: the former VInt operation surface remains reachable")
+          }
+
           test "unmeasured JUnit object surface remains catch-opaque and cannot reach a successor effect" {
+              let getterDenials =
+                  Fogell.Groovy.Interpreter.Sandbox.junitSummaryCountGetters
+                  |> Set.toList
+                  |> List.collect (fun getter ->
+                      [ $"{getter}-wrong-receiver", $"def ignored = 'text'.{getter}()"
+                        $"{getter}-free-call", $"def ignored = {getter}()"
+                        $"{getter}-positional", $"def ignored = got.{getter}(1)"
+                        $"{getter}-named", $"def ignored = got.{getter}(extra: 1)"
+                        $"{getter}-trailing", $"def ignored = got.{getter}() {{ sh 'touch escaped.txt' }}" ])
+
               let operations =
                   [ "property", "def ignored = got.duration"
-                    "method", "def ignored = got.getTotalCount()"
-                    "pass-getter", "def ignored = got.getPassCount()"
+                    "duration-getter", "def ignored = got.getDuration()"
                     "index", "def ignored = got['totalCount']"
                     "truthiness", "def ignored = got ? 1 : 0"
                     "equality", "def ignored = got == got"
@@ -2520,6 +2603,7 @@ let genuineNullRuntime =
                     "throw", "throw got"
                     "nested-throw", "throw [got]"
                     "nested-host-argument", "echo([got])" ]
+                  @ getterDenials
 
               for label, operation in operations do
                   let body =

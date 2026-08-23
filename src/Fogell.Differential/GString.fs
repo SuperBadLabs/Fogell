@@ -430,6 +430,7 @@ module GString =
         | VStr _ -> "String"
         | VInt _ -> "Integer"
         | VInteger _ -> "Integer"
+        | VArithmeticInteger _ -> "Integer"
         | VBool _ -> "Boolean"
         | VList _ -> "ArrayList"
         | VRange _ -> "IntRange"
