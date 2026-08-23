@@ -1007,6 +1007,183 @@ let externalInterrupt =
                       $"{label}: both XML orders emit the exact Jenkins null-className line"
           }
 
+          test "junit distinguishes a missing testcase name from an empty one and preserves parser order" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let emitted = ResizeArray<string>()
+              let missingTestName = JUnitDiagnostics.MissingTestNameMessage
+              let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+
+              let junit pattern allowEmpty =
+                  emitted.Clear()
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", pattern ]
+                              JUnitAllowEmptyResults = allowEmpty
+                              OnLine = Some emitted.Add }
+
+                  observed, List.ofSeq emitted
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "missing-name-classname.xml"),
+                  "<arbitrary>"
+                  + "<testcase classname=\"matrix.Pass\"/>"
+                  + "<testcase classname=\"matrix.Fail\"><failure/></testcase>"
+                  + "<testcase classname=\"matrix.Error\"><error/></testcase>"
+                  + "<testcase classname=\"matrix.Skip\"><failure/><error/><skipped/></testcase>"
+                  + "</arbitrary>")
+
+              let classnamed, _ = junit "missing-name-classname.xml" false
+              Expect.equal classnamed.Status Unstable "classname makes absent testcase names admissible"
+              Expect.equal classnamed.TestTotals (Some(4, 2, 1)) "all missing-name marker classes contribute"
+              Expect.equal classnamed.StageWarning (Some Unstable) "missing names do not suppress ordinary warnings"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "missing-name-owner.xml"),
+                  "<arbitrary name=\"\"><testcase/>"
+                  + "<testsuite name=\"SuiteFallback\"><testcase/></testsuite>"
+                  + "</arbitrary>")
+
+              let ownerNamed, _ = junit "missing-name-owner.xml" false
+              Expect.equal ownerNamed.Status Success "owner raw-name presence makes absent testcase names admissible"
+              Expect.equal ownerNamed.TestTotals (Some(2, 0, 0)) "both reached owners contribute one unnamed pass"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "missing-name-terminal.xml"),
+                  "<arbitrary><testcase/></arbitrary>")
+
+              let missing, missingOutput = junit "missing-name-terminal.xml" true
+              let missingReportPath = Path.Combine(baseRequest.Workspace, "missing-name-terminal.xml")
+              Expect.equal missing.Status Failure "a missing name without a class fallback is terminal"
+              Expect.isNone missing.TestTotals "allowEmptyResults cannot turn a missing name into zero totals"
+              Expect.isNone missing.StageWarning "the parser fault is not a test warning"
+              Expect.equal missing.Diagnostic (Some missingTestName) "the exact oracle diagnostic is durable"
+              Expect.equal
+                  missingOutput
+                  [ "Recording test results"
+                    $"Failed to read {missingReportPath}" ]
+                  "the report-specific wrapper is visible while the hosted boundary owns the root cause"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "empty-name-terminal.xml"),
+                  "<arbitrary><testcase name=\"\"/></arbitrary>")
+
+              let empty, emptyOutput = junit "empty-name-terminal.xml" true
+              Expect.equal empty.Status Failure "an empty name remains FG-211's null-className path"
+              Expect.equal empty.Diagnostic (Some missingIdentity) "missing and empty names remain distinct"
+              Expect.equal emptyOutput [ "Recording test results"; missingIdentity ] "the FG-211 line remains exact"
+
+              let assertFatal (label: string) (xml: string) (expected: string) =
+                  let fileName = $"{label}.xml"
+                  File.WriteAllText(Path.Combine(baseRequest.Workspace, fileName), xml)
+                  let observed, output = junit fileName true
+                  Expect.equal observed.Status Failure $"{label}: the selected parser fault is terminal"
+                  Expect.equal observed.Diagnostic (Some expected) $"{label}: construction/tally precedence matches the parser"
+
+                  let expectedOutput =
+                      if expected = missingTestName then
+                          [ "Recording test results"
+                            $"Failed to read {Path.Combine(baseRequest.Workspace, fileName)}" ]
+                      else
+                          [ "Recording test results"; expected ]
+
+                  Expect.equal output expectedOutput $"{label}: only the Jenkins-visible winning fault is emitted"
+
+              assertFatal
+                  "suite-document-order-missing-first"
+                  "<testsuites><testsuite><testcase/></testsuite><testsuite><testcase name=\"simple\"/></testsuite></testsuites>"
+                  missingTestName
+
+              assertFatal
+                  "suite-document-order-identity-first"
+                  "<testsuites><testsuite><testcase name=\"simple\"/></testsuite><testsuite><testcase/></testsuite></testsuites>"
+                  missingTestName
+
+              assertFatal
+                  "child-before-owner"
+                  "<testsuites><testcase/><testsuite><testcase name=\"simple\"/></testsuite></testsuites>"
+                  missingTestName
+
+              assertFatal
+                  "same-owner-missing-first"
+                  "<testsuite><testcase/><testcase name=\"simple\"/></testsuite>"
+                  missingTestName
+
+              assertFatal
+                  "same-owner-identity-first"
+                  "<testsuite><testcase name=\"simple\"/><testcase/></testsuite>"
+                  missingTestName
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-identity-missing-a-identity.xml"),
+                  "<arbitrary><testcase name=\"simple\"/></arbitrary>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-identity-missing-b-missing.xml"),
+                  "<arbitrary><testcase/></arbitrary>")
+
+              let identityThenMissing, identityThenMissingOutput =
+                  junit "global-identity-missing-*" true
+
+              let identityThenMissingReport =
+                  Path.Combine(baseRequest.Workspace, "global-identity-missing-b-missing.xml")
+
+              Expect.equal identityThenMissing.Status Failure "construction across all files precedes identity tally"
+              Expect.isNone identityThenMissing.TestTotals "the deferred identity path publishes no speculative totals"
+              Expect.equal identityThenMissing.Diagnostic (Some missingTestName) "a later construction fault wins"
+              Expect.equal
+                  identityThenMissingOutput
+                  [ "Recording test results"; $"Failed to read {identityThenMissingReport}" ]
+                  "the later missing-name report owns the visible wrapper"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-missing-unreadable-a-missing.xml"),
+                  "<arbitrary><testcase/></arbitrary>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-missing-unreadable-b-unreadable.XML"),
+                  "not xml")
+
+              let missingThenUnreadable, missingThenUnreadableOutput =
+                  junit
+                      "global-missing-unreadable-b-unreadable.XML,global-missing-unreadable-a-missing.xml"
+                      true
+
+              let missingThenUnreadableReport =
+                  Path.Combine(baseRequest.Workspace, "global-missing-unreadable-a-missing.xml")
+
+              Expect.equal missingThenUnreadable.Status Failure "the first globally sorted immediate fault wins"
+              Expect.isNone missingThenUnreadable.TestTotals "an immediate fault publishes no speculative totals"
+              Expect.equal missingThenUnreadable.Diagnostic (Some missingTestName) "the later unreadable file is not read"
+              Expect.equal
+                  missingThenUnreadableOutput
+                  [ "Recording test results"; $"Failed to read {missingThenUnreadableReport}" ]
+                  "global file sorting, not comma-pattern order, selects the missing-name wrapper"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-unreadable-missing-a-unreadable.XML"),
+                  "not xml")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "global-unreadable-missing-b-missing.xml"),
+                  "<arbitrary><testcase/></arbitrary>")
+
+              let unreadableThenMissing, unreadableThenMissingOutput =
+                  junit
+                      "global-unreadable-missing-b-missing.xml,global-unreadable-missing-a-unreadable.XML"
+                      true
+
+              Expect.equal unreadableThenMissing.Status Failure "an earlier globally sorted unreadable report wins"
+              Expect.isNone unreadableThenMissing.TestTotals "the unreadable path publishes no speculative totals"
+              Expect.isNone unreadableThenMissing.StageWarning "generic unreadability remains outside test-warning classification"
+              Expect.equal unreadableThenMissingOutput [ "Recording test results" ] "the unreadable report stops construction"
+              Expect.stringContains
+                  (defaultArg unreadableThenMissing.Diagnostic "")
+                  "global-unreadable-missing-a-unreadable.XML: XmlException"
+                  "the first immediate read failure remains exact"
+          }
+
           test "junit fails one aggregate with no recognized result unless typed allowEmptyResults permits it" {
               let root = tempRoot ()
               let baseRequest = request root ""

@@ -488,6 +488,7 @@ module Executor =
 
             let noReports = "No test report files were found. Configuration error?"
             let noResults = "None of the test reports contained any result"
+            let missingTestName = JUnitDiagnostics.MissingTestNameMessage
             let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
 
             let emptySummary (messages: string list) =
@@ -513,6 +514,15 @@ module Executor =
                 else
                     request.OnLine |> Option.iter (fun emit -> emit noReports)
                     { ok Failure with Diagnostic = Some noReports }
+            | Result.Error(MissingTestName relative) ->
+                // Unlike FG-211's later null-className failure, Jenkins prints
+                // a report-specific wrapper before its exception envelope. The
+                // wrapper is ordinary compared output; the exact root cause stays
+                // the diagnostic owned by the hosted step boundary.
+                let reportPath =
+                    System.IO.Path.GetFullPath(System.IO.Path.Combine(request.Workspace, relative))
+                request.OnLine |> Option.iter (fun emit -> emit $"Failed to read {reportPath}")
+                { ok Failure with Diagnostic = Some missingTestName }
             | Result.Error MissingIdentity ->
                 request.OnLine |> Option.iter (fun emit -> emit missingIdentity)
                 { ok Failure with Diagnostic = Some missingIdentity }
