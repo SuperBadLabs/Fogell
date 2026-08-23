@@ -388,6 +388,7 @@ module WalkerRules =
                       | [] -> None
                       | [ Fogell.Groovy.Interpreter.VInt _ ] -> None
                       | [ Fogell.Groovy.Interpreter.VInteger _ ] -> None
+                      | [ Fogell.Groovy.Interpreter.VArithmeticInteger _ ] -> None
                       | [ other ] -> Some $"`retry` needs an integer attempt count, not `{open' other}`"
                       | _ -> Some "`retry` takes at most one attempt count")
               "timeout",

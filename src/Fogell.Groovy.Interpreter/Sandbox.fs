@@ -23,21 +23,31 @@ type Denial =
 
 module Sandbox =
 
-    /// Pure helpers that cannot touch the outside world. Everything here is
-    /// string/collection manipulation over the closed [Value] type.
+    /// FG-213. Public zero-argument accessors on the nominal JUnit summary.
+    /// Admission is by name only; Interpreter dispatch confines every name to
+    /// VJUnitSummary and rejects free calls, other receivers, and every argument
+    /// or trailing-closure shape.
+    let junitSummaryCountGetters =
+        set [ "getTotalCount"; "getFailCount"; "getSkipCount"; "getPassCount" ]
+
+    /// Pure/interpreter-managed method names that cannot touch the outside world.
+    /// Most are string/collection helpers; nominal getter names dispatch only on
+    /// their closed [Value] receiver and fail closed for every other use.
     let builtins: Set<string> =
-        set
-            [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
-              "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
-              // FG-177: get/containsKey are admitted as NAMES only; the
-              // interpreter implements their narrow signatures solely for the
-              // nominal SCM return map and rejects every other receiver/shape.
-              "get"; "containsKey"; "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
-              "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus"
-              // FG-189/FG-195: `f.call(x)` is the explicit closure-invocation spelling;
-              // the interpreter dispatches it only on a VClosure receiver, so admitting
-              // the NAME opens nothing else
-              "call" ]
+        Set.union
+            junitSummaryCountGetters
+            (set
+                [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
+                  "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
+                  // FG-177: get/containsKey are admitted as NAMES only; the
+                  // interpreter implements their narrow signatures solely for the
+                  // nominal SCM return map and rejects every other receiver/shape.
+                  "get"; "containsKey"; "keySet"; "values"; "isEmpty"; "collect"; "each"; "find"; "findAll"; "any"; "every"
+                  "sort"; "reverse"; "first"; "last"; "tokenize"; "readLines"; "minus"; "plus"
+                  // FG-189/FG-195: `f.call(x)` is the explicit closure-invocation spelling;
+                  // the interpreter dispatches it only on a VClosure receiver, so admitting
+                  // the NAME opens nothing else
+                  "call" ])
 
     /// Names that are unambiguously an escape attempt. Kept as an explicit
     /// deny-list purely so the *diagnostic* names what was tried; the closed

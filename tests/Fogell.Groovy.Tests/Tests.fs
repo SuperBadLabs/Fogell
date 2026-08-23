@@ -1519,6 +1519,165 @@ let scmMapValues =
                   | other -> failtestf "%s: expected an explicit lax-path refusal, got %A" label other
           } ]
 
+let junitSummaryValues =
+    let runJUnitScript (summary: JUnitSummary) source =
+        let performed = ResizeArray<string>()
+
+        let host =
+            { Perform =
+                fun _ name _ _ _ ->
+                    performed.Add name
+                    if name = "source" then VJUnitSummary(ref summary) else VNull
+              CanContinue = fun () -> true
+              SetEnv = fun _ _ -> ()
+              CurrentEnv = fun () -> []
+              TakesBlock = fun _ -> false }
+
+        let outcome =
+            Interpreter.runHosted
+                host
+                Budget.defaults
+                (set [ "source"; "sink" ])
+                Env.empty
+                (parseOk source)
+
+        outcome, List.ofSeq performed
+
+    let positive =
+        { TotalCount = 4L
+          FailCount = 2L
+          SkipCount = 1L
+          PassCount = 1L }
+
+    let zero =
+        { TotalCount = 0L
+          FailCount = 0L
+          SkipCount = 0L
+          PassCount = 0L }
+
+    let expectOpaqueRefusal label operation =
+        let source =
+            "def value = source()\n"
+            + $"try {{ {operation}; sink('escaped') }} catch (Exception problem) {{ sink('caught') }}\n"
+
+        let outcome, performed = runJUnitScript positive source
+
+        match outcome.Fault with
+        | Some(Denied _)
+        | Some(Unsupported _)
+        | Some(HostedCallRefused _) -> ()
+        | other -> failtestf "%s: expected a catch-opaque modelling refusal, got %A" label other
+
+        Expect.equal performed [ "source" ] $"{label}: neither successor nor catch handler reached the host"
+
+    testList
+        "FG-213 nominal JUnit count accessors"
+        [ test "properties and zero-argument getters return the same Integer values" {
+              for label, summary in [ "positive", positive; "zero", zero ] do
+                  let source =
+                      "def value = source()\n"
+                      + "return [value.totalCount, value.failCount, value.skipCount, value.passCount, "
+                      + "value.getTotalCount(), value.getFailCount(), value.getSkipCount(), value.getPassCount()]\n"
+
+                  let outcome, performed = runJUnitScript summary source
+                  Expect.isNone outcome.Fault $"{label}: every measured accessor runs"
+                  Expect.equal performed [ "source" ] $"{label}: access remains interpreter-local"
+
+                  match outcome.Returned with
+                  | Some(VList values) ->
+                      let expectedAccessors =
+                          [ VArithmeticInteger summary.TotalCount
+                            VArithmeticInteger summary.FailCount
+                            VArithmeticInteger summary.SkipCount
+                            VInteger summary.PassCount ]
+
+                      Expect.equal
+                          values.Value
+                          (expectedAccessors @ expectedAccessors)
+                          $"{label}: getter and property spellings preserve exact Integer values"
+                  | other -> failtestf "%s: expected eight accessor values, got %A" label other
+          }
+
+          test "every property and getter is Integer-not-Long" {
+              let source =
+                  "def value = source()\n"
+                  + "return [value.totalCount, value.failCount, value.skipCount, value.passCount, "
+                  + "value.getTotalCount(), value.getFailCount(), value.getSkipCount(), value.getPassCount()].every { "
+                  + "it instanceof Integer && !(it instanceof Long) }\n"
+
+              for label, summary in [ "positive", positive; "zero", zero ] do
+                  let outcome, performed = runJUnitScript summary source
+                  Expect.isNone outcome.Fault $"{label}: provenance checks run"
+                  Expect.equal outcome.Returned (Some(VBool true)) $"{label}: all eight accessors are Integer-only"
+                  Expect.equal performed [ "source" ] $"{label}: provenance checks have no hosted effects"
+          }
+
+          test "total fail and skip retain their established arithmetic result surface" {
+              for accessor, expected in
+                  [ "totalCount", 4L
+                    "failCount", 2L
+                    "skipCount", 1L
+                    "getTotalCount()", 4L
+                    "getFailCount()", 2L
+                    "getSkipCount()", 1L ] do
+                  let source =
+                      "def value = source()\n"
+                      + $"def count = value.{accessor}\n"
+                      + "return [-count, count + 1, count - 1, count * 2, count / 1, count % 2, count >= 0, count == "
+                      + string expected
+                      + ", (count ? 1 : 0), count..(count + 1)]\n"
+
+                  let outcome, performed = runJUnitScript positive source
+                  Expect.isNone outcome.Fault $"{accessor}: the pre-existing VInt-compatible operations remain admitted"
+                  Expect.equal performed [ "source" ] $"{accessor}: arithmetic remains interpreter-local"
+
+                  let expectedValues =
+                      [ VInt(-expected)
+                        VInt(expected + 1L)
+                        VInt(expected - 1L)
+                        VInt(expected * 2L)
+                        VInt expected
+                        VInt(expected % 2L)
+                        VBool true
+                        VBool true
+                        VInt 1L
+                        VRange [ expected; expected + 1L ] ]
+
+                  match outcome.Returned with
+                  | Some(VList values) ->
+                      Expect.equal values.Value expectedValues $"{accessor}: every result type matches the former VInt path"
+                  | other -> failtestf "%s: expected compatibility-operation results, got %A" accessor other
+          }
+
+          test "passCount property and getter keep arithmetic and range refused" {
+              for accessor in [ "passCount"; "getPassCount()" ] do
+                  for label, expression in
+                      [ "unary", "-count"
+                        "plus", "count + 1"
+                        "minus", "count - 1"
+                        "multiply", "count * 2"
+                        "divide", "count / 1"
+                        "modulo", "count % 2"
+                        "range", "count..2" ] do
+                      expectOpaqueRefusal $"{accessor} {label}" $"def count = value.{accessor}; def ignored = {expression}"
+          }
+
+          test "globally admitted getter names remain receiver and signature scoped" {
+              for getter in Sandbox.junitSummaryCountGetters |> Set.toList do
+                  for shape, operation in
+                      [ "wrong receiver", $"def ignored = 'text'.{getter}()"
+                        "free call", $"def ignored = {getter}()"
+                        "positional argument", $"def ignored = value.{getter}(1)"
+                        "named argument", $"def ignored = value.{getter}(extra: 1)"
+                        "trailing closure", $"def ignored = value.{getter}() {{ sink('escaped') }}" ] do
+                      expectOpaqueRefusal $"{getter} {shape}" operation
+          }
+
+          test "duration property and getter remain outside the count-accessor slice" {
+              expectOpaqueRefusal "duration property" "def ignored = value.duration"
+              expectOpaqueRefusal "duration getter" "def ignored = value.getDuration()"
+          } ]
+
 /// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are
 /// asserted TOGETHER because three refusals were added one at a time, each looking
 /// complete, and the fourth was found inside the guard written for the third — a
@@ -2750,4 +2909,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
