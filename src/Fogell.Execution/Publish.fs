@@ -149,7 +149,7 @@ module Publish =
         (workspace: string)
         (patterns: string list)
         (abort: unit -> bool)
-        : Result<int * int * int, JUnitProblem> =
+        : Result<int * int * int * single option, JUnitProblem> =
         let files =
             patterns
             |> List.collect (expandGlob workspace)
@@ -173,6 +173,10 @@ module Publish =
             let mutable total = 0L
             let mutable failed = 0L
             let mutable skipped = 0L
+            // JUnit stores, parses, clamps, and adds durations as JVM float.
+            // Keep every addition binary32: accumulating as double and narrowing
+            // once changes observable summaries at the 2^24 boundary.
+            let mutable duration = Some 0.0f
             let mutable immediateProblem: JUnitProblem option = None
             let mutable sawMissingIdentity = false
 
@@ -205,6 +209,124 @@ module Publish =
 
                         let hasAttribute name (element: Xml.Linq.XElement) =
                             not (isNull (element.Attribute(xmlName name)))
+
+                        let parseDuration (raw: string) =
+                            // Pinned TimeToFloat removes commas, tries
+                            // Float.parseFloat, then DecimalFormat.parse (which
+                            // may accept a numeric prefix), and defaults to zero.
+                            let javaWhitespace = [| for code in 0..32 -> char code |]
+                            let cleaned = raw.Replace(",", "")
+                            // Float.parseFloat accepts its documented leading and
+                            // trailing ASCII whitespace. DecimalFormat.parse does
+                            // not, so retain both views for the two-stage path.
+                            let text = cleaned.Trim(javaWhitespace)
+                            let styles = Globalization.NumberStyles.Float
+                            let invariant = Globalization.CultureInfo.InvariantCulture
+
+                            let normalizeDecimalDigits (value: string) =
+                                // DecimalFormat accepts every Unicode Nd digit,
+                                // whereas Float.parseFloat is ASCII-only. The pinned
+                                // parser walks UTF-16 chars, not grapheme clusters or
+                                // scalar Runes: map one BMP digit to one ASCII digit
+                                // and preserve combining marks/surrogates verbatim.
+                                value
+                                |> Seq.map (fun codeUnit ->
+                                    let digit = Globalization.CharUnicodeInfo.GetDecimalDigitValue codeUnit
+                                    if digit >= 0 then char (int '0' + digit) else codeUnit)
+                                |> Seq.toArray
+                                |> String
+
+                            let decimalToken =
+                                Regex.IsMatch(
+                                    text,
+                                    @"^[+-]?(?:NaN|Infinity|(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?[fFdD]?)$"
+                                )
+
+                            let hexadecimalToken =
+                                Regex.IsMatch(
+                                    text,
+                                    @"^[+-]?0[xX](?:[0-9a-fA-F]+(?:\.[0-9a-fA-F]*)?|\.[0-9a-fA-F]+)[pP][+-]?[0-9]+[fFdD]?$"
+                                )
+
+                            let parsed =
+                                if hexadecimalToken then
+                                    // Java accepts hexadecimal float literals. A
+                                    // double-mediated conversion can double-round,
+                                    // so keep counts available but refuse duration
+                                    // access instead of guessing at binary32 edges.
+                                    None
+                                elif decimalToken then
+                                    let core =
+                                        if text.Length > 0 && "fFdD".Contains text.[text.Length - 1] then
+                                            text.Substring(0, text.Length - 1)
+                                        else
+                                            text
+
+                                    match core with
+                                    | "NaN" -> Some Single.NaN
+                                    | "Infinity"
+                                    | "+Infinity" -> Some Single.PositiveInfinity
+                                    | "-Infinity" -> Some Single.NegativeInfinity
+                                    | _ ->
+                                        match Single.TryParse(core, styles, invariant) with
+                                        | true, value -> Some value
+                                        | _ -> Some 0.0f
+                                else
+                                    // Pinned default DecimalFormat accepts only an
+                                    // uppercase-E exponent with no positive sign.
+                                    // Lowercase `1e2x` and `1E+2x` both stop at 1.
+                                    let fallbackText = normalizeDecimalDigits cleaned
+
+                                    if fallbackText.StartsWith("NaN", StringComparison.Ordinal) then
+                                        Some Single.NaN
+                                    elif fallbackText.StartsWith("∞", StringComparison.Ordinal) then
+                                        Some Single.PositiveInfinity
+                                    elif fallbackText.StartsWith("-∞", StringComparison.Ordinal) then
+                                        Some Single.NegativeInfinity
+                                    else
+                                        let prefix =
+                                            Regex.Match(
+                                                fallbackText,
+                                                @"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:E-?[0-9]+)?"
+                                            )
+
+                                        let oversizedExponent =
+                                            let exponentIndex = prefix.Value.IndexOf('E')
+
+                                            exponentIndex >= 0
+                                            && prefix.Value.Substring(exponentIndex + 1).TrimStart('-').Length > 3
+
+                                        if String.IsNullOrEmpty prefix.Value then
+                                            Some 0.0f
+                                        elif oversizedExponent then
+                                            // DecimalFormat's oversized-exponent
+                                            // overflow/parse-stop behavior diverges
+                                            // from Double.TryParse. Preserve counts
+                                            // and refuse duration beyond the measured
+                                            // three-digit exponent boundary.
+                                            None
+                                        else
+                                            // DecimalFormat returns Long for an
+                                            // integral value and Double otherwise.
+                                            // Every integer inside the subsequent
+                                            // [0, 31536000] clamp is exactly binary64;
+                                            // outside it the clamp erases the width
+                                            // distinction. Double->Float is therefore
+                                            // the exact observable fallback path.
+                                            match Double.TryParse(prefix.Value, styles, invariant) with
+                                            | true, value -> Some(single value)
+                                            | _ -> Some 0.0f
+
+                            // Java Math.min/max propagate NaN, clamp infinities,
+                            // and turn negative zero into positive zero here.
+                            parsed
+                            |> Option.map (fun value -> MathF.Max(0.0f, MathF.Min(31_536_000.0f, value)))
+
+                        let addDuration contribution =
+                            duration <-
+                                match duration, contribution with
+                                | Some total, Some value -> Some(total + value)
+                                | _ -> None
 
                         let hasCaseIdentity
                             (owner: Xml.Linq.XElement)
@@ -254,10 +376,13 @@ module Publish =
                                     // require the owner itself to be named testsuite.
                                     // A direct owner error is one synthetic case and remains
                                     // skipped when that owner also has a direct skipped marker.
-                                    if hasDirectChild "error" element then
+                                    let directCases = element.Elements(xmlName "testcase") |> Seq.toArray
+                                    let hasDirectError = hasDirectChild "error" element
+
+                                    if hasDirectError then
                                         tallyCase element
 
-                                    for testCase in element.Elements(xmlName "testcase") do
+                                    for testCase in directCases do
                                         let hasClassFallback =
                                             hasAttribute "classname" testCase
                                             || hasAttribute "name" element
@@ -283,6 +408,29 @@ module Publish =
                                             sawMissingIdentity <- true
 
                                         tallyCase testCase
+
+                                    // SuiteResult exists only for an owner which
+                                    // contributes a direct testcase or synthetic
+                                    // direct error. A present suite time is
+                                    // authoritative even when it parses to zero;
+                                    // otherwise add direct case times in document
+                                    // order. Nested suites have already been
+                                    // visited and added child-first.
+                                    if hasDirectError || directCases.Length > 0 then
+                                        let suiteDuration =
+                                            match element.Attribute(xmlName "time") with
+                                            | null ->
+                                                directCases
+                                                |> Array.fold (fun total testCase ->
+                                                    match testCase.Attribute(xmlName "time") with
+                                                    | null -> total
+                                                    | time ->
+                                                        match total, parseDuration time.Value with
+                                                        | Some aggregate, Some value -> Some(aggregate + value)
+                                                        | _ -> None) (Some 0.0f)
+                                            | time -> parseDuration time.Value
+
+                                        addDuration suiteDuration
                                 else
                                     // The pinned recursive parser visits direct suite
                                     // children first, in document order, and only then
@@ -322,12 +470,12 @@ module Publish =
             | false, None, false
                 when [ total; failed; skipped ]
                      |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
-                Ok(int total, int failed, int skipped)
+                Ok(int total, int failed, int skipped, duration)
             | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
 
     let parseJUnit (workspace: string) (patterns: string list) =
         match parseJUnitWithAbort workspace patterns (fun () -> false) with
-        | Ok v -> Ok v
+        | Ok(total, failed, skipped, _) -> Ok(total, failed, skipped)
         | Error Interrupted -> Error "interrupted"
         | Error NoReports -> Error "no test report matched the pattern"
         | Error(MissingTestName _) -> Error JUnitDiagnostics.MissingTestNameMessage

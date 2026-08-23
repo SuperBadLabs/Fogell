@@ -731,6 +731,7 @@ let externalInterrupt =
               // and archive timeouts select `post { aborted }`. Assert the exact status.
               Expect.equal r.Status Aborted "an interrupted junit is ABORTED, not failed"
               Expect.isNone r.StageWarning "an interrupted junit does not decorate the stage as unstable"
+              Expect.isNone r.TestDuration "an interrupted junit publishes no partial duration"
 
               // Round-12 mirror: with NO matching report, an interrupt must still be an
               // abort rather than "no test report matched the pattern" — which would
@@ -758,6 +759,7 @@ let externalInterrupt =
 
               Expect.equal noMatch.Status Aborted "zero-match plus interrupt is an abort"
               Expect.isNone noMatch.StageWarning "the zero-match interrupt has no stage warning"
+              Expect.isNone noMatch.TestDuration "the zero-match interrupt publishes no duration"
 
               match noMatch.Diagnostic with
               | Some d -> Expect.isFalse (d.Contains "no test report matched") $"not blamed on the pattern: {d}"
@@ -766,6 +768,89 @@ let externalInterrupt =
               match r.Diagnostic with
               | Some d -> Expect.stringContains d "aborted" $"the abort is named: {d}"
               | None -> failtest "an aborted junit must carry a diagnostic"
+          }
+
+          test "junit preserves suite authority, pinned parsing, and binary32 addition" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+
+              let junit pattern =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ] }
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "duration.xml"),
+                  "<testsuites time=\"999\">"
+                  + "<testsuite name=\"case-derived\"><testcase name=\"a\" time=\"1.25\"/><testcase name=\"b\" time=\"2.5\"/></testsuite>"
+                  + "<testsuite name=\"suite-authority\" time=\"4.0\"><testcase name=\"ignored-child-time\" time=\"99\"/></testsuite>"
+                  + "</testsuites>")
+
+              let aggregate = junit "duration.xml"
+              Expect.equal aggregate.Status Success "duration does not change the report result"
+              Expect.equal aggregate.TestTotals (Some(3, 0, 0)) "duration parsing does not change counts"
+              Expect.equal aggregate.TestDuration (Some 7.75f) "wrapper time is ignored, child sum and suite override each contribute once"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "width-a.xml"),
+                  "<testsuite name=\"wide\" time=\"16777216\"><testcase name=\"wide\"/></testsuite>")
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "width-b.xml"),
+                  "<testsuite name=\"one\" time=\"1\"><testcase name=\"one\"/></testsuite>")
+
+              Expect.equal
+                  (junit "width-*.xml").TestDuration
+                  (Some 16_777_216.0f)
+                  "globally sorted additions round after every JVM-float addition"
+
+              for label, raw, expected in
+                  [ "empty", "", Some 0.0f
+                    "invalid", "abc", Some 0.0f
+                    "negative", "-2", Some 0.0f
+                    "nan", "NaN", None
+                    "positive-infinity", "+Infinity", Some 31_536_000.0f
+                    "comma", "2,503.1", Some 2_503.1f
+                    "fallback-lowercase-exponent-stop", "1e2x", Some 1.0f
+                    "fallback-uppercase-exponent", "1E2x", Some 100.0f
+                    "fallback-uppercase-negative-exponent", "1E-2x", Some 0.01f
+                    "fallback-uppercase-positive-sign-stop", "1E+2x", Some 1.0f
+                    "fallback-leading-plus", "+1x", Some 0.0f
+                    "fallback-leading-space", " 1x", Some 0.0f
+                    "fallback-unicode-digits", "١٢x", Some 12.0f
+                    "fallback-unicode-exponent", "١E-٢x", Some 0.01f
+                    "fallback-combining-mark-stop", "١\u0301٢x", Some 1.0f
+                    "fallback-supplementary-digits-refuse", "𝟙𝟚x", Some 0.0f
+                    "fallback-double-then-float", "1.000000059604644775390625000001x", Some 1.0f
+                    "fallback-integral-width-clamped", "4611686293305294849.0x", Some 31_536_000.0f
+                    "fallback-nan-prefix", "NaNx", None
+                    "fallback-infinity-prefix", "∞x", Some 31_536_000.0f
+                    "fallback-negative-infinity-prefix", "-∞x", Some 0.0f ] do
+                  let report = $"duration-{label}.xml"
+                  File.WriteAllText(
+                      Path.Combine(baseRequest.Workspace, report),
+                      $"<testsuite name=\"{label}\" time=\"{raw}\"><testcase name=\"child\" time=\"1.25\"/></testsuite>")
+                  let observed = (junit report).TestDuration
+
+                  match expected, observed with
+                  | None, Some value -> Expect.isTrue (Single.IsNaN value) "NaN survives Java min/max and summary projection"
+                  | Some value, Some actual -> Expect.equal actual value $"{label}: exact pinned TimeToFloat/clamp result"
+                  | _ -> failtestf "%s: unexpected duration %A" label observed
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "duration-exponent-overflow.xml"),
+                  "<testsuite name=\"exponent-overflow\" time=\"1E2147483647x\"><testcase name=\"child\"/></testsuite>")
+              let exponentOverflow = junit "duration-exponent-overflow.xml"
+              Expect.equal exponentOverflow.TestTotals (Some(1, 0, 0)) "an oversized fallback exponent does not poison counts"
+              Expect.isNone exponentOverflow.TestDuration "oversized DecimalFormat exponent behavior is refused rather than guessed"
+
+              File.WriteAllText(
+                  Path.Combine(baseRequest.Workspace, "duration-hex.xml"),
+                  "<testsuite name=\"hex\" time=\"0x1.0p1\"><testcase name=\"child\"/></testsuite>")
+              let hexadecimal = junit "duration-hex.xml"
+              Expect.equal hexadecimal.TestTotals (Some(1, 0, 0)) "an unmodelled duration token does not poison counts"
+              Expect.isNone hexadecimal.TestDuration "hexadecimal binary32 rounding is refused rather than guessed"
           }
 
           test "junit build and stage suppression flags cover the measured four-combination matrix" {
@@ -1242,6 +1327,7 @@ let externalInterrupt =
               let allowed, allowedOutput = junit "zero-*.xml" true
               Expect.equal allowed.Status Success "allowEmptyResults makes the empty aggregate nonterminal"
               Expect.equal allowed.TestTotals (Some(0, 0, 0)) "the permitted call returns an exact zero summary"
+              Expect.equal allowed.TestDuration (Some 0.0f) "the permitted empty aggregate returns zero Float duration"
               Expect.isNone allowed.StageWarning "a permitted empty result has no stage warning"
               Expect.equal
                   allowedOutput
@@ -1263,6 +1349,7 @@ let externalInterrupt =
               let allowedMissing, allowedMissingOutput = junit "nothing-matches-*.xml" true
               Expect.equal allowedMissing.Status Success "allowEmptyResults also permits a missing glob"
               Expect.equal allowedMissing.TestTotals (Some(0, 0, 0)) "the permitted missing glob returns the zero summary"
+              Expect.equal allowedMissing.TestDuration (Some 0.0f) "the permitted missing glob returns zero Float duration"
               Expect.equal
                   allowedMissingOutput
                   [ "Recording test results"

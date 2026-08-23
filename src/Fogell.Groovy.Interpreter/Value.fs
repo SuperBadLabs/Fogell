@@ -18,6 +18,11 @@ type Value =
     /// total/fail/skip properties use this compatibility scalar; passCount stays
     /// VInteger so its unmeasured arithmetic remains refused.
     | VArithmeticInteger of int64
+    /// FG-214. A value proven to be the primitive-float result boxed by Groovy
+    /// as java.lang.Float. Its measured display/type/equality surface is narrow;
+    /// arithmetic, ordering, truthiness, hashing, and hosted-step coercion stay
+    /// fail-closed until measured independently.
+    | VFloat of single
     | VStr of string
     /// FG-015b. Groovy lists are reference objects. The ref is list identity:
     /// aliases, nested selections and method results share mutations, while a
@@ -54,7 +59,8 @@ and JUnitSummary =
     { TotalCount: int64
       FailCount: int64
       SkipCount: int64
-      PassCount: int64 }
+      PassCount: int64
+      Duration: single option }
 
 and ScmMap =
     { Entries: Map<string, string> }
@@ -167,6 +173,7 @@ module Value =
                 | VInt _
                 | VInteger _
                 | VArithmeticInteger _
+                | VFloat _
                 | VStr _
                 | VRange _
                 | VJUnitSummary _
@@ -209,6 +216,49 @@ module Value =
         | Text of string
         | DisplayCycleDetected
 
+    /// Java Float.toString spelling for the binary32 values emitted by the
+    /// pinned JUnit summary. .NET's round-trip digits are suitable, but Java
+    /// switches to scientific notation outside [1e-3, 1e7) and always keeps a
+    /// decimal point in a finite Float spelling.
+    let javaFloatDisplay (value: single) =
+        if System.Single.IsNaN value then
+            "NaN"
+        elif System.Single.IsPositiveInfinity value then
+            "Infinity"
+        elif System.Single.IsNegativeInfinity value then
+            "-Infinity"
+        elif value = 0.0f then
+            if System.BitConverter.SingleToInt32Bits value < 0 then "-0.0" else "0.0"
+        else
+            let invariant = System.Globalization.CultureInfo.InvariantCulture
+            let raw = value.ToString("R", invariant)
+
+            let withDecimalPoint (text: string) =
+                if text.Contains('.', System.StringComparison.Ordinal) then text else text + ".0"
+
+            let normalizeExponent (text: string) =
+                let parts = text.Split([| 'E'; 'e' |], 2, System.StringSplitOptions.None)
+                let exponent = System.Int32.Parse(parts.[1], invariant)
+                withDecimalPoint parts.[0] + "E" + exponent.ToString(invariant)
+
+            let absolute = System.MathF.Abs value
+
+            if raw.Contains('E') || raw.Contains('e') then
+                normalizeExponent raw
+            elif absolute >= 1.0e7f || absolute < 1.0e-3f then
+                let sign, unsigned = if raw.StartsWith("-", System.StringComparison.Ordinal) then "-", raw.Substring 1 else "", raw
+                let decimalPoint = unsigned.IndexOf('.') |> fun index -> if index < 0 then unsigned.Length else index
+                let digits = unsigned.Replace(".", "")
+                let firstNonZero = digits |> Seq.findIndex (fun digit -> digit <> '0')
+                let exponent = decimalPoint - firstNonZero - 1
+                let significant = digits.Substring(firstNonZero).TrimEnd([| '0' |])
+                let mantissa =
+                    if significant.Length = 1 then string significant.[0] + ".0"
+                    else string significant.[0] + "." + significant.Substring 1
+                sign + mantissa + "E" + exponent.ToString(invariant)
+            else
+                withDecimalPoint raw
+
     /// Direct self entries use Groovy's own `(this Collection)` / `(this Map)`
     /// markers. A longer reference cycle is different: Jenkins 2.568.1 chases
     /// list→map→list display into a catchable StackOverflowError. Report that
@@ -226,6 +276,7 @@ module Value =
             | VInt i -> string i
             | VInteger i -> string i
             | VArithmeticInteger i -> string i
+            | VFloat value -> javaFloatDisplay value
             | VStr s -> s
             | VList xs ->
                 if seenRef xs then
@@ -310,6 +361,7 @@ module Value =
         | VInt _
         | VInteger _
         | VArithmeticInteger _
+        | VFloat _
         | VStr _
         | VRange _
         | VScmMap _
@@ -320,6 +372,9 @@ module Value =
 
     let containsJUnitSummary value =
         containsNominalValue (function VJUnitSummary _ -> true | _ -> false) value
+
+    let containsJUnitDuration value =
+        containsNominalValue (function VFloat _ -> true | _ -> false) value
 
     let containsScmMap value =
         containsNominalValue (function VScmMap _ | VScmKeySet _ -> true | _ -> false) value
@@ -409,6 +464,15 @@ module Value =
             | VInt x, VArithmeticInteger y
             | VArithmeticInteger x, VInteger y
             | VInteger x, VArithmeticInteger y -> x = y
+            | VFloat x, VFloat y ->
+                // Java Float equality treats every NaN spelling as equal and
+                // distinguishes signed zero. The property and getter therefore
+                // compare equal even for the measured NaN boundary.
+                if System.Single.IsNaN x && System.Single.IsNaN y then true
+                elif x = 0.0f && y = 0.0f then
+                    System.BitConverter.SingleToInt32Bits x = System.BitConverter.SingleToInt32Bits y
+                else
+                    x.Equals y
             | VClosure(c1, e1), VClosure(c2, e2) ->
                 System.Object.ReferenceEquals(c1, c2) && System.Object.ReferenceEquals(e1, e2)
             | VClosure _, _
@@ -421,9 +485,18 @@ module Value =
             | _, VRange _ -> false
             | _ -> a = b
 
-        if containsNominalJenkinsValue a || containsNominalJenkinsValue b then
-            Unmodelled
-        else
+        match a, b with
+        | VFloat x, VFloat y ->
+            let answer =
+                if System.Single.IsNaN x && System.Single.IsNaN y then true
+                elif x = 0.0f && y = 0.0f then
+                    System.BitConverter.SingleToInt32Bits x = System.BitConverter.SingleToInt32Bits y
+                else
+                    x.Equals y
+            Answer answer
+        | _ when containsJUnitDuration a || containsJUnitDuration b -> Unmodelled
+        | _ when containsNominalJenkinsValue a || containsNominalJenkinsValue b -> Unmodelled
+        | _ ->
             let answer = go [] a b
             if cycle then CycleDetected else Answer answer
 
@@ -446,6 +519,7 @@ module Value =
             | VInt _ -> 2
             | VInteger _ -> 2
             | VArithmeticInteger _ -> 2
+            | VFloat _ -> 2
             | VStr _ -> 3
             | VList _ -> 4
             | VRange _ -> 4
@@ -545,7 +619,12 @@ module Value =
                     else
                         compareEntries seen leftTail rightTail
 
-        if containsNominalJenkinsValue a || containsNominalJenkinsValue b then
+        if
+            containsNominalJenkinsValue a
+            || containsNominalJenkinsValue b
+            || containsJUnitDuration a
+            || containsJUnitDuration b
+        then
             Unorderable
         else
             let answer =
@@ -566,6 +645,7 @@ module Value =
         | VInt i -> i <> 0L
         | VInteger i -> i <> 0L
         | VArithmeticInteger i -> i <> 0L
+        | VFloat _ -> invalidOp "JUnit duration Float truthiness must be refused by the interpreter boundary"
         | VStr s -> s <> ""
         | VList xs -> not (List.isEmpty xs.Value)
         | VRange values -> not (List.isEmpty values)

@@ -1843,7 +1843,8 @@ let genuineNullRuntime =
                           { TotalCount = 1L
                             FailCount = 0L
                             SkipCount = 0L
-                            PassCount = 1L })
+                            PassCount = 1L
+                            Duration = Some 0.0f })
 
               let mutable withSummary = summary
 
@@ -2555,6 +2556,33 @@ let genuineNullRuntime =
                       "a getFailCount() value passes the same retry integer guard")
           }
 
+          test "JUnit duration property and getter preserve Float provenance and exact values" {
+              Expect.equal
+                  (GString.javaTypeName (Fogell.Groovy.Interpreter.VFloat 7.75f))
+                  "Float"
+                  "the def-keyword advisory sees the measured Java Float provenance"
+
+              for label, setup, option, expected in
+                  [ "positive",
+                    "printf '%s' '<testsuites time=\\\"999\\\"><testsuite name=\\\"cases\\\"><testcase name=\\\"a\\\" time=\\\"1.25\\\"/><testcase name=\\\"b\\\" time=\\\"2.5\\\"/></testsuite><testsuite name=\\\"override\\\" time=\\\"4.0\\\"><testcase name=\\\"ignored\\\" time=\\\"99\\\"/></testsuite></testsuites>' > reports/summary.xml",
+                    "",
+                    "7.75"
+                    "zero", "true", ", allowEmptyResults: true", "0.0" ] do
+                  let body =
+                      $"sh \"mkdir -p reports; {setup}\"; "
+                      + $"def got = junit(testResults: 'reports/*.xml'{option}); "
+                      + "def property = got.duration; def getter = got.getDuration(); "
+                      + $"if (property == getter && property instanceof Float && property instanceof Number "
+                      + "&& !(property instanceof Double) && !(property instanceof BigDecimal) "
+                      + $"&& \"${{property}}\" == '{expected}') {{ sh 'touch {label}-duration.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "success" $"{label}: duration access does not change the report result"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-duration.txt")))
+                          $"{label}: property/getter parity, Float provenance, and exact rendering hold")
+          }
+
           test "JUnit total fail and skip accessors retain the established arithmetic surface" {
               for accessor, expected in
                   [ "totalCount", 4
@@ -2581,7 +2609,7 @@ let genuineNullRuntime =
 
           test "unmeasured JUnit object surface remains catch-opaque and cannot reach a successor effect" {
               let getterDenials =
-                  Fogell.Groovy.Interpreter.Sandbox.junitSummaryCountGetters
+                  Fogell.Groovy.Interpreter.Sandbox.junitSummaryGetters
                   |> Set.toList
                   |> List.collect (fun getter ->
                       [ $"{getter}-wrong-receiver", $"def ignored = 'text'.{getter}()"
@@ -2591,9 +2619,7 @@ let genuineNullRuntime =
                         $"{getter}-trailing", $"def ignored = got.{getter}() {{ sh 'touch escaped.txt' }}" ])
 
               let operations =
-                  [ "property", "def ignored = got.duration"
-                    "duration-getter", "def ignored = got.getDuration()"
-                    "index", "def ignored = got['totalCount']"
+                  [ "index", "def ignored = got['totalCount']"
                     "truthiness", "def ignored = got ? 1 : 0"
                     "equality", "def ignored = got == got"
                     "stringification", "def ignored = \"${got}\""
@@ -2619,6 +2645,29 @@ let genuineNullRuntime =
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt")))
                           $"{label}: ordinary Groovy catch cannot absorb a Fogell modelling refusal")
+          }
+
+          test "JUnit duration operations outside the measured Float surface remain catch-opaque" {
+              for label, operation in
+                  [ "arithmetic", "def ignored = duration + 1"
+                    "ordering", "def ignored = duration < 8"
+                    "mixed-equality", "def ignored = duration == 8"
+                    "range", "def ignored = duration..8"
+                    "truthiness", "def ignored = duration ? 1 : 0"
+                    "index", "def ignored = duration[0]"
+                    "iteration", "for (item in [duration]) { sh 'touch escaped.txt' }"
+                    "direct-toString", "def ignored = duration.toString()"
+                    "retry-count", "retry(count: duration) { sh 'touch escaped.txt' }"
+                    "host-argument", "echo(duration)" ] do
+                  let body =
+                      "sh \"mkdir -p reports; printf '%s' '<testsuite name=\\\"duration-refusal\\\" time=\\\"1.25\\\"><testcase name=\\\"ok\\\"/></testsuite>' > reports/summary.xml\"; "
+                      + "def got = junit(testResults: 'reports/summary.xml'); def duration = got.duration; "
+                      + $"try {{ {operation}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}"
+
+                  run body (fun workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: unmeasured duration use fails closed"
+                      Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "escaped.txt"))) $"{label}: successor did not run"
+                      Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "caught.txt"))) $"{label}: refusal stayed catch-opaque")
           }
 
           test "dir, timeout, retry and withEnv publish the body result" {

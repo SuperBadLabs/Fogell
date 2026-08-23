@@ -1,0 +1,15 @@
+7dd505533996f81b403a5d71542209f776cd69fad5a416958681ff62971cd142  /var/jenkins_home/plugins/junit/WEB-INF/lib/junit.jar
+  public int getTotalCount();
+  public int getFailCount();
+  public int getSkipCount();
+  public int getPassCount();
+  public float getDuration();
+  public float getDuration();
+  public float getDuration();
+  public float getDuration();
+  public float getDuration();
+class hudson.tasks.junit.TimeToFloat {
+seal verification: 2 receipt(s) recomputed from their own content, all match
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
+configured-target override proof: 4 commands, literal job placeholders preserved

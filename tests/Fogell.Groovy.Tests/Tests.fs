@@ -1547,13 +1547,15 @@ let junitSummaryValues =
         { TotalCount = 4L
           FailCount = 2L
           SkipCount = 1L
-          PassCount = 1L }
+          PassCount = 1L
+          Duration = Some 7.75f }
 
     let zero =
         { TotalCount = 0L
           FailCount = 0L
           SkipCount = 0L
-          PassCount = 0L }
+          PassCount = 0L
+          Duration = Some 0.0f }
 
     let expectOpaqueRefusal label operation =
         let source =
@@ -1571,7 +1573,7 @@ let junitSummaryValues =
         Expect.equal performed [ "source" ] $"{label}: neither successor nor catch handler reached the host"
 
     testList
-        "FG-213 nominal JUnit count accessors"
+        "FG-213/FG-214 nominal JUnit summary accessors"
         [ test "properties and zero-argument getters return the same Integer values" {
               for label, summary in [ "positive", positive; "zero", zero ] do
                   let source =
@@ -1673,9 +1675,118 @@ let junitSummaryValues =
                       expectOpaqueRefusal $"{getter} {shape}" operation
           }
 
-          test "duration property and getter remain outside the count-accessor slice" {
-              expectOpaqueRefusal "duration property" "def ignored = value.duration"
-              expectOpaqueRefusal "duration getter" "def ignored = value.getDuration()"
+          test "duration property and getter preserve Float provenance and rendering" {
+              for label, summary, rendered in [ "positive", positive, "7.75"; "zero", zero, "0.0" ] do
+                  let source =
+                      "def value = source()\n"
+                      + "return [value.duration, value.getDuration(), value.duration == value.getDuration(), "
+                      + "value.duration instanceof Float, value.duration instanceof Number, "
+                      + "value.duration instanceof Object, "
+                      + "value.duration instanceof Double, value.duration instanceof BigDecimal, "
+                      + "\"${value.duration}\"]\n"
+
+                  let outcome, performed = runJUnitScript summary source
+                  Expect.isNone outcome.Fault $"{label}: duration accessors run"
+                  Expect.equal performed [ "source" ] $"{label}: duration access remains interpreter-local"
+
+                  match outcome.Returned with
+                  | Some(VList values) ->
+                      Expect.equal
+                          values.Value
+                          [ VFloat summary.Duration.Value
+                            VFloat summary.Duration.Value
+                            VBool true
+                            VBool true
+                            VBool true
+                            VBool true
+                            VBool false
+                            VBool false
+                            VStr rendered ]
+                          $"{label}: duration retains the measured Float surface"
+                  | other -> failtestf "%s: expected duration accessor values, got %A" label other
+          }
+
+          test "duration rendering matches the measured Java Float spellings" {
+              for value, expected in
+                  [ 0.0f, "0.0"
+                    1.25f, "1.25"
+                    42.0f, "42.0"
+                    2_503.1f, "2503.1"
+                    31_536_000.0f, "3.1536E7"
+                    System.Single.NaN, "NaN" ] do
+                  Expect.equal (Value.javaFloatDisplay value) expected $"{value}: Java Float text"
+          }
+
+          test "unverified subnormal Float rendering fails closed" {
+              let subnormal =
+                  { positive with
+                      Duration = Some(System.BitConverter.Int32BitsToSingle 1) }
+              let outcome, performed = runJUnitScript subnormal "def value = source()\nreturn \"${value.duration}\"\n"
+
+              match outcome.Fault with
+              | Some(Unsupported message) -> Expect.stringContains message "binary32 boundary" "the unsafe formatter boundary is named"
+              | other -> failtestf "expected subnormal-rendering refusal, got %A" other
+
+              Expect.equal performed [ "source" ] "no hosted effect runs"
+          }
+
+          test "duration getter remains receiver and signature scoped" {
+              for getter in Sandbox.junitSummaryDurationGetters |> Set.toList do
+                  for shape, operation in
+                      [ "wrong receiver", $"def ignored = 'text'.{getter}()"
+                        "free call", $"def ignored = {getter}()"
+                        "positional argument", $"def ignored = value.{getter}(1)"
+                        "named argument", $"def ignored = value.{getter}(extra: 1)"
+                        "trailing closure", $"def ignored = value.{getter}() {{ sink('escaped') }}" ] do
+                      expectOpaqueRefusal $"{getter} {shape}" operation
+          }
+
+          test "unknown duration lexical provenance refuses only duration access" {
+              let unknown = { positive with Duration = None }
+              let outcome, performed = runJUnitScript unknown "def value = source()\nreturn value.totalCount\n"
+              Expect.isNone outcome.Fault "count access remains available"
+              Expect.equal outcome.Returned (Some(VArithmeticInteger positive.TotalCount)) "counts survive unknown duration text"
+              Expect.equal performed [ "source" ] "count access remains interpreter-local"
+
+              let refused, refusedPerformed = runJUnitScript unknown "def value = source()\ndef ignored = value.duration\n"
+              match refused.Fault with
+              | Some(Unsupported message) -> Expect.stringContains message "TimeToFloat" "the lexical boundary is named"
+              | other -> failtestf "expected unknown-duration refusal, got %A" other
+              Expect.equal refusedPerformed [ "source" ] "no hosted successor runs"
+          }
+
+          test "duration operations outside the measured surface remain refused" {
+              for label, expression in
+                  [ "unary", "-duration"
+                    "plus", "duration + 1"
+                    "ordering", "duration < 8"
+                    "mixed equality", "duration == 8"
+                    "unmeasured instanceof", "duration instanceof Serializable"
+                    "range", "duration..8"
+                    "truthiness", "duration ? 1 : 0"
+                    "indexing", "duration[0]"
+                    "direct toString", "duration.toString()" ] do
+                  expectOpaqueRefusal label $"def duration = value.duration; def ignored = {expression}"
+
+              for label, expression in
+                  [ "string plus left", "'x' + duration"
+                    "string plus right", "duration + 'x'"
+                    "string left shift", "'x' << duration"
+                    "list left shift", "[] << duration"
+                    "list plus", "[] + [duration]"
+                    "list join", "[duration].join(',')"
+                    "list contains argument", "[].contains(duration)"
+                    "list indexing receiver", "[duration][0]"
+                    "list indexing key", "[1][duration]"
+                    "map indexing key", "[:][duration]"
+                    "list reverse", "[duration].reverse()"
+                    "method iteration", "[duration].each { sink('escaped') }"
+                    "method predicate iteration", "[duration].any { true }" ] do
+                  expectOpaqueRefusal label $"def duration = value.duration; def ignored = {expression}"
+
+              expectOpaqueRefusal
+                  "iteration"
+                  "def duration = value.duration; for (item in [duration]) { sink('escaped') }"
           } ]
 
 /// FG-195: resolution is by SIGNATURE, as Groovy's is. The four measured shapes are

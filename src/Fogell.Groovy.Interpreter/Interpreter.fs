@@ -304,6 +304,18 @@ module Interpreter =
             raise (Stop(Unsupported "SCM return-map rendering is not modelled; read one measured string key"))
         elif Value.containsJUnitSummary value then
             raise (Stop(Unsupported "JUnit TestResultSummary rendering is not modelled; read totalCount, failCount, skipCount, or passCount"))
+        elif Value.containsJUnitDuration value then
+            match value with
+            | VFloat duration
+                when duration = 0.0f
+                     || System.Single.IsNaN duration
+                     || System.Single.IsInfinity duration
+                     || System.MathF.Abs duration >= 1.17549435e-38f ->
+                match Value.tryToDisplay value with
+                | Value.Text rendered -> rendered
+                | Value.DisplayCycleDetected -> raise (Stop(CyclicValue Display))
+            | _ ->
+                raise (Stop(Unsupported "JUnit duration Float rendering is not modelled for this binary32 boundary or collection shape"))
         else
             match Value.tryToDisplay value with
             | Value.Text rendered -> rendered
@@ -316,11 +328,15 @@ module Interpreter =
             raise (Stop(Unsupported "SCM return-map truthiness is not modelled; read one measured string key"))
         | VJUnitSummary _ ->
             raise (Stop(Unsupported "JUnit TestResultSummary truthiness is not modelled; read a measured count property"))
+        | VFloat _ ->
+            raise (Stop(Unsupported "JUnit duration Float truthiness is not modelled"))
         | _ -> Value.isTruthy value
 
     let private scriptHashKey value =
         if Value.hasReferenceCycle value then
             raise (Stop(CyclicValue HashKey))
+        elif Value.containsJUnitDuration value then
+            raise (Stop(Unsupported "JUnit duration Float hashing is not modelled"))
 
         scriptDisplay value
 
@@ -497,6 +513,10 @@ module Interpreter =
         | EProp(target, name) -> evalProp st (evalExpr st env target) name
         | EIndex(target, idx) ->
             match evalExpr st env target, evalExpr st env idx with
+            | receiver, key
+                when Value.containsJUnitDuration receiver
+                     || Value.containsJUnitDuration key ->
+                raise (Stop(Unsupported "indexing with a JUnit duration Float directly or inside a collection is not modelled"))
             | ListLike xs, Integral i -> listRead xs i
             | VMap _, key when Value.hasReferenceCycle key -> raise (Stop(CyclicValue HashKey))
             | VMap m, VStr k -> defaultArg (Map.tryFind k m.Value) VNull
@@ -508,6 +528,8 @@ module Interpreter =
                 raise (Stop(Unsupported "SCM return-map key-set indexing is not modelled; use join(String)"))
             | VJUnitSummary _, _ ->
                 raise (Stop(Unsupported "JUnit TestResultSummary indexing is not modelled; read a measured count property"))
+            | VFloat _, _ ->
+                raise (Stop(Unsupported "JUnit duration Float indexing is not modelled"))
             | VStr s, Integral i when i >= 0L && i < int64 s.Length -> VStr(string s.[int i])
             | _ -> VNull
         | EUnary(op, x) ->
@@ -557,8 +579,13 @@ module Interpreter =
             | "failCount" -> VArithmeticInteger summary.Value.FailCount
             | "skipCount" -> VArithmeticInteger summary.Value.SkipCount
             | "passCount" -> VInteger summary.Value.PassCount
+            | "duration" ->
+                match summary.Value.Duration with
+                | Some duration -> VFloat duration
+                | None ->
+                    raise (Stop(Unsupported "JUnit duration uses an unmodelled TimeToFloat lexical form"))
             | _ ->
-                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount, passCount"))
+                raise (Stop(Unsupported $"JUnit TestResultSummary property `{name}` is not modelled; supported properties: totalCount, failCount, skipCount, passCount, duration"))
         // MEASURED (receipt `gstring-string-property-fails`, Jenkins 2.568.1): the
         // sandbox REJECTS property access on a String — `${env.TARGET.length}` is
         // "No such field found: field java.lang.String length" and the build
@@ -630,6 +657,9 @@ module Interpreter =
         | _, VJUnitSummary _, _
         | _, _, VJUnitSummary _ ->
             raise (Stop(Unsupported $"operator '{op}' is not modelled for JUnit TestResultSummary"))
+        | ("+" | "<<"), _, _
+            when Value.containsJUnitDuration a || Value.containsJUnitDuration b ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for a JUnit duration Float directly or inside a collection"))
         | "+", ArithmeticIntegral x, ArithmeticIntegral y -> VInt(x + y)
         | "+", VStr x, _ -> VStr(x + scriptDisplay b)
         | "+", _, VStr y -> VStr(scriptDisplay a + y)
@@ -667,6 +697,13 @@ module Interpreter =
             | Value.Answer r -> VBool(not r)
             | Value.CycleDetected -> raise (Stop(CyclicValue Equality))
             | Value.Unmodelled -> raise (Stop(Unsupported "equality is not modelled for nominal Jenkins return values"))
+        | "instanceof", VFloat _, VStr("Float" | "Number" | "Object") -> VBool true
+        | "instanceof", VFloat _, VStr("Double" | "BigDecimal") -> VBool false
+        | "instanceof", VFloat _, VStr _ ->
+            raise (Stop(Unsupported "this instanceof type is not modelled for a JUnit duration Float"))
+        | _, VFloat _, _
+        | _, _, VFloat _ ->
+            raise (Stop(Unsupported $"operator '{op}' is not modelled for a JUnit duration Float"))
         | "<", Integral x, Integral y -> VBool(x < y)
         | "<=", Integral x, Integral y -> VBool(x <= y)
         | ">", Integral x, Integral y -> VBool(x > y)
@@ -691,6 +728,7 @@ module Interpreter =
                 | VInteger _, ("Integer" | "Number") -> true
                 | VArithmeticInteger _, ("Integer" | "Number") -> true
                 | VInt _, ("Integer" | "Long" | "Number") -> true
+                | VFloat _, ("Float" | "Number") -> true
                 | VList _, ("List" | "Collection" | "ArrayList") -> true
                 | VRange _, ("List" | "Collection" | "Range" | "IntRange") -> true
                 | VMap _, ("Map" | "HashMap" | "LinkedHashMap") -> true
@@ -1428,14 +1466,24 @@ module Interpreter =
         | "getPassCount", VJUnitSummary summary, []
             when List.isEmpty namedArgs && Option.isNone trailing ->
             VInteger summary.Value.PassCount
-        | getter, _, _ when Set.contains getter Sandbox.junitSummaryCountGetters ->
+        | "getDuration", VJUnitSummary summary, []
+            when List.isEmpty namedArgs && Option.isNone trailing ->
+            match summary.Value.Duration with
+            | Some duration -> VFloat duration
+            | None -> raise (Stop(Unsupported "JUnit duration uses an unmodelled TimeToFloat lexical form"))
+        | getter, _, _ when Set.contains getter Sandbox.junitSummaryGetters ->
             // The names are globally admitted only so the nominal summary can
             // reach the exact public accessors above. Never let that admission
             // turn a free call, another receiver, an argument, or a trailing
             // closure into a guessed null/success path.
-            raise (Stop(Unsupported $"method `{getter}` is modelled only as a zero-argument JUnit TestResultSummary count accessor"))
+            raise (Stop(Unsupported $"method `{getter}` is modelled only as a zero-argument JUnit TestResultSummary accessor"))
         | _, VJUnitSummary _, _ ->
-            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read a count property or call its matching zero-argument getter"))
+            raise (Stop(Unsupported $"method `{name}` is not modelled for JUnit TestResultSummary; read a measured property or call its matching zero-argument getter"))
+        | _, receiver, methodArgs
+            when Value.containsJUnitDuration receiver
+                 || (methodArgs |> List.exists Value.containsJUnitDuration)
+                 || (namedArgs |> List.exists (snd >> Value.containsJUnitDuration)) ->
+            raise (Stop(Unsupported $"method `{name}` is not modelled for a JUnit duration Float directly or inside a collection"))
         // FG-189/FG-195. `f.call(x)` is the explicit spelling of closure invocation
         // with the same binding rules and refusal contract as `f(x)` — for a closure
         // held in a LOCAL. A closure held in the script BINDING (assigned without
@@ -1852,6 +1900,8 @@ module Interpreter =
             st.LastValue <- None
 
             match evalExpr st env src with
+            | value when Value.containsJUnitDuration value ->
+                raise (Stop(Unsupported "iteration over a JUnit duration Float directly or inside a collection is not modelled"))
             | ListLike xs ->
                 // FG-194. `break` LEAVES THE LOOP. This caught `BreakSignal` per ITERATION
                 // and carried on with the next element, so `for (x in xs) { … break }` ran
@@ -1984,6 +2034,8 @@ module Interpreter =
                 raise (Stop(Unsupported "throwing an SCM return map directly or inside a collection is not modelled"))
             elif Value.containsJUnitSummary thrown then
                 raise (Stop(Unsupported "throwing a JUnit TestResultSummary directly or inside a collection is not modelled"))
+            elif Value.containsJUnitDuration thrown then
+                raise (Stop(Unsupported "throwing a JUnit duration Float directly or inside a collection is not modelled"))
             else
                 raise (Stop(Thrown thrown))
         | STry(body, catch, fin) ->

@@ -30,12 +30,17 @@ module Sandbox =
     let junitSummaryCountGetters =
         set [ "getTotalCount"; "getFailCount"; "getSkipCount"; "getPassCount" ]
 
+    let junitSummaryDurationGetters = set [ "getDuration" ]
+
+    let junitSummaryGetters =
+        Set.union junitSummaryCountGetters junitSummaryDurationGetters
+
     /// Pure/interpreter-managed method names that cannot touch the outside world.
     /// Most are string/collection helpers; nominal getter names dispatch only on
     /// their closed [Value] receiver and fail closed for every other use.
     let builtins: Set<string> =
         Set.union
-            junitSummaryCountGetters
+            junitSummaryGetters
             (set
                 [ "size"; "length"; "toString"; "toInteger"; "trim"; "toUpperCase"; "toLowerCase"
                   "split"; "join"; "contains"; "startsWith"; "endsWith"; "replace"; "substring"
