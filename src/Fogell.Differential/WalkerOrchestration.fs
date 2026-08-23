@@ -2312,6 +2312,13 @@ module WalkerOrchestration =
                                             Interpreter.raiseHostedCallRefused
                                                 "script block: passing a JUnit TestResultSummary directly or inside a collection to a hosted step is not modelled"
 
+                                        if
+                                            (rawPositional |> List.exists Value.containsJUnitDuration)
+                                            || (rawNamed |> List.exists (snd >> Value.containsJUnitDuration))
+                                        then
+                                            Interpreter.raiseHostedCallRefused
+                                                "script block: passing a JUnit duration Float directly or inside a collection to a hosted step is not modelled"
+
                                         match WalkerRules.validateHostedCall name rawPositional rawNamed with
                                         | Error(WalkerRules.EngineRefusal why) ->
                                             Interpreter.raiseHostedCallRefused $"script block: {why}"

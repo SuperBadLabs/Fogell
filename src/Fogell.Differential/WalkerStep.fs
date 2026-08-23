@@ -366,7 +366,8 @@ module WalkerStep =
                                     { TotalCount = int64 total
                                       FailCount = int64 failed
                                       SkipCount = int64 skipped
-                                      PassCount = int64 total - int64 failed - int64 skipped }))
+                                      PassCount = int64 total - int64 failed - int64 skipped
+                                      Duration = result.TestDuration }))
                 | None -> ()
             // The SCM executor/result-history slice publishes the nominal map.
             // This arm is intentionally a no-op here: fabricating even the base

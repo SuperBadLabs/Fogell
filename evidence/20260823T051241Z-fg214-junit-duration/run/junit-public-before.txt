@@ -1,0 +1,12 @@
+Compiled from "TestResultSummary.java"
+public class hudson.tasks.junit.TestResultSummary implements java.io.Serializable {
+  public hudson.tasks.junit.TestResultSummary();
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int);
+  public hudson.tasks.junit.TestResultSummary(int, int, int, int, float);
+  public hudson.tasks.junit.TestResultSummary(hudson.tasks.junit.TestResult);
+  public int getFailCount();
+  public int getSkipCount();
+  public int getPassCount();
+  public int getTotalCount();
+  public float getDuration();
+}

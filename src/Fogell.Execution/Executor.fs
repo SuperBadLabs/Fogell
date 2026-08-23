@@ -88,6 +88,9 @@ type StepResult =
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
+      /// JUnit's accumulated test duration in seconds, preserving JVM float
+      /// width and per-addition rounding. Distinct from wall-clock DurationMs.
+      TestDuration: single option
       /// A warning contribution attached to the current pipeline stage rather
       /// than folded into the build result. JUnit is the first producer: failed
       /// reports contribute UNSTABLE unless `skipMarkingStageUnstable` was set.
@@ -140,6 +143,7 @@ module Executor =
           Termination = None
           Archived = []
           TestTotals = None
+          TestDuration = None
           StageWarning = None
           CapturedStdoutRaw = None
           Diagnostic = None
@@ -327,6 +331,7 @@ module Executor =
               Termination = run.Termination
               Archived = []
               TestTotals = None
+              TestDuration = None
               StageWarning = None
               // ONLY when asked. An unconditional copy would keep the unmasked text
               // alive on every step for no consumer.
@@ -496,7 +501,8 @@ module Executor =
                 |> List.iter (fun message -> request.OnLine |> Option.iter (fun emit -> emit message))
 
                 { ok Success with
-                    TestTotals = Some(0, 0, 0) }
+                    TestTotals = Some(0, 0, 0)
+                    TestDuration = Some 0.0f }
 
             match Publish.parseJUnitWithAbort request.Workspace (patterns raw) abort with
             // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
@@ -527,13 +533,13 @@ module Executor =
                 request.OnLine |> Option.iter (fun emit -> emit missingIdentity)
                 { ok Failure with Diagnostic = Some missingIdentity }
             | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
-            | Result.Ok(total, _, _) when total = 0 ->
+            | Result.Ok(total, _, _, _) when total = 0 ->
                 if request.JUnitAllowEmptyResults then
                     emptySummary [ noResults ]
                 else
                     request.OnLine |> Option.iter (fun emit -> emit noResults)
                     { ok Failure with Diagnostic = Some noResults }
-            | Result.Ok(total, failed, skipped) ->
+            | Result.Ok(total, failed, skipped, duration) ->
                 // Jenkins marks the build UNSTABLE (not failed) when tests fail:
                 // the build worked, the code did not.
                 // The build and stage flags are two typed inputs to one measured
@@ -554,6 +560,7 @@ module Executor =
 
                 { ok status with
                     TestTotals = Some(total, failed, skipped)
+                    TestDuration = duration
                     StageWarning = if marksStageUnstable then Some Unstable else None
                     Diagnostic =
                         if failed > 0 then

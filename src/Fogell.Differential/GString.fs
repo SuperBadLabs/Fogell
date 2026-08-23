@@ -431,6 +431,7 @@ module GString =
         | VInt _ -> "Integer"
         | VInteger _ -> "Integer"
         | VArithmeticInteger _ -> "Integer"
+        | VFloat _ -> "Float"
         | VBool _ -> "Boolean"
         | VList _ -> "ArrayList"
         | VRange _ -> "IntRange"
