@@ -3,10 +3,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "=== sdk ==="; dotnet --version
-echo "=== build (warnings are errors for FS0025/FS0026) ==="
-dotnet build -c Release --nologo 2>&1 | tail -5
-rc=${PIPESTATUS[0]}
-[ "$rc" -ne 0 ] && { echo "BUILD FAILED"; exit 1; }
+./scripts/prove-dependency-locks.sh \
+  || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
 echo "=== tests ==="
 fail=0
 for p in tests/*/; do

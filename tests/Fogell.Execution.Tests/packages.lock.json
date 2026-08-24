@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Expecto": {
+        "type": "Direct",
+        "requested": "[10.2.3, )",
+        "resolved": "10.2.3",
+        "contentHash": "mwGOvtkKfMwakKeONwWYy5RgnO7Ijx/THt50GHh8mkSPySVOW/BsOppHzNwby45uaO6X0IKpqS76BrlYgOqcIg==",
+        "dependencies": {
+          "FSharp.Core": "7.0.200",
+          "Mono.Cecil": "[0.11.4, 1.0.0)"
+        }
+      },
+      "FSharp.Core": {
+        "type": "Direct",
+        "requested": "[10.1.301, )",
+        "resolved": "10.1.301",
+        "contentHash": "FwQFuqOA1+qQnFl6Vqg6piS83ZRuKJqXJQxOM52M5tNarT2XQ/pMvw8fOOlnhcOYvdZyje2PJ8rK/J64ZI729Q=="
+      },
+      "Mono.Cecil": {
+        "type": "Transitive",
+        "resolved": "0.11.4",
+        "contentHash": "IC1h5g0NeJGHIUgzM1P82ld57knhP0IcQfrYITDPXlNpMYGUrsG5TxuaWTjaeqDNQMBDNZkB8L0rBnwsY6JHuQ=="
+      },
+      "fogell.admission": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Ir": "[1.0.0, )"
+        }
+      },
+      "fogell.domain": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )"
+        }
+      },
+      "fogell.execution": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      },
+      "fogell.ir": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}
