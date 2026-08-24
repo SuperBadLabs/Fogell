@@ -47,15 +47,18 @@
 #   O. a `submitter:`-restricted gate is REFUSED rather than approved by whoever
 #      can write to the inbox — this engine cannot authenticate a submitter, and
 #      enforcing a restriction on a self-declared name is theatre;
-#   P. a VOIDED answer is not replayed into a resumed attempt. Note the two
-#      things P does NOT prove: it hand-appends the void record, so it covers
-#      replay refusal GIVEN one rather than the engine writing one for a
-#      genuinely late answer; and it runs the UNBOUNDED Jenkinsfile, so it says
-#      nothing about a fresh deadline. FG-115;
+#   P. a VOIDED answer is not replayed into a resumed attempt. P deliberately
+#      constructs that state; QL below is the end-to-end late-answer case;
 #   Q. a DEADLINE-BOUND prompt's answer is provisional and STAYS provisional —
 #      usable in the attempt that read it, never replayable by another, because
 #      promotion is itself a durable write that can straddle the deadline it
 #      rules on;
+#   QL. a poll that starts while a DEADLINE-BOUND prompt is eligible but returns
+#      after expiry records the exact provisional answer and the engine's own
+#      exact VOID, aborts without the guarded effect, consumes the inbox, and
+#      leaves a bounded crash snapshot that refuses replay. The provisional
+#      record already supplies replay safety; QL proves the void is truthful
+#      durable audit state, NOT that it is the sole replay barrier. FG-115;
 #   QF. failFast CAPABILITY, before any sibling has faulted, makes an answered
 #      prompt provisional too. A paired ordinary-parallel control writes an
 #      actionable decision, so making every parallel prompt provisional cannot
@@ -103,6 +106,9 @@ cleanup() {
   # directory — leaking a process and poisoning later runs, which is exactly how
   # an orphaned host process failed a lane earlier in this session.
   [ -n "${CHURN:-}" ] && { kill -9 "$CHURN" 2>/dev/null; CHURN=""; } || true
+  # QL's writer is bounded itself, but killing it here keeps a broken host from
+  # leaving `printf > fifo` behind until that outer bound elapses.
+  [ -n "${LATE_WRITER:-}" ] && { kill -9 "$LATE_WRITER" 2>/dev/null; LATE_WRITER=""; } || true
   # same argument for the inbox watcher: it blocks forever by design
   [ -n "${WATCHER:-}" ] && { kill -9 "$WATCHER" 2>/dev/null; WATCHER=""; } || true
   [ "${LANE_OK:-0}" = 1 ] && rm -rf "$LANE" || echo "lane FAILED — evidence kept at $LANE" >&2
@@ -900,6 +906,154 @@ set -e
 grep -q 'needs-reconciliation: Gate#1' "$Q/run2.log" || {
   echo "FAIL: the provisional input was not sent for reconciliation"; cat "$Q/run2.log"; exit 1; }
 echo "provisional only, never actionable; the crash state refuses"
+
+# --------------------------------------------------------------- scenario QL
+echo "=== QL: an answer returned after cancellation is provisionally recorded and VOIDED ==="
+# FG-115. Scenario P proves replay refusal GIVEN a hand-written void; it cannot
+# prove the engine emits one. This case makes the real poll return late.
+#
+# The FIFO is a TEST-ONLY slow-storage surrogate, not a supported decision-file
+# spelling. The host observes its stable metadata, enters File.ReadAllText while
+# the deadline is still live, and blocks. A bounded writer supplies one exact
+# answer only after the deadline. The poll then journals what it read, returns,
+# and the walker's mandatory post-poll cancellation check must write the void
+# before applying the timeout. This drives the otherwise-microsecond window
+# without depending on scheduler luck or claiming a FIFO is part of the inbox
+# protocol.
+QL="$LANE/ql"; mkdir -p "$QL/approvals"
+cat > "$QL/Jenkinsfile" <<'JF'
+pipeline {
+    agent any
+    options { timeout(time: 3, unit: 'SECONDS') }
+    stages {
+        stage("Gate") {
+            steps {
+                sh "echo one >> markers.txt"
+                input message: "Deploy?", ok: "Ship it"
+                sh "echo two >> markers.txt"
+            }
+        }
+    }
+}
+JF
+
+timeout 30 "$HOST_BIN" "$QL/Jenkinsfile" "$QL/ws" gate "$QL/build.journal" "$QL/approvals" > "$QL/run1.log" 2>&1 &
+PID=$!
+QLID=$(await_pending "$QL/approvals") || {
+  echo "FAIL: QL never published its bounded prompt"; cat "$QL/run1.log"; exit 1; }
+QL_DECISION="$QL/approvals/$QLID.decision"
+mkfifo "$QL_DECISION"
+QL_FIFO_STAMP="$QL/fifo.stamp"
+: > "$QL_FIFO_STAMP"
+touch -r "$QL_DECISION" "$QL_FIFO_STAMP"
+
+# `timeout` bounds both the initial delay and a writer stuck opening the FIFO if
+# the host never reaches the read. Its exit is asserted below, so a case that
+# merely timed out its helper cannot announce success. Keep the FIFO open after
+# writing while restoring its original timestamp: readDecision re-stats after
+# reading specifically to reject bytes from a file whose validated identity
+# changed. Closing first races that re-stat and would test the replacement guard
+# instead of the late-return branch FG-115 owns.
+timeout 15 /bin/sh -c '
+  sleep 5
+  exec 3> "$1"
+  printf "approve late-reader\n" >&3
+  touch -r "$2" "$1"
+  exec 3>&-
+' sh "$QL_DECISION" "$QL_FIFO_STAMP" &
+LATE_WRITER=$!
+set +e
+wait "$PID"
+QL_RC=$?
+wait "$LATE_WRITER"
+QL_WRITER_RC=$?
+set -e
+LATE_WRITER=""
+
+[ "$QL_RC" -ne 124 ] || { echo "FAIL: QL host hung"; cat "$QL/run1.log"; exit 1; }
+[ "$QL_RC" -ne 0 ] || { echo "FAIL: the answer that returned after expiry was accepted"; cat "$QL/run1.log"; exit 1; }
+[ "$QL_WRITER_RC" -eq 0 ] || {
+  echo "FAIL: the slow decision writer did not rendezvous with the host (exit $QL_WRITER_RC)"
+  cat "$QL/run1.log"; exit 1; }
+grep -q 'completed: aborted' "$QL/run1.log" || {
+  echo "FAIL: the late bounded answer did not end ABORTED"; cat "$QL/run1.log"; exit 1; }
+grep -q 'completed: success' "$QL/run1.log" && {
+  echo "FAIL: the late bounded answer reported success"; cat "$QL/run1.log"; exit 1; }
+
+QLMARK="$QL/ws/gate/markers.txt"
+[ "$(grep -c '^one$' "$QLMARK" 2>/dev/null || true)" -eq 1 ] || {
+  echo "FAIL: QL pre-gate effect inventory is not exactly one"; cat "$QLMARK" 2>/dev/null || true; exit 1; }
+[ "$(grep -c '^two$' "$QLMARK" 2>/dev/null || true)" -eq 0 ] || {
+  echo "FAIL: work ran after the late bounded answer"; cat "$QLMARK"; exit 1; }
+[ "$(wc -l < "$QLMARK")" -eq 1 ] || {
+  echo "FAIL: QL marker inventory contains an unexpected effect"; cat "$QLMARK"; exit 1; }
+
+QL_PROMPT=$'input-prompt-cancellable\tGate\t1\t1'
+QL_PROVISIONAL=$'input-answer-provisional\tGate\t1\t1\tapproved\tlate-reader'
+QL_VOID=$'input-decision-voided\tGate\t1\t1'
+[ "$(grep -Fxc "$QL_PROMPT" "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: QL did not journal exactly one exact cancellable prompt"; sed 's/^/  | /' "$QL/build.journal"; exit 1; }
+[ "$(grep -Fxc "$QL_PROVISIONAL" "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: QL did not journal exactly one exact provisional answer"; sed 's/^/  | /' "$QL/build.journal"; exit 1; }
+[ "$(grep -Fxc "$QL_VOID" "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: the engine did not journal exactly one exact void for its late answer"; sed 's/^/  | /' "$QL/build.journal"; exit 1; }
+[ "$(grep -c $'^input-prompt-cancellable\t' "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: QL has an unexpected cancellable-prompt record elsewhere"; exit 1; }
+[ "$(grep -c $'^input-answer-provisional\t' "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: QL has an unexpected provisional-answer record elsewhere"; exit 1; }
+[ "$(grep -c $'^input-decision-voided\t' "$QL/build.journal" || true)" -eq 1 ] || {
+  echo "FAIL: QL has an unexpected void record elsewhere"; exit 1; }
+[ "$(grep -c $'^input-decision\t' "$QL/build.journal" || true)" -eq 0 ] || {
+  echo "FAIL: QL made a cancellable late answer actionable"; sed 's/^/  | /' "$QL/build.journal"; exit 1; }
+
+QL_PROMPT_LINE=$(grep -nFx "$QL_PROMPT" "$QL/build.journal" | cut -d: -f1)
+QL_PROVISIONAL_LINE=$(grep -nFx "$QL_PROVISIONAL" "$QL/build.journal" | cut -d: -f1)
+QL_VOID_LINE=$(grep -nFx "$QL_VOID" "$QL/build.journal" | cut -d: -f1)
+[ "$QL_PROMPT_LINE" -lt "$QL_PROVISIONAL_LINE" ] && [ "$QL_PROVISIONAL_LINE" -lt "$QL_VOID_LINE" ] || {
+  echo "FAIL: QL journal order is not prompt < provisional answer < void"; sed 's/^/  | /' "$QL/build.journal"; exit 1; }
+
+if [ -n "$(find "$QL/approvals" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "FAIL: QL approvals directory is not empty after cancellation"
+  find "$QL/approvals" -mindepth 1 -maxdepth 1 -print
+  exit 1
+fi
+
+# Reconstruct only the crash boundary: keep the bounded prompt, provisional
+# answer and engine-written void, remove terminal records which necessarily
+# happened later. The Jenkinsfile is still deadline-bearing. A resumed process
+# must refuse this state without republishing the prompt or repeating an effect.
+# Provisional state already makes replay unsafe; this assertion deliberately
+# does NOT claim the void is the sole barrier.
+grep -vP '^(build-finished|stage-committed)\t' "$QL/build.journal" \
+  | grep -vP '^step-finished\tGate\t1\t' \
+  | grep -vP '^step-reason\tGate\t1\t' > "$QL/crash.journal"
+grep -Fqx "$QL_PROVISIONAL" "$QL/crash.journal" || { echo "FAIL: QL crash snapshot lost the provisional answer"; exit 1; }
+grep -Fqx "$QL_VOID" "$QL/crash.journal" || { echo "FAIL: QL crash snapshot lost the engine-written void"; exit 1; }
+QL_CRASH_BEFORE=$(sha256sum "$QL/crash.journal" | cut -d' ' -f1)
+set +e
+timeout 30 "$HOST_BIN" "$QL/Jenkinsfile" "$QL/ws" gate "$QL/crash.journal" "$QL/approvals" > "$QL/run2.log" 2>&1
+QL_REPLAY_RC=$?
+set -e
+[ "$QL_REPLAY_RC" -ne 124 ] || { echo "FAIL: QL bounded crash-state replay hung"; exit 1; }
+[ "$QL_REPLAY_RC" -eq 3 ] || {
+  echo "FAIL: QL bounded crash state was not refused for reconciliation (exit $QL_REPLAY_RC)"
+  cat "$QL/run2.log"; exit 1; }
+grep -q 'needs-reconciliation: Gate#1' "$QL/run2.log" || {
+  echo "FAIL: QL bounded crash-state refusal was not named"; cat "$QL/run2.log"; exit 1; }
+grep -q 'completed:' "$QL/run2.log" && {
+  echo "FAIL: QL bounded crash-state replay reached a terminal build result"; cat "$QL/run2.log"; exit 1; }
+[ "$(sha256sum "$QL/crash.journal" | cut -d' ' -f1)" = "$QL_CRASH_BEFORE" ] || {
+  echo "FAIL: the refused QL replay appended to its crash snapshot"; exit 1; }
+[ "$(grep -c '^one$' "$QLMARK" 2>/dev/null || true)" -eq 1 ] || {
+  echo "FAIL: QL replay repeated the pre-gate effect"; cat "$QLMARK"; exit 1; }
+[ "$(grep -c '^two$' "$QLMARK" 2>/dev/null || true)" -eq 0 ] || {
+  echo "FAIL: QL replay ran the guarded effect"; cat "$QLMARK"; exit 1; }
+if [ -n "$(find "$QL/approvals" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "FAIL: QL replay published or retained an inbox file"
+  find "$QL/approvals" -mindepth 1 -maxdepth 1 -print
+  exit 1
+fi
+echo "late poll wrote provisional + audit-truth void; bounded replay refused (void is not claimed as the sole barrier)"
 
 # ---------------------------------------------------------------- scenario QF
 echo "=== QF: failFast capability makes an answer provisional before a sibling faults ==="
