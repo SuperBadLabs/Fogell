@@ -93,6 +93,67 @@ module Trace =
 
     let private sha256Text (text: string) = sha256Hex (Text.Encoding.UTF8.GetBytes text)
 
+    type private WorkspaceEntry =
+        | WorkspaceFile of path: string * hash: string
+        | EmptyLeafDirectory of path: string
+
+    // A readable receipt needs a hash-shaped value for a directory row. The value
+    // is presentation only; the canonical directory record below is what binds the
+    // workspace hash. A trailing slash makes the row impossible to confuse with a
+    // file path.
+    let private emptyDirectoryDisplayHash = sha256Text "\u0000D"
+
+    let private entryPath = function
+        | WorkspaceFile(path, _) -> path
+        | EmptyLeafDirectory path -> path
+
+    // The committed emitter uses `LC_ALL=C sort -z` over UTF-8 filesystem bytes.
+    // Validate that wire order exactly. Canonical reduction below still uses the
+    // historical .NET ordinal path order, preserving v1 file ordering even for
+    // the narrow supplementary-plane ordering difference between UTF-8 and UTF-16.
+    let private compareWirePath (left: string) (right: string) =
+        Array.compareWith compare (Text.Encoding.UTF8.GetBytes left) (Text.Encoding.UTF8.GetBytes right)
+
+    let private validateWorkspacePath (path: string) =
+        let segments = path.Split '/'
+
+        if
+            path = ""
+            || path.StartsWith "/"
+            || path.EndsWith "/"
+            || path.Contains '\\'
+            || path |> Seq.exists Char.IsControl
+            || Text.RegularExpressions.Regex.IsMatch(path, "^[A-Za-z]:")
+            || segments |> Array.exists (fun segment -> segment = "" || segment = "." || segment = "..")
+        then
+            invalidOp "workspace path is not canonical"
+
+        path
+
+    let private finishWorkspace (entries: WorkspaceEntry list) =
+        let ordered = entries |> List.sortWith (fun a b -> String.CompareOrdinal(entryPath a, entryPath b))
+
+        // Compatibility is deliberate: every file record is exactly the v1
+        // `<path><TAB><hash>` byte sequence and file order is unchanged. Only an
+        // empty leaf adds a v2 record. NUL cannot occur in a filesystem path, so
+        // this tag cannot collide with a file record; base64 keeps the new record
+        // unambiguous even when a path contains whitespace.
+        let canonical =
+            ordered
+            |> List.map (function
+                | WorkspaceFile(path, hash) -> $"{path}\t{hash}"
+                | EmptyLeafDirectory path ->
+                    "\u0000D\t" + Convert.ToBase64String(Text.Encoding.UTF8.GetBytes path))
+            |> String.concat "\n"
+
+        let visible =
+            ordered
+            |> List.map (function
+                | WorkspaceFile(path, hash) -> path, hash
+                | EmptyLeafDirectory path -> path + "/", emptyDirectoryDisplayHash)
+
+        sha256Text canonical, visible
+
     /// Paths that are execution scaffolding rather than build output. Excluded
     /// from the workspace hash because their presence is an engine detail:
     /// Jenkins writes an `@tmp` sibling and durable-task spool files; Fogell
@@ -110,20 +171,38 @@ module Trace =
         || Path.GetFileName p = "script.sh"
         || Path.GetFileName p = "script.sh.copy"
 
-    /// Hash a directory tree: sorted (relative path, content hash) pairs. Sorted
-    /// because directory enumeration order is not a semantic property.
+    /// Hash a directory tree: files plus physical empty leaf directories. Directory
+    /// links are never followed and a link to an empty directory is not an empty
+    /// directory record. Sorted because enumeration order is not semantic.
     let hashWorkspace (root: string) : string * (string * string) list =
         if not (Directory.Exists root) then
             sha256Text "", []
+        elif (File.GetAttributes root).HasFlag FileAttributes.ReparsePoint then
+            "not-collected", []
         else
-            let entries =
-                Directory.GetFiles(root, "*", SearchOption.AllDirectories)
-                |> Array.choose (fun full ->
+            let rec visit (directory: string) =
+                Directory.EnumerateFileSystemEntries directory
+                |> Seq.toArray
+                |> Array.toList
+                |> List.collect (fun full ->
                     let relative =
-                        Path.GetRelativePath(root, full).Replace('\\', '/')
+                        Path.GetRelativePath(root, full).Replace('\\', '/') |> validateWorkspacePath
+                    let attrs = File.GetAttributes full
 
-                    if isScaffolding relative then
-                        None
+                    if attrs.HasFlag FileAttributes.ReparsePoint then
+                        []
+                    elif attrs.HasFlag FileAttributes.Directory then
+                        if isScaffolding (relative + "/") then
+                            []
+                        else
+                            let children = Directory.EnumerateFileSystemEntries full |> Seq.toArray
+
+                            if children.Length = 0 then
+                                [ EmptyLeafDirectory relative ]
+                            else
+                                visit full
+                    elif isScaffolding relative then
+                        []
                     else
                         let content =
                             try
@@ -131,17 +210,23 @@ module Trace =
                             with _ ->
                                 "unreadable"
 
-                        Some(relative, content))
-                |> Array.sortBy fst
-                |> Array.toList
+                        [ WorkspaceFile(relative, content) ])
 
-            let manifest =
-                entries |> List.map (fun (p, h) -> $"{p}\t{h}") |> String.concat "\n"
+            finishWorkspace (visit root)
 
-            sha256Text manifest, entries
-
-    /// FG-002b. Hash a workspace that lives somewhere this process cannot see,
-    /// by running a caller-supplied command that prints `<sha256>  <path>` lines.
+    /// FG-002b/FG-173. Hash a workspace that lives somewhere this process cannot
+    /// see. The collector protocol is deliberately strict and versioned:
+    ///
+    ///   FOGELL-WORKSPACE-MANIFEST<TAB>2<LF>
+    ///   F<TAB><64 lowercase hex><TAB><canonical base64 UTF-8 path><LF>
+    ///   D<TAB><canonical base64 UTF-8 path><LF>
+    ///   END<TAB><decimal record count><LF>
+    ///
+    /// Records are in strict UTF-8 bytewise decoded-path order. Paths are relative,
+    /// slash-normalised, non-control, non-dot-segment spellings. The framing is
+    /// validated but intentionally not hashed: file-only canonical bytes stay v1
+    /// compatible. Any malformed/truncated/duplicate/conflicting response or a
+    /// non-zero collector exit fails closed as `not-collected`.
     ///
     /// The same [isScaffolding] filter and the same sorted-manifest hash are
     /// applied, so a remote hash and a local hash are computed identically. If
@@ -156,39 +241,124 @@ module Trace =
             psi.UseShellExecute <- false
 
             use proc = Diagnostics.Process.Start psi
-            let out = proc.StandardOutput.ReadToEnd()
-            proc.WaitForExit 60_000 |> ignore
+            let stdout = proc.StandardOutput.ReadToEndAsync()
+            let stderr = proc.StandardError.ReadToEndAsync()
+
+            if not (proc.WaitForExit 60_000) then
+                proc.Kill true
+                invalidOp "workspace collector timed out"
+
+            if
+                not (
+                    Threading.Tasks.Task.WaitAll(
+                        [| stdout :> Threading.Tasks.Task; stderr :> Threading.Tasks.Task |],
+                        5_000
+                    )
+                )
+            then
+                invalidOp "workspace collector output did not close"
+
+            let out = stdout.Result
+            stderr.Result |> ignore
+
+            if proc.ExitCode <> 0 then
+                invalidOp $"workspace collector exited {proc.ExitCode}"
+
+            if out.Contains '\r' || not (out.EndsWith "\n") || out.EndsWith "\n\n" then
+                invalidOp "workspace collector framing is invalid"
+
+            let lines = out.Split '\n' |> Array.rev |> Array.tail |> Array.rev
+
+            if lines.Length < 2 || lines[0] <> "FOGELL-WORKSPACE-MANIFEST\t2" then
+                invalidOp "workspace collector version is invalid"
+
+            let trailer = lines[lines.Length - 1]
+            let trailerMatch = Text.RegularExpressions.Regex.Match(trailer, "^END\\t(0|[1-9][0-9]*)$")
+
+            if not trailerMatch.Success then
+                invalidOp "workspace collector trailer is invalid"
+
+            let recordLines = lines[1 .. lines.Length - 2]
+            let expectedCount = Int32.Parse trailerMatch.Groups[1].Value
+
+            if recordLines.Length <> expectedCount then
+                invalidOp "workspace collector count is invalid"
+
+            let utf8 = Text.UTF8Encoding(false, true)
+
+            let decodePath encoded =
+                if
+                    encoded = ""
+                    || encoded.Length % 4 <> 0
+                    || not (Text.RegularExpressions.Regex.IsMatch(encoded, "^[A-Za-z0-9+/]+={0,2}$"))
+                then
+                    invalidOp "workspace collector path encoding is invalid"
+
+                let bytes = Convert.FromBase64String encoded
+
+                if Convert.ToBase64String bytes <> encoded then
+                    invalidOp "workspace collector path encoding is not canonical"
+
+                utf8.GetString bytes |> validateWorkspacePath
+
+            let mutable previous: string option = None
+            let seen = Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+
+            let hasObservedLeafAncestor (path: string) =
+                let mutable slash = path.IndexOf '/'
+                let mutable found = false
+
+                while slash >= 0 && not found do
+                    found <- seen.Contains(path.Substring(0, slash))
+                    slash <- path.IndexOf('/', slash + 1)
+
+                found
 
             let entries =
-                out.Replace("\r\n", "\n").Split '\n'
-                |> Array.choose (fun line ->
-                    // `sha256sum` output: "<hash>  <path>"
-                    let parts = line.Split("  ", 2, StringSplitOptions.None)
+                recordLines
+                |> Array.map (fun line ->
+                    let fields = line.Split '\t'
 
-                    if parts.Length <> 2 then
-                        None
-                    else
-                        let hash = parts[0].Trim()
+                    let entry =
+                        match fields with
+                        | [| "F"; hash; encoded |]
+                            when Text.RegularExpressions.Regex.IsMatch(hash, "^[0-9a-f]{64}$") ->
+                            WorkspaceFile(decodePath encoded, hash)
+                        | [| "D"; encoded |] -> EmptyLeafDirectory(decodePath encoded)
+                        | _ -> invalidOp "workspace collector record is invalid"
 
-                        // Strip exactly one leading "./" — a charset TrimStart ate
-                        // the dot of ".git/" too, so .git internals (reflogs, the
-                        // index: nondeterministic BY NATURE) escaped the exclusion
-                        // list and poisoned the first SCM workspace hash (FG-111).
-                        let relative =
-                            let p = parts[1].Trim().Replace('\\', '/')
-                            if p.StartsWith "./" then p.Substring 2 else p
+                    let path = entryPath entry
 
-                        if hash = "" || relative = "" || isScaffolding relative then
-                            None
-                        else
-                            Some(relative, hash))
-                |> Array.sortBy fst
+                    if seen.Contains path then
+                        invalidOp "workspace collector path is duplicated or conflicting"
+
+                    match previous with
+                    | Some prior when compareWirePath prior path >= 0 ->
+                        invalidOp "workspace collector records are not strictly sorted"
+                    | _ -> ()
+
+                    // Every F is a file and every emitted D is an EMPTY leaf. An
+                    // earlier leaf therefore cannot be an ancestor of this row.
+                    // Strict ordering guarantees ancestors precede descendants,
+                    // but they need not be adjacent (`a`, `a-foo`, `a/b`), so the
+                    // check covers every slash-boundary prefix against all seen rows.
+                    if hasObservedLeafAncestor path then
+                        invalidOp "workspace collector contains an impossible leaf hierarchy"
+
+                    seen.Add path |> ignore
+                    previous <- Some path
+
+                    entry)
+                |> Array.choose (fun entry ->
+                    let scaffolding =
+                        match entry with
+                        | WorkspaceFile(path, _) -> isScaffolding path
+                        | EmptyLeafDirectory path -> isScaffolding (path + "/")
+
+                    if scaffolding then None else Some entry)
                 |> Array.toList
 
-            let manifest =
-                entries |> List.map (fun (p, h) -> $"{p}\t{h}") |> String.concat "\n"
-
-            sha256Text manifest, entries
+            finishWorkspace entries
         with _ ->
             "not-collected", []
 

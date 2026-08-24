@@ -5,13 +5,10 @@
 // admitted again under FG-172 (its arm runs a hosted body), so the body-less spelling
 // is refused by the ARM, before the directory is created.
 //
-// WHAT THIS CASE PROVES, narrowed after review: the two engines agree on the TERMINAL
-// RESULT and the OUTPUT. It does NOT prove they agree on side effects, because the
-// workspace manifest hashes FILES and an extra EMPTY DIRECTORY is invisible to it — this
-// receipt would be byte-identical with `child/` left behind. It said it proved agreement
-// on the rejection, which was more than it could see. The refusal now happens BEFORE
-// `Directory.CreateDirectory`, verified by hand rather than by this case; FG-173 carries
-// making the checker able to see it.
+// FG-173 makes physical empty leaf directories part of the compared workspace state.
+// This case now proves the two engines agree on the terminal result, output, AND absence
+// of a leftover `child/`: either engine creating it changes that side's workspace hash
+// and prints the directory row in the receipt. Directory symlinks are never followed.
 pipeline {
     agent any
     stages {

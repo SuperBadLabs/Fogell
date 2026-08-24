@@ -22,10 +22,12 @@ type JenkinsConfig =
       /// container, often on another host. Rather than give up on comparing
       /// workspaces (which would cap every receipt at PROVEN-PARTIAL forever),
       /// the harness can be handed a command that hashes the workspace WHERE IT
-      /// LIVES and prints `<sha256>  <relative-path>` lines on stdout.
+      /// LIVES and prints the strict version-2 file/empty-leaf manifest consumed
+      /// by `Trace.collectRemote`.
       ///
       /// `{job}` is substituted with the job name. Example:
-      ///   ssh luigi 'podman exec jenkins-lab sh -c "cd /var/jenkins_home/workspace/{job} && find . -type f | sort | xargs -r sha256sum"'
+      /// The committed runner is the executable reference emitter; `{job}` is
+      /// substituted with the job name before invocation.
       ///
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".

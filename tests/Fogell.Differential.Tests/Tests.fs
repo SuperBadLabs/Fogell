@@ -4164,6 +4164,228 @@ script says Checking out Revision {laterCheckout} (spoof)
               Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
+let workspaceManifestV2 =
+    let sha256Hex (bytes: byte[]) =
+        use hash = Security.Cryptography.SHA256.Create()
+        hash.ComputeHash bytes |> Convert.ToHexString |> fun value -> value.ToLowerInvariant()
+
+    let sha256Text (text: string) = text |> Text.Encoding.UTF8.GetBytes |> sha256Hex
+    let b64 (text: string) = text |> Text.Encoding.UTF8.GetBytes |> Convert.ToBase64String
+
+    let protocol (records: string list) =
+        String.concat "\n" ([ "FOGELL-WORKSPACE-MANIFEST\t2" ] @ records @ [ $"END\t{records.Length}"; "" ])
+
+    let collectText exitCode (text: string) =
+        let path = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-v2-{Guid.NewGuid():N}")
+
+        try
+            IO.File.WriteAllText(path, text)
+            Trace.collectRemote $"cat {path}; exit {exitCode}"
+        finally
+            IO.File.Delete path
+
+    let refused label exitCode text =
+        Expect.equal (collectText exitCode text) ("not-collected", []) label
+
+    testList
+        "FG-173 versioned file and empty-leaf workspace manifest"
+        [ test "file-only canonical bytes remain exactly v1" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-local-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "payload.txt"), "payload\n")
+                  IO.File.WriteAllText(IO.Path.Combine(root, "Alpha.txt"), "alpha\n")
+                  let alphaHash = sha256Text "alpha\n"
+                  let payloadHash = sha256Text "payload\n"
+                  let expectedManifest = $"Alpha.txt\t{alphaHash}\npayload.txt\t{payloadHash}"
+                  let actualHash, entries = Trace.hashWorkspace root
+                  Expect.equal actualHash (sha256Text expectedManifest) "v1 file record bytes are unchanged"
+                  Expect.equal
+                      entries
+                      [ "Alpha.txt", alphaHash; "payload.txt", payloadHash ]
+                      "v1 ordinal file order is unchanged"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "only physical empty leaf directories are visible and deterministic" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-dirs-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "z-empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "a", "inner-empty")) |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "payload.txt"), "payload\n")
+                  let firstHash, first = Trace.hashWorkspace root
+                  let secondHash, second = Trace.hashWorkspace root
+                  Expect.equal secondHash firstHash "enumeration order does not affect the hash"
+                  Expect.equal second first "enumeration order does not affect the inventory"
+                  Expect.contains (first |> List.map fst) "a/inner-empty/" "nested empty leaf is recorded"
+                  Expect.contains (first |> List.map fst) "z-empty/" "top-level empty leaf is recorded"
+                  Expect.isFalse (first |> List.map fst |> List.contains "a/") "non-leaf parent is not recorded"
+
+                  IO.Directory.Delete(IO.Path.Combine(root, "z-empty"))
+                  IO.Directory.Delete(IO.Path.Combine(root, "a"), true)
+                  let fileOnlyHash, _ = Trace.hashWorkspace root
+                  Expect.notEqual firstHash fileOnlyHash "empty-directory state changes the workspace hash"
+
+                  let controlPath = IO.Path.Combine(root, "bad\nname")
+                  IO.File.WriteAllText(controlPath, "bad")
+                  Expect.throws (fun () -> Trace.hashWorkspace root |> ignore) "ambiguous control paths fail closed"
+                  IO.File.Delete controlPath
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "directory and file symlinks are neither recorded nor followed" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-links-{Guid.NewGuid():N}")
+              let outside = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-outside-{Guid.NewGuid():N}")
+              let rootLink = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-root-link-{Guid.NewGuid():N}")
+
+              try
+                  let physical = IO.Directory.CreateDirectory(IO.Path.Combine(root, "physical-empty"))
+                  let holder = IO.Directory.CreateDirectory(IO.Path.Combine(root, "holder"))
+                  IO.Directory.CreateDirectory outside |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(outside, "outside.txt"), "outside")
+                  IO.Directory.CreateSymbolicLink(IO.Path.Combine(root, "dir-link"), outside) |> ignore
+                  IO.Directory.CreateSymbolicLink(IO.Path.Combine(holder.FullName, "empty-link"), physical.FullName) |> ignore
+                  IO.File.CreateSymbolicLink(IO.Path.Combine(root, "file-link"), IO.Path.Combine(outside, "outside.txt")) |> ignore
+                  let _, entries = Trace.hashWorkspace root
+                  let paths = entries |> List.map fst
+                  Expect.equal paths [ "physical-empty/" ] "only the physical empty leaf is observable"
+                  IO.Directory.CreateSymbolicLink(rootLink, outside) |> ignore
+                  Expect.equal
+                      (Trace.hashWorkspace rootLink)
+                      ("not-collected", [])
+                      "a symlink root is not followed or mistaken for an empty workspace"
+              finally
+                  if IO.Directory.Exists rootLink then IO.Directory.Delete rootLink
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+                  if IO.Directory.Exists outside then IO.Directory.Delete(outside, true)
+          }
+
+          test "scaffolding subtrees do not manufacture empty-directory state" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-scaffold-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, ".git", "empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "job@tmp", "empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "kept")) |> ignore
+                  let _, entries = Trace.hashWorkspace root
+                  Expect.equal (entries |> List.map fst) [ "kept/" ] "only semantic empty leaves remain"
+                  let remoteScaffolding = b64 "job@tmp"
+                  Expect.equal
+                      (collectText 0 (protocol [ $"D\t{remoteScaffolding}" ]))
+                      (sha256Text "", [])
+                      "remote directory scaffolding uses the same exclusion"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "strict remote v2 produces the same canonical hash as local collection" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-parity-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "z empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "nested")) |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "a.txt"), "a\n")
+                  IO.File.WriteAllText(IO.Path.Combine(root, "nested", "file.txt"), "nested\n")
+                  let fileHash = sha256Text "a\n"
+                  let nestedHash = sha256Text "nested\n"
+                  let filePath = b64 "a.txt"
+                  let nestedPath = b64 "nested/file.txt"
+                  let directoryPath = b64 "z empty"
+                  let wire =
+                      protocol
+                          [ $"F\t{fileHash}\t{filePath}"
+                            $"F\t{nestedHash}\t{nestedPath}"
+                            $"D\t{directoryPath}" ]
+
+                  Expect.equal (collectText 0 wire) (Trace.hashWorkspace root) "local and remote reduce identically"
+
+                  let lexicalA = b64 "a"
+                  let lexicalAb = b64 "ab"
+                  let lexicalWire = protocol [ $"D\t{lexicalA}"; $"D\t{lexicalAb}" ]
+                  let lexicalHash, lexicalEntries = collectText 0 lexicalWire
+                  Expect.notEqual lexicalHash "not-collected" "a lexical prefix is not a path ancestor"
+                  Expect.equal
+                      (lexicalEntries |> List.map fst)
+                      [ "a/"; "ab/" ]
+                      "sibling leaf spellings remain valid"
+
+                  let bmp = "\uE000"
+                  let supplementary = "\U00010000"
+                  let unicodeWire = protocol [ $"D\t{b64 bmp}"; $"D\t{b64 supplementary}" ]
+                  let unicodeHash, unicodeEntries = collectText 0 unicodeWire
+                  Expect.notEqual unicodeHash "not-collected" "C-locale UTF-8 wire order is accepted"
+                  Expect.equal
+                      (unicodeEntries |> List.map fst)
+                      [ supplementary + "/"; bmp + "/" ]
+                      "canonical inventory retains historical .NET ordinal order"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "remote framing, tags, encodings, paths, order, uniqueness and status fail closed" {
+              let hash = String.replicate 64 "a"
+              let file path = $"F\t{hash}\t{b64 path}"
+              let dir path = $"D\t{b64 path}"
+              let good = protocol [ file "a" ]
+              let encodedA = b64 "a"
+              let uppercaseHash = hash.ToUpperInvariant()
+
+              [ "unknown version", 0, good.Replace("\t2\n", "\t3\n")
+                "unknown tag", 0, protocol [ $"X\t{encodedA}" ]
+                "malformed base64", 0, protocol [ "D\t***=" ]
+                "noncanonical base64", 0, protocol [ "D\tYQ===" ]
+                "absolute path", 0, protocol [ dir "/a" ]
+                "dot segment", 0, protocol [ dir "a/../b" ]
+                "control path", 0, protocol [ dir "a\nb" ]
+                "uppercase hash", 0, protocol [ $"F\t{uppercaseHash}\t{encodedA}" ]
+                "duplicate", 0, protocol [ file "a"; file "a" ]
+                "file-directory conflict", 0, protocol [ file "a"; dir "a" ]
+                "file ancestor of directory", 0, protocol [ file "a"; dir "a/b" ]
+                "directory ancestor of file", 0, protocol [ dir "a"; file "a/b" ]
+                "directory ancestor of directory", 0, protocol [ dir "a"; dir "a/b" ]
+                "interposed file hides ancestor", 0, protocol [ file "a"; file "a-foo"; dir "a/b" ]
+                "unsorted", 0, protocol [ dir "z"; file "a" ]
+                "missing trailer", 0, "FOGELL-WORKSPACE-MANIFEST\t2\n"
+                "extra trailer", 0, good + "END\t1\n"
+                "wrong count", 0, good.Replace("END\t1", "END\t2")
+                "noncanonical count", 0, good.Replace("END\t1", "END\t01")
+                "missing terminal LF", 0, good.TrimEnd '\n'
+                "extra blank row", 0, good + "\n"
+                "nonzero status", 9, good ]
+              |> List.iter (fun (label, exitCode, wire) -> refused label exitCode wire)
+          }
+
+          test "zero-record v2 is valid and remains the historical empty hash" {
+              Expect.equal
+                  (collectText 0 (protocol []))
+                  (sha256Text "", [])
+                  "framing metadata is validated, not folded into canonical bytes"
+          }
+
+          test "an explicit empty root is observable while a missing root still refuses" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-setup-{Guid.NewGuid():N}")
+              let command = $"cd {root} && printf 'FOGELL-WORKSPACE-MANIFEST\\t2\\nEND\\t0\\n'"
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  Expect.equal
+                      (Trace.collectRemote command)
+                      (sha256Text "", [])
+                      "the reset's mkdir establishes a physical empty tree"
+
+                  IO.Directory.Delete root
+                  Expect.equal
+                      (Trace.collectRemote command)
+                      ("not-collected", [])
+                      "the same strict collector refuses an actually missing or wrong root"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -4176,6 +4398,7 @@ let main argv =
               stepDescriptorValidation
               genuineNullRuntime
               scmReturnMapRuntime
+              workspaceManifestV2
               jenkinsBuildDataAttestation
               unsupportedNamedCollections
               unsupportedDeclarativeAgents
