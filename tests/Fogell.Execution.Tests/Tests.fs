@@ -1360,6 +1360,373 @@ let externalInterrupt =
                   "the shared matcher also retains its repeated trailing-separator behavior"
           }
 
+          test "junit follows healthy symlinks and bounds repeated directory targets like pinned Ant" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+
+              let report name duration =
+                  $"<testsuite name=\"{name}\" time=\"{duration}\" tests=\"1\"><testcase name=\"pass\"/></testsuite>"
+
+              let direct = Path.Combine(reports, "direct.xml")
+              File.WriteAllText(direct, report "direct" 1)
+              File.CreateSymbolicLink(Path.Combine(reports, "file-link.xml"), direct) |> ignore
+
+              let nested = Path.Combine(reports, "nested")
+              Directory.CreateDirectory nested |> ignore
+              File.WriteAllText(Path.Combine(nested, "nested.xml"), report "nested" 2)
+              Directory.CreateSymbolicLink(Path.Combine(reports, "dir-link"), nested) |> ignore
+
+              let external = tempRoot ()
+              File.WriteAllText(Path.Combine(external, "external.xml"), report "external" 3)
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external-link"), external) |> ignore
+
+              File.CreateSymbolicLink(
+                  Path.Combine(reports, "broken.xml"),
+                  Path.Combine(reports, "missing.xml"))
+              |> ignore
+
+              Directory.CreateSymbolicLink(
+                  Path.Combine(reports, "broken-dir"),
+                  Path.Combine(reports, "missing-dir"))
+              |> ignore
+
+              File.CreateSymbolicLink(
+                  Path.Combine(reports, "self-loop.xml"),
+                  Path.Combine(reports, "self-loop.xml"))
+              |> ignore
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ]
+                          JUnitAllowEmptyResults = allowEmpty }
+
+              for label, pattern, duration in
+                  [ "file", "reports/file-link.xml", 1.0f
+                    "directory", "reports/dir-link/*.xml", 2.0f
+                    "external", "reports/external-link/*.xml", 3.0f ] do
+                  let observed = junit pattern false
+                  Expect.equal observed.Status Success $"{label}: a healthy link is followed"
+                  Expect.equal observed.TestTotals (Some(1, 0, 0)) $"{label}: one logical report is selected"
+                  Expect.equal observed.TestDuration (Some duration) $"{label}: target content is parsed"
+
+              let brokenLiteral = junit "reports/broken.xml" false
+              Expect.equal brokenLiteral.Status Failure "a dangling literal link is absent from Ant's fast path"
+              Expect.equal
+                  brokenLiteral.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "a dangling literal link takes the existing no-report path"
+
+              let brokenLiteralAllowed = junit "reports/broken.xml" true
+              Expect.equal brokenLiteralAllowed.Status Success "allowEmptyResults permits the literal dangling miss"
+              Expect.equal brokenLiteralAllowed.TestTotals (Some(0, 0, 0)) "the permitted miss returns typed zero"
+
+              let brokenWildcard = junit "reports/broken*.xml" false
+              Expect.equal brokenWildcard.Status Unstable "a wildcard scan retains the dangling lexical file entry"
+              Expect.equal brokenWildcard.TestTotals (Some(1, 1, 0)) "the dangling wildcard entry is one synthetic failure"
+              Expect.equal brokenWildcard.TestDuration (Some 0.0f) "the synthetic report has zero duration"
+
+              let brokenWildcardAllowed = junit "reports/broken*.xml" true
+              Expect.equal
+                  brokenWildcardAllowed.Status
+                  Unstable
+                  "allowEmptyResults does not suppress a selected dangling wildcard entry"
+              Expect.equal
+                  brokenWildcardAllowed.TestTotals
+                  (Some(1, 1, 0))
+                  "allowEmptyResults changes only the no-match path"
+
+              let brokenDirectory = junit "reports/broken-dir/**/*.xml" true
+              Expect.equal brokenDirectory.Status Success "a dangling directory link has no descendants"
+              Expect.equal brokenDirectory.TestTotals (Some(0, 0, 0)) "the dangling directory link is a no-match"
+
+              let selfFileLoop = junit "reports/self-*.xml" false
+              Expect.equal selfFileLoop.Status Unstable "a file symlink loop is retained lexically"
+              Expect.equal selfFileLoop.TestTotals (Some(1, 1, 0)) "the selected file loop is one synthetic failure"
+              Expect.equal selfFileLoop.TestDuration (Some 0.0f) "the file loop synthetic report has zero duration"
+
+              let brokenWithTimestampFilter =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "reports/broken*.xml" ]
+                          JUnitSkipOldReportsSince = Some(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) }
+
+              Expect.equal
+                  brokenWithTimestampFilter.Status
+                  Failure
+                  "skipOldReports inspects the final target before zero-length synthesis"
+              Expect.stringContains
+                  brokenWithTimestampFilter.Diagnostic.Value
+                  "FileNotFoundException"
+                  "a dangling target fails the timestamp lookup like Jenkins"
+
+              let emptyTarget = Path.Combine(external, "empty.data")
+              File.WriteAllBytes(emptyTarget, Array.empty)
+              File.CreateSymbolicLink(Path.Combine(reports, "empty-link.data"), emptyTarget) |> ignore
+
+              let emptyLink = junit "reports/empty-link.data" false
+              Expect.equal emptyLink.Status Unstable "length is read from the final zero-byte target"
+              Expect.equal emptyLink.TestTotals (Some(1, 1, 0)) "the zero-byte target is one synthetic failure"
+
+              let buildStart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+              let oldTarget = Path.Combine(external, "old.xml")
+              File.WriteAllText(oldTarget, report "old" 4)
+              File.SetLastWriteTimeUtc(
+                  oldTarget,
+                  DateTimeOffset.FromUnixTimeMilliseconds(buildStart - 4000L).UtcDateTime)
+              File.CreateSymbolicLink(Path.Combine(reports, "old-link.xml"), oldTarget) |> ignore
+
+              let oldLink =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "reports/old-link.xml" ]
+                          JUnitSkipOldReportsSince = Some buildStart
+                          JUnitAllowEmptyResults = true }
+
+              Expect.equal oldLink.Status Success "skipOldReports reads the final target timestamp"
+              Expect.equal oldLink.TestTotals (Some(0, 0, 0)) "an old symlink target is filtered"
+
+              let loops = Path.Combine(baseRequest.Workspace, "loops")
+              Directory.CreateDirectory loops |> ignore
+              File.WriteAllText(Path.Combine(loops, "looped.xml"), report "looped" 1)
+              Directory.CreateSymbolicLink(Path.Combine(loops, "loop"), ".") |> ignore
+
+              let boundedLoop = junit "loops/**/*.xml" false
+              Expect.equal boundedLoop.Status Success "a self-loop terminates without poisoning publication"
+              Expect.equal boundedLoop.TestTotals (Some(6, 0, 0)) "the base report plus five followed aliases are ingested"
+              Expect.equal boundedLoop.TestDuration (Some 6.0f) "all six logical Ant paths retain their content"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "loops/**/*.xml" |> List.length)
+                  41
+                  "the public archive/stash matcher retains its platform traversal ceiling"
+          }
+
+          test "junit prunes unrelated external symlink directories before traversal" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              File.WriteAllText(
+                  Path.Combine(reports, "result.xml"),
+                  "<testsuite name=\"good\" time=\"1\"><testcase name=\"pass\"/></testsuite>")
+
+              let blocked = tempRoot ()
+              let originalMode = File.GetUnixFileMode blocked
+              Directory.CreateSymbolicLink(Path.Combine(baseRequest.Workspace, "unrelated"), blocked)
+              |> ignore
+
+              try
+                  File.SetUnixFileMode(blocked, UnixFileMode.None)
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", "reports/*.xml" ] }
+
+                  Expect.equal observed.Status Success "the narrow include succeeds"
+                  Expect.equal observed.TestTotals (Some(1, 0, 0)) "only the selected report contributes"
+                  Expect.equal observed.TestDuration (Some 1.0f) "the selected report duration is retained"
+                  Expect.isNone observed.Diagnostic "the unrelated denied tree is never inspected"
+              finally
+                  File.SetUnixFileMode(blocked, originalMode)
+          }
+
+          test "junit polls cancellation while enumerating selected symlink directories" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let blocked = tempRoot ()
+              let originalMode = File.GetUnixFileMode blocked
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external"), blocked) |> ignore
+              let polls = ref 0
+
+              let abort () =
+                  polls.Value <- polls.Value + 1
+                  polls.Value >= 2
+
+              try
+                  File.SetUnixFileMode(blocked, UnixFileMode.None)
+
+                  let observed =
+                      Publish.parseJUnitWithAbort
+                          baseRequest.Workspace
+                          [ "reports/**/*.xml" ]
+                          None
+                          abort
+
+                  Expect.equal
+                      observed
+                      (Error JUnitProblem.Interrupted)
+                      "enumeration returns the typed interruption"
+                  Expect.equal polls.Value 2 "cancellation wins before the denied target is traversed"
+              finally
+                  File.SetUnixFileMode(blocked, originalMode)
+          }
+
+          test "junit fails closed when a selected symlink target is not accessible" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let denied = tempRoot ()
+              let target = Path.Combine(denied, "target.xml")
+              File.WriteAllText(
+                  target,
+                  "<testsuite name=\"denied\"><testcase name=\"pass\"/></testsuite>")
+              File.CreateSymbolicLink(Path.Combine(reports, "permission-link.xml"), target) |> ignore
+              let originalMode = File.GetUnixFileMode denied
+
+              let junit pattern =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ]
+                          JUnitAllowEmptyResults = true }
+
+              try
+                  File.SetUnixFileMode(denied, UnixFileMode.None)
+
+                  for pattern in [ "reports/permission-link.xml"; "reports/permission-*.xml" ] do
+                      let observed = junit pattern
+                      Expect.equal observed.Status Failure $"{pattern}: authority failure is not allow-empty success"
+                      Expect.isNone observed.TestTotals $"{pattern}: authority failure publishes no synthetic counts"
+                      Expect.isNone observed.TestDuration $"{pattern}: authority failure publishes no duration"
+                      Expect.stringContains
+                          observed.Diagnostic.Value
+                          "UnauthorizedAccessException"
+                          $"{pattern}: the original authority failure class is retained"
+              finally
+                  File.SetUnixFileMode(denied, originalMode)
+          }
+
+          test "junit fails closed when a selected directory-link target is not accessible" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let deniedParent = tempRoot ()
+              let targetDirectory = Path.Combine(deniedParent, "target-dir")
+              Directory.CreateDirectory targetDirectory |> ignore
+              File.WriteAllText(
+                  Path.Combine(targetDirectory, "result.xml"),
+                  "<testsuite name=\"denied\"><testcase name=\"pass\"/></testsuite>")
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external"), targetDirectory) |> ignore
+              let originalMode = File.GetUnixFileMode deniedParent
+
+              try
+                  File.SetUnixFileMode(deniedParent, UnixFileMode.None)
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", "reports/external/**/*.xml" ]
+                              JUnitAllowEmptyResults = true }
+
+                  Expect.equal observed.Status Failure "directory-link authority failure is not allow-empty success"
+                  Expect.isNone observed.TestTotals "directory-link authority failure publishes no counts"
+                  Expect.isNone observed.TestDuration "directory-link authority failure publishes no duration"
+                  Expect.stringContains
+                      observed.Diagnostic.Value
+                      "UnauthorizedAccessException"
+                      "the directory-link authority failure class is retained"
+              finally
+                  File.SetUnixFileMode(deniedParent, originalMode)
+          }
+
+          test "junit stops branching symlink scans at the configured logical-entry budget" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let loops = Path.Combine(baseRequest.Workspace, "loops")
+              Directory.CreateDirectory loops |> ignore
+              File.WriteAllText(
+                  Path.Combine(loops, "result.xml"),
+                  "<testsuite name=\"loop\"><testcase name=\"pass\"/></testsuite>")
+              Directory.CreateSymbolicLink(Path.Combine(loops, "a"), ".") |> ignore
+              Directory.CreateSymbolicLink(Path.Combine(loops, "b"), ".") |> ignore
+
+              let observed =
+                  Publish.parseJUnitWithAbortUsingScanLimit
+                      20
+                      baseRequest.Workspace
+                      [ "loops/**/*.xml" ]
+                      None
+                      (fun () -> false)
+
+              Expect.equal
+                  observed
+                  (Error(Unreadable "JUnit report scan exceeded the 20 logical-entry safety limit"))
+                  "branching aliases fail with a stable named safety limit"
+
+              let patternBound =
+                  Publish.parseJUnitWithAbortUsingScanLimit
+                      20
+                      baseRequest.Workspace
+                      (List.init 30 (fun index -> $"missing-{index}.xml"))
+                      None
+                      (fun () -> false)
+
+              Expect.equal
+                  patternBound
+                  (Error(Unreadable "JUnit report scan exceeded the 20 logical-entry safety limit"))
+                  "pattern compilation and evaluation share the same stable work ceiling"
+          }
+
+          test "junit retains the selected physical report across directory-link retargeting" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let targetA = tempRoot ()
+              let targetB = tempRoot ()
+              File.WriteAllText(
+                  Path.Combine(targetA, "result.xml"),
+                  "<testsuite name=\"a\" time=\"1\"><testcase name=\"pass\"/></testsuite>")
+              File.WriteAllText(
+                  Path.Combine(targetB, "result.xml"),
+                  "<testsuite name=\"b\" time=\"9\"><testcase name=\"pass\"/></testsuite>")
+
+              let link = Path.Combine(reports, "external")
+              Directory.CreateSymbolicLink(link, targetA) |> ignore
+              let polls = ref 0
+
+              let retargetAfterSelection () =
+                  polls.Value <- polls.Value + 1
+
+                  if polls.Value = 8 then
+                      Directory.Delete link
+                      Directory.CreateSymbolicLink(link, targetB) |> ignore
+
+                  false
+
+              let observed =
+                  Publish.parseJUnitWithAbort
+                      baseRequest.Workspace
+                      [ "reports/external/*.xml" ]
+                      None
+                      retargetAfterSelection
+
+              Expect.equal
+                  observed
+                  (Ok(1, 0, 0, Some 1.0f))
+                  "the scanner opens target A by its retained physical path after the logical link points to B"
+              Expect.isGreaterThanOrEqual polls.Value 8 "the deterministic retarget seam ran after selection"
+          }
+
           test "junit skipOldReports filters before report construction at the pinned build-time boundary" {
               let root = tempRoot ()
               let baseRequest = request root ""
@@ -1426,11 +1793,15 @@ let externalInterrupt =
                   (buildStart + 1000L)
 
               let mutable polls = 0
+              let deleteAtPoll =
+                  (Directory.EnumerateFileSystemEntries(baseRequest.Workspace) |> Seq.length)
+                  + (Directory.EnumerateFileSystemEntries(Path.GetDirectoryName vanishedPath) |> Seq.length)
+                  + 4
 
               let vanishAfterScan () =
                   polls <- polls + 1
 
-                  if polls = 2 then
+                  if polls = deleteAtPoll then
                       File.Delete vanishedPath
 
                   false
@@ -1954,10 +2325,14 @@ let externalInterrupt =
               let ioReport = Path.Combine(baseRequest.Workspace, "io.xml")
               File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
               let vanishedPolls = ref 0
+              let deleteAtPoll =
+                  Directory.EnumerateFileSystemEntries(baseRequest.Workspace)
+                  |> Seq.length
+                  |> fun scannedEntries -> scannedEntries + 3
 
               let deleteAfterGlob () =
                   vanishedPolls.Value <- vanishedPolls.Value + 1
-                  if vanishedPolls.Value = 1 then File.Delete ioReport
+                  if vanishedPolls.Value = deleteAtPoll then File.Delete ioReport
                   false
 
               let vanished = junit "io.xml" false false (Some deleteAfterGlob)

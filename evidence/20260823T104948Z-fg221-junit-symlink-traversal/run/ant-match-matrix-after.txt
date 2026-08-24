@@ -1,0 +1,8 @@
+healthy-file=[healthy/file-link.xml]
+healthy-dir=[healthy/dir-link/result.xml]
+external-dir=[healthy/external-link/outside.xml]
+broken-literal=[]
+broken-wildcard=[broken/broken.xml]
+broken-dir=[]
+self-file=[broken/self.xml]
+loop-count=6

@@ -14,8 +14,12 @@ explains Jenkins' worst failure: with the process gone, the log stops growing
 and it takes ~10 minutes to conclude anything.
 
 **Therefore.**
-- Each attempt gets a fresh normalized workspace under a canonical root;
-  absolute paths, traversal and symlink components are rejected.
+- Each attempt gets a fresh normalized workspace under a canonical root.
+  Fogell-managed path arguments are resolved by `Workspace.resolveUnder` and
+  reject absolute paths, traversal and symlink components. Compatibility
+  scanners that reproduce a pinned Jenkins plugin may follow links when the
+  measured plugin does, but only through a ticket-specific, evidence-backed
+  implementation; they do not redefine the workspace resolver's policy.
 - The step's stdout/stderr are written locally, fsynced, and hashed; the
   controller consumes by offset and survives reconnect with no loss.
 - Session and certificate epochs increase monotonically; only the current
@@ -25,3 +29,14 @@ and it takes ~10 minutes to conclude anything.
   then SIGKILL — matching the trappable-SIGTERM contract in ADR 0005.
 - Process groups are lifecycle containment, not a hostile multi-tenant
   boundary. Untrusted multi-tenant workloads require VM-level isolation.
+
+The agent account and its VM are therefore the filesystem authority boundary,
+not the lexical workspace directory. A pipeline shell already runs with that
+account's filesystem permissions. Following a link in a measured compatibility
+scanner must never grant controller credentials or broader OS permissions, and
+must remain explicit in the ticket's scope and tests.
+
+Ticket evidence establishes the pinned plugin behavior that motivates an
+exception; it does not prove filesystem isolation or credential separation.
+Those are deployment properties of the agent-account and VM boundary and must
+be verified independently.
