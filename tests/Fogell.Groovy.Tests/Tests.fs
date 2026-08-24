@@ -2802,6 +2802,59 @@ let fg180Grammar =
               | other -> failtestf "wrong command-form AST: %A" other
           }
 
+          test "all four quoted consumers share Java numeric escape decoding" {
+              let source =
+                  "def single = '\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777'\n"
+                  + "def tripleSingle = '''\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777'''\n"
+                  + "def double = \"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\"\n"
+                  + "def tripleDouble = \"\"\"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\"\"\"\n"
+
+              let expected = "\b\fAB\u0007?\u00ff 0?7"
+
+              match ast source with
+              | [ SDef("single", Some(EStr single))
+                  SDef("tripleSingle", Some(EStr tripleSingle))
+                  SDef("double", Some(EStr double))
+                  SDef("tripleDouble", Some(EStr tripleDouble)) ] ->
+                  Expect.equal single expected "single quoted"
+                  Expect.equal tripleSingle expected "triple single quoted"
+                  Expect.equal double expected "double quoted"
+                  Expect.equal tripleDouble expected "triple double quoted"
+              | other -> failtestf "numeric escapes did not stay plain strings: %A" other
+          }
+
+          test "numeric escapes also decode in constant names without creating interpolation" {
+              match ast "f(\"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\": 1)\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EInt 1L) ], None)) ] ->
+                  Expect.equal name "\b\fAB\u0007?\u00ff 0?7" "constant-name decoder"
+              | other -> failtestf "wrong numeric constant-name AST: %A" other
+
+              match ast "def value = \"\\044MISSING\"\n" with
+              | [ SDef("value", Some(EStr "$MISSING")) ] -> ()
+              | other -> failtestf "an octal dollar became interpolation: %A" other
+          }
+
+          test "slashy strings retain numeric-looking escapes literally" {
+              match ast "def pattern = /\\b\\7\\77\\377/\n" with
+              | [ SDef("pattern", Some(EStr value)) ] ->
+                  Expect.equal value "\\b\\7\\77\\377" "slashy has delimiter-only escaping"
+              | other -> failtestf "wrong slashy AST: %A" other
+          }
+
+          test "all four quoted consumers remove each physical continuation spelling" {
+              for label, ending in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
+                  let sources =
+                      [ "single", "def value = 'before\\" + ending + "after'\n"
+                        "triple-single", "def value = '''before\\" + ending + "after'''\n"
+                        "double", "def value = \"before\\" + ending + "after\"\n"
+                        "triple-double", "def value = \"\"\"before\\" + ending + "after\"\"\"\n" ]
+
+                  for consumer, source in sources do
+                      match ast source with
+                      | [ SDef("value", Some(EStr "beforeafter")) ] -> ()
+                      | other -> failtestf "%s continuation in %s decoded incorrectly: %A" label consumer other
+          }
+
           test "double-quoted named keys use the same escape decoding as string values" {
               match ast "f(\"line\\nname\": \"line\\nname\")\n" with
               | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EStr value) ], None)) ] ->

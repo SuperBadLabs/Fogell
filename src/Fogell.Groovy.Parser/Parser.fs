@@ -157,22 +157,60 @@ let private decodeEscape =
     | 'n' -> '\n'
     | 't' -> '\t'
     | 'r' -> '\r'
+    | 'b' -> '\b'
+    | 'f' -> '\f'
     | c -> c
 
-let private escaped: P<char> = skipChar '\\' >>. anyChar |>> decodeEscape
+/// FG-124. Scripted Groovy uses Java's numeric escape grammar: a Unicode
+/// escape has one-or-more `u` characters and exactly four hex digits; an octal
+/// escape has one or two digits, or three only when its first digit is 0-3.
+/// Keeping this parser below the leading backslash lets both ordinary string
+/// values and constant named-argument keys share the exact digit boundaries.
+let private numericEscape: P<char> =
+    attempt (
+        (skipMany1 (skipChar 'u')
+         >>. manyMinMaxSatisfy 4 4 (fun c ->
+             (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+         |>> fun hex -> char (System.Convert.ToInt32(hex, 16)))
+        <|> attempt (
+                manyMinMaxSatisfy 1 1 (fun c -> c >= '0' && c <= '3')
+                .>>. manyMinMaxSatisfy 2 2 (fun c -> c >= '0' && c <= '7')
+                |>> fun (hi, lo) -> char (System.Convert.ToInt32(hi + lo, 8)))
+        <|> (manyMinMaxSatisfy 1 2 (fun c -> c >= '0' && c <= '7')
+             |>> fun digits -> char (System.Convert.ToInt32(digits, 8))))
+
+/// A backslash followed by a physical line ending is a continuation and adds
+/// no character to the decoded value. Jenkins accepts LF, CRLF and bare CR;
+/// the longest spelling must be tried first so CRLF is consumed as one unit.
+let private escaped: P<string> =
+    skipChar '\\'
+    >>. choice
+            [ (skipChar '\r' >>. opt (skipChar '\n')) >>% ""
+              skipChar '\n' >>% ""
+              numericEscape |>> string
+              anyChar |>> (decodeEscape >> string) ]
 
 /// The narrow named-key form does not claim Groovy's physical line-continuation
 /// escapes. Keep the ordinary escape decoder shared, but fail closed rather
 /// than turning an unsupported backslash-break into key text.
-let private escapedWithoutPhysicalBreak: P<char> =
-    skipChar '\\' >>. satisfy (fun c -> c <> '\n' && c <> '\r') |>> decodeEscape
+let private escapedWithoutPhysicalBreak: P<string> =
+    skipChar '\\'
+    >>. ((numericEscape |>> string)
+         <|> (satisfy (fun c -> c <> '\n' && c <> '\r') |>> (decodeEscape >> string)))
 
 let private singleQuoted: P<Expr> =
-    between (skipString "'") (skipString "'") (manyChars (escaped <|> satisfy (fun c -> c <> '\'' && c <> '\n')))
+    between
+        (skipString "'")
+        (skipString "'")
+        (manyStrings (escaped <|> (satisfy (fun c -> c <> '\'' && c <> '\n') |>> string)))
     |>> EStr
 
 let private tripleSingle: P<Expr> =
-    between (skipString "'''") (skipString "'''") (manyCharsTill (escaped <|> anyChar) (lookAhead (skipString "'''")))
+    between
+        (skipString "'''")
+        (skipString "'''")
+        (manyTill (escaped <|> (anyChar |>> string)) (lookAhead (skipString "'''"))
+         |>> String.concat "")
     |>> EStr
 
 /// Slashy string `/regex/`. Only reachable where a primary expression is
@@ -213,7 +251,7 @@ let private gstring (q: string) : P<Expr> =
               attempt (skipString "${" >>. withExpressionGroup (ws >>. exprOrCommandRef .>> ws) .>> skipString "}") |>> GExpr
               attempt (skipChar '$' >>. rawIdent .>>. many (attempt (skipChar '.' >>. rawIdent))
                        |>> fun (h, tail) -> GExpr(List.fold (fun acc n -> EProp(acc, n)) (EVar h) tail))
-              (escaped |>> (string >> GLit))
+              (escaped |>> GLit)
               (many1Satisfy (fun c -> c <> '$' && c <> '\\' && c <> q.[0]) |>> GLit) ]
 
     between (skipString q) (skipString q) (many part)
@@ -231,9 +269,9 @@ let private doubleQuotedConstantName: P<Expr> =
     between
         (skipString "\"")
         (skipString "\"")
-        (manyChars (
+        (manyStrings (
             escapedWithoutPhysicalBreak
-            <|> satisfy (fun c -> c <> '"' && c <> '$' && c <> '\\' && c <> '\n' && c <> '\r')))
+            <|> (satisfy (fun c -> c <> '"' && c <> '$' && c <> '\\' && c <> '\n' && c <> '\r') |>> string)))
     |>> EStr
 
 let private literal: P<Expr> =
