@@ -278,6 +278,181 @@ let grammar =
               Expect.contains (Ast.definedFunctions script) "helper" "declared function found"
           } ]
 
+/// FG-190/192. Trivia is lexed forward and its break fact is scoped to one
+/// exact stream index. Expression-bearing delimiters may continue an index
+/// across a break; statement bodies and the command/typed/return seams may not.
+let fg190192TriviaState =
+    testList
+        "FG-190/192 forward trivia state"
+        [ test "a same-line block comment keeps a postfix index attached" {
+              match parseOk "def xs = [1]\ndef value = xs /* same line */ [0]\n" with
+              | [ SDef("xs", _); SDef("value", Some(EIndex(EVar "xs", EInt 0L))) ] -> ()
+              | other -> failtestf "same-line index split unexpectedly: %A" other
+          }
+
+          test "comment text containing an opener stays non-nesting and preserves a same-line index" {
+              match parseOk "def xs = [1]\ndef value = xs /* text /* is ordinary */ [0]\n" with
+              | [ SDef("xs", _); SDef("value", Some(EIndex(EVar "xs", EInt 0L))) ] -> ()
+              | other -> failtestf "nested-looking comment changed the index: %A" other
+          }
+
+          test "a break before nested-looking comment text ends the top-level expression" {
+              let source = "def xs = [1]\nxs /*\ntext /* is ordinary */ [0]\n"
+
+              match parseOk source with
+              | [ SDef("xs", _); SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "forward comment boundary was lost: %A" other
+          }
+
+          test "the FG-187 top-level split remains strict" {
+              match parseOk "xs\n[0]\n" with
+              | [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "top-level lines merged: %A" other
+          }
+
+          test "line comments record LF, CR and CRLF terminators" {
+              for label, ending in [ "LF", "\n"; "CR", "\r"; "CRLF", "\r\n" ] do
+                  match parseOk ("xs // comment" + ending + "[0]") with
+                  | [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+                  | other -> failtestf "%s line-comment terminator was lost: %A" label other
+          }
+
+          test "line and block trivia preserve exact LF, CR and CRLF error positions" {
+              let expectPosition label expected source =
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Error e -> Expect.equal e.Position expected $"{label}: physical error position"
+                  | Ok parsed -> failtestf "%s unexpectedly parsed as %A" label parsed
+
+              for label, ending in [ "LF", "\n"; "CR", "\r"; "CRLF", "\r\n" ] do
+                  expectPosition
+                      $"{label} line comment"
+                      { Line = 2L; Column = 1L }
+                      ("def x = 1 // comment" + ending + "@")
+
+                  expectPosition
+                      $"{label} block comment"
+                      { Line = 2L; Column = 14L }
+                      ("def x = 1 /* comment" + ending + "continued */ @")
+          }
+
+          test "a parenthesised expression may continue an index across a break" {
+              match parseOk "(xs\n[0])\n" with
+              | [ SExpr(EIndex(EVar "xs", EInt 0L)) ] -> ()
+              | other -> failtestf "grouped index did not continue: %A" other
+          }
+
+          test "a call argument is an expression-bearing group" {
+              match parseOk "pick(xs\n[0])\n" with
+              | [ SExpr(ECall(FreeCall "pick", [ APos(EIndex(EVar "xs", EInt 0L)) ], None)) ] -> ()
+              | other -> failtestf "call argument lost its grouped index: %A" other
+          }
+
+          test "a GString placeholder is an expression-bearing group" {
+              match parseOk "def value = \"${xs\n[0]}\"\n" with
+              | [ SDef("value", Some(EGString [ GExpr(EIndex(EVar "xs", EInt 0L)) ])) ] -> ()
+              | other -> failtestf "GString placeholder lost its grouped index: %A" other
+          }
+
+          test "group exit keeps an immediate outer index attached" {
+              match parseOk "(xs\n[0])[1]\n" with
+              | [ SExpr(EIndex(EIndex(EVar "xs", EInt 0L), EInt 1L)) ] -> ()
+              | other -> failtestf "outer index chain changed: %A" other
+          }
+
+          test "group exit keeps ordinary binary and index chains intact" {
+              match parseOk "(xs\n[0]) + ys[1]\n" with
+              | [ SExpr(EBinary("+", EIndex(EVar "xs", EInt 0L), EIndex(EVar "ys", EInt 1L))) ] -> ()
+              | other -> failtestf "binary/index chain changed: %A" other
+          }
+
+          test "nested expression groups retain continuation depth" {
+              Expect.isTrue
+                  (parses "pick(([xs\n[0]])[0])\n")
+                  "nested call, paren, list and index groups all stay expression-bearing"
+          }
+
+          test "a closure body resets inherited expression depth" {
+              match parseOk "pick({ xs\n[0] })\n" with
+              | [ SExpr(ECall(FreeCall "pick", [ APos(EClosure c) ], None)) ] ->
+                  Expect.equal
+                      c.Body
+                      [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ]
+                      "closure statements remain split inside an outer call group"
+              | other -> failtestf "closure argument shape changed: %A" other
+          }
+
+          test "unterminated block trivia survives speculative backtracking as a refusal" {
+              for source in
+                  [ "def xs = [1]\nxs /* never closed"
+                    "def value = tool /* never closed"
+                    "def value = (xs /* never closed" ] do
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Error e ->
+                      Expect.stringContains
+                          (string e)
+                          "terminated block comment"
+                          "the trivia refusal remains visible after attempted alternatives"
+                  | Ok parsed -> failtestf "unterminated block comment parsed as %A" parsed
+          }
+
+          test "a failed typed-declaration attempt restores trivia state" {
+              match parseOk "echo msg\n[0]\n" with
+              | [ SExpr(ECall(FreeCall "echo", [ APos(EVar "msg") ], None)); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "attempted declaration leaked state into fallback: %A" other
+          }
+
+          test "command expression, typed seam and return remain strict across comment breaks" {
+              match parseOk "def value = tool /*\ntext /* ordinary */ 'M3'\n" with
+              | [ SDef("value", Some(EVar "tool")); SExpr(EStr "M3") ] -> ()
+              | other -> failtestf "command expression crossed a break: %A" other
+
+              match parseOk "echo msg /*\ntext /* ordinary */ (x) { echo 'y' }\n" with
+              | SExpr(ECall(FreeCall "echo", _, _)) :: _ -> ()
+              | other -> failtestf "typed declaration seam crossed a break: %A" other
+
+              match parseOk "return /*\ntext /* ordinary */ value\n" with
+              | [ SReturn None; SExpr(EVar "value") ] -> ()
+              | other -> failtestf "return swallowed the next line: %A" other
+          }
+
+          test "statement command calls cannot swallow newline or comment-break successors" {
+              let expected =
+                  [ SExpr(EVar "pwd")
+                    SExpr(ECall(FreeCall "sh", [ APos(EStr "danger") ], None)) ]
+
+              Expect.equal (parseOk "pwd\nsh 'danger'\n") expected "plain newline keeps both statements"
+
+              Expect.equal
+                  (parseOk "pwd /*\ntext /* ordinary */ sh 'danger'\n")
+                  expected
+                  "forward non-nesting comment break keeps both statements"
+          }
+
+          test "switch headers are expression groups and switch bodies reset depth" {
+              let source = "switch (xs\n[0]) { case 1: item\n[0] }\n"
+
+              match parseOk source with
+              | [ SSwitch(
+                    EIndex(EVar "xs", EInt 0L),
+                    [ Some(EInt 1L), [ SExpr(EVar "item"); SExpr(EList [ EInt 0L ]) ] ]
+                  ) ] -> ()
+              | other -> failtestf "switch group/body state changed: %A" other
+          }
+
+          test "for headers retain expression grouping without leaking into their bodies" {
+              Expect.isTrue
+                  (parses "for (item in xs\n[0]) { echo item }\n")
+                  "for-in source continues inside its header"
+
+              Expect.isTrue
+                  (parses "for (int i = xs\n[0]; i < 1; i++) { echo i }\n")
+                  "C-style initializer continues inside its header"
+
+              match parseOk "for (item in xs) { item\n[0] }\n" with
+              | [ SForIn(_, _, [ SExpr(EVar "item"); SExpr(EList [ EInt 0L ]) ]) ] -> ()
+              | other -> failtestf "for body inherited header group depth: %A" other
+          } ]
+
 /// FG-013: the sandbox is the reason ADR 0002 was affordable. These tests are
 /// the acceptance criterion.
 let sandbox =
@@ -3137,4 +3312,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
