@@ -886,11 +886,17 @@ module Interpreter =
             // receiver is, with the method never dispatched — not a property read
             // followed by a rejected `call`. Groovy's order: the RECEIVER evaluates
             // first (its side effects are performed and survive a later denial),
-            // THEN the sandbox rules on the method — before the null test, so `?.`
-            // is no doorway past it — and only then does a non-null receiver
-            // dispatch.
+            // THEN, after receiver/null classification but before returning the
+            // null-safe short-circuit, the sandbox rules on the method — so `?.`
+            // is no doorway past it. Only a non-null receiver then dispatches.
             (match evalExpr st env recv with
-             | VNull -> VNull // short-circuit: arguments never evaluate either
+             | VNull ->
+                 // Admission still happens for a null-safe call. Only evaluation of
+                 // the receiver is complete at this point; arguments remain lazy and
+                 // therefore cannot perform effects when the admitted call short-circuits.
+                 match Sandbox.admitMethod name with
+                 | Error d -> raise (Stop(Denied d))
+                 | Ok _ -> VNull
              | r ->
                  // Groovy's order on a non-null receiver: ARGUMENTS evaluate (their
                  // side effects are performed and survive a denial), THEN the

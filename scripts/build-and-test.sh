@@ -81,6 +81,16 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # times before this proof existed to notice.
 ./scripts/prove-section-refusals.sh || { echo "SECTION-REFUSAL PROOF FAILED"; exit 1; }
 
+# FG-072. The interpreter sandbox is a load-bearing security boundary, not a
+# unit-test implementation detail. Exercise every name in Sandbox.knownEscapes
+# through the real parser/interpreter/host path, prove sanctioned calls still
+# work, and prove the checker rejects timeout/signal execution states plus six
+# record/workspace mutations: unique non-failure terminal, extra terminal,
+# generic-failure, unnamed, missing-boundary-reason, and no-halt. The proof binds
+# the exact current-worktree net10 Release host; no ambient binary override exists.
+echo "=== sandbox-denial proof (FG-072, blocking) ==="
+./scripts/prove-sandbox-denials.sh || { echo "SANDBOX-DENIAL PROOF FAILED"; exit 1; }
+
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.

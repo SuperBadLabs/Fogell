@@ -337,11 +337,128 @@ let sandbox =
               Expect.isSome o.Fault "faulted"
           }
 
-          test "every known escape name is denied" {
-              for name in Sandbox.knownEscapes do
-                  match Sandbox.admitCall steps Set.empty name with
-                  | Error _ -> ()
-                  | Ok _ -> failtestf "%s must not be admissible" name
+          test "test-owned escape inventory matches production and both direct gates deny every name" {
+              let expectedEscapeNames =
+                  set
+                      [ "File"
+                        "FileInputStream"
+                        "FileOutputStream"
+                        "RandomAccessFile"
+                        "ProcessBuilder"
+                        "Runtime"
+                        "System"
+                        "Class"
+                        "ClassLoader"
+                        "GroovyShell"
+                        "GroovyClassLoader"
+                        "Eval"
+                        "evaluate"
+                        "URL"
+                        "URLConnection"
+                        "Socket"
+                        "ServerSocket"
+                        "HttpURLConnection"
+                        "Thread"
+                        "Unsafe"
+                        "MethodHandles"
+                        "getClass"
+                        "forName"
+                        "newInstance"
+                        "getDeclaredMethod"
+                        "getDeclaredField"
+                        "setAccessible"
+                        "invoke"
+                        "execute"
+                        "exec" ]
+
+              Expect.equal Sandbox.knownEscapes expectedEscapeNames "production escape inventory changed without review"
+
+              for name in expectedEscapeNames do
+                  match Sandbox.admitCall Set.empty Set.empty name with
+                  | Error d -> Expect.equal d.Attempted name $"free call {name}: exact denied name"
+                  | Ok admitted -> failtestf "free call %s unexpectedly admitted as %A" name admitted
+
+                  match Sandbox.admitMethod name with
+                  | Error d -> Expect.equal d.Attempted name $"method {name}: exact denied name"
+                  | Ok admitted -> failtestf "method %s unexpectedly admitted as %A" name admitted
+          }
+
+          test "independent escape matrix is denied before any successor effect" {
+              // Test-owned inputs are deliberate. Deriving this matrix from
+              // Sandbox.knownEscapes made deletion from the production set delete the
+              // corresponding test vector too, and exercised only the free-call gate.
+              let escapeCases =
+                  [ "constructor", "new File('/etc/passwd')\n", "new File"
+                    "free call", "evaluate('1 + 1')\n", "evaluate"
+                    "method", "'ls'.execute()\n", "execute"
+                    "safe null", "def target = null\ntarget?.execute()\n", "execute"
+                    "safe value", "'ls'?.execute()\n", "execute" ]
+
+              for family, source, attempted in escapeCases do
+                  let o = run (source + "sh 'successor'\n")
+
+                  match o.Fault with
+                  | Some(Denied d) -> Expect.equal d.Attempted attempted $"{family}: exact denied call"
+                  | other -> failtestf "%s: expected typed Denied, got %A" family other
+
+                  Expect.isEmpty o.Effects $"{family}: no successor effect after denial"
+          }
+
+          test "admitted null-safe builtin keeps arguments lazy and execution continues" {
+              let o = run "def target = null\ntarget?.trim(sh('argument'))\nsh 'successor'\n"
+              Expect.isNone o.Fault "the admitted builtin short-circuits normally"
+              Expect.equal (stepArgs o) [ "sh", [ "successor" ] ] "argument was not evaluated; successor ran"
+          }
+
+          test "registered steps, pure builtins and script helpers remain admitted" {
+              let registered = run "sh 'registered'\n"
+              Expect.isNone registered.Fault "registered step"
+              Expect.equal (stepArgs registered) [ "sh", [ "registered" ] ] "registered effect emitted"
+
+              let builtin = run "def value = '  clean  '.trim()\nsh value\n"
+              Expect.isNone builtin.Fault "pure builtin"
+              Expect.equal (stepArgs builtin) [ "sh", [ "clean" ] ] "builtin result reached the step"
+
+              let helper = run "def helper() { return 'local' }\nhelper()\nsh 'successor'\n"
+              Expect.isNone helper.Fault "script helper"
+              Expect.equal (stepArgs helper) [ "sh", [ "successor" ] ] "helper returned without blocking later work"
+          }
+
+          test "Value union remains an explicitly reviewed closed boundary" {
+              // The exact case-name snapshot makes a new runtime carrier (especially a
+              // host-object wrapper) an intentional security-review change rather than
+              // an unnoticed expansion of the interpreter's authority.
+              let expectedCases =
+                  set
+                      [ "VNull"
+                        "VBool"
+                        "VInt"
+                        "VInteger"
+                        "VArithmeticInteger"
+                        "VFloat"
+                        "VStr"
+                        "VList"
+                        "VRange"
+                        "VMap"
+                        "VScmMap"
+                        "VScmKeySet"
+                        "VJUnitSummary"
+                        "VClosure"
+                        "VFunc" ]
+
+              let cases =
+                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<Value>
+
+              let actualCases =
+                  cases |> Array.map (fun case -> case.Name) |> Set.ofArray
+
+              Expect.equal actualCases expectedCases "every Value carrier is explicitly security-reviewed"
+
+              for case in cases do
+                  for field in case.GetFields() do
+                      Expect.isFalse
+                          (field.PropertyType = typeof<obj>)
+                          $"{case.Name}.{field.Name} must not directly wrap System.Object"
           } ]
 
 /// Budgets: the interpreter runs on the admission path, so a runaway script is
