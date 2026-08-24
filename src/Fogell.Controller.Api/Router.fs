@@ -125,11 +125,13 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
-                    match state.Store.BuildSnapshot(OrganizationId org, BuildId build) with
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
+                    match state.Store.BuildSnapshot(OrganizationId org, ProjectId project, BuildId build) with
                     | None -> return! fail ctx 404 "not_found" "no such build" None
                     | Some(s, cancelled) ->
                         let payload: StatusResponse =
@@ -148,10 +150,12 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
                     let from =
                         match ctx.Request.Query.TryGetValue "from" with
                         | true, v when v.Count > 0 ->
@@ -160,20 +164,21 @@ module Router =
                             | _ -> 0
                         | _ -> 0
 
-                    let chunks = state.Store.ReadLog(OrganizationId org, BuildId build, from)
+                    match state.Store.ReadLog(OrganizationId org, ProjectId project, BuildId build, from) with
+                    | None -> return! fail ctx 404 "not_found" "no such build" None
+                    | Some chunks ->
+                        let next =
+                            match chunks with
+                            | [] -> from
+                            | _ -> (chunks |> List.map fst |> List.max) + 1
 
-                    let next =
-                        match chunks with
-                        | [] -> from
-                        | _ -> (chunks |> List.map fst |> List.max) + 1
+                        let payload: LogResponse =
+                            { BuildId = string build
+                              FromSequence = from
+                              NextSequence = next
+                              Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
 
-                    let payload: LogResponse =
-                        { BuildId = string build
-                          FromSequence = from
-                          NextSequence = next
-                          Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
-
-                    return! json ctx 200 payload
+                        return! json ctx 200 payload
         }
         :> Threading.Tasks.Task
 
@@ -183,11 +188,13 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
-                    match state.Store.RequestCancellation(OrganizationId org, BuildId build) with
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
+                    match state.Store.RequestCancellation(OrganizationId org, ProjectId project, BuildId build) with
                     | CancellationAccepted -> return! json ctx 202 {| accepted = true; already_requested = false |}
                     // Idempotent: a retry after a client timeout must not look
                     // like a failure, because the caller's intent is satisfied.

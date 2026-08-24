@@ -43,6 +43,11 @@ let private admitOk input =
     | Ok a -> a
     | Error e -> failtestf "admission failed: %s" e
 
+let private readLog org project build fromSequence =
+    match store.ReadLog(org, project, build, fromSequence) with
+    | Some chunks -> chunks
+    | None -> failtest "expected the project-qualified build lineage to exist"
+
 let migrations =
     testList
         "FG-020 migrations"
@@ -404,9 +409,9 @@ let logs =
               for i in 0..4 do
                   Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, i, $"line-{i}")) $"append {i}"
 
-              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.length) 5 "all five"
-              Expect.equal (store.ReadLog(org, a.BuildId, 3) |> List.length) 2 "tail from offset"
-              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.map snd |> List.head) "line-0" "ordered"
+              Expect.equal (readLog org project a.BuildId 0 |> List.length) 5 "all five"
+              Expect.equal (readLog org project a.BuildId 3 |> List.length) 2 "tail from offset"
+              Expect.equal (readLog org project a.BuildId 0 |> List.map snd |> List.head) "line-0" "ordered"
           }
 
           test "appending the same sequence twice is idempotent" {
@@ -414,7 +419,7 @@ let logs =
               let a = admitOk (newBuild org project "log-2" [ "b" ])
               Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "once")) "first"
               Expect.isFalse (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "again")) "duplicate rejected"
-              Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.length) 1 "still one chunk"
+              Expect.equal (readLog org project a.BuildId 0 |> List.length) 1 "still one chunk"
           }
 
           test "an attempt cannot append to another build or consume its real sequence" {
@@ -426,13 +431,13 @@ let logs =
                   (store.AppendLog(org, second.BuildId, first.AttemptId, 7, "poison"))
                   "wrong-build append is rejected"
 
-              Expect.isEmpty (store.ReadLog(org, second.BuildId, 0)) "wrong build received no line"
+              Expect.isEmpty (readLog org project second.BuildId 0) "wrong build received no line"
 
               Expect.isTrue
                   (store.AppendLog(org, first.BuildId, first.AttemptId, 7, "real"))
                   "the rejected append did not consume the attempt's sequence"
 
-              Expect.equal (store.ReadLog(org, first.BuildId, 0)) [ 7, "real" ] "correct lineage appends exactly once"
+              Expect.equal (readLog org project first.BuildId 0) [ 7, "real" ] "correct lineage appends exactly once"
           }
 
           test "a nonexistent attempt cannot append and a valid attempt still can at the same sequence" {
@@ -444,14 +449,14 @@ let logs =
                   (store.AppendLog(org, admitted.BuildId, missing, 11, "invented"))
                   "an unregistered attempt is rejected"
 
-              Expect.isEmpty (store.ReadLog(org, admitted.BuildId, 0)) "invented attempt produced no line"
+              Expect.isEmpty (readLog org project admitted.BuildId 0) "invented attempt produced no line"
 
               Expect.isTrue
                   (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 11, "registered"))
                   "the real attempt can use the same sequence"
 
               Expect.equal
-                  (store.ReadLog(org, admitted.BuildId, 0))
+                  (readLog org project admitted.BuildId 0)
                   [ 11, "registered" ]
                   "only the registered attempt's line is visible"
           }
@@ -471,7 +476,7 @@ let logs =
                   "the rejected tenant claim did not consume the real lineage's sequence"
 
               Expect.equal
-                  (store.ReadLog(firstOrg, foreign.BuildId, 0))
+                  (readLog firstOrg firstProject foreign.BuildId 0)
                   [ 17, "foreign-owner" ]
                   "the owning organization can append"
 
@@ -479,13 +484,13 @@ let logs =
                   (store.AppendLog(secondOrg, local.BuildId, foreign.AttemptId, 13, "foreign"))
                   "the organization and attempt must belong to one lineage"
 
-              Expect.isEmpty (store.ReadLog(secondOrg, local.BuildId, 0)) "foreign attempt produced no local line"
+              Expect.isEmpty (readLog secondOrg secondProject local.BuildId 0) "foreign attempt produced no local line"
 
               Expect.isTrue
                   (store.AppendLog(secondOrg, local.BuildId, local.AttemptId, 13, "local"))
                   "the local lineage remains writable at that sequence"
 
-              Expect.equal (store.ReadLog(secondOrg, local.BuildId, 0)) [ 13, "local" ] "only local data is visible"
+              Expect.equal (readLog secondOrg secondProject local.BuildId 0) [ 13, "local" ] "only local data is visible"
           }
 
           test "composite node and attempt identities cannot splice a cross-tenant lineage" {
@@ -541,30 +546,89 @@ let logs =
                   (store.AppendLog(ownerOrg, target.BuildId, source.AttemptId, 19, "spliced"))
                   "composite identities cannot be joined through another organization"
 
-              Expect.isEmpty (store.ReadLog(ownerOrg, target.BuildId, 0)) "target build received no spliced line"
+              Expect.isEmpty (readLog ownerOrg ownerProject target.BuildId 0) "target build received no spliced line"
 
               Expect.isTrue
                   (store.AppendLog(ownerOrg, source.BuildId, source.AttemptId, 19, "owned"))
                   "the rejected splice did not consume the owner's sequence"
 
-              Expect.equal (store.ReadLog(ownerOrg, source.BuildId, 0)) [ 19, "owned" ] "owner lineage remains exact"
+              Expect.equal (readLog ownerOrg ownerProject source.BuildId 0) [ 19, "owned" ] "owner lineage remains exact"
+          }
+
+          test "status, logs and cancellation require the exact project lineage" {
+              let org, ownerProject = freshProject ()
+              let wrongProject = ProjectId(Guid.NewGuid())
+              store.CreateProject(org, $"org-{org.Value}", wrongProject, "wrong")
+              let admitted = admitOk (newBuild org ownerProject "project-bound" [ "b" ])
+
+              Expect.equal
+                  (store.BuildSnapshot(org, wrongProject, admitted.BuildId))
+                  None
+                  "status cannot cross a valid project boundary"
+
+              Expect.equal
+                  (store.ReadLog(org, wrongProject, admitted.BuildId, 0))
+                  None
+                  "logs cannot cross a valid project boundary"
+
+              Expect.equal
+                  (store.ReadLog(org, ownerProject, admitted.BuildId, 0))
+                  (Some [])
+                  "a real build with no log is distinct from a missing lineage"
+
+              Expect.equal
+                  (store.ReadLog(org, ownerProject, BuildId(Guid.NewGuid()), 0))
+                  None
+                  "an unknown build is not an empty log"
+
+              Expect.equal
+                  (store.RequestCancellation(org, wrongProject, admitted.BuildId))
+                  NoSuchBuild
+                  "wrong-project cancellation is rejected"
+
+              match store.BuildSnapshot(org, ownerProject, admitted.BuildId) with
+              | Some(_, requested) -> Expect.isFalse requested "wrong route had no cancellation side effect"
+              | None -> failtest "owner snapshot missing"
+
+              Expect.isTrue
+                  (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 2, "two"))
+                  "first sparse chunk appended"
+
+              Expect.isTrue
+                  (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 4, "four"))
+                  "second sparse chunk appended"
+
+              Expect.equal
+                  (store.ReadLog(org, ownerProject, admitted.BuildId, 3))
+                  (Some [ 4, "four" ])
+                  "qualified reads preserve the offset and cursor input"
+
+              Expect.equal
+                  (store.ReadLog(org, ownerProject, admitted.BuildId, 5))
+                  (Some [])
+                  "a real build remains distinguishable past its final chunk"
+
+              Expect.equal
+                  (store.RequestCancellation(org, ownerProject, admitted.BuildId))
+                  CancellationAccepted
+                  "correct project route remains cancellable"
           }
 
           test "cancellation is recorded and visible in the snapshot" {
               let org, project = freshProject ()
               let a = admitOk (newBuild org project "cancel" [ "b" ])
 
-              match store.BuildSnapshot(org, a.BuildId) with
+              match store.BuildSnapshot(org, project, a.BuildId) with
               | Some(_, requested) -> Expect.isFalse requested "not requested yet"
               | None -> failtest "snapshot missing"
 
-              Expect.equal (store.RequestCancellation(org, a.BuildId)) CancellationAccepted "recorded"
+              Expect.equal (store.RequestCancellation(org, project, a.BuildId)) CancellationAccepted "recorded"
               Expect.equal
-                  (store.RequestCancellation(org, a.BuildId))
+                  (store.RequestCancellation(org, project, a.BuildId))
                   AlreadyRequested
                   "a retry is idempotent, not an error"
 
-              match store.BuildSnapshot(org, a.BuildId) with
+              match store.BuildSnapshot(org, project, a.BuildId) with
               | Some(_, requested) -> Expect.isTrue requested "now requested"
               | None -> failtest "snapshot missing"
           } ]

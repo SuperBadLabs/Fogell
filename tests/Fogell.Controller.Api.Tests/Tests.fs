@@ -182,6 +182,58 @@ let endpoints =
               Expect.stringContains s "\"cancellation_requested\":false" "not cancelled"
           }
 
+          test "status, logs and cancellation are bound to the route project" {
+              let org, project = freshProject ()
+              let wrongProject = ProjectId(Guid.NewGuid())
+              store.CreateProject(org, $"org-{org.Value}", wrongProject, "wrong")
+              let ownerUrl = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let wrongUrl = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{wrongProject.Value}/builds"
+              let _, body = send HttpMethod.Post ownerUrl (Some token) (Some "bound-api") (Some pipeline)
+              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+
+              Expect.isTrue
+                  (store.AppendLog(org, BuildId(Guid.Parse buildId), AttemptId(Guid.Parse attemptId), 3, "owned"))
+                  "control log append is non-vacuous"
+
+              let wrongRoutes =
+                  [ HttpMethod.Get, $"{wrongUrl}/{buildId}"
+                    HttpMethod.Get, $"{wrongUrl}/{buildId}/logs"
+                    HttpMethod.Post, $"{wrongUrl}/{buildId}/cancel" ]
+
+              for method, route in wrongRoutes do
+                  let code, response = send method route (Some token) None None
+                  Expect.equal code 404 $"{method} rejects a valid but wrong project"
+                  Expect.stringContains response "not_found" "wrong lineage is not disclosed"
+
+              let statusCode, statusBody = send HttpMethod.Get $"{ownerUrl}/{buildId}" (Some token) None None
+              Expect.equal statusCode 200 "correct status route remains valid"
+              Expect.stringContains statusBody "\"cancellation_requested\":false" "wrong cancel had no side effect"
+
+              let logCode, logBody = send HttpMethod.Get $"{ownerUrl}/{buildId}/logs?from=3" (Some token) None None
+              Expect.equal logCode 200 "correct logs route remains valid"
+              Expect.stringContains logBody "owned" "correct project sees its log"
+              Expect.stringContains logBody "\"next_sequence\":4" "cursor is computed from the qualified read"
+          }
+
+          test "empty and unknown logs remain distinguishable" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, body = send HttpMethod.Post url (Some token) (Some "empty-log-api") (Some pipeline)
+              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+
+              let emptyCode, emptyBody = send HttpMethod.Get $"{url}/{buildId}/logs?from=7" (Some token) None None
+              Expect.equal emptyCode 200 "a legitimate empty log is successful"
+              Expect.stringContains emptyBody "\"chunks\":[]" "empty chunks are explicit"
+              Expect.stringContains emptyBody "\"next_sequence\":7" "empty log retains the requested cursor"
+
+              let missingCode, missingBody =
+                  send HttpMethod.Get $"{url}/{Guid.NewGuid()}/logs" (Some token) None None
+
+              Expect.equal missingCode 404 "an unknown build is not an empty log"
+              Expect.stringContains missingBody "not_found" "unknown build is named"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -201,6 +253,20 @@ let endpoints =
 
               Expect.equal code 400 "bad request"
               Expect.stringContains body "malformed_identifier" "named"
+          }
+
+          test "a malformed project is 400 on status, logs and cancellation" {
+              let org = Guid.NewGuid()
+              let build = Guid.NewGuid()
+              let root = $"{baseUrl}/api/v1/organizations/{org}/projects/not-a-project/builds/{build}"
+
+              for method, route in
+                  [ HttpMethod.Get, root
+                    HttpMethod.Get, $"{root}/logs"
+                    HttpMethod.Post, $"{root}/cancel" ] do
+                  let code, body = send method route (Some token) None None
+                  Expect.equal code 400 $"{method} rejects a malformed project"
+                  Expect.stringContains body "malformed_identifier" "named"
           }
 
           test "logs are readable from an offset and report next_sequence" {
@@ -243,11 +309,28 @@ let endpoints =
               Expect.equal code2 202 "a retry is idempotent, not an error"
               Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
 
-              let code3, b3 =
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use terminal = conn.CreateCommand()
+              terminal.CommandText <-
+                  "UPDATE builds SET status = 'succeeded', cancellation_requested = false
+                    WHERE organization_id = @o AND project_id = @p AND id = @b"
+              terminal.Parameters.AddWithValue("o", org.Value) |> ignore
+              terminal.Parameters.AddWithValue("p", project.Value) |> ignore
+              terminal.Parameters.AddWithValue("b", Guid.Parse buildId) |> ignore
+              Expect.equal (terminal.ExecuteNonQuery()) 1 "terminal control updates the exact build"
+
+              let terminalCode, terminalBody =
+                  send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
+
+              Expect.equal terminalCode 409 "a terminal build conflicts"
+              Expect.stringContains terminalBody "already_terminal" "terminal outcome is named"
+
+              let missingCode, missingBody =
                   send HttpMethod.Post $"{url}/{Guid.NewGuid()}/cancel" (Some token) None None
 
-              Expect.equal code3 404 "an unknown build is not found"
-              Expect.stringContains b3 "not_found" "named"
+              Expect.equal missingCode 404 "an unknown build is not found"
+              Expect.stringContains missingBody "not_found" "named"
           }
 
           test "explain names missing capabilities rather than saying 'waiting'" {

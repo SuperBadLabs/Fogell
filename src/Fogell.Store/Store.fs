@@ -481,34 +481,52 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("body", body) |> ignore
         cmd.ExecuteNonQuery() = 1
 
-    /// FG-064. Read the log from a sequence offset, so a client can tail a
-    /// running build rather than waiting for completion.
-    member _.ReadLog(org: OrganizationId, build: BuildId, fromSequence: int) : (int * string) list =
+    /// FG-060a/FG-064. The build lineage and progressive read are one query.
+    /// Some [] therefore means a real build with no chunks at this offset,
+    /// while None means that org/project/build lineage does not exist.
+    member _.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) : (int * string) list option =
         use conn = openConn ()
         use cmd = conn.CreateCommand()
         cmd.CommandText <-
-            "SELECT sequence, body FROM log_chunks
-              WHERE organization_id = @o AND build_id = @b AND sequence >= @s
-              ORDER BY sequence"
+            "SELECT l.sequence, l.body
+               FROM builds b
+               LEFT JOIN log_chunks l
+                 ON l.organization_id = b.organization_id
+                AND l.build_id = b.id
+                AND l.sequence >= @s
+              WHERE b.organization_id = @o
+                AND b.project_id = @p
+                AND b.id = @b
+              ORDER BY l.sequence"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         cmd.Parameters.AddWithValue("s", fromSequence) |> ignore
 
         use r = cmd.ExecuteReader()
-        [ while r.Read() do
-              yield r.GetInt32 0, r.GetString 1 ]
+        let mutable lineageExists = false
+
+        let chunks =
+            [ while r.Read() do
+                  lineageExists <- true
+
+                  if not (r.IsDBNull 0) then
+                      yield r.GetInt32 0, r.GetString 1 ]
+
+        if lineageExists then Some chunks else None
 
     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
     /// timeout, say — must not look like an error: the caller's intent is already
     /// satisfied. What genuinely is a conflict is asking to cancel a build that
     /// has already finished, or one that does not exist.
-    member _.RequestCancellation(org: OrganizationId, build: BuildId) : CancellationOutcome =
+    member _.RequestCancellation(org: OrganizationId, project: ProjectId, build: BuildId) : CancellationOutcome =
         use conn = openConn ()
         use cmd = conn.CreateCommand()
         cmd.CommandText <-
             "SELECT status, cancellation_requested FROM builds
-              WHERE organization_id = @o AND id = @b"
+              WHERE organization_id = @o AND project_id = @p AND id = @b"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
 
         let existing =
@@ -524,18 +542,21 @@ type Store(connectionString: string) =
             use upd = conn.CreateCommand()
             upd.CommandText <-
                 "UPDATE builds SET cancellation_requested = true
-                  WHERE organization_id = @o AND id = @b"
+                  WHERE organization_id = @o AND project_id = @p AND id = @b"
             upd.Parameters.AddWithValue("o", org.Value) |> ignore
+            upd.Parameters.AddWithValue("p", project.Value) |> ignore
             upd.Parameters.AddWithValue("b", build.Value) |> ignore
             upd.ExecuteNonQuery() |> ignore
             CancellationAccepted
 
-    member _.BuildSnapshot(org: OrganizationId, build: BuildId) : (string * bool) option =
+    member _.BuildSnapshot(org: OrganizationId, project: ProjectId, build: BuildId) : (string * bool) option =
         use conn = openConn ()
         use cmd = conn.CreateCommand()
         cmd.CommandText <-
-            "SELECT status, cancellation_requested FROM builds WHERE organization_id = @o AND id = @b"
+            "SELECT status, cancellation_requested FROM builds
+              WHERE organization_id = @o AND project_id = @p AND id = @b"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         use r = cmd.ExecuteReader()
         if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
