@@ -108,6 +108,22 @@ echo "=== sandbox-denial proof (FG-072, blocking) ==="
 ./scripts/prove-review-coverage.sh \
   || { echo "REVIEW-COVERAGE PROOF FAILED"; exit 1; }
 
+# FG-093. The live provenance manifest is created outside the candidate checkout
+# and exists only at release time, so the ordinary pre-publication gate cannot
+# perform a live release verification. Its OFFLINE proof can and must run here:
+# a recursive scratch Git repository proves the exact tuple, initialized gitlink
+# identities, filter-free raw stage-0 worktree bytes/modes against index blobs,
+# physical-untracked inventory, clean index/config view, five downstream
+# bindings, Git-environment removal, and argv-only exec boundary.
+# Direct mutations prove comparisons, exports, downstream/subprocess scrubs,
+# mask scans, recursion, required gitlinks, raw identity, fixed config, and
+# ignored-file detection are load-bearing. Live release uses a pristine,
+# untransformed checkout with its exact artifact external; this ordinary build
+# may retain ignored bin/obj because only the scratch proof invokes the checker.
+echo "=== release-provenance gate proof (FG-093, blocking) ==="
+./scripts/prove-release-provenance.sh \
+  || { echo "RELEASE-PROVENANCE PROOF FAILED"; exit 1; }
+
 # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
 # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
 # re-derived the hash that claim rests on — a receipt edited with that line left intact
