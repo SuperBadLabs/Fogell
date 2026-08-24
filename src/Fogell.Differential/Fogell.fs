@@ -51,6 +51,31 @@ module FogellSide =
             descriptor.Behaviour = InertForSingleBuild
             && descriptor.UnevaluatedNamedCollectionArgs.Contains argumentName)
 
+    /// FG-130a. `parallelsAlwaysFailFast` is a zero-argument Declarative option.
+    /// Jenkins rejects an argument-bearing declaration while compiling the model;
+    /// reading the option by name alone made `parallelsAlwaysFailFast(false)` enable
+    /// failFast and run a build Jenkins never starts. Inspect EVERY occurrence: a
+    /// valid declaration beside an invalid one does not make the model valid.
+    ///
+    /// This slice validates positional and named arguments only. A trailing closure,
+    /// other option signatures, and duplicate section cardinality remain outside its
+    /// claim.
+    let rejectParallelsAlwaysFailFast (emit: string -> unit) (options: Step list) =
+        let declarations =
+            options |> List.filter (fun option -> option.Name = "parallelsAlwaysFailFast")
+
+        if
+            declarations
+            |> List.exists (fun option ->
+                not (List.isEmpty option.Positional) || not (List.isEmpty option.Named))
+        then
+            emit
+                "ERROR: pipeline declares an unusable parallelsAlwaysFailFast option: the parallelsAlwaysFailFast() option takes no arguments"
+
+            true
+        else
+            false
+
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
@@ -801,6 +826,11 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
+
+            if rejectParallelsAlwaysFailFast emit pipeline.Options then
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
 
             match timestampsArgError with
             | Some e ->

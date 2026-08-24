@@ -4164,6 +4164,183 @@ script says Checking out Revision {laterCheckout} (spoof)
               Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
+/// FG-130a. Jenkins refuses an argument-bearing `parallelsAlwaysFailFast`
+/// while compiling the Declarative model. The refusal must therefore happen
+/// before every stage and pipeline-post effect; merely treating `(false)` as
+/// "option disabled" would still run a Jenkinsfile Jenkins never starts.
+let parallelsAlwaysFailFastArguments =
+    let option name positional named =
+        { Name = name
+          Positional = positional
+          Named = named
+          ArgumentOrder =
+            (positional |> List.mapi (fun i _ -> $"#{i}"))
+            @ (named |> List.map fst)
+          Block = []
+          LiteralNamedArgs = Set.empty
+          LiteralPositionalArgs = Set.empty
+          ExpressionArgs = Set.empty
+          InterpolationSource = []
+          RawArgs = ""
+          ScriptBody = None
+          Position = Position.zero }
+
+    let expectedError =
+        "ERROR: pipeline declares an unusable parallelsAlwaysFailFast option: the parallelsAlwaysFailFast() option takes no arguments"
+
+    let reject options =
+        let emitted = ResizeArray<string>()
+        let rejected = FogellSide.rejectParallelsAlwaysFailFast emitted.Add options
+        rejected, emitted |> Seq.toList
+
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg130a-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline optionBody quickName peerName peerDelay postName =
+        let options =
+            if optionBody = "" then "" else "options { " + optionBody + " } "
+
+        "pipeline { agent any "
+        + options
+        + "stages { stage('fanout') { parallel { "
+        + "stage('quick') { steps { sh 'while [ ! -f "
+        + peerName
+        + ".txt ]; do sleep 0.05; done; touch "
+        + quickName
+        + ".txt; exit 7' } } "
+        + "stage('peer') { steps { sh 'touch "
+        + peerName
+        + ".txt; sleep "
+        + peerDelay
+        + "; touch "
+        + peerName
+        + "-late.txt' } } "
+        + "} } } post { failure { sh 'touch "
+        + postName
+        + ".txt' } } }"
+
+    let workspaceFiles (trace: Trace) =
+        trace.WorkspaceFiles |> List.map fst |> List.sort
+
+    testList
+        "FG-130a parallelsAlwaysFailFast argument shape"
+        [ test "the zero-argument signature inspects every declaration and owns the exact diagnostic" {
+              let valid = option "parallelsAlwaysFailFast" [] []
+              let positional = option "parallelsAlwaysFailFast" [ "false" ] []
+              let named = option "parallelsAlwaysFailFast" [] [ "enabled", "false" ]
+              let unrelated = option "quietPeriod" [ "5" ] []
+
+              Expect.equal
+                  (reject [])
+                  (false, [])
+                  "absence neither rejects nor emits"
+              Expect.equal
+                  (reject [ unrelated; valid ])
+                  (false, [])
+                  "an unrelated option and the exact zero-argument form neither reject nor emit"
+              Expect.equal
+                  (reject [ positional ])
+                  (true, [ expectedError ])
+                  "the measured positional false spelling emits the one exact refusal"
+              Expect.equal
+                  (reject [ named ])
+                  (true, [ expectedError ])
+                  "a named map argument emits the same one exact refusal"
+              Expect.equal
+                  (reject [ valid; positional ])
+                  (true, [ expectedError ])
+                  "a valid first declaration cannot hide the later exact refusal"
+              Expect.equal
+                  (reject [ named; valid ])
+                  (true, [ expectedError ])
+                  "a valid last declaration cannot hide the earlier exact refusal"
+          }
+
+          test "positional, named and both mixed orders refuse before stage and post effects" {
+              for label, optionBody in
+                  [ "positional", "parallelsAlwaysFailFast(false)"
+                    "named", "parallelsAlwaysFailFast(enabled: false)"
+                    "valid-then-invalid",
+                    "parallelsAlwaysFailFast(); parallelsAlwaysFailFast(false)"
+                    "invalid-then-valid",
+                    "parallelsAlwaysFailFast(false); parallelsAlwaysFailFast()" ] do
+                  withWorkspace label (fun root workspace ->
+                      let source =
+                          "pipeline { agent any options { "
+                          + optionBody
+                          + " } stages { stage('must-not-run') { steps { sh 'touch stage-marker.txt' } } } "
+                          + "post { always { sh 'touch post-marker.txt' } } }"
+
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s did not reach the named compile-shaped refusal: %s" label why
+                      | Ok trace ->
+                          Expect.equal trace.Result "failure" $"{label}: refusal controls the terminal result"
+                          Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is not silent"
+                          Expect.isEmpty trace.Output $"{label}: no stage-skip or post narration escapes compile refusal"
+                          Expect.isEmpty trace.EngineNotes $"{label}: no unrelated engine note substitutes for the refusal"
+                          Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace inventory is empty"
+                          Expect.equal
+                              trace.WorkspaceHash
+                              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                              $"{label}: exact empty-workspace hash"
+
+                          Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+                          Expect.isEmpty
+                              (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                               |> Seq.toList)
+                              $"{label}: no hidden stage, post or scaffolding effect remains")
+          }
+
+          test "the valid zero-argument option still interrupts a running sibling" {
+              withWorkspace "valid" (fun root _ ->
+                  let source =
+                      pipeline
+                          "parallelsAlwaysFailFast()"
+                          "failfast-quick"
+                          "failfast-peer"
+                          "5"
+                          "failfast-post"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "valid zero-argument option was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the quick sibling still fails the build"
+                      Expect.equal
+                          (workspaceFiles trace)
+                          [ "failfast-peer.txt"; "failfast-post.txt"; "failfast-quick.txt" ]
+                          "the peer started, was interrupted before its late effect, and failure post ran")
+          }
+
+          test "without the option an ordinary parallel waits for the failing branch's peer" {
+              withWorkspace "ordinary" (fun root _ ->
+                  let source =
+                      pipeline "" "ordinary-quick" "ordinary-peer" "0.2" "ordinary-post"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "ordinary parallel control was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the quick branch still controls the result"
+                      Expect.equal
+                          (workspaceFiles trace)
+                          [ "ordinary-peer-late.txt"
+                            "ordinary-peer.txt"
+                            "ordinary-post.txt"
+                            "ordinary-quick.txt" ]
+                          "without failFast the peer completes before failure post runs")
+          } ]
+
 let workspaceManifestV2 =
     let sha256Hex (bytes: byte[]) =
         use hash = Security.Cryptography.SHA256.Create()
@@ -4414,4 +4591,5 @@ let main argv =
               continuationResolution
               returnFlagContract
               timestampPrefixIsConditional
-              timestampCoverageUsesComparedSurvivors ])
+              timestampCoverageUsesComparedSurvivors
+              parallelsAlwaysFailFastArguments ])
