@@ -50,7 +50,12 @@ let private request root script =
 /// immediately and every reaping assertion passed vacuously — the daemon it
 /// claimed to reap never existed. Identifying by recorded pid cannot lie.
 let private daemonScript (pidFile: string) =
-    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 &"
+    // The parent must not exit until the child has established the evidence
+    // this test reads. The old 40ms reader-settlement floor accidentally gave
+    // the child time to write; event-driven completion correctly lets reaping
+    // win that race. Make the precondition explicit and bounded instead of
+    // depending on executor slowness.
+    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done;"
 
 let private waitForPidFile (pidFile: string) =
     let clock = Diagnostics.Stopwatch.StartNew()
@@ -350,6 +355,282 @@ let containment =
                   Expect.isTrue (pidAlive pid) $"the opt-out must keep daemon {pid} alive"
                   // leave nothing behind
                   Native.signalProcess pid Native.SIGKILL |> ignore
+          } ]
+
+let eventDrivenWaits =
+    testList
+        "FG-197 event-driven process completion"
+        [ test "the reported group id is the inner session leader, not the setsid wrapper" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("printf 'leader=%s\\n' \"$$\"", tempRoot ()) with
+                          ReapGroup = false }
+
+              let leader =
+                  result.Stdout.Replace("\r\n", "\n").Split '\n'
+                  |> Array.tryPick (fun line ->
+                      if line.StartsWith "leader=" then
+                          match Int32.TryParse(line.Substring("leader=".Length)) with
+                          | true, pid -> Some pid
+                          | _ -> None
+                      else
+                          None)
+
+              Expect.isSome leader "the script exposed its actual session-leader pid"
+              Expect.equal result.ProcessGroupId leader "the marker, not Process.Id, owns group identity"
+          }
+
+          test "continuous output consumes only the shared settlement budget" {
+              // Model 17ms already spent draining an active callback, then make
+              // every before/after snapshot differ. This is a deterministic
+              // budget proof: no scheduler or wall-clock tolerance participates.
+              let mutable elapsed = 17L
+              let sleeps = ResizeArray<int>()
+              let mutable sample = 0
+
+              let snapshot () =
+                  sample <- sample + 1
+                  sample, -sample
+
+              ProcessGroup.settleOutputUntilQuiet
+                  300
+                  (fun () -> elapsed)
+                  (fun milliseconds ->
+                      sleeps.Add milliseconds
+                      elapsed <- elapsed + int64 milliseconds)
+                  snapshot
+
+              Expect.sequenceEqual
+                  sleeps
+                  [ 40; 40; 40; 40; 40; 40; 40; 3 ]
+                  "the final sample sleeps only the three milliseconds left in the shared budget"
+              Expect.equal elapsed 300L "continuous output cannot overshoot the 300ms settlement budget"
+          }
+
+          test "a zero settlement budget neither samples nor sleeps" {
+              let mutable samples = 0
+              let mutable sleeps = 0
+
+              ProcessGroup.settleOutputUntilQuiet
+                  0
+                  (fun () -> 0L)
+                  (fun _ -> sleeps <- sleeps + 1)
+                  (fun () ->
+                      samples <- samples + 1
+                      samples, samples)
+
+              Expect.equal samples 0 "zero budget never opens a quiet-sampling window"
+              Expect.equal sleeps 0 "zero budget never sleeps"
+          }
+
+          test "a delayed tail after the direct process exits is retained" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            "#!/bin/sh\nsetsid /bin/sh -c 'sleep 0.3; printf \"delayed-tail\\n\"' & printf 'leader-done\\n'",
+                            tempRoot ()) with
+                          ReapGroup = false }
+
+              Expect.equal result.Outcome (Completed 0) "the direct step completed"
+              Expect.equal
+                  (result.Stdout.Replace("\r\n", "\n"))
+                  "leader-done\ndelayed-tail\n"
+                  "a no-xtrace script preserves the actual delayed tail in exact emission order"
+          }
+
+          test "an escaped descendant holding stdout cannot wedge or erase arrived capture" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped.pid")
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' & printf arrived",
+                            root) with
+                          SuppressStdoutEcho = true
+                          ReapGroup = false }
+
+              sw.Stop()
+              match waitForPidFile pidFile with
+              | Some pid ->
+                  Native.signalGroup pid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap pid) "the escaped fixture is cleaned up"
+              | None -> failtest "the escaped descendant never established its pipe-holding precondition"
+
+              Expect.equal result.Outcome (Completed 0) "the direct step completed"
+              Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture reuses the reader bound instead of adding a second five-second wait"
+              Expect.equal result.Stdout "arrived" "bytes received before the bound survive truncation"
+          }
+
+          test "capture timeout pays one post-signal reader bound and keeps partial output" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped-timeout.pid")
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf arrived; sleep 30",
+                            root) with
+                          SuppressStdoutEcho = true
+                          TimeoutMs = Some 500L
+                          GraceMs = 100
+                          ReapGroup = false }
+
+              sw.Stop()
+              match waitForPidFile pidFile with
+              | Some pid ->
+                  Native.signalGroup pid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap pid) "the escaped timeout fixture is cleaned up"
+              | None -> failtest "the escaped timeout descendant never established its precondition"
+
+              Expect.equal result.Outcome TimedOut "the foreground step reached its timeout"
+              Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture has no second post-result or duplicate reader wait"
+              Expect.equal result.Stdout "arrived" "timeout keeps bytes captured before the bounded snapshot"
+          }
+
+          test "a delayed pre-signal user Terminated line does not suppress synthetic narration" {
+              let root = tempRoot ()
+              let readyFile = Path.Combine(root, "user-terminated.ready")
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use interruptObserved = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+
+              let releaser =
+                  Threading.Tasks.Task.Run(fun () ->
+                      let clock = Diagnostics.Stopwatch.StartNew()
+
+                      while not (File.Exists readyFile) && clock.ElapsedMilliseconds < 3_000L do
+                          Threading.Thread.Sleep 5
+
+                      interruptObserved.Wait 3_000 |> ignore
+                      // Keep the user callback in flight while the interrupt is
+                      // observed and the bounded pre-signal snapshot is taken.
+                      Threading.Thread.Sleep 150
+                      releaseCallback.Set())
+
+              let onLine line =
+                  streamed.Enqueue line
+
+                  if line = "hold-user-callback" then
+                      callbackEntered.Set()
+                      releaseCallback.Wait 3_000 |> ignore
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"#!/bin/sh\ntrap 'exit 0' TERM\necho hold-user-callback\necho Terminated\nprintf ready > '{readyFile}'\nwhile :; do :; done",
+                            root) with
+                          GraceMs = 500
+                          Interrupt =
+                              Some(fun () ->
+                                  let ready = File.Exists readyFile
+                                  if ready then interruptObserved.Set()
+                                  ready)
+                          OnLine = Some onLine }
+
+              releaser.GetAwaiter().GetResult()
+              Expect.isTrue (File.Exists readyFile) "the script printed before requesting interruption"
+              Expect.isTrue callbackEntered.IsSet "the pre-signal user callback was genuinely delayed"
+              Expect.equal result.Outcome Cancelled "the ready-file interrupt ended the step"
+
+              let terminatedCount =
+                  streamed.ToArray()
+                  |> Array.filter (fun line -> line.Trim() = "Terminated")
+                  |> Array.length
+
+              Expect.equal terminatedCount 2 "pre-signal user output remains distinct from synthetic post-signal narration"
+          }
+
+          test "a Terminated callback delayed across the signal boundary is emitted exactly once" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+
+              let releaser =
+                  Threading.Tasks.Task.Run(fun () ->
+                      if callbackEntered.Wait 3_000 then
+                          // This callback is emitted by the TERM trap, so it starts
+                          // strictly after the signal. Keep the following Terminated
+                          // callback queued long enough to make post-signal draining
+                          // load-bearing, but within its 300ms upper bound.
+                          Threading.Thread.Sleep 150
+
+                      releaseCallback.Set())
+
+              let onLine line =
+                  streamed.Enqueue line
+
+                  if line = "hold-post-callback" then
+                      callbackEntered.Set()
+                      releaseCallback.Wait 3_000 |> ignore
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            "#!/bin/sh\ntrap 'echo hold-post-callback; echo \"Terminated \"; exit 0' TERM\nwhile :; do :; done",
+                            tempRoot ()) with
+                          TimeoutMs = Some 500L
+                          GraceMs = 500
+                          OnLine = Some onLine }
+
+              releaser.GetAwaiter().GetResult()
+              Expect.isTrue callbackEntered.IsSet "the hostile callback was blocked before timeout"
+              Expect.equal result.Outcome TimedOut "the timeout signal reached the trapping shell"
+
+              let terminatedCount =
+                  streamed.ToArray()
+                  |> Array.filter (fun line -> line.Trim() = "Terminated")
+                  |> Array.length
+
+              Expect.contains (streamed.ToArray()) "Terminated " "the delayed shell callback itself drained before return"
+              let transcript = String.concat " | " (streamed.ToArray())
+
+              Expect.equal
+                  terminatedCount
+                  1
+                  $"the delayed shell line suppresses synthetic duplicate narration: {transcript}"
+          }
+
+          test "fast completed steps do not pay a fixed reader-settlement window" {
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              for _ in 1 .. 10 do
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create ("true", tempRoot ()) with
+                              ReapGroup = false }
+
+                  Expect.equal result.Outcome (Completed 0) "each fast control completed"
+
+              sw.Stop()
+              Expect.isLessThan sw.ElapsedMilliseconds 400L "ten steps have no tenfold 40ms floor"
+          }
+
+          test "an earlier interrupt remains cancellation when the local budget is also expired" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("sleep 30", tempRoot ()) with
+                          TimeoutMs = Some 0L
+                          GraceMs = 100
+                          Interrupt = Some(fun () -> true)
+                          InterruptBeatsDeadline = Some(fun () -> true) }
+
+              Expect.equal result.Outcome Cancelled "the caller's earlier interrupt timestamp is authoritative"
+          }
+
+          test "an earlier deadline remains timeout when an interrupt is also observable" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("sleep 30", tempRoot ()) with
+                          TimeoutMs = Some 0L
+                          GraceMs = 100
+                          Interrupt = Some(fun () -> true)
+                          InterruptBeatsDeadline = Some(fun () -> false) }
+
+              Expect.equal result.Outcome TimedOut "the caller's earlier deadline timestamp is authoritative"
           } ]
 
 /// FG-070/071. The properties that make secret handling better than Jenkins',
@@ -2457,4 +2738,14 @@ let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt; maskingOnOutputPath ]))
+        (testSequenced
+            (testList
+                "Fogell.Execution"
+                [ workspaceHygiene
+                  shellExecution
+                  containment
+                  eventDrivenWaits
+                  secrets
+                  deadProcessDetection
+                  externalInterrupt
+                  maskingOnOutputPath ]))

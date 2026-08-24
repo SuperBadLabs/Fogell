@@ -195,6 +195,29 @@ module ProcessGroup =
         else
             terminateGroup pgid graceMs
 
+    /// Residual quiet sampling used only before an abort signal. The caller owns
+    /// the clock so time already spent draining active callbacks consumes this
+    /// SAME budget. Keeping the sleeper injectable makes the exact upper bound a
+    /// deterministic law rather than a wall-clock assertion in the test suite.
+    let internal settleOutputUntilQuiet
+        (budgetMs: int)
+        (elapsedMilliseconds: unit -> int64)
+        (sleep: int -> unit)
+        (snapshot: unit -> int * int)
+        =
+        let mutable settled = false
+
+        while not settled && elapsedMilliseconds () < int64 budgetMs do
+            let before = snapshot ()
+            let remaining = max 0L (int64 budgetMs - elapsedMilliseconds ())
+            let sleepMs = int (min 40L remaining)
+
+            if sleepMs > 0 then
+                sleep sleepMs
+
+            let after = snapshot ()
+            settled <- after = before
+
     /// Run one command in its own process group.
     let run (request: RunRequest) : RunResult =
         let sw = Stopwatch.StartNew()
@@ -205,10 +228,15 @@ module ProcessGroup =
         // stderr as the first line, and that is the real process-group id.
         let pgidMarker = "__FOGELL_PGID "
 
-        let psi = ProcessStartInfo("/usr/bin/setsid")
-        psi.ArgumentList.Add "--wait"
-        psi.ArgumentList.Add "/bin/sh"
+        let psi = ProcessStartInfo("/bin/sh")
+        // Keep an explicit wait-status-preserving parent outside the new group.
+        // This makes marker provenance observable (proc.Id is the outer waiter,
+        // not the session leader) without `setsid --fork --wait`: util-linux maps
+        // a signal-killed child to the bare signal number, whereas the shell's
+        // wait status preserves the established 128+signal diagnostic contract.
         psi.ArgumentList.Add "-c"
+        psi.ArgumentList.Add "/usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\"; exit $?"
+        psi.ArgumentList.Add "fogell-wait-wrapper" // $0 for the outer waiter
         // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
         // trace an EMITTED, COMPARED artifact on both engines (retiring the last
         // wording-only suppression and FG-002c's continuation gap with it), and
@@ -319,7 +347,9 @@ module ProcessGroup =
          | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\"{mergeStderr}"
          | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\"{mergeStderr}")
 
-        psi.ArgumentList.Add "fogell-launcher" // $0 for the wrapper
+        // These are $1..$3 of the outer waiter, and therefore command/$0/$1 of
+        // the inner shell launched by setsid.
+        psi.ArgumentList.Add "fogell-launcher"
         psi.ArgumentList.Add(defaultArg shebangFile request.Command)
 
         psi.WorkingDirectory <- request.WorkingDirectory
@@ -334,10 +364,19 @@ module ProcessGroup =
 
         use proc = new Process()
         proc.StartInfo <- psi
+        proc.EnableRaisingEvents <- true
 
         let stdout = Text.StringBuilder()
         let stderr = Text.StringBuilder()
-        let reportedPgid = ref 0
+        let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
+        let reportedPgid = Tasks.TaskCompletionSource<int>(completionOptions)
+        let stdoutClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
+        let stderrClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
+        let processExited = Tasks.TaskCompletionSource<unit>(completionOptions)
+        let stdoutCallbackGate = obj ()
+        let stderrCallbackGate = obj ()
+
+        proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
 
         let emit (sink: Text.StringBuilder) (line: string) =
             if line <> null then
@@ -364,20 +403,34 @@ module ProcessGroup =
         // CONCURRENTLY — reading one to completion before draining the other is how a
         // full pipe buffer deadlocks a process that writes to both.
         if not request.SuppressStdoutEcho then
-            proc.OutputDataReceived.Add(fun e -> emit stdout e.Data)
+            proc.OutputDataReceived.Add(fun e ->
+                // Process may dispatch EOF while an earlier user callback is
+                // still running. Serialize the whole callback, not only buffer
+                // mutation, so EOF is a real queue-drained barrier.
+                lock stdoutCallbackGate (fun () ->
+                    match e.Data with
+                    | null -> stdoutClosed.TrySetResult(()) |> ignore
+                    | line -> emit stdout line))
 
         proc.ErrorDataReceived.Add(fun e ->
-            match e.Data with
-            | null -> ()
-            | line when line.StartsWith pgidMarker ->
-                // the leader's own pid: the real group id. Never surfaced to the
-                // caller as build output.
-                match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
-                | true, pid -> reportedPgid.Value <- pid
-                | _ -> ()
-            | line -> emit stderr line)
+            lock stderrCallbackGate (fun () ->
+                match e.Data with
+                | null -> stderrClosed.TrySetResult(()) |> ignore
+                | line when line.StartsWith pgidMarker ->
+                    // the leader's own pid: the real group id. Never surfaced to the
+                    // caller as build output.
+                    match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
+                    | true, pid -> reportedPgid.TrySetResult pid |> ignore
+                    | _ -> ()
+                | line -> emit stderr line))
 
         proc.Start() |> ignore
+
+        // `Exited` is a process-handle notification. It does not wait for
+        // redirected pipes to close, unlike Process.WaitForExit(): an escaped
+        // descendant may inherit a write end and must not wedge step completion.
+        if proc.HasExited then
+            processExited.TrySetResult(()) |> ignore
 
         // FG-181. The capture accumulates INCREMENTALLY into a buffer this scope owns,
         // rather than being handed to `ReadToEndAsync` and read out of the task's Result.
@@ -420,21 +473,32 @@ module ProcessGroup =
 
         proc.BeginErrorReadLine()
 
-        // Wait briefly for the leader to report its pid. Deriving it from
-        // proc.Id is WRONG: that is setsid's pid, in our own group.
+        let stdoutReaderCompleted: Tasks.Task =
+            match capturedStdout with
+            | Some task -> task
+            | None -> stdoutClosed.Task :> Tasks.Task
+
+        let allReadersCompleted =
+            Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
+
+        // Wait for the leader marker or definitive stderr EOF, with the same
+        // two-second upper bound as before. Deriving it from proc.Id is WRONG:
+        // that is setsid's pid, in our own group. EOF is load-bearing for a
+        // very short command: it proves no late marker callback remains, instead
+        // of paying a flat 50ms and hoping the callback catches up.
         let pgid =
-            let clock = Stopwatch.StartNew()
+            Tasks.Task.WhenAny(
+                [| reportedPgid.Task :> Tasks.Task
+                   stderrClosed.Task :> Tasks.Task
+                   Tasks.Task.Delay 2_000 |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
 
-            while reportedPgid.Value = 0 && clock.ElapsedMilliseconds < 2_000L && not proc.HasExited do
-                Thread.Sleep 5
-
-            // one more chance after exit, in case the marker arrived late
-            if reportedPgid.Value = 0 then
-                Thread.Sleep 50
-
-            match reportedPgid.Value with
-            | 0 -> None
-            | pid -> Some pid
+            if reportedPgid.Task.IsCompletedSuccessfully then
+                Some reportedPgid.Task.Result
+            else
+                None
 
         // NOTE: never use the parameterless WaitForExit() with redirected
         // output. It waits for the *pipes* to close, and a backgrounded
@@ -450,8 +514,6 @@ module ProcessGroup =
         // `interrupted()` afterwards raced a sibling failing just after a deadline
         // expiry, flipping both the narration and the reported outcome.
         let waitForProcessExit (budgetMs: int64 option) =
-            let mutable exited = proc.HasExited
-
             let expired () =
                 // measured against `sw`, which started at the TOP of this run —
                 // a clock created here would exclude script creation, launch, and
@@ -460,14 +522,44 @@ module ProcessGroup =
                 | Some ms -> sw.ElapsedMilliseconds >= ms
                 | None -> false
 
-            let mutable cause = if exited then WaitEnd.Exited else WaitEnd.Waiting
+            let nextWaitMilliseconds () =
+                let remaining =
+                    budgetMs
+                    |> Option.map (fun ms -> max 0L (ms - sw.ElapsedMilliseconds))
+
+                // The interrupt contract is a predicate, not a wait handle, so
+                // only interruptible steps still need a bounded re-sample. An
+                // ordinary step sleeps on the process handle until exit or its
+                // exact remaining deadline; there is no 10ms exit poll.
+                match request.Interrupt, remaining with
+                | Some _, Some ms -> int (min 10L ms)
+                | Some _, None -> 10
+                | None, Some ms -> int (min (int64 Int32.MaxValue) ms)
+                | None, None -> Timeout.Infinite
+
+            let mutable cause =
+                if processExited.Task.IsCompleted || proc.HasExited then
+                    WaitEnd.Exited
+                else
+                    WaitEnd.Waiting
 
             while cause = WaitEnd.Waiting do
-                if proc.HasExited then
+                if processExited.Task.IsCompleted || proc.HasExited then
                     cause <- WaitEnd.Exited
                 else
                     match expired (), interrupted () with
-                    | false, false -> Thread.Sleep 10
+                    | false, false ->
+                        let delay = Tasks.Task.Delay(nextWaitMilliseconds ())
+
+                        let completed =
+                            Tasks.Task.WhenAny(
+                                [| processExited.Task :> Tasks.Task
+                                   delay |])
+                                .GetAwaiter()
+                                .GetResult()
+
+                        if Object.ReferenceEquals(completed, processExited.Task) then
+                            cause <- WaitEnd.Exited
                     | false, true ->
                         // the LOCAL budget clock starts after launch overhead, so it
                         // can lag the walker's absolute deadline — an interrupt seen
@@ -497,23 +589,52 @@ module ProcessGroup =
 
             cause
 
-        let flushReaders (budgetMs: int) =
-            // Best-effort: if a daemon holds the pipe this returns on the budget
-            // rather than blocking, and whatever was read so far is kept.
-            let clock = Stopwatch.StartNew()
-            let mutable settled = false
+        let waitForReaderCompletion (budgetMs: int) =
+            // EOF/task completion, not an unchanged-length guess. A descendant
+            // can hold a pipe open indefinitely, so completion is still bounded;
+            // expiry keeps every byte already appended and never blocks the run.
+            if not allReadersCompleted.IsCompleted then
+                Tasks.Task.WhenAny(
+                    [| allReadersCompleted
+                       Tasks.Task.Delay budgetMs |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
 
-            while not settled && clock.ElapsedMilliseconds < int64 budgetMs do
-                let before = stdout.Length + stderr.Length
-                Thread.Sleep 40
-                settled <- (stdout.Length + stderr.Length) = before
+        let settleBeforeSignal (budgetMs: int) =
+            // RESIDUAL, deliberately not described as event-driven. Process does
+            // not expose the instant at which bytes become queued DataReceived
+            // callbacks, so pre/post-signal causality still needs the old bounded
+            // quiet sample. This runs only on abort paths; ordinary completion no
+            // longer pays it. The snapshots below remain the classification boundary.
+            let clock = Stopwatch.StartNew()
+
+            let drainActiveCallback gate =
+                let remaining = max 0 (budgetMs - int clock.ElapsedMilliseconds)
+
+                if Monitor.TryEnter(gate, remaining) then
+                    Monitor.Exit gate
+
+            // A callback already executing is knowable and should not be left
+            // behind the snapshot. The shared clock keeps even hostile OnLine
+            // callbacks inside the same upper bound. The quiet sample still
+            // covers callbacks which Process has queued but not invoked yet.
+            drainActiveCallback stdoutCallbackGate
+            drainActiveCallback stderrCallbackGate
+
+            settleOutputUntilQuiet
+                budgetMs
+                (fun () -> clock.ElapsedMilliseconds)
+                Thread.Sleep
+                (fun () ->
+                    lock stdout (fun () -> stdout.Length), lock stderr (fun () -> stderr.Length))
 
         let waitEnd = waitForProcessExit request.TimeoutMs
         let finished = waitEnd = WaitEnd.Exited
 
         let outcome, termination =
             if finished then
-                flushReaders 500
+                waitForReaderCompletion 500
                 let code = proc.ExitCode
 
                 let t =
@@ -550,21 +671,11 @@ module ProcessGroup =
 
                 request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
 
-                // Drain already-queued reader callbacks BEFORE the snapshot: the
-                // async readers can lag the script, and a user-printed `Terminated`
-                // still in flight would land after the snapshot, read as post-signal
-                // shell narration, and wrongly suppress the synthetic line below.
-                flushReaders 300
-                // BOTH BUFFERS. A trapping script's `Terminated` lands wherever its
-                // stderr is pointed, and in CAPTURE mode the two streams are no longer
-                // merged — so a stdout-only snapshot stopped seeing it and the engine
-                // synthesised a SECOND line beside the shell's own. Raised in review on
-                // PR #53; the split that caused it is FG-174's, so the check has to know
-                // about it.
+                settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
                 let stderrBeforeSignal = lock stderr (fun () -> stderr.ToString())
                 let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
-                flushReaders 300
+                waitForReaderCompletion 300
 
                 // On Jenkins the wrapper shell survives to print `Terminated` for its
                 // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
@@ -578,7 +689,7 @@ module ProcessGroup =
                     [ since stdout outputBeforeSignal; since stderr stderrBeforeSignal ]
                     |> List.exists (fun afterSignal ->
                         afterSignal.Replace("\r\n", "\n").Split '\n'
-                        |> Array.exists (fun l -> l.Trim() = "Terminated"))
+                        |> Array.exists (fun line -> line.Trim() = "Terminated"))
 
                 if not shellSaidIt then
                     request.OnLine |> Option.iter (fun f -> f "Terminated")
@@ -590,17 +701,11 @@ module ProcessGroup =
 
         shebangFile |> Option.iter deleteShebang
 
-        // The captured text is awaited HERE, after the wait has ended, so the read never
-        // competes with the timeout/interrupt polling above. On a killed process the
-        // pipe closes and the read completes with whatever was written before the kill,
-        // which is the honest answer; a step that never produced output yields "".
-        //
-        // A bounded wait, not an indefinite one: this runs after the process group has
-        // been reaped, but an INHERITED pipe held open by a surviving grandchild would
-        // otherwise block the engine here forever — the one failure mode that would be
-        // worse than a wrong value. The captured value is best-effort by construction,
-        // and `returnStdout` on a step that timed out is discarded anyway, since an
-        // abort propagates rather than becoming a value.
+        // Reader completion has already received its single bounded wait above. Never
+        // wait on the capture task again here: an escaped descendant can retain the pipe,
+        // and a second five-second wait made that earlier bound fictional. Snapshot the
+        // incrementally-owned buffer; completed reads are exact and incomplete reads
+        // retain every character which arrived before the bound.
         //
         // "BEST-EFFORT" NOW MEANS WHAT IT SAYS, and it took two goes. The bound was always
         // right; what was salvaged when it expired was not. First the fallback read
@@ -618,13 +723,14 @@ module ProcessGroup =
         // wrong value. Truncation removes the need to choose between them.
         let capturedText =
             capturedStdout
-            |> Option.map (fun t ->
-                t.Wait 5_000 |> ignore
-                lock captureBuffer (fun () -> captureBuffer.ToString()))
+            |> Option.map (fun _ -> lock captureBuffer (fun () -> captureBuffer.ToString()))
+
+        let bufferedStdout = lock stdout (fun () -> stdout.ToString())
+        let bufferedStderr = lock stderr (fun () -> stderr.ToString())
 
         { Outcome = outcome
-          Stdout = defaultArg capturedText (stdout.ToString())
-          Stderr = stderr.ToString()
+          Stdout = defaultArg capturedText bufferedStdout
+          Stderr = bufferedStderr
           DurationMs = sw.ElapsedMilliseconds
           ProcessGroupId = pgid
           Termination = termination
