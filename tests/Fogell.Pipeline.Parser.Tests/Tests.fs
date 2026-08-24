@@ -1,5 +1,6 @@
 module Fogell.Pipeline.Parser.Tests
 
+open System
 open Expecto
 open Fogell.Ir
 open Fogell.Admission
@@ -65,6 +66,187 @@ let admissionLimits =
               for c in
                   [ SourceTooLarge; TooManyNodes; NestingTooDeep; ScalarTooLong; TooManyCollectionItems ] do
                   Expect.isFalse (ErrorCode.isInputDefect c) "a limit is a Fogell bound, not a user defect"
+          } ]
+
+let private expectedWireName =
+    function
+    | SourceTooLarge -> "source_too_large"
+    | TooManyNodes -> "too_many_nodes"
+    | NestingTooDeep -> "nesting_too_deep"
+    | ScalarTooLong -> "scalar_too_long"
+    | TooManyCollectionItems -> "too_many_collection_items"
+    | EmptySource -> "empty_source"
+    | NoPipelineBlock -> "no_pipeline_block"
+    | NoStages -> "no_stages"
+    | ExpectedStage -> "expected_stage"
+    | ExpectedSteps -> "expected_steps"
+    | DuplicateSection -> "duplicate_section"
+    | UnknownSection -> "unknown_section"
+    | MalformedSyntax -> "malformed_syntax"
+    | UnsupportedConstruct -> "unsupported_construct"
+
+/// FG-016b. A rejection is useful to a human only when its stable code and
+/// position lead back to the exact source line. These goldens deliberately
+/// enumerate the union independently from ErrorCode.toWireString: a new code
+/// without a rendering decision is a compile-time failure under FS0025.
+let sourceExcerpts =
+    let allCodes =
+        [ SourceTooLarge
+          TooManyNodes
+          NestingTooDeep
+          ScalarTooLong
+          TooManyCollectionItems
+          EmptySource
+          NoPipelineBlock
+          NoStages
+          ExpectedStage
+          ExpectedSteps
+          DuplicateSection
+          UnknownSection
+          MalformedSyntax
+          UnsupportedConstruct ]
+
+    let diagnostic code line column message source =
+        AdmissionError.render source (AdmissionError.at code line column message)
+
+    testList
+        "FG-016b source excerpts"
+        [ for code in allCodes do
+              let wire = expectedWireName code
+
+              test $"{wire} has an exact source diagnostic" {
+                  let actual = diagnostic code 1L 3L "sample rejection" "  broken"
+
+                  Expect.equal
+                      actual
+                      $"{wire} at 1:3: sample rejection\n  broken\n  ^"
+                      "code, position, physical line and caret are stable"
+              }
+
+          test "the source-free ToString contract is unchanged" {
+              let e = AdmissionError.at MalformedSyntax 7L 9L "bad token"
+              Expect.equal (string e) "malformed_syntax at 7:9: bad token" "legacy diagnostic bytes"
+          }
+
+          test "LF, CRLF and lone CR select the same tabbed physical line" {
+              let expected = "malformed_syntax at 2:2: bad token\n\tbad\n\t^"
+
+              for source in [ "first\n\tbad\nlast"; "first\r\n\tbad\r\nlast"; "first\r\tbad\rlast" ] do
+                  Expect.equal (diagnostic MalformedSyntax 2L 2L "bad token" source) expected "newline form"
+          }
+
+          test "trailing space and tab remain exact before CRLF" {
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 7L "trailing whitespace" "\tbad \t\r\nnext")
+                  "malformed_syntax at 1:7: trailing whitespace\n\tbad \t\n\t    \t^"
+                  "the physical line and EOF caret preserve both trailing bytes"
+          }
+
+          test "empty source and an empty final line retain a visible caret" {
+              Expect.equal
+                  (diagnostic EmptySource 1L 1L "source is empty" "")
+                  "empty_source at 1:1: source is empty\n\n^"
+                  "the empty first line is real"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 2L 1L "at eof" "a\n")
+                  "malformed_syntax at 2:1: at eof\n\n^"
+                  "a trailing newline creates an empty EOF line"
+          }
+
+          test "invalid line and column positions are total and explicit" {
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 0L "bad column" "abc")
+                  "malformed_syntax at 1:0: bad column\nabc\n^"
+                  "a non-positive column clamps to the start of a real line"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 0L 0L "bad position" "abc")
+                  "malformed_syntax at 0:0: bad position\n<source line unavailable>\n^"
+                  "a non-positive line is not silently redirected"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 99L Int64.MaxValue "bad position" "abc")
+                  "malformed_syntax at 99:9223372036854775807: bad position\n<source line unavailable>\n^"
+                  "an absent line cannot throw"
+
+              Expect.equal
+                  (AdmissionError.render null (AdmissionError.at MalformedSyntax 1L 1L "missing source"))
+                  "malformed_syntax at 1:1: missing source\n<source line unavailable>\n^"
+                  "a defensive null source cannot throw"
+          }
+
+          test "columns at and beyond EOF clamp to the physical line end" {
+              let expected = "malformed_syntax at 1:4: at eof\nabc\n   ^"
+              Expect.equal (diagnostic MalformedSyntax 1L 4L "at eof" "abc") expected "exact EOF"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L Int64.MaxValue "at eof" "abc")
+                  "malformed_syntax at 1:9223372036854775807: at eof\nabc\n   ^"
+                  "a hostile column is bounded"
+          }
+
+          test "a long line is clipped around a middle caret" {
+              let line = String.replicate 400 "x"
+              let expectedLine = "…" + String.replicate 158 "x" + "…"
+              let expectedCaret = String.replicate 80 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 201L "middle" line)
+                  $"malformed_syntax at 1:201: middle\n{expectedLine}\n{expectedCaret}"
+                  "both ellipses and the caret stay in the bounded window"
+          }
+
+          test "a SourceTooLarge-sized line allocates only its displayed window" {
+              let line = String.replicate 300_000 "x"
+              let source = "prefix\n" + line + "\nsuffix"
+              let error = AdmissionError.at SourceTooLarge 2L 150_001L "source is too large"
+              let expectedLine = "…" + String.replicate 158 "x" + "…"
+              let expectedCaret = String.replicate 80 " " + "^"
+
+              // Warm the clipping path so this measures the renderer rather
+              // than first-use JIT/type initialization. Per-thread allocation
+              // excludes other concurrently running Expecto tests.
+              AdmissionError.render ("prefix\n" + String.replicate 400 "x" + "\nsuffix") error |> ignore
+              let before = GC.GetAllocatedBytesForCurrentThread()
+              let actual = AdmissionError.render source error
+              let allocated = GC.GetAllocatedBytesForCurrentThread() - before
+
+              Expect.equal
+                  actual
+                  $"source_too_large at 2:150001: source is too large\n{expectedLine}\n{expectedCaret}"
+                  "the hostile physical line still produces the exact bounded diagnostic"
+
+              Expect.isLessThan
+                  allocated
+                  (64L * 1024L)
+                  $"rendering must not copy the 300,000-character source line; allocated {allocated} bytes"
+          }
+
+          test "a line exactly at the bound is not clipped" {
+              let line = String.replicate 160 "x"
+              let caret = String.replicate 159 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 160L "boundary" line)
+                  $"malformed_syntax at 1:160: boundary\n{line}\n{caret}"
+                  "the 160-character boundary remains literal"
+          }
+
+          test "long-line edge carets remain visible without false ellipses" {
+              let line = String.replicate 400 "x"
+              let clipped = String.replicate 158 "x"
+              let rightCaret = String.replicate 159 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 1L "left" line)
+                  $"malformed_syntax at 1:1: left\n{clipped}…\n^"
+                  "the left edge has no leading ellipsis"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 401L "right" line)
+                  $"malformed_syntax at 1:401: right\n…{clipped}\n{rightCaret}"
+                  "the EOF edge has no trailing ellipsis"
           } ]
 
 let declarativeDetection =
@@ -1182,6 +1364,7 @@ let main argv =
         (testList
             "Fogell.Pipeline.Parser"
             [ admissionLimits
+              sourceExcerpts
               declarativeDetection
               structure
               invalidEightEscape

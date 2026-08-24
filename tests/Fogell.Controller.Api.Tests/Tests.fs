@@ -4,6 +4,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Text
+open System.Text.Json
 open Expecto
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -156,16 +157,38 @@ let endpoints =
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let code, body = send HttpMethod.Post url (Some token) None (Some pipeline)
               Expect.equal code 400 "refused"
-              Expect.stringContains body "idempotency_key_required" "named code"
+              use payload = JsonDocument.Parse body
+              let root = payload.RootElement
+              Expect.equal (root.GetProperty("code").GetString()) "idempotency_key_required" "named code"
+
+              Expect.equal
+                  (root.GetProperty("message").GetString())
+                  "an Idempotency-Key header is required so a retry cannot create a second build"
+                  "ordinary API error text remains unchanged"
+
+              Expect.equal (root.GetProperty("position").ValueKind) JsonValueKind.Null "ordinary error has no position"
           }
 
-          test "a malformed pipeline is rejected with its code AND source position" {
+          test "a malformed pipeline renders its exact excerpt" {
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
-              let code, body = send HttpMethod.Post url (Some token) (Some "bad-1") (Some "node { sh 'make' }")
+              let source = "  node {\r\n\tsh 'make'\r\n}"
+              let code, body = send HttpMethod.Post url (Some token) (Some "bad-1") (Some source)
               Expect.equal code 422 "unprocessable"
-              Expect.stringContains body "no_pipeline_block" "named code"
-              Expect.stringContains body "\"position\"" "carries a position"
+              use payload = JsonDocument.Parse body
+              let root = payload.RootElement
+              Expect.equal (root.GetProperty("code").GetString()) "no_pipeline_block" "named code"
+              Expect.equal (root.GetProperty("position").GetString()) "1:1" "typed position remains separate"
+
+              Expect.equal
+                  (root.GetProperty("message").GetString())
+                  "no_pipeline_block at 1:1: no declarative `pipeline { }` block found\n  node {\n^"
+                  "the public admission response carries the exact bounded diagnostic"
+
+              Expect.equal
+                  (root.EnumerateObject() |> Seq.map (fun property -> property.Name) |> Set.ofSeq)
+                  (set [ "code"; "message"; "position" ])
+                  "the established error-response wire shape is unchanged"
           }
 
           test "status reflects the admitted build" {

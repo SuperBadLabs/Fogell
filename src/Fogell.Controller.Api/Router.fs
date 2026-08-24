@@ -85,7 +85,7 @@ module Router =
                             return!
                                 fail ctx 422
                                     (Fogell.Admission.ErrorCode.toWireString e.Code)
-                                    e.Message
+                                    (Fogell.Admission.AdmissionError.render source e)
                                     (Some(string e.Position))
                         | Result.Ok pipeline ->
                             let stages =
