@@ -633,6 +633,123 @@ let eventDrivenWaits =
               Expect.equal result.Outcome TimedOut "the caller's earlier deadline timestamp is authoritative"
           } ]
 
+/// FG-044b(c). Raw nested-call keys are identifiers, not suffix searches.
+let credentialKeyBoundaries =
+    let prefixes =
+        [ "ASCII letter", "X"
+          "ASCII digit", "7"
+          "Arabic-Indic decimal digit", "\u0667"
+          "Roman letter number", "\u2167"
+          "underscore connector", "_"
+          "dollar currency", "$"
+          "Unicode letter", "λ"
+          "nonspacing mark", "\u0301"
+          "spacing combining mark", "\u093E"
+          "connector punctuation", "\u203F"
+          "Unicode currency", "€"
+          "zero-width non-joiner", "\u200C"
+          "zero-width joiner", "\u200D" ]
+
+    let hostile prefix =
+        [ "string credentialsId", "string", $"string({prefix}credentialsId: 'text-id', variable: 'TOKEN')"
+          "string variable", "string", $"string(credentialsId: 'text-id', {prefix}variable: 'TOKEN')"
+          "file credentialsId", "file", $"file({prefix}credentialsId: 'file-id', variable: 'CERT')"
+          "file variable", "file", $"file(credentialsId: 'file-id', {prefix}variable: 'CERT')"
+          "userpass credentialsId",
+          "usernamePassword",
+          $"usernamePassword({prefix}credentialsId: 'user-id', usernameVariable: 'USER', passwordVariable: 'PASS')"
+          "userpass usernameVariable",
+          "usernamePassword",
+          $"usernamePassword(credentialsId: 'user-id', {prefix}usernameVariable: 'USER', passwordVariable: 'PASS')"
+          "userpass passwordVariable",
+          "usernamePassword",
+          $"usernamePassword(credentialsId: 'user-id', usernameVariable: 'USER', {prefix}passwordVariable: 'PASS')" ]
+
+    testList
+        "FG-044b(c) credential keys require a complete identifier token"
+        [ test "every required key rejects every hostile identifier-part prefix" {
+              for prefixLabel, prefix in prefixes do
+                  for keyLabel, kind, source in hostile prefix do
+                      for quoteLabel, quotedSource in
+                          [ "single quoted", source
+                            "double quoted", source.Replace("'", "\"") ] do
+                          let requests = Credentials.parseRequests quotedSource
+
+                          match requests with
+                          | [ BindUnmodelled(actualKind, actualSource) ] ->
+                              Expect.equal
+                                  actualKind
+                                  kind
+                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: binding kind remains observable"
+
+                              Expect.isNonEmpty
+                                  actualSource
+                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: rejected source remains observable"
+                          | other ->
+                              failtestf "%s / %s / %s parsed as supported: %A" prefixLabel keyLabel quoteLabel other
+
+                          Expect.isEmpty
+                              (Credentials.idsOf requests)
+                              $"{prefixLabel} / {keyLabel} / {quoteLabel}: an unmodelled request invents no credential id"
+          }
+
+          test "exact case-sensitive keys preserve all three supported bindings" {
+              let source =
+                  "string ( credentialsId : 'text-id', variable : \"TOKEN\" ), "
+                  + "file(credentialsId:\"file-id\", variable:'CERT'), "
+                  + "usernamePassword(credentialsId: 'user-id', usernameVariable: \"USER\", passwordVariable: 'PASS')"
+
+              let requests = Credentials.parseRequests source
+
+              Expect.equal
+                  requests
+                  [ BindText("text-id", "TOKEN")
+                    BindFile("file-id", "CERT")
+                    BindUserPass("user-id", "USER", "PASS") ]
+                  "single/double quotes and whitespace remain valid"
+
+              Expect.equal
+                  (Credentials.idsOf requests)
+                  [ "text-id"; "file-id"; "user-id" ]
+                  "idsOf returns exactly the modeled ids"
+          }
+
+          test "key spelling remains case-sensitive" {
+              for source in
+                  [ "string(CredentialsId: 'text-id', variable: 'TOKEN')"
+                    "file(credentialsId: 'file-id', Variable: 'CERT')"
+                    "usernamePassword(credentialsId: 'user-id', UsernameVariable: 'USER', passwordVariable: 'PASS')" ] do
+                  let requests = Credentials.parseRequests source
+
+                  match requests with
+                  | [ BindUnmodelled _ ] -> ()
+                  | other -> failtestf "wrong-case key parsed as supported: %A" other
+
+                  Expect.isEmpty (Credentials.idsOf requests) "wrong-case keys invent no ids"
+          }
+
+          test "non-Java number and enclosing-mark categories remain separators" {
+              for label, separator in
+                  [ "other number", "\u00B2"
+                    "enclosing mark", "\u20DD" ] do
+                  let single = $"string({separator}credentialsId: 'text-id', variable: 'TOKEN')"
+
+                  for quoteLabel, source in
+                      [ "single quoted", single
+                        "double quoted", single.Replace("'", "\"") ] do
+                      let requests = Credentials.parseRequests source
+
+                      Expect.equal
+                          requests
+                          [ BindText("text-id", "TOKEN") ]
+                          $"{label}/{quoteLabel}: a non-identifier category does not hide the exact key"
+
+                      Expect.equal
+                          (Credentials.idsOf requests)
+                          [ "text-id" ]
+                          $"{label}/{quoteLabel}: the exact supported id remains observable"
+          } ]
+
 /// FG-070/071. The properties that make secret handling better than Jenkins',
 /// each asserted against a real subprocess.
 let secrets =
@@ -2745,6 +2862,7 @@ let main argv =
                   shellExecution
                   containment
                   eventDrivenWaits
+                  credentialKeyBoundaries
                   secrets
                   deadProcessDetection
                   externalInterrupt

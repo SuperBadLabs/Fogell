@@ -5447,6 +5447,121 @@ let compileRefusalDisposition =
               Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "legacy grammar remains valid"
           } ]
 
+/// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
+/// and one unsupported sibling refuses the entire wrapper before any binding effect.
+let credentialKeyBoundaryRefusal =
+    let credentialSpec =
+        let encode (value: string) =
+            value
+            |> Text.Encoding.UTF8.GetBytes
+            |> Convert.ToBase64String
+
+        let text = encode "text-secret"
+        let file = encode "file-secret"
+        let userpass = encode "measured-user\nmeasured-pass"
+
+        String.concat
+            "\n"
+            [ $"live-text\ttext\t{text}"
+              $"live-file\tfile\t{file}"
+              $"live-user\tuserpass\t{userpass}" ]
+
+    let pipeline bindings body successor =
+        "pipeline { agent any stages { stage('credentials') { steps { "
+        + "sh 'touch before-wrapper.txt'; "
+        + $"withCredentials([{bindings}]) {{ sh '{body}' }}; "
+        + $"sh '{successor}' "
+        + "} } } }"
+
+    let run source check =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-key-" + Guid.NewGuid().ToString("N"))
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "credential boundary pipeline refused outside execution: %s" why
+            | Ok trace -> check root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-044b(c) credential key boundary refuses atomically"
+        [ test "mixed valid and prefixed-key requests refuse atomically in either sibling order" {
+        let oldFile = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE"
+        let oldInline = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+
+        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", null)
+        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", credentialSpec)
+
+        try
+            let cases =
+                [ "string",
+                  "string(credentialsId: 'live-text', variable: 'GOOD')",
+                  "string(XcredentialsId: 'live-text', variable: 'BAD')"
+                  "file",
+                  "file(credentialsId: 'live-file', variable: 'GOOD')",
+                  "file(credentialsId: 'live-file', $variable: 'BAD')"
+                  "usernamePassword",
+                  "usernamePassword(credentialsId: 'live-user', usernameVariable: 'GOOD_USER', passwordVariable: 'GOOD_PASS')",
+                  "usernamePassword(credentialsId: 'live-user', usernameVariable: 'BAD_USER', \u200CpasswordVariable: 'BAD_PASS')" ]
+
+            for label, valid, invalid in cases do
+                for order, bindings in
+                    [ "invalid-first", invalid + ", " + valid
+                      "valid-first", valid + ", " + invalid ] do
+                    let body = $"touch {label}-{order}-body.txt"
+                    let successor = $"touch {label}-{order}-successor.txt"
+
+                    run (pipeline bindings body successor) (fun root workspace trace ->
+                        Expect.equal trace.Result "failure" $"{label}/{order}: wrapper refuses"
+
+                        Expect.isTrue
+                            trace.ReportedFailureReason
+                            $"{label}/{order}: the runtime refusal remains observably explained"
+
+                        Expect.isFalse
+                            (trace.Output
+                             |> List.exists (fun line -> line.StartsWith("Masking supported pattern matches", StringComparison.Ordinal)))
+                            $"{label}/{order}: credential binding narration was never reached"
+
+                        Expect.isTrue
+                            (IO.File.Exists(IO.Path.Combine(workspace, "before-wrapper.txt")))
+                            $"{label}/{order}: this is a runtime refusal after prior ordinary effects"
+
+                        Expect.isFalse
+                            (IO.Directory.Exists(IO.Path.Combine(root, "_secrets")))
+                            $"{label}/{order}: no credential file or value binding was created"
+
+                        Expect.isFalse
+                            (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-body.txt")))
+                            $"{label}/{order}: wrapper body did not run"
+
+                        Expect.isFalse
+                            (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-successor.txt")))
+                            $"{label}/{order}: later effects did not run")
+
+            let validBindings =
+                String.concat
+                    ", "
+                    [ "string(credentialsId: 'live-text', variable: 'TOKEN')"
+                      "file(credentialsId: 'live-file', variable: 'CERT')"
+                      "usernamePassword(credentialsId: 'live-user', usernameVariable: 'USER', passwordVariable: 'PASS')" ]
+
+            let validBody =
+                "test -n \"$TOKEN\" && test -f \"$CERT\" && test -n \"$USER\" && test -n \"$PASS\" && touch valid-body.txt"
+
+            run (pipeline validBindings validBody "touch valid-successor.txt") (fun _ workspace trace ->
+                Expect.equal trace.Result "success" "exact controls still bind all three credential kinds"
+                Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "valid-body.txt"))) "the bound body ran"
+                Expect.isTrue
+                    (IO.File.Exists(IO.Path.Combine(workspace, "valid-successor.txt")))
+                    "the ordinary successor ran")
+        finally
+            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", oldFile)
+            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", oldInline)
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -5478,5 +5593,6 @@ let main argv =
               timestampPrefixIsConditional
               timestampCoverageUsesComparedSurvivors
               compileRefusalDisposition
+              credentialKeyBoundaryRefusal
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])
