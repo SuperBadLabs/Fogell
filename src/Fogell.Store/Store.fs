@@ -1,6 +1,7 @@
 namespace Fogell.Store
 
 open System
+open System.Security.Cryptography
 open Npgsql
 open Fogell.Domain
 
@@ -30,6 +31,36 @@ type NewBuild =
       RequiredTrustPool: string
       RequiredCapabilities: string list }
 
+/// FG-026. The durable state of one externally visible effect for one attempt.
+type EffectCheckpointState =
+    | EffectPrepared
+    | EffectApplied
+    | EffectConfirmed
+    | EffectUncertain
+
+type EffectUncertainOrigin =
+    | UncertainAfterPrepare
+    | UncertainAfterApply
+
+type EffectCheckpoint =
+    { OrganizationId: OrganizationId
+      AttemptId: AttemptId
+      EffectKey: string
+      Fence: Fence
+      AuthorityOwner: string
+      RestoreEpoch: RestoreEpoch
+      PayloadSha256: string
+      State: EffectCheckpointState
+      UncertainOrigin: EffectUncertainOrigin option }
+
+type EffectCheckpointOutcome =
+    { Checkpoint: EffectCheckpoint
+      WasReplay: bool }
+
+type EffectAdvance =
+    | RecordApplied
+    | RecordConfirmed
+
 /// FG-021/FG-022. The controller's durable truth.
 type Store(connectionString: string) =
 
@@ -37,6 +68,127 @@ type Store(connectionString: string) =
         let c = new NpgsqlConnection(connectionString)
         c.Open()
         c
+
+    let effectProjection =
+        "organization_id, attempt_id, effect_key, fence, authority_owner,
+         restore_epoch, encode(payload_digest, 'hex'), state, uncertain_from"
+
+    let payloadDigest (payload: byte array) =
+        use sha = SHA256.Create()
+        sha.ComputeHash payload
+
+    let digestHex (digest: byte array) =
+        Convert.ToHexString(digest).ToLowerInvariant()
+
+    let readCheckpoint (reader: System.Data.Common.DbDataReader) =
+        let state =
+            match reader.GetString 7 with
+            | "prepared" -> EffectPrepared
+            | "applied" -> EffectApplied
+            | "confirmed" -> EffectConfirmed
+            | "uncertain" -> EffectUncertain
+            | invalid -> failwithf "invalid effect checkpoint state '%s'" invalid
+
+        let uncertainOrigin =
+            if reader.IsDBNull 8 then
+                None
+            else
+                match reader.GetString 8 with
+                | "prepared" -> Some UncertainAfterPrepare
+                | "applied" -> Some UncertainAfterApply
+                | invalid -> failwithf "invalid effect uncertainty origin '%s'" invalid
+
+        { OrganizationId = OrganizationId(reader.GetGuid 0)
+          AttemptId = AttemptId(reader.GetGuid 1)
+          EffectKey = reader.GetString 2
+          Fence = Fence(reader.GetInt64 3)
+          AuthorityOwner = reader.GetString 4
+          RestoreEpoch = RestoreEpoch(reader.GetInt64 5)
+          PayloadSha256 = reader.GetString 6
+          State = state
+          UncertainOrigin = uncertainOrigin }
+
+    let addEffectIdentity
+        (cmd: NpgsqlCommand)
+        (org: OrganizationId)
+        (attempt: AttemptId)
+        (effectKey: string)
+        =
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("k", effectKey) |> ignore
+
+    let tryLockEffectAuthority
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (attempt: AttemptId)
+        (fence: Fence)
+        (owner: string)
+        =
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT a.restore_epoch
+             FROM attempts a
+             WHERE a.organization_id = @o
+               AND a.id = @a
+               AND a.fence = @f
+               AND a.lease_owner = @owner
+               AND a.lease_expires_at > clock_timestamp()
+               AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+               AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+             FOR UPDATE"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+        cmd.Parameters.AddWithValue("owner", owner) |> ignore
+
+        match cmd.ExecuteScalar() with
+        | null -> None
+        | value -> Some(RestoreEpoch(value :?> int64))
+
+    let selectEffectForUpdate
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (attempt: AttemptId)
+        (effectKey: string)
+        =
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            $"SELECT {effectProjection}
+              FROM effect_checkpoints
+              WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k
+              FOR UPDATE"
+        addEffectIdentity cmd org attempt effectKey
+        use reader = cmd.ExecuteReader()
+        if reader.Read() then Some(readCheckpoint reader) else None
+
+    let sameEffectIdentity
+        (checkpoint: EffectCheckpoint)
+        (fence: Fence)
+        (owner: string)
+        (epoch: RestoreEpoch)
+        (digest: byte array)
+        =
+        checkpoint.Fence = fence
+        && checkpoint.AuthorityOwner = owner
+        && checkpoint.RestoreEpoch = epoch
+        && checkpoint.PayloadSha256 = digestHex digest
+
+    let validateEffectInput (effectKey: string) (owner: string) (payload: byte array) =
+        if String.IsNullOrWhiteSpace effectKey then
+            Some "effect key is required"
+        elif effectKey.Length > 256 then
+            Some "effect key exceeds 256 characters"
+        elif String.IsNullOrWhiteSpace owner then
+            Some "effect authority owner is required"
+        elif isNull payload then
+            Some "effect payload is required"
+        else
+            None
 
     member _.Migrate() = Migrations.run connectionString
 
@@ -62,6 +214,232 @@ type Store(connectionString: string) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
         RestoreEpoch(cmd.ExecuteScalar() :?> int64)
+
+    /// FG-026 Store foundation. Durably records intent before an external
+    /// effect. The payload itself is never stored: its exact bytes are SHA-256
+    /// hashed inside this API, and the digest is immutable thereafter.
+    member _.PrepareEffect
+        (org: OrganizationId,
+         attempt: AttemptId,
+         fence: Fence,
+         owner: string,
+         effectKey: string,
+         payload: byte array)
+        : Result<EffectCheckpointOutcome, string> =
+        match validateEffectInput effectKey owner payload with
+        | Some error -> Error error
+        | None ->
+            use conn = openConn ()
+            use tx = conn.BeginTransaction()
+
+            try
+                match tryLockEffectAuthority conn tx org attempt fence owner with
+                | None ->
+                    tx.Rollback()
+                    Error "effect preparation refused: stale fence, wrong owner, expired lease, pre-restore epoch, or inactive attempt"
+                | Some epoch ->
+                    let digest = payloadDigest payload
+
+                    match selectEffectForUpdate conn tx org attempt effectKey with
+                    | Some checkpoint when sameEffectIdentity checkpoint fence owner epoch digest ->
+                        tx.Commit()
+                        Ok { Checkpoint = checkpoint; WasReplay = true }
+                    | Some _ ->
+                        tx.Rollback()
+                        Error "effect preparation refused: key already has different authority or payload bytes"
+                    | None ->
+                        use insert = conn.CreateCommand()
+                        insert.Transaction <- tx
+                        insert.CommandText <-
+                            $"INSERT INTO effect_checkpoints
+                                 (organization_id, attempt_id, effect_key, fence, authority_owner,
+                                  restore_epoch, payload_digest, state)
+                              VALUES (@o, @a, @k, @f, @owner, @e, @d, 'prepared')
+                              RETURNING {effectProjection}"
+                        addEffectIdentity insert org attempt effectKey
+                        insert.Parameters.AddWithValue("f", fence.Value) |> ignore
+                        insert.Parameters.AddWithValue("owner", owner) |> ignore
+                        insert.Parameters.AddWithValue("e", epoch.Value) |> ignore
+                        insert.Parameters.Add(
+                            NpgsqlParameter("d", NpgsqlTypes.NpgsqlDbType.Bytea, Value = digest))
+                        |> ignore
+
+                        use reader = insert.ExecuteReader()
+                        if not (reader.Read()) then failwith "effect checkpoint insert returned no row"
+                        let checkpoint = readCheckpoint reader
+                        reader.Close()
+                        tx.Commit()
+                        Ok { Checkpoint = checkpoint; WasReplay = false }
+            with ex ->
+                (try tx.Rollback() with _ -> ())
+                Error ex.Message
+
+    /// Records only the two positive acknowledgements. A prepared checkpoint
+    /// cannot skip directly to confirmed, and uncertain is terminal pending
+    /// operator reconciliation.
+    member _.AdvanceEffect
+        (org: OrganizationId,
+         attempt: AttemptId,
+         fence: Fence,
+         owner: string,
+         effectKey: string,
+         payload: byte array,
+         advance: EffectAdvance)
+        : Result<EffectCheckpointOutcome, string> =
+        match validateEffectInput effectKey owner payload with
+        | Some error -> Error error
+        | None ->
+            use conn = openConn ()
+            use tx = conn.BeginTransaction()
+
+            try
+                match tryLockEffectAuthority conn tx org attempt fence owner with
+                | None ->
+                    tx.Rollback()
+                    Error "effect advancement refused: stale fence, wrong owner, expired lease, pre-restore epoch, or inactive attempt"
+                | Some epoch ->
+                    let digest = payloadDigest payload
+
+                    match selectEffectForUpdate conn tx org attempt effectKey with
+                    | None ->
+                        tx.Rollback()
+                        Error "effect checkpoint does not exist"
+                    | Some checkpoint when not (sameEffectIdentity checkpoint fence owner epoch digest) ->
+                        tx.Rollback()
+                        Error "effect advancement refused: authority or payload bytes differ from preparation"
+                    | Some checkpoint ->
+                        let replay =
+                            match advance, checkpoint.State with
+                            | RecordApplied, EffectApplied
+                            | RecordApplied, EffectConfirmed
+                            | RecordConfirmed, EffectConfirmed -> true
+                            | _ -> false
+
+                        if replay then
+                            tx.Commit()
+                            Ok { Checkpoint = checkpoint; WasReplay = true }
+                        else
+                            let targetState, timestampColumn =
+                                match advance, checkpoint.State with
+                                | RecordApplied, EffectPrepared -> "applied", "applied_at"
+                                | RecordConfirmed, EffectApplied -> "confirmed", "confirmed_at"
+                                | RecordConfirmed, EffectPrepared ->
+                                    failwith "effect confirmation requires an applied checkpoint"
+                                | _, EffectUncertain ->
+                                    failwith "an uncertain effect checkpoint cannot advance"
+                                | RecordApplied, state ->
+                                    failwithf "effect checkpoint cannot record applied from %A" state
+                                | RecordConfirmed, state ->
+                                    failwithf "effect checkpoint cannot record confirmed from %A" state
+
+                            use update = conn.CreateCommand()
+                            update.Transaction <- tx
+                            update.CommandText <-
+                                $"UPDATE effect_checkpoints
+                                  SET state = @state, {timestampColumn} = clock_timestamp()
+                                  WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k
+                                  RETURNING {effectProjection}"
+                            addEffectIdentity update org attempt effectKey
+                            update.Parameters.AddWithValue("state", targetState) |> ignore
+                            use reader = update.ExecuteReader()
+                            if not (reader.Read()) then failwith "effect checkpoint update returned no row"
+                            let advanced = readCheckpoint reader
+                            reader.Close()
+                            tx.Commit()
+                            Ok { Checkpoint = advanced; WasReplay = false }
+            with ex ->
+                (try tx.Rollback() with _ -> ())
+                Error ex.Message
+
+    /// Moves only checkpoints whose captured authority is no longer live into
+    /// the reconciliation queue. The origin records whether the external call
+    /// might have happened before authority was lost.
+    member _.MarkStaleEffectsUncertain(org: OrganizationId) : Result<EffectCheckpoint list, string> =
+        let markOnce () =
+            use conn = openConn ()
+            use tx = conn.BeginTransaction(System.Data.IsolationLevel.RepeatableRead)
+
+            try
+                // RepeatableRead gives the lock and update statements one stable
+                // marker snapshot. A checkpoint committed after this query began
+                // is deliberately left for the next bounded reconciliation pass.
+                // Lock attempts first so prepare/advance and reconciliation never
+                // invert the attempt -> checkpoint order.
+                use authorityLocks = conn.CreateCommand()
+                authorityLocks.Transaction <- tx
+                authorityLocks.CommandText <-
+                    "SELECT /* FG026_MARKER_SNAPSHOT */ a.id
+                     FROM attempts a
+                     JOIN effect_checkpoints e
+                       ON e.organization_id = a.organization_id AND e.attempt_id = a.id
+                     WHERE e.organization_id = @o AND e.state IN ('prepared', 'applied')
+                     ORDER BY a.id
+                     FOR UPDATE OF a"
+                authorityLocks.Parameters.AddWithValue("o", org.Value) |> ignore
+                use locked = authorityLocks.ExecuteReader()
+                while locked.Read() do ()
+                locked.Close()
+
+                use update = conn.CreateCommand()
+                update.Transaction <- tx
+                update.CommandText <-
+                    $"UPDATE effect_checkpoints e
+                      SET uncertain_from = e.state,
+                          state = 'uncertain',
+                          uncertain_at = clock_timestamp()
+                      WHERE e.organization_id = @o
+                        AND e.state IN ('prepared', 'applied')
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM attempts a
+                            WHERE a.organization_id = e.organization_id
+                              AND a.id = e.attempt_id
+                              AND a.fence = e.fence
+                              AND a.lease_owner = e.authority_owner
+                              AND a.lease_expires_at > clock_timestamp()
+                              AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                              AND a.restore_epoch = e.restore_epoch
+                              AND a.restore_epoch = (
+                                  SELECT restore_epoch FROM controller_metadata WHERE singleton
+                              )
+                        )
+                      RETURNING {effectProjection}"
+                update.Parameters.AddWithValue("o", org.Value) |> ignore
+                use reader = update.ExecuteReader()
+                let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
+                reader.Close()
+                tx.Commit()
+
+                checkpoints
+                |> List.sortBy (fun checkpoint ->
+                    checkpoint.AttemptId.Value, checkpoint.EffectKey)
+            with _ ->
+                (try tx.Rollback() with _ -> ())
+                reraise ()
+
+        let rec run attemptNumber =
+            try
+                markOnce () |> Ok
+            with
+            | :? PostgresException as error
+                when (error.SqlState = "40001" || error.SqlState = "40P01")
+                     && attemptNumber < 3 ->
+                run (attemptNumber + 1)
+            | ex -> Error ex.Message
+
+        run 1
+
+    member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            $"SELECT {effectProjection}
+              FROM effect_checkpoints
+              WHERE organization_id = @o AND state = 'uncertain'
+              ORDER BY prepared_at, attempt_id, effect_key"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        [ while reader.Read() do yield readCheckpoint reader ]
 
     /// FG-021. Build, first node, first attempt, a durable event and an outbox
     /// message commit **together**. There is no window in which a build exists

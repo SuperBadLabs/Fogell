@@ -1,6 +1,7 @@
 module Fogell.Store.Tests
 
 open System
+open System.Security.Cryptography
 open Expecto
 open Fogell.Domain
 open Fogell.Store
@@ -43,6 +44,55 @@ let private admitOk input =
     | Ok a -> a
     | Error e -> failtestf "admission failed: %s" e
 
+let private runningAttempt org project key owner leaseSeconds =
+    let admitted = admitOk (newBuild org project key [ "effect" ])
+
+    let fence =
+        match store.OfferAttempt(org, admitted.AttemptId, owner, leaseSeconds) with
+        | Ok value -> value
+        | Error error -> failtestf "offer failed: %s" error
+
+    if leaseSeconds > 0 then
+        Expect.isTrue
+            (store.AcceptAttempt(org, admitted.AttemptId, fence, owner))
+            "effect attempt accepted"
+
+    admitted, fence
+
+let private prepareEffectOk org attempt fence owner effectKey payload =
+    match store.PrepareEffect(org, attempt, fence, owner, effectKey, payload) with
+    | Ok outcome -> outcome
+    | Error error -> failtestf "effect preparation failed: %s" error
+
+let private advanceEffectOk org attempt fence owner effectKey payload advance =
+    match store.AdvanceEffect(org, attempt, fence, owner, effectKey, payload, advance) with
+    | Ok outcome -> outcome
+    | Error error -> failtestf "effect advancement failed: %s" error
+
+let private expectError message result =
+    match result with
+    | Error _ -> ()
+    | Ok value -> failtestf "%s; unexpectedly succeeded with %A" message value
+
+let private checkpointCount (org: OrganizationId) (attempt: AttemptId) =
+    use conn = new Npgsql.NpgsqlConnection(connectionString)
+    conn.Open()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <-
+        "SELECT count(*) FROM effect_checkpoints
+         WHERE organization_id = @o AND attempt_id = @a"
+    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+    cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+    cmd.ExecuteScalar() :?> int64 |> int
+
+let private checkpointCountForOrg (org: OrganizationId) =
+    use conn = new Npgsql.NpgsqlConnection(connectionString)
+    conn.Open()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "SELECT count(*) FROM effect_checkpoints WHERE organization_id = @o"
+    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+    cmd.ExecuteScalar() :?> int64 |> int
+
 let private readLog org project build fromSequence =
     match store.ReadLog(org, project, build, fromSequence) with
     | Some chunks -> chunks
@@ -81,6 +131,21 @@ let migrations =
               use cmd = conn.CreateCommand()
               cmd.CommandText <- "SELECT count(*) FROM schema_migrations WHERE version = '0001'"
               Expect.equal (cmd.ExecuteScalar() :?> int64) 1L "exactly one ledger row"
+          }
+
+          test "effect ledger migration 0003 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0003'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0003 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "1ce854dd3de720521eac6afc7322f2b098b644f07460a959b0df8edcf9f319c6"
+                      "migration 0003 exact source checksum"
           } ]
 
 let admission =
@@ -273,6 +338,666 @@ let fencing =
               let f1 = match store.OfferAttempt(org, a.AttemptId, "agent-a", 60) with Ok f -> f | Error e -> failtestf "%s" e
               let f2 = match store.OfferAttempt(org, a.AttemptId, "agent-b", 60) with Ok f -> f | Error e -> failtestf "%s" e
               Expect.equal f2.Value (f1.Value + 1L) "monotonic"
+          } ]
+
+/// FG-026 Store foundation. Runtime effect invocation is deliberately outside
+/// this package; these controls prove the durable prepare/advance/reconcile law.
+let effectCheckpoints =
+    testList
+        "FG-026 effect checkpoint ledger"
+        [ test "focused suite proves a live PostgreSQL effect ledger" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "SELECT current_setting('server_version_num')::int,
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0003')"
+              use reader = cmd.ExecuteReader()
+              Expect.isTrue (reader.Read()) "live PostgreSQL returned one marker row"
+              Expect.isGreaterThan (reader.GetInt32 0) 0 "real server version"
+              Expect.isTrue (reader.GetBoolean 1) "migration 0003 installed"
+              printfn "FG026_LIVE_PG=1 FG026_SCHEMA=0003 FG026_CONCURRENCY=16"
+          }
+
+          test "prepare hashes exact payload bytes and stores no payload column" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-digest" "effect-agent" 60
+              let payload = [| 0uy; 255uy; 13uy; 10uy; 65uy |]
+              let outcome = prepareEffectOk org admitted.AttemptId fence "effect-agent" "notify:primary" payload
+
+              use sha = SHA256.Create()
+              let expectedDigest = Convert.ToHexString(sha.ComputeHash payload).ToLowerInvariant()
+
+              Expect.isFalse outcome.WasReplay "first preparation creates the checkpoint"
+              Expect.equal outcome.Checkpoint.PayloadSha256 expectedDigest "digest covers exact bytes"
+              Expect.equal outcome.Checkpoint.State EffectPrepared "intent is durable before invocation"
+              Expect.equal outcome.Checkpoint.RestoreEpoch (store.CurrentRestoreEpoch()) "current epoch captured"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use schema = conn.CreateCommand()
+              schema.CommandText <-
+                  "SELECT count(*) FROM information_schema.columns
+                   WHERE table_schema = 'public'
+                     AND table_name = 'effect_checkpoints'
+                     AND column_name = 'payload'"
+              Expect.equal (schema.ExecuteScalar() :?> int64) 0L "raw payload has no storage column"
+          }
+
+          test "identical replay is stable and payload substitution is refused" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-replay" "effect-agent" 60
+              let payload = Text.Encoding.UTF8.GetBytes "same bytes"
+              let first = prepareEffectOk org admitted.AttemptId fence "effect-agent" "deploy" payload
+              let replay = prepareEffectOk org admitted.AttemptId fence "effect-agent" "deploy" payload
+
+              Expect.isFalse first.WasReplay "first call inserts"
+              Expect.isTrue replay.WasReplay "same exact preparation is replay-safe"
+              Expect.equal replay.Checkpoint first.Checkpoint "replay returns the same durable identity"
+              Expect.equal (checkpointCount org admitted.AttemptId) 1 "one row for one per-attempt key"
+
+              expectError
+                  "the same key cannot name different bytes"
+                  (store.PrepareEffect(
+                      org,
+                      admitted.AttemptId,
+                      fence,
+                      "effect-agent",
+                      "deploy",
+                      Text.Encoding.UTF8.GetBytes "different bytes"))
+
+              Expect.equal (checkpointCount org admitted.AttemptId) 1 "substitution has no side effect"
+          }
+
+          test "16 concurrent preparations converge on one checkpoint" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-race" "effect-agent" 60
+              let payload = Text.Encoding.UTF8.GetBytes "one immutable request"
+
+              let results =
+                  [ 1..16 ]
+                  |> List.map (fun _ ->
+                      async {
+                          return
+                              Store(connectionString).PrepareEffect(
+                                  org,
+                                  admitted.AttemptId,
+                                  fence,
+                                  "effect-agent",
+                                  "publish",
+                                  payload)
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let outcomes =
+                  results
+                  |> Array.map (function
+                      | Ok outcome -> outcome
+                      | Error error -> failtestf "concurrent preparation failed: %s" error)
+
+              Expect.equal outcomes.Length 16 "all callers completed"
+              Expect.equal (outcomes |> Array.filter (fun value -> not value.WasReplay) |> Array.length) 1 "one insert"
+              Expect.equal (outcomes |> Array.filter (fun value -> value.WasReplay) |> Array.length) 15 "fifteen replays"
+              Expect.equal
+                  (outcomes |> Array.map (fun outcome -> outcome.Checkpoint) |> Array.distinct |> Array.length)
+                  1
+                  "one durable truth"
+              Expect.equal (checkpointCount org admitted.AttemptId) 1 "one database row"
+
+              let replayMarker = $"FG026_PRELOCK_{Guid.NewGuid():N}"
+              let replayConnectionString =
+                  let builder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+                  builder.ApplicationName <- replayMarker
+                  builder.ConnectionString
+
+              use blocker = new Npgsql.NpgsqlConnection(connectionString)
+              blocker.Open()
+              use blockerTx = blocker.BeginTransaction()
+              use blockerPidCmd = blocker.CreateCommand()
+              blockerPidCmd.Transaction <- blockerTx
+              blockerPidCmd.CommandText <- "SELECT pg_backend_pid()"
+              let blockerPid = blockerPidCmd.ExecuteScalar() :?> int
+
+              use lockCheckpoint = blocker.CreateCommand()
+              lockCheckpoint.Transaction <- blockerTx
+              lockCheckpoint.CommandText <-
+                  "SELECT effect_key
+                   FROM effect_checkpoints
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k
+                   FOR UPDATE"
+              lockCheckpoint.Parameters.AddWithValue("o", org.Value) |> ignore
+              lockCheckpoint.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              lockCheckpoint.Parameters.AddWithValue("k", "publish") |> ignore
+              Expect.equal (lockCheckpoint.ExecuteScalar() :?> string) "publish" "existing checkpoint row locked"
+
+              let replayTask =
+                  Async.StartAsTask(async {
+                      return
+                          Store(replayConnectionString).PrepareEffect(
+                              org,
+                              admitted.AttemptId,
+                              fence,
+                              "effect-agent",
+                              "publish",
+                              payload)
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec replayBlockedOnCheckpoint remaining =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1
+                           FROM pg_stat_activity
+                           WHERE application_name = @marker
+                             AND state = 'active'
+                             AND wait_event_type = 'Lock'
+                             AND query LIKE '%effect_checkpoints%'
+                             AND query LIKE '%FOR UPDATE%'
+                             AND @blocker_pid = ANY(pg_blocking_pids(pid))
+                       )"
+                  waiting.Parameters.AddWithValue("marker", replayMarker) |> ignore
+                  waiting.Parameters.AddWithValue("blocker_pid", blockerPid) |> ignore
+
+                  if waiting.ExecuteScalar() :?> bool then
+                      true
+                  elif remaining = 0 then
+                      false
+                  else
+                      Threading.Thread.Yield() |> ignore
+                      replayBlockedOnCheckpoint (remaining - 1)
+
+              let mutable barrierEstablished = false
+              let mutable attemptLocked = false
+
+              let observationError =
+                  try
+                      try
+                          barrierEstablished <- replayBlockedOnCheckpoint 2000
+
+                          if barrierEstablished then
+                              use probe = new Npgsql.NpgsqlConnection(connectionString)
+                              probe.Open()
+                              use probeTx = probe.BeginTransaction()
+                              use lockAttempt = probe.CreateCommand()
+                              lockAttempt.Transaction <- probeTx
+                              lockAttempt.CommandText <-
+                                  "SELECT id
+                                   FROM attempts
+                                   WHERE organization_id = @o AND id = @a
+                                   FOR UPDATE NOWAIT"
+                              lockAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+                              lockAttempt.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+
+                              try
+                                  lockAttempt.ExecuteScalar() |> ignore
+                              with :? Npgsql.PostgresException as error when error.SqlState = "55P03" ->
+                                  attemptLocked <- true
+
+                          None
+                      with ex ->
+                          Some ex
+                  finally
+                      blockerTx.Rollback()
+
+              let replayResult = replayTask.GetAwaiter().GetResult()
+
+              match observationError with
+              | Some error -> raise error
+              | None -> ()
+
+              Expect.isTrue barrierEstablished "replay blocked on the existing checkpoint behind the attested blocker"
+
+              match replayResult with
+              | Ok replay -> Expect.isTrue replay.WasReplay "blocked exact preparation remained a replay"
+              | Error error -> failtestf "blocked exact replay failed: %s" error
+
+              Expect.isTrue attemptLocked "replay held the attempt lock before waiting on the checkpoint"
+          }
+
+          test "prepare requires the exact live PublishTerminal authority" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-authority" "effect-agent" 60
+              let payload = [| 1uy |]
+
+              expectError
+                  "stale fence"
+                  (store.PrepareEffect(org, admitted.AttemptId, Fence(fence.Value + 1L), "effect-agent", "stale", payload))
+              expectError
+                  "wrong owner"
+                  (store.PrepareEffect(org, admitted.AttemptId, fence, "other-agent", "owner", payload))
+
+              let otherOrg, _ = freshProject ()
+              expectError
+                  "cross-organization authority"
+                  (store.PrepareEffect(otherOrg, admitted.AttemptId, fence, "effect-agent", "tenant", payload))
+              expectError
+                  "missing attempt"
+                  (store.PrepareEffect(org, AttemptId(Guid.NewGuid()), fence, "effect-agent", "missing", payload))
+
+              let queued = admitOk (newBuild org project "effect-inactive" [ "effect" ])
+              expectError
+                  "inactive attempt"
+                  (store.PrepareEffect(org, queued.AttemptId, Fence 0L, "effect-agent", "inactive", payload))
+
+              let expired, expiredFence = runningAttempt org project "effect-expired" "effect-agent" 0
+              Threading.Thread.Sleep 50
+              expectError
+                  "expired lease"
+                  (store.PrepareEffect(org, expired.AttemptId, expiredFence, "effect-agent", "expired", payload))
+
+              let beforeRestore, beforeRestoreFence =
+                  runningAttempt org project "effect-restore" "effect-agent" 300
+              store.ActivateRestore() |> ignore
+              expectError
+                  "pre-restore authority"
+                  (store.PrepareEffect(
+                      org,
+                      beforeRestore.AttemptId,
+                      beforeRestoreFence,
+                      "effect-agent",
+                      "restore",
+                      payload))
+
+              Expect.equal
+                  (checkpointCountForOrg org + checkpointCountForOrg otherOrg)
+                  0
+                  "all probed attempts and organizations remain checkpoint-free"
+          }
+
+          test "legal advancement is ordered and replay-safe" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-advance" "effect-agent" 60
+              let payload = Text.Encoding.UTF8.GetBytes "call body"
+              prepareEffectOk org admitted.AttemptId fence "effect-agent" "call" payload |> ignore
+
+              expectError
+                  "confirmation cannot skip application"
+                  (store.AdvanceEffect(
+                      org,
+                      admitted.AttemptId,
+                      fence,
+                      "effect-agent",
+                      "call",
+                      payload,
+                      RecordConfirmed))
+
+              let applied =
+                  advanceEffectOk org admitted.AttemptId fence "effect-agent" "call" payload RecordApplied
+              Expect.equal applied.Checkpoint.State EffectApplied "application recorded"
+              Expect.isFalse applied.WasReplay "first application advances"
+
+              let appliedAgain =
+                  advanceEffectOk org admitted.AttemptId fence "effect-agent" "call" payload RecordApplied
+              Expect.isTrue appliedAgain.WasReplay "application acknowledgement is idempotent"
+
+              let confirmed =
+                  advanceEffectOk org admitted.AttemptId fence "effect-agent" "call" payload RecordConfirmed
+              Expect.equal confirmed.Checkpoint.State EffectConfirmed "confirmation recorded"
+              Expect.isFalse confirmed.WasReplay "first confirmation advances"
+
+              let confirmedAgain =
+                  advanceEffectOk org admitted.AttemptId fence "effect-agent" "call" payload RecordConfirmed
+              Expect.isTrue confirmedAgain.WasReplay "confirmation is idempotent"
+
+              let lateAppliedReplay =
+                  advanceEffectOk org admitted.AttemptId fence "effect-agent" "call" payload RecordApplied
+              Expect.equal lateAppliedReplay.Checkpoint.State EffectConfirmed "late applied replay cannot regress"
+              Expect.isTrue lateAppliedReplay.WasReplay "already confirmed satisfies applied"
+
+              expectError
+                  "advancement payload substitution"
+                  (store.AdvanceEffect(
+                      org,
+                      admitted.AttemptId,
+                      fence,
+                      "effect-agent",
+                      "call",
+                      Text.Encoding.UTF8.GetBytes "other body",
+                      RecordApplied))
+          }
+
+          test "stale prepared and applied effects become tenant-scoped uncertainty" {
+              let org, project = freshProject ()
+              let preparedAttempt, preparedFence = runningAttempt org project "effect-uncertain-p" "agent-p" 60
+              let appliedAttempt, appliedFence = runningAttempt org project "effect-uncertain-a" "agent-a" 60
+              let liveAttempt, liveFence = runningAttempt org project "effect-live" "agent-live" 60
+              let payload = [| 9uy; 8uy; 7uy |]
+
+              prepareEffectOk org preparedAttempt.AttemptId preparedFence "agent-p" "prepared" payload |> ignore
+              prepareEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "applied" payload |> ignore
+              advanceEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "applied" payload RecordApplied |> ignore
+              prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "live" payload |> ignore
+
+              let foreignOrg, foreignProject = freshProject ()
+              let foreignAttempt, foreignFence =
+                  runningAttempt foreignOrg foreignProject "effect-foreign" "agent-foreign" 60
+              prepareEffectOk foreignOrg foreignAttempt.AttemptId foreignFence "agent-foreign" "foreign" payload |> ignore
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+                   WHERE (organization_id = @o AND id IN (@prepared, @applied))
+                      OR (organization_id = @foreign_o AND id = @foreign)"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.Parameters.AddWithValue("prepared", preparedAttempt.AttemptId.Value) |> ignore
+              expire.Parameters.AddWithValue("applied", appliedAttempt.AttemptId.Value) |> ignore
+              expire.Parameters.AddWithValue("foreign_o", foreignOrg.Value) |> ignore
+              expire.Parameters.AddWithValue("foreign", foreignAttempt.AttemptId.Value) |> ignore
+              Expect.equal (expire.ExecuteNonQuery()) 3 "three authorities expired"
+
+              let marked =
+                  match store.MarkStaleEffectsUncertain org with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "uncertainty marking failed: %s" error
+
+              Expect.equal marked.Length 2 "only stale effects in the requested organization"
+              let origins = marked |> List.map (fun value -> value.EffectKey, value.UncertainOrigin) |> Map.ofList
+              Expect.equal origins.["prepared"] (Some UncertainAfterPrepare) "prepared origin retained"
+              Expect.equal origins.["applied"] (Some UncertainAfterApply) "applied origin retained"
+              let listed = store.ListUncertainEffects org
+              Expect.equal (listed |> List.map (fun value -> value.EffectKey)) [ "prepared"; "applied" ] "stable list order"
+              Expect.isEmpty (store.ListUncertainEffects foreignOrg) "foreign stale effect is not disclosed"
+
+              let liveReplay =
+                  prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "live" payload
+              Expect.equal liveReplay.Checkpoint.State EffectPrepared "live authority remains prepared"
+
+              match store.MarkStaleEffectsUncertain org with
+              | Ok repeated -> Expect.isEmpty repeated "uncertainty marking is idempotent"
+              | Error error -> failtestf "repeated uncertainty marking failed: %s" error
+
+              use renew = conn.CreateCommand()
+              renew.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() + interval '1 minute'
+                   WHERE organization_id = @o AND id = @a"
+              renew.Parameters.AddWithValue("o", org.Value) |> ignore
+              renew.Parameters.AddWithValue("a", preparedAttempt.AttemptId.Value) |> ignore
+              Expect.equal (renew.ExecuteNonQuery()) 1 "authority restored only to probe terminal uncertainty"
+
+              expectError
+                  "uncertain is terminal until reconciliation"
+                  (store.AdvanceEffect(
+                      org,
+                      preparedAttempt.AttemptId,
+                      preparedFence,
+                      "agent-p",
+                      "prepared",
+                      payload,
+                      RecordApplied))
+          }
+
+          test "marker snapshot excludes a checkpoint committed behind its attempt locks" {
+              let org, project = freshProject ()
+              let firstAttempt, firstFence = runningAttempt org project "effect-snapshot-first" "agent-first" 60
+              let lateAttempt, lateFence = runningAttempt org project "effect-snapshot-late" "agent-late" 60
+              let payload = [| 4uy; 2uy |]
+              prepareEffectOk org firstAttempt.AttemptId firstFence "agent-first" "snapshot-first" payload |> ignore
+
+              use expireFirst = new Npgsql.NpgsqlConnection(connectionString)
+              expireFirst.Open()
+              use expireFirstCmd = expireFirst.CreateCommand()
+              expireFirstCmd.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+                   WHERE organization_id = @o AND id = @a"
+              expireFirstCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              expireFirstCmd.Parameters.AddWithValue("a", firstAttempt.AttemptId.Value) |> ignore
+              Expect.equal (expireFirstCmd.ExecuteNonQuery()) 1 "first authority made stale"
+
+              use blocker = new Npgsql.NpgsqlConnection(connectionString)
+              blocker.Open()
+              use blockerTx = blocker.BeginTransaction()
+              use lockAttempt = blocker.CreateCommand()
+              lockAttempt.Transaction <- blockerTx
+              lockAttempt.CommandText <-
+                  "SELECT id FROM attempts
+                   WHERE organization_id = @o AND id = @a
+                   FOR UPDATE"
+              lockAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+              lockAttempt.Parameters.AddWithValue("a", firstAttempt.AttemptId.Value) |> ignore
+              Expect.isNotNull (lockAttempt.ExecuteScalar()) "test holds the first attempt lock"
+
+              let firstPass =
+                  Async.StartAsTask(async {
+                      return Store(connectionString).MarkStaleEffectsUncertain org
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec markerSnapshotEstablished remaining =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1 FROM pg_stat_activity
+                           WHERE pid <> pg_backend_pid()
+                             AND state = 'active'
+                             AND wait_event_type = 'Lock'
+                             AND query LIKE '%FG026_MARKER_SNAPSHOT%'
+                       )"
+
+                  if waiting.ExecuteScalar() :?> bool then
+                      true
+                  elif remaining = 0 then
+                      false
+                  else
+                      Threading.Thread.Sleep 20
+                      markerSnapshotEstablished (remaining - 1)
+
+              Expect.isTrue
+                  (markerSnapshotEstablished 100)
+                  "marker established its stable snapshot before blocking"
+
+              prepareEffectOk org lateAttempt.AttemptId lateFence "agent-late" "snapshot-late" payload |> ignore
+
+              use expireLate = observer.CreateCommand()
+              expireLate.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+                   WHERE organization_id = @o AND id = @a"
+              expireLate.Parameters.AddWithValue("o", org.Value) |> ignore
+              expireLate.Parameters.AddWithValue("a", lateAttempt.AttemptId.Value) |> ignore
+              Expect.equal (expireLate.ExecuteNonQuery()) 1 "late checkpoint committed and then became stale"
+
+              blockerTx.Commit()
+              Expect.isTrue (firstPass.Wait(TimeSpan.FromSeconds 5.0)) "first bounded reconciliation completed"
+
+              let firstMarked =
+                  match firstPass.Result with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "first reconciliation returned a database error: %s" error
+
+              Expect.equal
+                  (firstMarked |> List.map (fun checkpoint -> checkpoint.EffectKey))
+                  [ "snapshot-first" ]
+                  "first stable snapshot cannot see or lock the late checkpoint"
+
+              let secondMarked =
+                  match store.MarkStaleEffectsUncertain org with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "second reconciliation returned a database error: %s" error
+
+              Expect.equal
+                  (secondMarked |> List.map (fun checkpoint -> checkpoint.EffectKey))
+                  [ "snapshot-late" ]
+                  "the next bounded pass reconciles the late checkpoint"
+          }
+
+          test "database trigger rejects hostile identity and transition SQL" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-trigger" "effect-agent" 60
+              let payload = Text.Encoding.UTF8.GetBytes "trigger body"
+              let prepared = prepareEffectOk org admitted.AttemptId fence "effect-agent" "guarded" payload
+              prepareEffectOk org admitted.AttemptId fence "effect-agent" "timing-one" payload |> ignore
+              prepareEffectOk org admitted.AttemptId fence "effect-agent" "timing-two" payload |> ignore
+              prepareEffectOk org admitted.AttemptId fence "effect-agent" "timing-three" payload |> ignore
+              advanceEffectOk org admitted.AttemptId fence "effect-agent" "timing-one" payload RecordApplied |> ignore
+              advanceEffectOk org admitted.AttemptId fence "effect-agent" "timing-two" payload RecordApplied |> ignore
+
+              let expectSqlRejected description sql bind =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <- sql
+                  bind cmd
+
+                  try
+                      cmd.ExecuteNonQuery() |> ignore
+                      failtestf "%s unexpectedly succeeded" description
+                  with :? Npgsql.PostgresException ->
+                      ()
+
+              let bindIdentity (cmd: Npgsql.NpgsqlCommand) =
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                  cmd.Parameters.AddWithValue("k", "guarded") |> ignore
+
+              let bindKey key (cmd: Npgsql.NpgsqlCommand) =
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                  cmd.Parameters.AddWithValue("k", key) |> ignore
+
+              expectSqlRejected
+                  "digest rewrite"
+                  "UPDATE effect_checkpoints
+                   SET payload_digest = decode(repeat('00', 32), 'hex')
+                  WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  bindIdentity
+
+              expectSqlRejected
+                  "checkpoint deletion"
+                  "DELETE FROM effect_checkpoints
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  bindIdentity
+
+              let afterDelete = prepareEffectOk org admitted.AttemptId fence "effect-agent" "guarded" payload
+              Expect.isTrue afterDelete.WasReplay "reprepare cannot replace a deleted identity"
+
+              expectSqlRejected
+                  "effect key rewrite"
+                  "UPDATE effect_checkpoints
+                   SET effect_key = 'renamed'
+                  WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  bindIdentity
+
+              expectSqlRejected
+                  "application before preparation"
+                  "UPDATE effect_checkpoints
+                   SET state = 'applied', applied_at = prepared_at - interval '1 second'
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  (bindKey "timing-three")
+
+              expectSqlRejected
+                  "confirmation before application"
+                  "UPDATE effect_checkpoints
+                   SET state = 'confirmed', confirmed_at = applied_at - interval '1 second'
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  (bindKey "timing-one")
+
+              expectSqlRejected
+                  "application timestamp rewrite during confirmation"
+                  "UPDATE effect_checkpoints
+                   SET state = 'confirmed',
+                       applied_at = applied_at + interval '1 microsecond',
+                       confirmed_at = clock_timestamp()
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  (bindKey "timing-two")
+
+              expectSqlRejected
+                  "prepared-to-confirmed jump"
+                  "UPDATE effect_checkpoints
+                   SET state = 'confirmed', applied_at = clock_timestamp(), confirmed_at = clock_timestamp()
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  bindIdentity
+
+              expectSqlRejected
+                  "live checkpoint forced uncertain"
+                  "UPDATE effect_checkpoints
+                   SET state = 'uncertain', uncertain_from = 'prepared', uncertain_at = clock_timestamp()
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  bindIdentity
+
+              expectSqlRejected
+                  "direct applied insertion"
+                  "INSERT INTO effect_checkpoints
+                     (organization_id, attempt_id, effect_key, fence, authority_owner,
+                      restore_epoch, payload_digest, state, applied_at)
+                   VALUES (@o, @a, 'direct', @f, @owner, @e, decode(@digest, 'hex'),
+                           'applied', clock_timestamp())"
+                  (fun cmd ->
+                      cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                      cmd.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                      cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+                      cmd.Parameters.AddWithValue("owner", "effect-agent") |> ignore
+                      cmd.Parameters.AddWithValue("e", prepared.Checkpoint.RestoreEpoch.Value) |> ignore
+                      cmd.Parameters.AddWithValue("digest", prepared.Checkpoint.PayloadSha256) |> ignore)
+
+              expectSqlRejected
+                  "future preparation time"
+                  "INSERT INTO effect_checkpoints
+                     (organization_id, attempt_id, effect_key, fence, authority_owner,
+                      restore_epoch, payload_digest, state, prepared_at)
+                   VALUES (@o, @a, 'future', @f, @owner, @e, decode(@digest, 'hex'),
+                           'prepared', clock_timestamp() + interval '1 hour')"
+                  (fun cmd ->
+                      cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                      cmd.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                      cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+                      cmd.Parameters.AddWithValue("owner", "effect-agent") |> ignore
+                      cmd.Parameters.AddWithValue("e", prepared.Checkpoint.RestoreEpoch.Value) |> ignore
+                      cmd.Parameters.AddWithValue("digest", prepared.Checkpoint.PayloadSha256) |> ignore)
+
+              use expire = new Npgsql.NpgsqlConnection(connectionString)
+              expire.Open()
+              use expireCmd = expire.CreateCommand()
+              expireCmd.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+                   WHERE organization_id = @o AND id = @a"
+              expireCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              expireCmd.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              Expect.equal (expireCmd.ExecuteNonQuery()) 1 "authority expired for uncertainty ordering probe"
+
+              expectSqlRejected
+                  "uncertainty before preparation"
+                  "UPDATE effect_checkpoints
+                   SET state = 'uncertain', uncertain_from = 'prepared',
+                       uncertain_at = prepared_at - interval '1 second'
+                   WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+                  (bindKey "timing-three")
+
+              Expect.equal afterDelete.Checkpoint.State EffectPrepared "all hostile statements were atomic"
+              Expect.equal (checkpointCount org admitted.AttemptId) 4 "hostile insert and delete changed no rows"
+          }
+
+          test "invalid API inputs and unknown keys have no effect" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "effect-inputs" "effect-agent" 60
+              let payload = [| 1uy |]
+
+              expectError "blank effect key" (store.PrepareEffect(org, admitted.AttemptId, fence, "effect-agent", "  ", payload))
+              expectError
+                  "oversized effect key"
+                  (store.PrepareEffect(org, admitted.AttemptId, fence, "effect-agent", String.replicate 257 "k", payload))
+              expectError "blank owner" (store.PrepareEffect(org, admitted.AttemptId, fence, " ", "key", payload))
+              expectError
+                  "null payload"
+                  (store.PrepareEffect(org, admitted.AttemptId, fence, "effect-agent", "key", null))
+              expectError
+                  "unknown advancement key"
+                  (store.AdvanceEffect(
+                      org,
+                      admitted.AttemptId,
+                      fence,
+                      "effect-agent",
+                      "missing",
+                      payload,
+                      RecordApplied))
+
+              Expect.equal (checkpointCount org admitted.AttemptId) 0 "invalid inputs are side-effect free"
           } ]
 
 /// FG-061. Scheduling is where a cross-tenant leak or a double-claim would do
@@ -652,4 +1377,7 @@ let main argv =
             runTestsWithCLIArgs
                 []
                 argv
-                (testSequenced (testList "Fogell.Store" [ migrations; admission; fencing; scheduling; logs ]))
+                (testSequenced
+                    (testList
+                        "Fogell.Store"
+                        [ migrations; admission; fencing; effectCheckpoints; scheduling; logs ]))
