@@ -92,26 +92,41 @@
       ;; the writer. Until then they agree, which is the property that matters here.
       stem-of (fn [n] (-> n (str/replace "/" "_") (str/replace ".Jenkinsfile" "")))
 
-      expected-list
+      ;; Carry the originating case beside every exact name it can emit. Staleness
+      ;; is a relation between those two physical files; reversing a receipt name
+      ;; cannot recover it unambiguously because a singleton case may itself be
+      ;; named `foo.b1.Jenkinsfile`.
+      expected-mappings
       (->> (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")
            (mapcat (fn [f]
                      (let [stem (stem-of (fs/file-name f))
                            builds (inc (count (re-seq #"(?m)^//// NEXT BUILD ////\s*$"
                                                       (slurp (fs/file f)))))]
                        (if (= 1 builds)
-                         [stem]
-                         (map #(str stem ".b" %) (range 1 (inc builds))))))))
+                         [{:receipt stem :case f}]
+                         (map (fn [build] {:receipt (str stem ".b" build) :case f})
+                              (range 1 (inc builds))))))))
 
       ;; A COLLISION IS AN ERROR, NOT A DEDUPLICATION. `foo.Jenkinsfile` as a sequence
       ;; synthesises `foo.b1`, and a separate case `foo.b1.Jenkinsfile` expects the same
       ;; name; `set` silently collapsed two expected builds into one and quietly shrank
       ;; the denominator this counting path was just fixed to protect.
-      _ (let [dups (->> expected-list frequencies (filter #(> (val %) 1)) (map key) sort)]
+      _ (let [dups (->> expected-mappings
+                         (map :receipt)
+                         frequencies
+                         (filter #(> (val %) 1))
+                         (map key)
+                         sort)]
           (when (seq dups)
             (println "FAIL: two cases expect the same receipt name:" (str/join ", " dups))
             (System/exit 1)))
 
-      expected-receipts (set expected-list)
+      ;; Construct the lookup only AFTER proving names unique. Building a map first
+      ;; would let last-writer-wins erase the collision this check exists to refuse.
+      expected-case-by-receipt
+      (into {} (map (juxt :receipt :case) expected-mappings))
+
+      expected-receipts (set (keys expected-case-by-receipt))
 
       ;; A RECEIPT NAMING A CORPUS FILE IS TIER-1 EVIDENCE and must survive this filter.
       ;; The orphan filter I added discarded it before `tier-of` looked, so a corpus file
@@ -231,11 +246,6 @@
       ;; on disk still seals validly, because the seal binds the case digest recorded
       ;; when it ran. Verification proves the receipt is intact; mtime is what notices
       ;; the case moved underneath it.
-      case-mtime (into {}
-                       (map (fn [f] [(stem-of (fs/file-name f))
-                                     (fs/last-modified-time (fs/file f))])
-                            (fs/glob (fs/file root "differential/cases") "*.Jenkinsfile")))
-
       ;; MTIME IS ENVIRONMENT STATE AND NEVER ENTERS THE DOCUMENT. A fresh checkout
       ;; gives arbitrary mtimes, so interpolating this into a byte-compared artifact
       ;; would make `--check` fail on a clean clone and publish spurious STALE text —
@@ -244,10 +254,10 @@
       stale-receipts
       (->> (fs/glob (fs/file root "differential/receipts") "*.receipt.txt")
            (keep (fn [f]
-                   (let [n (str/replace (fs/file-name f) #"\.receipt\.txt$" "")
-                         case-stem (str/replace n #"\.b\d+$" "")]
-                     (when-let [ct (get case-mtime case-stem)]
-                       (when (pos? (compare ct (fs/last-modified-time f)))
+                   (let [n (str/replace (fs/file-name f) #"\.receipt\.txt$" "")]
+                     (when-let [case-file (get expected-case-by-receipt n)]
+                       (when (pos? (compare (fs/last-modified-time (fs/file case-file))
+                                            (fs/last-modified-time f)))
                          n)))))
            sort)
 

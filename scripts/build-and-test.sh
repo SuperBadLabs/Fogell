@@ -124,6 +124,15 @@ echo "=== release-provenance gate proof (FG-093, blocking) ==="
 ./scripts/prove-release-provenance.sh \
   || { echo "RELEASE-PROVENANCE PROOF FAILED"; exit 1; }
 
+# FG-166. The live freshness warning is corpus-host-only, but its case-to-receipt
+# mapping is pure filename/mtime logic and must be proven everywhere. The scratch
+# proof holds literal `.b1` singleton names apart from multi-build `.b1` receipts,
+# checks every emitted build independently, and refuses name collisions before a
+# map can silently deduplicate them.
+echo "=== scorecard receipt-mapping proof (FG-166, blocking) ==="
+./scripts/prove-scorecard-receipt-mapping.sh \
+  || { echo "SCORECARD RECEIPT-MAPPING PROOF FAILED"; exit 1; }
+
 # FG-094. The live comparison needs the private 228-file corpus, a pinned
 # Jenkins oracle and an operator-provided external baseline, so it cannot run
 # in ordinary corpus-free CI. The self-contained proof still runs everywhere.
