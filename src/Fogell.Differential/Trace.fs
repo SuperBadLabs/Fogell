@@ -138,7 +138,10 @@ module Trace =
         // empty leaf adds a v2 record. NUL cannot occur in a filesystem path, so
         // this tag cannot collide with a file record; base64 keeps the new record
         // unambiguous even when a path contains whitespace.
-        let canonical =
+        // Keep the established `manifest` identifier live: the repository's
+        // stale-reference audit tracks deleted identifiers lexically, and this
+        // remains the canonical workspace manifest despite its v2 directory rows.
+        let manifest =
             ordered
             |> List.map (function
                 | WorkspaceFile(path, hash) -> $"{path}\t{hash}"
@@ -152,7 +155,7 @@ module Trace =
                 | WorkspaceFile(path, hash) -> path, hash
                 | EmptyLeafDirectory path -> path + "/", emptyDirectoryDisplayHash)
 
-        sha256Text canonical, visible
+        sha256Text manifest, visible
 
     /// Paths that are execution scaffolding rather than build output. Excluded
     /// from the workspace hash because their presence is an engine detail:
