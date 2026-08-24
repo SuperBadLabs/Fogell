@@ -929,16 +929,6 @@ let main argv =
                         printfn $"skip (durably finished): {stage}#{i}"
 
                     run
-              OnStepReason =
-                fun stage i reason ->
-                    // beside the finish it explains. A lost reason after a crash
-                    // costs an explanation, never a disposition — Resume tolerates
-                    // a finish-without-reason by design. NOTE the cost this comment
-                    // once denied: under FsyncPolicy.EveryStep this separate Append
-                    // is a SECOND fsync barrier on the failure path (found by the
-                    // fleet session's review of PR #97); folding it into the
-                    // finish's write is FG-207.
-                    journal.Append(StepReason(stage, i, reason))
               OnRetryAttempt =
                 fun stage n ->
                     // durable BEFORE the attempt's first step, like OnStepStarted:
@@ -958,7 +948,8 @@ let main argv =
               // losing its separate unstable stage decoration after restart.
               OnStepStageWarning =
                 fun stage i status -> journal.Append(StepStageWarning(stage, i, status))
-              OnStepFinished = fun stage i status -> journal.Append(StepFinished(stage, i, status))
+              OnStepFinished =
+                fun stage i status reason -> journal.AppendStepFinished(stage, i, status, reason)
               OnStageCommitted =
                 fun stage ->
                     journal.Append(StageCommitted stage)

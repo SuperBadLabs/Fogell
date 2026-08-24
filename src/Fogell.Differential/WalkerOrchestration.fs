@@ -66,15 +66,12 @@ type PersistenceHooks =
       /// BEFORE OnStepFinished so a durably finished step can never lose the
       /// warning that its enclosing stage must replay after restart.
       OnStepStageWarning: string -> int -> BuildStatus -> unit
-      /// stage -> stepIndex -> the step's worst sunk status.
-      OnStepFinished: string -> int -> BuildStatus -> unit
+      /// stage -> stepIndex -> the step's worst sunk status and, only for a
+      /// failed/aborted disposition, its captured diagnostic. One callback makes
+      /// the ordering and shared durability unit a type-level contract.
+      OnStepFinished: string -> int -> BuildStatus -> string option -> unit
       /// The stage boundary — the journal's group-commit point.
       OnStageCommitted: string -> unit
-      /// FG-114. stage -> stepIndex -> the ERROR-shaped diagnostic a FAILED (or
-      /// aborted) step emitted — the REASON, made durable beside the status,
-      /// because `failure` alone sent every reader to a console that no longer
-      /// says why. Called after OnStepFinished, only when a reason was captured.
-      OnStepReason: string -> int -> string -> unit
       /// FG-135. stage -> retry attempt N (>= 2) is starting. Journaled (and made
       /// durable) BEFORE the attempt's first step, so a resume can tell a failed
       /// prior attempt's records from the live attempt's. Implementations also
@@ -2650,14 +2647,20 @@ module WalkerOrchestration =
                                 if observedStageWarning.Value <> BuildStatus.Success then
                                     hooks.OnStepStageWarning stage.Name i observedStageWarning.Value
 
-                                hooks.OnStepFinished stage.Name i observed.Value
-
                                 // FG-114: the reason travels only beside a failed
                                 // or aborted finish — a green step's diagnostics
-                                // are narration, not explanation
-                                if observed.Value = BuildStatus.Failure || observed.Value = BuildStatus.Aborted then
-                                    observing.LastDiagnostic.Value
-                                    |> Option.iter (fun r -> hooks.OnStepReason stage.Name i r))
+                                // are narration, not explanation. Passing both
+                                // through one callback lets the journal force the
+                                // Finish/Reason group once without pending shared
+                                // state between parallel branch callbacks.
+                                let reason =
+                                    if observed.Value = BuildStatus.Failure
+                                       || observed.Value = BuildStatus.Aborted then
+                                        observing.LastDiagnostic.Value
+                                    else
+                                        None
+
+                                hooks.OnStepFinished stage.Name i observed.Value reason)
 
 
 

@@ -27,6 +27,15 @@ for p in tests/*/; do
   fi
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+
+# FG-207. StepFinished and its optional StepReason are historical records but
+# one current durability group: exact order under one lock and exactly one
+# EveryStep Flush(true). The deterministic observer proof runs everywhere;
+# strace adds a syscall-level count only on hosts that provide it.
+echo "=== grouped step-finish force proof (FG-207, blocking) ==="
+./scripts/prove-fg207-fsync.sh \
+  || { echo "GROUPED STEP-FINISH FORCE PROOF FAILED"; exit 1; }
+
 # FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The
 # backlog it was introduced against (30) is zero, so the check now fails the build instead
 # of printing at it — an advisory check nobody must act on decays into noise.

@@ -6,4 +6,9 @@
     <Compile Include="Resume.fs" />
   </ItemGroup>
   <ItemGroup><ProjectReference Include="../Fogell.Domain/Fogell.Domain.fsproj" /></ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Journal.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
