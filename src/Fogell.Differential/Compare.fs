@@ -6,6 +6,7 @@ open System.Security.Cryptography
 
 /// Why a comparison failed, named so a report is machine-readable.
 type Divergence =
+    | DispositionDiffers of jenkins: ExecutionDisposition * fogell: ExecutionDisposition
     | ResultDiffers of jenkins: string * fogell: string
     | DiagnosticSilence of engine: string
     /// One engine printed `timestamps()` prefixes and the other did not. The
@@ -25,6 +26,7 @@ type Divergence =
 
     member this.Describe =
         match this with
+        | DispositionDiffers(j, f) -> $"execution disposition: jenkins={j} fogell={f}"
         | ResultDiffers(j, f) -> $"terminal result: jenkins={j} fogell={f}"
         | DiagnosticSilence engine -> $"{engine} failed without reporting a reason"
         | TimestampMismatch(j, f) ->
@@ -366,7 +368,7 @@ module Compare =
     let workspaceWasCompared (jenkins: Trace) (fogell: Trace) =
         jenkins.WorkspaceHash <> "not-collected" && fogell.WorkspaceHash <> "not-collected"
 
-    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict * string list =
+    let private executedTraces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict * string list =
         let outputDivergence, folds =
             compareOutput (jenkins.Concurrent || fogell.Concurrent) envReplacements jenkins.Output fogell.Output
 
@@ -462,6 +464,30 @@ module Compare =
 
         (if List.isEmpty divergences then Proven else Diverged divergences), folds
 
+    /// FG-129. Refusal is a comparison axis before output shaping. A one-sided
+    /// refusal is always a semantic divergence. When both sides refused, neither
+    /// engine executed user code, so compiler narration, timestamp coverage and
+    /// diagnostic wording are not runtime semantics; compare only disposition,
+    /// result and the workspace snapshot.
+    let traces (envReplacements: (string * string) list) (jenkins: Trace) (fogell: Trace) : Verdict * string list =
+        match jenkins.Disposition, fogell.Disposition with
+        | RefusedBeforeExecution, ExecutedOrRuntime
+        | ExecutedOrRuntime, RefusedBeforeExecution ->
+            Diverged [ DispositionDiffers(jenkins.Disposition, fogell.Disposition) ], []
+        | RefusedBeforeExecution, RefusedBeforeExecution ->
+            let divergences =
+                [ if jenkins.Result <> fogell.Result then
+                      ResultDiffers(jenkins.Result, fogell.Result)
+
+                  if
+                      workspaceWasCompared jenkins fogell
+                      && jenkins.WorkspaceHash <> fogell.WorkspaceHash
+                  then
+                      WorkspaceDiffers(jenkins.WorkspaceHash, fogell.WorkspaceHash) ]
+
+            (if List.isEmpty divergences then Proven else Diverged divergences), []
+        | ExecutedOrRuntime, ExecutedOrRuntime -> executedTraces envReplacements jenkins fogell
+
     /// FG-167. Whether a comparison ran in MULTISET mode, decided exactly as
     /// `compareOutput` decides it — the DISJUNCTION, not per-trace. One engine reporting
     /// a concurrent case puts BOTH sides through multiset mode, so a per-trace test would
@@ -489,8 +515,14 @@ module Compare =
     /// verifier that passed.
     ///
     /// Derived-therefore-safe is only true if something re-derives it. Nothing did.
-    let verdictLines (verdict: Verdict) (workspaceCompared: bool) : string list =
+    let verdictLines (verdict: Verdict) (workspaceCompared: bool) (bothRefused: bool) : string list =
         match verdict with
+        | Proven when workspaceCompared && bothRefused ->
+            [ "VERDICT: PROVEN (tier 1) — same pre-execution refusal, same result, same workspace hash; output not compared" ]
+        | Proven when bothRefused ->
+            [ "VERDICT: PROVEN-PARTIAL — same pre-execution refusal and same result; output not compared."
+              "  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,"
+              "  so this is NOT a tier-1 claim under ADR 0001. See FG-002b." ]
         | Proven when workspaceCompared ->
             [ "VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash" ]
         | Proven ->
@@ -521,6 +553,16 @@ module Compare =
           "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
           "  minus fenced regions; it is NOT implemented, so this list is what holds today." ]
 
+    let private refusalUnsealedRegions =
+        [ "NOT SEALED, in full: this contract block; the workspace FILE LISTING below"
+          "  (the workspace HASH is sealed, the listing under it is not); any engine notes;"
+          "  and the FG-119 RECOVERED provenance block, which can be added, removed or"
+          "  fabricated without breaking the seal (FG-128). Output and timestamp evidence"
+          "  are omitted and are neither compared nor sealed when either engine refused."
+          "  So `--verify-seals` passing does NOT mean this document is unaltered — it means"
+          "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
+          "  minus fenced regions; it is NOT implemented, so this list is what holds today." ]
+
     /// FG-161. The receipt filename a case name produces. ONE derivation, because the
     /// writer picks the path and the verifier must check the file it found is the one that
     /// name would have produced.
@@ -533,12 +575,39 @@ module Compare =
 
     /// FG-161. One side of a comparison, reduced to exactly the facts the seal binds.
     type SealedSide =
-        { Result: string
+        { Disposition: ExecutionDisposition
+          Result: string
           WorkspaceHash: string
           TimestampCoverage: string
           /// Already in SEALED order — sorted for a multiset comparison, literal
           /// otherwise. The sort belongs to the caller that knows which mode ran.
           Output: string list }
+
+    type private ComparisonMode =
+        | ExecutedSequence
+        | ExecutedMultiset
+        | OneRefused
+        | BothRefused
+
+    let private comparisonMode comparedAsMultiset (traces: Trace option list) =
+        let refused =
+            traces
+            |> List.choose id
+            |> List.filter (fun trace -> trace.Disposition = RefusedBeforeExecution)
+            |> List.length
+
+        match refused with
+        | n when n >= 2 -> BothRefused
+        | 1 -> OneRefused
+        | _ when comparedAsMultiset -> ExecutedMultiset
+        | _ -> ExecutedSequence
+
+    let private modeWire =
+        function
+        | ExecutedSequence -> "sequence"
+        | ExecutedMultiset -> "multiset"
+        | OneRefused
+        | BothRefused -> "omitted"
 
     /// FG-161. THE ONE DEFINITION of the string a seal hashes.
     ///
@@ -586,7 +655,17 @@ module Compare =
                 // "no elements" apart from "one empty element" is ambiguous by construction.
                 let joined = String.concat "\n" x.Output
                 let n = List.length x.Output
-                $"{x.Result}|{x.WorkspaceHash}|timestamps={x.TimestampCoverage}|lines={n}|{joined}"
+                let legacy = $"{x.Result}|{x.WorkspaceHash}|timestamps={x.TimestampCoverage}|lines={n}|{joined}"
+
+                if sealedOutputMode = "omitted" then
+                    let disposition =
+                        match x.Disposition with
+                        | ExecutedOrRuntime -> "executed-or-runtime"
+                        | RefusedBeforeExecution -> "refused-before-execution"
+
+                    $"disposition={disposition}|{x.Result}|{x.WorkspaceHash}"
+                else
+                    legacy
             | None -> "<none>"
 
         // Folds join the sealed content: a fold section edited after the fact must be as
@@ -618,6 +697,14 @@ module Compare =
 
         let comparedAsMultiset = comparedAsMultisetIn [ j; f ]
         let caseHex = caseDigest caseBytes
+        let comparisonMode = comparisonMode comparedAsMultiset [ j; f ]
+        let anyRefused = comparisonMode = OneRefused || comparisonMode = BothRefused
+        let bothRefused = comparisonMode = BothRefused
+        let comparisonUsesMultiset = comparisonMode = ExecutedMultiset
+        let workspaceCompared =
+            match j, f with
+            | Some jt, Some ft -> workspaceWasCompared jt ft
+            | _ -> false
 
         let comparable =
             let sealedSide (t: Trace option) =
@@ -643,14 +730,18 @@ module Compare =
                     // exactly the nondeterminism and nothing else — content and
                     // MULTIPLICITY stay bound.
                     Some
-                        { Result = x.Result
+                        { Disposition = x.Disposition
+                          Result = x.Result
                           WorkspaceHash = x.WorkspaceHash
                           // the SAME classifier the comparison uses. Three copies of
                           // this rule existed — compare, seal, render — and two of them
                           // disagreed about `stamped > total`, so a proof could compare
                           // one fact and seal another.
                           TimestampCoverage = Trace.timestampCoverage x.Timestamps
-                          Output = if comparedAsMultiset then List.sort x.Output else x.Output }
+                          Output =
+                              if anyRefused then []
+                              elif comparisonUsesMultiset then List.sort x.Output
+                              else x.Output }
                 | None -> None
 
             // FG-164. THE CASE SOURCE IS IN THE SEAL. It bound the file NAME only, so
@@ -668,19 +759,14 @@ module Compare =
             // call site pass anything — the seal would bind it and `receipt` could not
             // tell. Hashing here makes the binding non-bypassable, which is the same
             // collapse-the-duplication move that ended the fallback and list drift.
-            let workspaceCompared =
-                match j, f with
-                | Some jt, Some ft -> workspaceWasCompared jt ft
-                | _ -> false
-
-            let mode = if comparedAsMultiset then "multiset" else "sequence"
+            let mode = modeWire comparisonMode
 
             sealedContent
                 file
                 caseHex
                 core
                 mode
-                (verdictLines verdict workspaceCompared)
+                (verdictLines verdict workspaceCompared bothRefused)
                 (sealedSide j)
                 (sealedSide f)
                 folds
@@ -691,7 +777,20 @@ module Compare =
           Jenkins = j
           Fogell = f
           ComparisonContract =
-            Trace.comparisonContract
+            (if bothRefused then
+                 [ if workspaceCompared then
+                       "PRE-EXECUTION REFUSAL: disposition, terminal result and workspace hash are compared and sealed."
+                   else
+                       "PRE-EXECUTION REFUSAL: disposition and terminal result are compared and sealed; workspace is not compared."
+                   "  Compiler narration, output, timestamp coverage and failure-reason wording are omitted"
+                   "  from comparison because no user Pipeline code ran." ]
+             elif anyRefused then
+                 [ "DISPOSITION DIVERGENCE: only execution disposition is compared. Result, workspace,"
+                   "  output, timestamp coverage and failure-reason wording are not compared."
+                   "EXECUTED-SIDE EVIDENCE: any executed-side result and workspace shown below are"
+                   "  rendered and sealed for audit only; output is omitted, and none are equality axes." ]
+             else
+                 Trace.comparisonContract)
             // FG-161. WHAT THE SEAL DOES NOT COVER, in the document it does not cover it
             // in. The seal binds an ENUMERATED subset — verdict, results, workspace
             // hashes, output, folds, case digest, core, output mode — so everything else
@@ -699,8 +798,8 @@ module Compare =
             // limit and a lie: `--verify-seals` passing means the sealed fields are
             // intact, not that this document is unaltered. FG-169 replaces the whole
             // scheme with one that binds the document minus fenced regions.
-            @ unsealedRegions
-            @ (if comparedAsMultiset then
+            @ (if anyRefused then refusalUnsealedRegions else unsealedRegions)
+            @ (if comparisonUsesMultiset then
                    [ "PARALLEL: output compared as a sorted multiset, not a sequence — concurrent"
                      "  branches interleave nondeterministically, so a sequence comparison would"
                      "  pass or fail on OS scheduling. Line content and multiplicity ARE compared;"
@@ -745,7 +844,9 @@ module Compare =
         // guessed would fail every parallel receipt. Reading the mode from PROSE in the
         // contract block was the alternative, and coupling a hash check to the wording of
         // an explanatory sentence is a defect waiting for the first edit.
-        let sealedOutputMode = if comparedAsMultiset r then "multiset" else "sequence"
+        let comparisonMode = comparisonMode (comparedAsMultiset r) [ r.Jenkins; r.Fogell ]
+        let anyRefused = comparisonMode = OneRefused || comparisonMode = BothRefused
+        let sealedOutputMode = modeWire comparisonMode
         line $"case-digest:  {r.CaseDigest}"
         line $"sealed-output: {sealedOutputMode}"
         line ""
@@ -753,6 +854,12 @@ module Compare =
         let workspaceCompared =
             match r.Jenkins, r.Fogell with
             | Some j, Some f -> workspaceWasCompared j f
+            | _ -> false
+
+        let bothRefused =
+            match r.Jenkins, r.Fogell with
+            | Some j, Some f ->
+                j.Disposition = RefusedBeforeExecution && f.Disposition = RefusedBeforeExecution
             | _ -> false
 
         if not (List.isEmpty r.RecoveredFrom) then
@@ -773,7 +880,7 @@ module Compare =
             line "  that recovers REPEATEDLY across runs is a defect report; treat it so."
             line ""
 
-        for l in verdictLines r.Verdict workspaceCompared do
+        for l in verdictLines r.Verdict workspaceCompared bothRefused do
             line l
 
         // The timestamp fact, rendered WHEN THERE IS ANY — and the sentence here
@@ -791,10 +898,11 @@ module Compare =
         // count is non-zero and the line appears).
         match r.Jenkins, r.Fogell with
         | Some j, Some f
-            when fst j.Timestamps > 0
-                 || fst f.Timestamps > 0
-                 || not (Trace.timestampCountsValid j.Timestamps)
-                 || not (Trace.timestampCountsValid f.Timestamps) ->
+            when not anyRefused
+                 && (fst j.Timestamps > 0
+                     || fst f.Timestamps > 0
+                     || not (Trace.timestampCountsValid j.Timestamps)
+                     || not (Trace.timestampCountsValid f.Timestamps)) ->
             line ""
 
             let show ((stamped, total) as ts) =
@@ -840,12 +948,17 @@ module Compare =
             match t with
             | None -> line "  (did not run)"
             | Some x ->
+                if x.Disposition = RefusedBeforeExecution then
+                    line "  disposition: refused-before-execution"
+
                 line $"  result:         {x.Result}"
                 line $"  workspace-hash: {x.WorkspaceHash}"
-                line $"  output ({x.Output.Length} lines):"
 
-                for l in x.Output do
-                    line $"    | {l}"
+                if not anyRefused && x.Disposition = ExecutedOrRuntime then
+                    line $"  output ({x.Output.Length} lines):"
+
+                    for l in x.Output do
+                        line $"    | {l}"
 
                 if not (List.isEmpty x.WorkspaceFiles) then
                     line "  workspace:"
@@ -988,7 +1101,8 @@ module Compare =
         // the existing extractor.
         let accountable =
             let sideShapes (l: string) =
-                l.StartsWith "  result:"
+                l = "  disposition: refused-before-execution"
+                || l.StartsWith "  result:"
                 || l.StartsWith "  workspace-hash:"
                 || l.StartsWith "  output ("
                 || l.StartsWith "    | "
@@ -1110,10 +1224,11 @@ module Compare =
 
         match field "# Differential receipt — ", field "jenkins-core: ", field "seal:", field "case-digest:" with
         | Some file, Some core, Some storedSeal, Some caseHex ->
-            let multiset =
+            let outputMode =
                 match field "sealed-output:" with
-                | Some "multiset" -> Ok true
-                | Some "sequence" -> Ok false
+                | Some "multiset" -> Ok "multiset"
+                | Some "sequence" -> Ok "sequence"
+                | Some "omitted" -> Ok "omitted"
                 | Some other -> Error $"unknown sealed-output mode: {other}"
                 // NOT DEFAULTED. Guessing `sequence` would make every parallel receipt
                 // read as tampered, and guessing `multiset` would stop binding order for
@@ -1183,7 +1298,7 @@ module Compare =
                     else
                         None
 
-            let side (name: string) (cov: string) (sortOutput: bool) =
+            let side (name: string) (cov: string) (sortOutput: bool) (omitOutput: bool) =
                 match sideBlock name with
                 | None -> Ok None
                 | Some block when block |> List.exists (fun l -> l.Trim() = "(did not run)") ->
@@ -1261,31 +1376,58 @@ module Compare =
                             | 1 -> None
                             | n -> Some $"{name} has {n} '{prefix.Trim()}' lines — expected exactly one")
 
-                    match dupField with
-                    | Some why -> Error why
-                    | None ->
+                    let disposition =
+                        let fields = block |> List.filter (fun l -> l.StartsWith "  disposition:")
 
-                    match headers with
-                    | [ declared ] when declared <> List.length output ->
-                        Error $"{name} declares {declared} output lines but carries {List.length output}"
-                    | [ _ ] ->
-                        match get "  result:", get "  workspace-hash:" with
-                        | Some result, Some ws ->
-                            Ok(
-                                Some
-                                    { Result = result
-                                      WorkspaceHash = ws
-                                      TimestampCoverage = cov
-                                      Output = if sortOutput then List.sort output else output }
-                            )
-                        | _ -> Error $"{name} block has no result/workspace-hash"
-                    | hs -> Error $"{name} has {List.length hs} output headers — expected exactly one"
+                        match fields with
+                        | [] -> Ok ExecutedOrRuntime
+                        | [ "  disposition: refused-before-execution" ] ->
+                            match block with
+                            | "  disposition: refused-before-execution" :: result :: _
+                                when result.StartsWith "  result:" -> Ok RefusedBeforeExecution
+                            | _ -> Error $"{name} disposition marker is not immediately before result"
+                        | [ value ] -> Error $"{name} has unknown disposition marker: {value.Trim()}"
+                        | values -> Error $"{name} has {List.length values} disposition markers — expected at most one"
 
-            match multiset, coverage with
+                    match dupField, disposition with
+                    | Some why, _ -> Error why
+                    | _, Error why -> Error why
+                    | None, Ok disposition ->
+                        let expectedHeaders =
+                            if omitOutput then 0
+                            else
+                                match disposition with
+                                | ExecutedOrRuntime -> 1
+                                | RefusedBeforeExecution -> 0
+
+                        match headers with
+                        | [ declared ] when declared <> List.length output ->
+                            Error $"{name} declares {declared} output lines but carries {List.length output}"
+                        | hs when List.length hs <> expectedHeaders ->
+                            Error $"{name} has {List.length hs} output headers — expected exactly {expectedHeaders}"
+                        | [] when not (List.isEmpty output) ->
+                            Error $"{name} has omitted output mode but carries {List.length output} output line(s)"
+                        | _ ->
+                            match get "  result:", get "  workspace-hash:" with
+                            | Some result, Some ws ->
+                                Ok(
+                                    Some
+                                        { Disposition = disposition
+                                          Result = result
+                                          WorkspaceHash = ws
+                                          TimestampCoverage = cov
+                                          Output = if sortOutput then List.sort output else output }
+                                )
+                            | _ -> Error $"{name} block has no result/workspace-hash"
+
+            match outputMode, coverage with
             | Error why, _ -> SealUnreadable why
             | _, None -> SealUnreadable "timestamps() line present but unparseable"
-            | Ok ms, Some(jCov, fCov) ->
-                match side "Jenkins" jCov ms, side "Fogell" fCov ms with
+            | Ok modeText, Some(jCov, fCov) ->
+                let multiset = modeText = "multiset"
+                let omitOutput = modeText = "omitted"
+
+                match side "Jenkins" jCov multiset omitOutput, side "Fogell" fCov multiset omitOutput with
                 | Error why, _
                 | _, Error why -> SealUnreadable why
                 | Ok j, Ok f ->
@@ -1301,6 +1443,25 @@ module Compare =
                         | None -> []
                         | Some i -> lines |> List.skip i |> List.takeWhile (fun l -> l <> "")
 
+                    let bothRefused =
+                        match j, f with
+                        | Some jt, Some ft ->
+                            jt.Disposition = RefusedBeforeExecution
+                            && ft.Disposition = RefusedBeforeExecution
+                        | _ -> false
+
+                    let anyRefused =
+                        [ j; f ]
+                        |> List.choose id
+                        |> List.exists (fun trace -> trace.Disposition = RefusedBeforeExecution)
+
+                    let refusalCarriesTimestampLine =
+                        anyRefused && (lines |> List.exists (fun l -> l.StartsWith "timestamps(): "))
+
+                    let inconsistentEvidenceMode =
+                        (anyRefused && modeText <> "omitted")
+                        || (not anyRefused && modeText = "omitted")
+
                     // THE FILENAME IS PART OF THE CLAIM. A valid receipt COPIED onto another
                     // expected name verifies fine on its own terms — and `generate-scorecard.bb`
                     // attributes evidence by the ON-DISK filename, so copying any proven
@@ -1308,12 +1469,14 @@ module Compare =
                     // never tested it. The seal binds which case was compared; nothing bound
                     // where the document sits. Raised by review on PR #48 — ninth instance of
                     // one class in this ticket, and the reason FG-169 exists.
-                    if onDiskName <> "" && onDiskName <> receiptFileName file then
+                    if refusalCarriesTimestampLine then
+                        SealRefused "a pre-execution refusal must omit timestamp coverage"
+                    elif inconsistentEvidenceMode then
+                        SealRefused "sealed-output omitted mode must match refusal disposition"
+                    elif onDiskName <> "" && onDiskName <> receiptFileName file then
                         SealRefused
                             $"sealed title '{file}' derives '{receiptFileName file}', but this file is '{onDiskName}'"
                     else
-
-                    let modeText = if ms then "multiset" else "sequence"
 
                     let recomputed =
                         sha256Text (sealedContent file caseHex core modeText verdictBlock j f folds)

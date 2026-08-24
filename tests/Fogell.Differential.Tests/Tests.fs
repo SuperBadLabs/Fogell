@@ -588,7 +588,8 @@ let stringModel =
 /// tests are what let it be replaced by evidence rather than a timestamp.
 let sealBindsCaseSource =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "abc123"
           WorkspaceFiles = []
@@ -658,7 +659,8 @@ let concurrentSealIsOrderStable =
     // BLOCKED FG-161: a seal verifier would have flagged those two as tampered on every
     // single run, and a check that cries wolf twice per run is worse than no check.
     let mkTrace concurrent output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "ws-hash"
           WorkspaceFiles = []
@@ -822,7 +824,8 @@ let silenceIsPerEngine =
     // a Fogell defect. Measured with a `script { sh ... }` probe: fogell=failure, zero
     // output, no DiagnosticSilence in the receipt.
     let trace result reported output =
-        { Result = result
+        { Disposition = ExecutedOrRuntime
+          Result = result
           Output = output
           WorkspaceHash = "ws"
           WorkspaceFiles = []
@@ -952,7 +955,8 @@ let caseSnapshotIsOneRead =
 
 let concurrentFoldAccounting =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "not-collected"
           WorkspaceFiles = []
@@ -1047,7 +1051,8 @@ let concurrentFoldAccounting =
 
 let continuationResolution =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "not-collected"
           WorkspaceFiles = []
@@ -1205,7 +1210,8 @@ let timestampCoverageUsesComparedSurvivors =
             lines
 
     let trace counts =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = [ "visible" ]
           WorkspaceHash = "workspace"
           WorkspaceFiles = []
@@ -2762,9 +2768,10 @@ let genuineNullRuntime =
 
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" (pipeline duplicate) with
-                      | Ok trace -> failtestf "%s duplicate binding unexpectedly ran: %A" key trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{key}: Groovy rejects the duplicate map key"
+                      | Error why -> failtestf "%s duplicate binding remained a harness error: %s" key why
+                      | Ok trace ->
+                          Expect.equal trace.Disposition RefusedBeforeExecution $"{key}: reference refusal is typed"
+                          Expect.equal trace.Result "failure" $"{key}: terminal result"
                           Expect.isFalse
                               (IO.Directory.Exists(IO.Path.Combine(workspace, "reports")))
                               $"{key}: the compile-shaped duplicate refusal happened before report setup"
@@ -3564,10 +3571,10 @@ let unsupportedDeclarativeAgents =
               for label, source in duplicates do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate agent unexpectedly executed: %A" label trace
-                      | Error why -> Expect.stringContains why "malformed_syntax" $"{label}: admission refusal"
+                      | Error why -> failtestf "%s duplicate agent remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt"))) "workspace retained"
+                      Expect.isFalse (IO.Directory.Exists workspace) "fresh workspace was reset before refusal"
                       Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
           }
 
@@ -3687,13 +3694,10 @@ let unsupportedDeclarativeTools =
                     "nested parallel stage", duplicateNestedParallel ] do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate tools unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s duplicate tools remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
@@ -3708,13 +3712,10 @@ let unsupportedDeclarativeTools =
               for label, source in duplicateStructuralSections do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate structural section unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s duplicate structural section remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
@@ -3729,13 +3730,10 @@ let unsupportedDeclarativeTools =
               for label, source in competingStageBodies do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s competing bodies unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s competing bodies remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       for file in [ "ran.txt"; "parallel.txt"; "matrix.txt" ] do
                           Expect.isFalse
@@ -4260,6 +4258,28 @@ script says Checking out Revision {laterCheckout} (spoof)
               | Error why -> failtest why
               | Ok revision ->
                   Expect.equal revision definitionRevision "later checkout and script text cannot replace the definition identity"
+          }
+
+          test "a classified compile refusal attests the definition before the compiler boundary" {
+              let definitionRevision = String.replicate 40 "a"
+              let laterSpoof = String.replicate 40 "b"
+              let console =
+                  $"""Started by user harness
+Checking out Revision {definitionRevision} (refs/remotes/origin/pin)
+org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
+WorkflowScript: 6: unexpected char: '\\' @ line 6, column 30.
+1 error
+script says Checking out Revision {laterSpoof} (spoof)
+"""
+
+              match Jenkins.parseScmDefinitionRevisionFor RefusedBeforeExecution console with
+              | Error why -> failtest why
+              | Ok revision ->
+                  Expect.equal revision definitionRevision "post-boundary text cannot replace definition identity"
+
+              match Jenkins.parseScmDefinitionRevisionFor ExecutedOrRuntime console with
+              | Ok revision -> failtestf "executed disposition accepted a compiler-only boundary: %s" revision
+              | Error why -> Expect.stringContains why "no Pipeline start" "the alternate boundary is refusal-only"
           }
 
           test "missing or conflicting pre-Pipeline definition revisions fail closed" {
@@ -4965,6 +4985,468 @@ let workspaceManifestV2 =
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           } ]
 
+let compileRefusalDisposition =
+    let emptyHash, _ = Trace.hashWorkspace (IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-missing-{Guid.NewGuid():N}"))
+
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+        start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+        start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+        start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+        for arg in args do
+            start.ArgumentList.Add arg
+
+        use child = Diagnostics.Process.Start start
+        let stdout = child.StandardOutput.ReadToEnd()
+        let stderr = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+
+        if child.ExitCode <> 0 then
+            let command = String.concat " " args
+            failwith $"git {command} failed ({child.ExitCode}): {stderr}"
+
+        stdout.Trim()
+
+    let trace disposition result workspace output timestamps reported =
+        { Disposition = disposition
+          Result = result
+          Output = output
+          WorkspaceHash = workspace
+          WorkspaceFiles = []
+          Timestamps = timestamps
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = reported }
+
+    let refused workspace output timestamps reported =
+        trace RefusedBeforeExecution "failure" workspace output timestamps reported
+
+    let executed result workspace output reported =
+        trace ExecutedOrRuntime result workspace output (0, List.length output) reported
+
+    let compilerEnvelope =
+        [| "Started by user unknown or anonymous"
+           "org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:"
+           "WorkflowScript: 6: unexpected char: '\\' @ line 6, column 30."
+           "                   sh 'printf \"[\\8]\\n\"'"
+           "                                ^"
+           ""
+           "1 error"
+           "Finished: FAILURE" |]
+
+    let invalidEight =
+        """pipeline {
+    agent any
+    stages {
+        stage('invalid-eight') {
+            steps { sh 'printf "[\8]\n"' }
+        }
+    }
+}
+"""
+
+    let badOption =
+        """pipeline {
+    agent any
+    options { parallelsAlwaysFailFast(false) }
+    stages { stage('must-not-run') { steps { sh 'touch must-not-run.txt' } } }
+}
+"""
+
+    let validBuild body =
+        "pipeline { agent any stages { stage('one') { steps { " + body + " } } } }"
+
+    let receipt j f =
+        Compare.receipt
+            "refusal.Jenkinsfile"
+            (Text.Encoding.UTF8.GetBytes invalidEight)
+            "2.568.1"
+            []
+            (Ok j)
+            (Ok f)
+
+    testList
+        "FG-129 compile refusals are comparable without becoming execution"
+        [ test "Jenkins classifier requires failure, zero annotations and an ordered exact envelope" {
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" compilerEnvelope)
+                  RefusedBeforeExecution
+                  "the measured invalid escape is a pre-execution refusal"
+
+              let optionEnvelope =
+                  Array.copy compilerEnvelope
+
+              optionEnvelope[2] <-
+                  "WorkflowScript: 4: \"parallelsAlwaysFailFast\" should have 0 arguments but has 1 arguments instead. @ line 4, column 9."
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" optionEnvelope)
+                  RefusedBeforeExecution
+                  "the measured Declarative model refusal has the same disposition"
+
+              let runtime =
+                  [| "Started by user unknown or anonymous"
+                     "[Pipeline] Start of Pipeline"
+                     "[Pipeline] error"
+                     "ERROR: runtime boom"
+                     "Finished: FAILURE" |]
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" runtime)
+                  ExecutedOrRuntime
+                  "a genuine runtime failure executed Pipeline code"
+
+              let spoof =
+                  [| "[Pipeline] Start of Pipeline"
+                     "[Pipeline] echo"
+                     compilerEnvelope[1]
+                     "[Pipeline] echo"
+                     compilerEnvelope[2]
+                     "[Pipeline] echo"
+                     compilerEnvelope[6]
+                     "Finished: FAILURE" |]
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" spoof)
+                  ExecutedOrRuntime
+                  "compiler-shaped build output cannot spoof a refusal"
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "success" compilerEnvelope)
+                  ExecutedOrRuntime
+                  "the terminal failure guard is mandatory"
+          }
+
+          test "Jenkins classifier fails closed on malformed or reordered envelopes" {
+              let mutations =
+                  [ "summary before diagnostic", [| compilerEnvelope[0]; compilerEnvelope[1]; compilerEnvelope[6]; compilerEnvelope[2] |]
+                    "unanchored compiler head", [| "prefix " + compilerEnvelope[1]; compilerEnvelope[2]; compilerEnvelope[6] |]
+                    "unanchored workflow line", [| compilerEnvelope[1]; "prefix " + compilerEnvelope[2]; compilerEnvelope[6] |]
+                    "zero workflow line", [| compilerEnvelope[1]; "WorkflowScript: 0: bad @ line 0, column 1."; compilerEnvelope[6] |]
+                    "zero errors", [| compilerEnvelope[1]; compilerEnvelope[2]; "0 errors" |]
+                    "missing class head", [| compilerEnvelope[2]; compilerEnvelope[6] |] ]
+
+              for label, lines in mutations do
+                  Expect.equal
+                      (Jenkins.classifyExecutionDisposition "failure" lines)
+                      ExecutedOrRuntime
+                      label
+          }
+
+          test "refused SCM attestation requires an exact compiler boundary" {
+              let revision = String.replicate 40 "a"
+              let prefixed =
+                  $"Checking out Revision {revision} (origin/main)\nprefix org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:\n"
+
+              match Jenkins.parseScmDefinitionRevisionFor RefusedBeforeExecution prefixed with
+              | Ok accepted -> failtestf "embedded compiler text became an SCM boundary: %s" accepted
+              | Error why -> Expect.stringContains why "no compiler boundary" "boundary matching is exact"
+          }
+
+          test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+
+              try
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "stale.txt"), "must be wiped")
+
+                  match FogellSide.run [] root "job" invalidEight with
+                  | Error why -> failtestf "input rejection remained a harness error: %s" why
+                  | Ok result ->
+                      Expect.equal result.Disposition RefusedBeforeExecution "typed refusal"
+                      Expect.equal result.Result "failure" "terminal result"
+                      Expect.equal result.Output [] "compiler narration is omitted"
+                      Expect.equal result.WorkspaceHash emptyHash "missing workspace has the canonical empty hash"
+                      Expect.isTrue result.ReportedFailureReason "the refusal reports a terminal failure reason"
+                      Expect.isFalse (IO.Directory.Exists workspace) "fresh cleanup preceded the refusal and no workspace was recreated"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell compile-shaped option refusal is typed and performs no effect" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-option-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+
+                  match FogellSide.run [] root "job" badOption with
+                  | Error why -> failtestf "option refusal did not produce a trace: %s" why
+                  | Ok result ->
+                      Expect.equal result.Disposition RefusedBeforeExecution "compile-shaped rejection"
+                      Expect.equal result.Result "failure" "terminal failure"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(root, "job", "must-not-run.txt")))
+                          "the rejected model performed no shell effect"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell capability gaps remain engine-unavailable rather than reference refusals" {
+              let source =
+                  "pipeline { agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('one') { steps { echo 'x' } } } }"
+
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-capability-{Guid.NewGuid():N}")
+
+              try
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> Expect.stringStarts why "unsupported_agent:" "capability remains not comparable"
+                  | Ok result -> failtestf "capability gap became a reference refusal: %A" result
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell parser limits remain engine-unavailable rather than reference refusals" {
+              let source = String.replicate 262_145 "x"
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-limit-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+
+              try
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "sentinel.txt"), "keep")
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> Expect.stringStarts why "source_too_large at" "parser capability remains not comparable"
+                  | Ok result -> failtestf "parser limit became a reference refusal: %A" result
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "engine-unavailable preflight does not wipe the workspace"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "SCM attestation failures preserve fresh-job workspace and history before a parser refusal" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-scm-order-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+              let history = IO.Path.Combine(root, "_artifacts", "_scm", "job")
+
+              let plantSentinels () =
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.Directory.CreateDirectory history |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "workspace.sentinel"), "keep")
+                  IO.File.WriteAllText(IO.Path.Combine(history, "history.sentinel"), "keep")
+
+              let assertSentinels label =
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "workspace.sentinel"))) $"{label}: workspace retained"
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(history, "history.sentinel"))) $"{label}: history retained"
+
+              try
+                  plantSentinels ()
+                  let unavailable = { Url = "file:///definitely/not/a/repository"; Branch = "main" }
+
+                  match FogellSide.runScm [] root "job" unavailable invalidEight with
+                  | Ok trace -> failtestf "unavailable SCM sealed a refusal: %A" trace
+                  | Error why -> Expect.stringContains why "verification unavailable" "attestation failure is named"
+
+                  assertSentinels "unavailable"
+
+                  let sourceRepo = IO.Path.Combine(root, "source")
+                  let bareRepo = IO.Path.Combine(root, "remote.git")
+                  IO.Directory.CreateDirectory sourceRepo |> ignore
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), validBuild "echo 'remote'" )
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "drifted definition" ] |> ignore
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+
+                  match FogellSide.runScm [] root "job" { Url = bareRepo; Branch = "main" } invalidEight with
+                  | Ok trace -> failtestf "drifted SCM sealed a refusal: %A" trace
+                  | Error why -> Expect.stringContains why "SCM case drift" "drift is named"
+
+                  assertSentinels "drift"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "successful SCM attestation cleans fresh-job sentinels before hashing a refusal" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-scm-success-{Guid.NewGuid():N}")
+              let sourceRepo = IO.Path.Combine(root, "source")
+              let bareRepo = IO.Path.Combine(root, "remote.git")
+              let workspace = IO.Path.Combine(root, "workspace", "job")
+              let history = IO.Path.Combine(root, "workspace", "_artifacts", "_scm", "job")
+
+              try
+                  IO.Directory.CreateDirectory sourceRepo |> ignore
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.Directory.CreateDirectory history |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "workspace.sentinel"), "remove")
+                  IO.File.WriteAllText(IO.Path.Combine(history, "history.sentinel"), "remove")
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), invalidEight)
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "matching invalid definition" ] |> ignore
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+
+                  match FogellSide.runScm [] (IO.Path.Combine(root, "workspace")) "job" { Url = bareRepo; Branch = "main" } invalidEight with
+                  | Error why -> failtestf "matching SCM refusal failed: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Disposition RefusedBeforeExecution "attested input refused"
+                      Expect.equal trace.WorkspaceHash emptyHash "fresh workspace was cleaned before hashing"
+                      Expect.isFalse (IO.Directory.Exists workspace) "workspace was removed and not recreated"
+                      Expect.isFalse (IO.Directory.Exists history) "SCM history was reset"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "a retained refusal preserves workspace and carries failure into the next build" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-sequence-{Guid.NewGuid():N}")
+              let first = validBuild "sh 'printf retained > retained.txt'"
+              let third =
+                  "pipeline { agent any stages { stage('three') { steps { sh 'printf three > third.txt' } } } "
+                  + "post { fixed { sh 'printf fixed > fixed.txt' } } }"
+
+              try
+                  let results = FogellSide.runMany [] root "job" [ first; invalidEight; third ]
+
+                  match results with
+                  | [ Ok b1; Ok b2; Ok b3 ] ->
+                      Expect.equal b1.Result "success" "build 1 seeded the workspace"
+                      Expect.equal b2.Disposition RefusedBeforeExecution "build 2 refused"
+                      Expect.equal b2.WorkspaceHash b1.WorkspaceHash "build 2 retained build 1's workspace"
+                      Expect.equal b3.Result "success" "build 3 ran"
+                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(root, "job", "fixed.txt"))) "prior refusal carried as failure"
+                  | other -> failtestf "three-build sequence did not remain aligned: %A" other
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "one refused side always diverges before ordinary axes are considered" {
+              let j = refused emptyHash [] (0, 0) true
+              let f = executed "failure" emptyHash [] true
+
+              match Compare.traces [] j f with
+              | Diverged [ DispositionDiffers(RefusedBeforeExecution, ExecutedOrRuntime) ], [] -> ()
+              | other -> failtestf "expected the single disposition divergence, got %A" other
+          }
+
+          test "two refusals compare only result and workspace" {
+              let j = refused emptyHash [ "compiler wording A" ] (99, -1) false
+              let f = refused emptyHash [ "compiler wording B" ] (-3, 0) true
+
+              Expect.equal (Compare.traces [] j f) (Proven, []) "output, timestamps and reason are omitted"
+
+              match Compare.traces [] j { f with Result = "aborted" } with
+              | Diverged [ ResultDiffers("failure", "aborted") ], [] -> ()
+              | other -> failtestf "result was not compared: %A" other
+
+              match Compare.traces [] j { f with WorkspaceHash = String.replicate 64 "f" } with
+              | Diverged [ WorkspaceDiffers _ ], [] -> ()
+              | other -> failtestf "workspace was not compared: %A" other
+          }
+
+          test "refusal disposition is conditional, sealed and parsed fail-closed" {
+              let r = receipt (refused emptyHash [ "jenkins compiler text" ] (0, 0) true) (refused emptyHash [] (0, 0) true)
+              let text = Compare.render r
+              let marker = "  disposition: refused-before-execution"
+
+              Expect.equal
+                  (text.Replace(marker, "").Length - text.Length)
+                  (-2 * marker.Length)
+                  "one exact marker per side"
+              Expect.isFalse (text.Contains "  output (") "refusal output is omitted"
+              Expect.stringContains text "same pre-execution refusal" "the verdict does not claim output equality"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "round trip"
+
+              let hostileTimestampText =
+                  receipt
+                      (refused emptyHash [] (99, -1) true)
+                      (refused emptyHash [] (-3, 0) true)
+                  |> Compare.render
+
+              Expect.isFalse
+                  (hostileTimestampText.Contains "timestamps():")
+                  "refusal timestamps are omitted even when the raw counters are hostile"
+
+              Expect.equal
+                  (Compare.verifySealedText "refusal.receipt.txt" hostileTimestampText)
+                  Compare.SealValid
+                  "omitted refusal timestamps round trip"
+
+              let refusalSealWith timestamps output =
+                  receipt
+                      (refused emptyHash output timestamps true)
+                      (refused emptyHash [] (0, 0) false)
+                  |> fun candidate -> candidate.Seal
+
+              Expect.equal
+                  (refusalSealWith (99, -1) [ "compiler A" ])
+                  (refusalSealWith (-3, 0) [ "compiler B" ])
+                  "refusal seals omit output, timestamp coverage and failure wording"
+
+              let partial = receipt (refused "not-collected" [] (0, 0) true) (refused emptyHash [] (0, 0) true)
+              let partialText = Compare.render partial
+              Expect.stringContains partialText "same pre-execution refusal and same result; output not compared" "partial verdict is refusal-specific"
+              Expect.stringContains partialText "WORKSPACE NOT COMPARED" "partial verdict names the missing axis"
+              Expect.isFalse (partialText.Contains "same result, same output") "partial verdict never claims output equality"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" partialText) Compare.SealValid "partial refusal round trip"
+
+              let oneRefused =
+                  receipt
+                      { refused emptyHash [ "compiler" ] (99, -1) true with Concurrent = true }
+                      { executed "failure" emptyHash [ "executed evidence" ] true with
+                          Concurrent = true
+                          Timestamps = (-3, 0) }
+
+              let oneRefusedText = Compare.render oneRefused
+              Expect.stringContains oneRefusedText "sealed-output: omitted" "refusal short-circuit has an explicit output mode"
+              Expect.stringContains oneRefusedText "only execution disposition is compared" "one-sided contract names its sole axis"
+              Expect.stringContains oneRefusedText "rendered and sealed for audit only" "executed facts are evidence only"
+              Expect.isFalse (oneRefusedText.Contains "  output (") "all output is omitted after a refusal short-circuit"
+              Expect.isFalse (oneRefusedText.Contains "timestamps():") "one-sided refusal timestamps are omitted"
+              Expect.isFalse (oneRefusedText.Contains "PARALLEL:") "refusal concurrency cannot claim multiset comparison"
+              Expect.isFalse (oneRefusedText.Contains "compared: ordered normalised output") "generic output contract is absent"
+              Expect.isFalse (oneRefusedText.Contains "CLASSIFICATION is") "generic timestamp sealing claim is absent"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" oneRefusedText) Compare.SealValid "one-sided refusal round trip"
+
+              let bothConcurrent =
+                  receipt
+                      { refused emptyHash [] (0, 0) true with Concurrent = true }
+                      { refused emptyHash [] (0, 0) true with Concurrent = true }
+                  |> Compare.render
+
+              Expect.stringContains bothConcurrent "sealed-output: omitted" "dual refusal ignores concurrent flags"
+              Expect.isFalse (bothConcurrent.Contains "PARALLEL:") "dual refusal cannot claim multiset output"
+              Expect.isFalse (bothConcurrent.Contains "CLASSIFICATION is") "dual refusal omits timestamp sealing claims"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" bothConcurrent) Compare.SealValid "concurrent refusal round trip"
+
+              let replaceFirst (oldValue: string) (newValue: string) (source: string) =
+                  let index = source.IndexOf(oldValue, StringComparison.Ordinal)
+                  if index < 0 then failtestf "fixture has no '%s'" oldValue
+                  source.Substring(0, index) + newValue + source.Substring(index + oldValue.Length)
+
+              let hostile =
+                  [ "deleted", replaceFirst (marker + Environment.NewLine) "" text
+                    "explicit executed", text.Replace(marker, "  disposition: executed-or-runtime")
+                    "unknown", text.Replace(marker, "  disposition: unknown")
+                    "trailing junk", text.Replace(marker, marker + " junk")
+                    "duplicate", replaceFirst marker (marker + Environment.NewLine + marker) text
+                    "misplaced", replaceFirst (marker + Environment.NewLine) "" text |> replaceFirst "  workspace-hash:" (marker + Environment.NewLine + "  workspace-hash:")
+                    "top-level", replaceFirst "sealed-output: omitted" ("sealed-output: omitted" + Environment.NewLine + marker) text ]
+
+              for label, forged in hostile do
+                  match Compare.verifySealedText "refusal.receipt.txt" forged with
+                  | Compare.SealValid -> failtestf "%s disposition forgery verified" label
+                  | _ -> ()
+          }
+
+          test "ordinary receipts retain the legacy wire shape" {
+              let ordinary = receipt (executed "success" emptyHash [ "hello" ] false) (executed "success" emptyHash [ "hello" ] false)
+              let text = Compare.render ordinary
+              Expect.isFalse (text.Contains "disposition:") "executed disposition is represented by absence"
+              Expect.stringContains text "  output (1 lines):" "legacy side shape remains"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "legacy grammar remains valid"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -4995,5 +5477,6 @@ let main argv =
               returnFlagContract
               timestampPrefixIsConditional
               timestampCoverageUsesComparedSurvivors
+              compileRefusalDisposition
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])

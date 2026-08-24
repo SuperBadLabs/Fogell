@@ -4,6 +4,13 @@ open System
 open System.IO
 open System.Security.Cryptography
 
+/// Whether user Pipeline code began executing. This is deliberately independent
+/// of workspace presence: Jenkins can retain build 1's workspace when build 2 is
+/// refused by the compiler before its first `[Pipeline]` annotation.
+type ExecutionDisposition =
+    | ExecutedOrRuntime
+    | RefusedBeforeExecution
+
 /// FG-002. The canonical form both engines are reduced to before comparison.
 ///
 /// The hard part of a differential harness is deciding what "the same" means.
@@ -20,7 +27,10 @@ open System.Security.Cryptography
 /// Anything outside those three is deliberately not compared, and the reasons
 /// are recorded here rather than left implicit.
 type Trace =
-    { /// success | failure | aborted | unstable
+    { /// Absent from legacy receipts because ordinary execution is the historical
+      /// default. Refusals render and seal one exact marker.
+      Disposition: ExecutionDisposition
+      /// success | failure | aborted | unstable
       Result: string
       /// Ordered, normalised output lines attributable to the pipeline itself.
       Output: string list

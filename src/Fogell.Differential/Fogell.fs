@@ -380,6 +380,25 @@ module FogellSide =
                                 + String.concat ", " unsupportedCollections
                             )
 
+    /// FG-129. A bad input and an unavailable Fogell capability were both
+    /// `Result.Error` before this boundary. Only the former is evidence that the
+    /// reference engine also refused before execution; the latter must remain
+    /// NOT COMPARABLE unless Jenkins independently reports a disposition.
+    type private ExecutionPreflight =
+        | Ready of Pipeline
+        | ReferenceRejected of Fogell.Admission.AdmissionError
+        | EngineUnavailable of string
+
+    let private executionPreflight (script: string) =
+        match Fogell.Pipeline.Parser.Parser.parse script with
+        | Result.Error e when Fogell.Admission.ErrorCode.isInputDefect e.Code -> ReferenceRejected e
+        | Result.Error e ->
+            EngineUnavailable $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+        | Result.Ok _ ->
+            match preflightExecution script with
+            | Result.Ok pipeline -> Ready pipeline
+            | Result.Error why -> EngineUnavailable why
+
     let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
@@ -396,10 +415,65 @@ module FogellSide =
         // Capture the closest Fogell analogue at build entry, before preflight.
         let buildStartTimeInMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         let isRestartedRun = persistence |> Option.exists (fun hooks -> hooks.IsRestartedRun)
+        let workspace = Path.Combine(workspaceRoot, jobName)
+        // Artifacts and SCM history live outside the workspace hash.
+        let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
 
-        match preflightExecution script with
-        | Result.Error why -> Result.Error why
-        | Result.Ok pipeline ->
+        let prepareFreshJob () =
+            // Fresh-job semantics precede every sealable outcome. A stale
+            // workspace or build-history record from an earlier invocation must
+            // not appear in a new job's refusal evidence. Retained builds skip both.
+            if freshWorkspace && Directory.Exists workspace then
+                Directory.Delete(workspace, true)
+
+            if freshWorkspace then
+                WalkerGit.resetHistory artifactRoot jobName
+
+        // SCM definition identity precedes every sealable outcome, including a
+        // parser refusal. Jenkins executes the remote bytes, so a local invalid
+        // case cannot be credited until those bytes are independently attested.
+        let verifyScmDefinition () =
+            match scm with
+            | Some spec ->
+                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                | Result.Ok remote ->
+                    if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
+                        failwith (
+                            "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                        )
+
+                    if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
+                        [ $"scm-preflight branch={spec.Branch} revision={remote.Revision} tree={remote.Tree} jenkinsfile-blob={remote.JenkinsfileBlob}" ]
+                    else
+                        []
+            | None -> []
+
+        match executionPreflight script with
+        | EngineUnavailable why -> Result.Error why
+        | ReferenceRejected _ ->
+            let scmPreflightNotes = verifyScmDefinition ()
+            prepareFreshJob ()
+            // After the fresh-job reset above, do not create a workspace. A new
+            // job hashes as the historical empty workspace; a retained build was
+            // not reset and hashes exactly what its prior build left behind.
+            let workspaceHash, files = Trace.hashWorkspace workspace
+
+            Result.Ok
+                { Disposition = RefusedBeforeExecution
+                  Result = "failure"
+                  EngineNotes = scmPreflightNotes
+                  Output = []
+                  WorkspaceHash = workspaceHash
+                  WorkspaceFiles = files
+                  Concurrent = false
+                  Timestamps = (0, 0)
+                  ReportedFailureReason = true }
+        | Ready pipeline ->
+            let scmPreflightNotes = verifyScmDefinition ()
+            prepareFreshJob ()
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
@@ -649,20 +723,6 @@ module FogellSide =
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
 
-            let workspace = Path.Combine(workspaceRoot, jobName)
-            // artifacts live OUTSIDE the workspace so archiving cannot perturb
-            // the workspace hash the differential compares
-            let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
-            // FG-110: only a sequence's FIRST build starts clean — Jenkins does
-            // not wipe the workspace between builds of one job, and neither do we.
-            if freshWorkspace && Directory.Exists workspace then
-                Directory.Delete(workspace, true)
-
-            // a NEW job has no build history — mirror the harness's doDelete
-            // (the record otherwise survives from a previous run of this case)
-            if freshWorkspace then
-                WalkerGit.resetHistory artifactRoot jobName
-
             Directory.CreateDirectory workspace |> ignore
 
             /// Environment visible to a step: pipeline scope, overridden by stage
@@ -710,37 +770,11 @@ module FogellSide =
 
             let mutable scmWrapperEnv: (string * string) list = []
 
-            // EVERY SCM case, BEFORE anything can set `root.Failed`. This is the
-            // lane's core invariant: the bytes this engine was handed must be the
-            // bytes the SCM serves, because Jenkins executes the latter.
-            //
-            // It lived inside `match scm with Some spec when not root.Failed.Value`,
-            // so the FG-053 option refusals — which set `root.Failed` above — made a
-            // refused SCM case skip verification entirely and seal against unverified
-            // bytes. The comment on this check already recorded it vanishing once
-            // before, "exactly when skipDefaultCheckout did"; guarding it on a
-            // failure flag is how it keeps happening. Unconditional now: a check that
-            // any later short-circuit can switch off is not fail-closed.
-            match scm with
-            | Some spec ->
-                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
-                | Result.Error e ->
-                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
-                // the subprocess reader trims trailing whitespace, so compare TRIMMED
-                // on both sides (a trailing newline is not a different script) with
-                // line endings normalised
-                | Ok remote ->
-                    if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
-                        runCtx.NoteEngine(
-                            $"scm-preflight branch={spec.Branch} revision={remote.Revision} tree={remote.Tree} jenkinsfile-blob={remote.JenkinsfileBlob}"
-                        )
-
-                    if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
-                        failwith (
-                            "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                        )
-            | None -> ()
+            // Definition identity was verified before semantic preflight so even
+            // parser-refused SCM cases are attested. Carry the same controller-owned
+            // notes into ordinary traces without a second remote read.
+            for note in scmPreflightNotes do
+                runCtx.NoteEngine note
 
 
             match scm with
@@ -1144,7 +1178,8 @@ module FogellSide =
             let terminalStatus = runCtx.Status()
 
             let trace =
-                { Result = BuildStatus.toWireString terminalStatus
+                { Disposition = if compileRejected then RefusedBeforeExecution else ExecutedOrRuntime
+                  Result = BuildStatus.toWireString terminalStatus
                   EngineNotes = runCtx.EngineNotes()
                   Output = outputLines
                   WorkspaceHash = workspaceHash
