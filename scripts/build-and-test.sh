@@ -124,6 +124,16 @@ echo "=== release-provenance gate proof (FG-093, blocking) ==="
 ./scripts/prove-release-provenance.sh \
   || { echo "RELEASE-PROVENANCE PROOF FAILED"; exit 1; }
 
+# FG-094. The live comparison needs the private 228-file corpus, a pinned
+# Jenkins oracle and an operator-provided external baseline, so it cannot run
+# in ordinary corpus-free CI. The self-contained proof still runs everywhere.
+# It plants filename-set regressions (including equal-count swaps), schema and
+# digest damage, reached_agent/compiled confusion, Git object replacement, and
+# mutations that make each comparison incorrectly executable.
+echo "=== compatibility-regression gate proof (FG-094, blocking) ==="
+./scripts/prove-compatibility-regression.sh \
+  || { echo "COMPATIBILITY-REGRESSION PROOF FAILED"; exit 1; }
+
 # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
 # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
 # re-derived the hash that claim rests on — a receipt edited with that line left intact
@@ -136,8 +146,9 @@ dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fspro
   -- --verify-seals differential/receipts || { echo "SEAL VERIFICATION FAILED"; exit 1; }
 ./scripts/prove-seal-verification.sh || { echo "SEAL VERIFICATION PROOF FAILED"; exit 1; }
 
-# FG-090/091/092. The published compatibility artifacts are GENERATED, and this
-# checks they match the evidence — ONLY ON A HOST THAT HAS THE CORPUS.
+# FG-090/091/092/094. The published compatibility artifacts are GENERATED, and
+# the regression checker runs their --check before comparing exact filename
+# sets — ONLY ON A HOST THAT HAS THE CORPUS.
 #
 # CI does not: the corpus lives outside the repo (see the workflow header), so on
 # GitHub this check does not run and stale artifacts WOULD pass. That is a real
@@ -145,9 +156,10 @@ dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fspro
 # nowhere else. Hard-failing instead would break every CI run, which trades a
 # gap in coverage for a gate nobody can pass.
 if [ -d "${FOGELL_CORPUS:-/sn8100/work/exchange/crucible-gate/corpus}" ]; then
-  ./scripts/generate-scorecard.bb --check || { echo "SCORECARD STALE"; exit 1; }
+  ./scripts/check-compatibility-regression.py \
+    || { echo "COMPATIBILITY REGRESSION OR SCORECARD CHECK FAILED"; exit 1; }
 else
-  echo "scorecard check NOT RUN: corpus not mounted — generated artifacts are UNVERIFIED on this host"
+  echo "scorecard/regression check NOT RUN: corpus not mounted — generated artifacts and live compatibility non-regression are UNVERIFIED on this host"
 fi
 ./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
   || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
