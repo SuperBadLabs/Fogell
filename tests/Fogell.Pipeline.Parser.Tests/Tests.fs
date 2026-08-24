@@ -967,6 +967,91 @@ let structure =
               Expect.equal (err src).Code MalformedSyntax "and `parse` still agrees"
           } ]
 
+/// FG-126a. Jenkins 2.568.1 refuses the measured `\8` spelling at Groovy
+/// compilation while Fogell used to drop the backslash and run the command.
+/// This tranche is intentionally narrow: it pins directly decoded Declarative
+/// literals only and makes no claim about `\9`, arbitrary invalid letters,
+/// provenance sentinels, dollar-slashy strings, opaque raw expressions or a
+/// purely Scripted Jenkinsfile.
+let invalidEightEscape =
+    let diagnostic = "invalid Groovy escape `\\8`: `8` is not an octal digit"
+
+    let directStep literal =
+        mk $"    stage('S') {{ steps {{ sh {literal} }} }}"
+
+    let expectRefusal label source =
+        let assertError route result =
+            match result with
+            | Ok _ -> failtestf "%s/%s admitted the measured-invalid escape" label route
+            | Error e ->
+                Expect.equal e.Code MalformedSyntax $"{label}/{route}: named admission code"
+                Expect.equal e.Message diagnostic $"{label}/{route}: exact diagnostic"
+                Expect.isGreaterThan e.Position.Line 0L $"{label}/{route}: positive line"
+                Expect.isGreaterThan e.Position.Column 0L $"{label}/{route}: positive column"
+
+        let custom =
+            { Limits.defaults with
+                MaxSourceBytes = 100_000 }
+
+        assertError "parse" (Parser.parse source)
+        assertError "parseWithLimits" (Parser.parseWithLimits custom source)
+
+    let onlyPositional source =
+        let pipeline = ok source
+        match pipeline.Stages with
+        | [ stage ] ->
+            match stage.Steps with
+            | [ step ] -> step.Positional
+            | other -> failtestf "expected one step, got %A" other
+        | other -> failtestf "expected one stage, got %A" other
+
+    testList
+        "FG-126a measured invalid-eight refusal"
+        [ test "all four decoded quote consumers refuse through both public entry points" {
+              for label, literal in
+                  [ "single", "'prefix\\8suffix'"
+                    "triple-single", "'''prefix\\8suffix'''"
+                    "double", "\"prefix\\8suffix\""
+                    "triple-double", "\"\"\"prefix\\8suffix\"\"\"" ] do
+                  expectRefusal label (directStep literal)
+          }
+
+          test "positional, named and environment fallbacks cannot swallow the refusal" {
+              expectRefusal "positional" (directStep "'prefix\\8suffix'")
+
+              expectRefusal
+                  "named"
+                  (mk "    stage('S') { steps { sh(script: 'prefix\\8suffix') } }")
+
+              expectRefusal
+                  "environment"
+                  "pipeline { agent any environment { BAD = 'prefix\\8suffix' } stages { stage('S') { steps { sh 'true' } } } }"
+          }
+
+          test "an escaped backslash and slashy text retain backslash-eight exactly" {
+              Expect.equal
+                  (onlyPositional (directStep "'prefix\\\\8suffix'"))
+                  [ "prefix\\8suffix" ]
+                  "escaped backslash is data, so the following 8 is ordinary text"
+
+              Expect.equal
+                  (onlyPositional (directStep "/prefix\\8suffix/"))
+                  [ "prefix\\8suffix" ]
+                  "slashy strings keep non-delimiter escapes literal"
+          }
+
+          test "valid octal and ordinary quoted values keep their exact decoding" {
+              Expect.equal
+                  (onlyPositional (directStep "'\\7\\77\\377'"))
+                  [ "\u0007?\u00ff" ]
+                  "one-, two- and valid three-digit octal remain admitted"
+
+              Expect.equal
+                  (onlyPositional (directStep "'ordinary'"))
+                  [ "ordinary" ]
+                  "the historical catch-all still serves ordinary quoted text"
+          } ]
+
 /// FG-141. Slashy versus division, decided by POSITION: a `/` after something
 /// that can end an expression is division; with no left operand it can only
 /// open a slashy. The over-broad fix (every `/` opens a span) was an approval
@@ -1099,5 +1184,6 @@ let main argv =
             [ admissionLimits
               declarativeDetection
               structure
+              invalidEightEscape
               stepBlockPresence
               slashyPosition ])

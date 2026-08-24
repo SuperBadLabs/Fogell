@@ -143,8 +143,28 @@ let private simpleEscape (c: char) =
     | 'f' -> '\f'
     | c -> c
 
+/// FG-126a. Jenkins 2.568.1 refuses `\8` while compiling a quoted Groovy
+/// literal; the former catch-all dropped the backslash and ran the resulting
+/// command. This is deliberately the ONE measured spelling, not a claim that
+/// every invalid Groovy escape is classified here. In particular, `\9`,
+/// arbitrary letters, provenance sentinels, dollar-slashy text and opaque raw
+/// expressions remain outside this tranche.
+///
+/// `refuse`, rather than an ordinary parser failure, is load-bearing. A whole
+/// literal is attempted before the raw-argument fallback, so a plain `fail`
+/// would rewind and let that fallback silently admit the original source.
+let private measuredInvalidEight: P<char> =
+    lookAhead (skipChar '8')
+    >>. refuse "invalid Groovy escape `\\8`: `8` is not an octal digit"
+
+/// The one post-backslash operation for both ordinary strings and GStrings.
+/// Keeping the refusal between numeric decoding and the historical catch-all
+/// makes valid octal escapes win while preventing the fallback from eating 8.
+let private decodedEscape: P<char> =
+    numericEscape <|> measuredInvalidEight <|> (anyChar |>> simpleEscape)
+
 let private escapedChar: P<char> =
-    skipChar '\\' >>. (numericEscape <|> (anyChar |>> simpleEscape))
+    skipChar '\\' >>. decodedEscape
 
 /// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
 ///
@@ -201,7 +221,7 @@ let private slashyQuoted: P<string> =
 /// then removes it.
 let private escapedCharKeepingDollar: P<string> =
     skipChar '\\'
-    >>. ((numericEscape |>> keepDollar) <|> (anyChar |>> (simpleEscape >> keepDollar)))
+    >>. (decodedEscape |>> keepDollar)
 
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
