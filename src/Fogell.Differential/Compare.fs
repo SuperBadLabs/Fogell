@@ -14,6 +14,10 @@ type Divergence =
     /// compare equal to one that honours it, which is the exact shape of hole
     /// FG-102's rule exists to prevent.
     | TimestampMismatch of jenkins: string * fogell: string
+    /// A trace supplied a timestamp-count relation no real survivor set can
+    /// produce. Named per engine so two identically malformed sides cannot
+    /// cancel into a false Proven verdict.
+    | InvalidTimestampCounts of engine: string * stamped: int * total: int
     | OutputDiffers of firstMismatchIndex: int * jenkins: string option * fogell: string option
     | WorkspaceDiffers of jenkins: string * fogell: string
     | JenkinsFailed of string
@@ -25,6 +29,8 @@ type Divergence =
         | DiagnosticSilence engine -> $"{engine} failed without reporting a reason"
         | TimestampMismatch(j, f) ->
             $"timestamps() coverage differs: jenkins={j} fogell={f} — the option is honoured differently by the two engines"
+        | InvalidTimestampCounts(engine, stamped, total) ->
+            $"timestamps() counts invalid: engine={engine} stamped={stamped} total={total} — expected 0 <= stamped <= total"
         | OutputDiffers(i, j, f) ->
             let show = Option.defaultValue "<absent>"
             $"output line {i}: jenkins={show j} fogell={show f}"
@@ -422,12 +428,29 @@ module Compare =
               // the MESSAGE, where they help a reader, and nowhere else.
               let classify = Trace.timestampCoverage
 
+              let invalidCounts engine ((stamped, total) as counts) =
+                  if Trace.timestampCountsValid counts then
+                      []
+                  else
+                      [ InvalidTimestampCounts(engine, stamped, total) ]
+
               let describe (stamped, total) =
                   match classify (stamped, total) with
                   | "partial" -> $"partial ({stamped}/{total})"
                   | c -> c
 
-              if classify jenkins.Timestamps <> classify fogell.Timestamps then
+              yield! invalidCounts "jenkins" jenkins.Timestamps
+              yield! invalidCounts "fogell" fogell.Timestamps
+
+              // Invalid tuples are divergences in their own right, per side.
+              // Comparing their shared string class would let two malformed
+              // traces cancel into Proven; comparing one invalid class against
+              // a valid class would hide which engine supplied impossible data.
+              if
+                  Trace.timestampCountsValid jenkins.Timestamps
+                  && Trace.timestampCountsValid fogell.Timestamps
+                  && classify jenkins.Timestamps <> classify fogell.Timestamps
+              then
                   TimestampMismatch(describe jenkins.Timestamps, describe fogell.Timestamps)
 
               if
@@ -767,13 +790,18 @@ module Compare =
         // every OTHER axis anyway (the engine that honoured it stamped, so its
         // count is non-zero and the line appears).
         match r.Jenkins, r.Fogell with
-        | Some j, Some f when fst j.Timestamps > 0 || fst f.Timestamps > 0 ->
+        | Some j, Some f
+            when fst j.Timestamps > 0
+                 || fst f.Timestamps > 0
+                 || not (Trace.timestampCountsValid j.Timestamps)
+                 || not (Trace.timestampCountsValid f.Timestamps) ->
             line ""
 
             let show ((stamped, total) as ts) =
                 match Trace.timestampCoverage ts with
                 | "partial" -> $"PARTIAL ({stamped}/{total})"
                 | "all" -> $"all ({total})"
+                | "invalid" -> $"INVALID ({stamped}/{total})"
                 | c -> c
 
             line
@@ -1093,11 +1121,9 @@ module Compare =
                 // a fact to report, not to paper over.
                 | None -> Error "no sealed-output field — cannot know which order was hashed"
 
-            // Absent timestamp line means neither side stamped a line, and
-            // `Trace.timestampCoverage` returns "none" whenever stamped = 0. So the
-            // absence is unambiguous, not a gap — verified against the classifier rather
-            // than assumed, because assuming it would have been a silent wrong answer for
-            // every receipt that never mentions the option.
+            // Absent timestamp line means the valid `(0,total)`/none class on both
+            // sides. Invalid tuples are always rendered explicitly and rejected below;
+            // absence must never turn `(0,-1)` into a byte-identical valid-none receipt.
             let coverage =
                 match lines |> List.tryFind (fun l -> l.StartsWith "timestamps(): ") with
                 | None -> Some("none", "none")
@@ -1109,10 +1135,37 @@ module Compare =
                     let word (s: string) =
                         let s = s.Trim()
 
-                        if Text.RegularExpressions.Regex.IsMatch(s, @"^PARTIAL \(\d+/\d+\)$") then "partial"
-                        elif Text.RegularExpressions.Regex.IsMatch(s, @"^all \(\d+\)$") then "all"
-                        elif s = "none" then "none"
-                        else "<unparseable>"
+                        let partial = Text.RegularExpressions.Regex.Match(s, @"^PARTIAL \((-?\d+)/(-?\d+)\)$")
+                        let all = Text.RegularExpressions.Regex.Match(s, @"^all \((-?\d+)\)$")
+
+                        if partial.Success then
+                            match Int32.TryParse partial.Groups[1].Value, Int32.TryParse partial.Groups[2].Value with
+                            | (true, stamped), (true, total)
+                                when Trace.timestampCountsValid(stamped, total)
+                                     && stamped > 0
+                                     && stamped < total ->
+                                Some "partial"
+                            | _ -> None
+                        elif all.Success then
+                            match Int32.TryParse all.Groups[1].Value with
+                            | true, total when total > 0 -> Some "all"
+                            | _ -> None
+                        elif s = "none" then
+                            Some "none"
+                        // A recognised coverage spelling with malformed numbers is
+                        // structurally unreadable: do not reduce hostile counts to a
+                        // sealed class. An arbitrary lexical spelling is different.
+                        // FG-161 historically projects that spelling into the seal as
+                        // `<unparseable>`, so `alligator (N)` fails as a seal mismatch
+                        // instead of changing category to an unreadable receipt.
+                        elif
+                            s.StartsWith("PARTIAL ")
+                            || s.StartsWith("all ")
+                            || s.StartsWith("INVALID ")
+                        then
+                            None
+                        else
+                            Some "<unparseable>"
 
                     // THE WHOLE LINE, anchored at both ends. The pattern stopped at
                     // "prefix text excluded", leaving the rest of the sentence — and
@@ -1124,7 +1177,9 @@ module Compare =
                             @"^timestamps\(\): jenkins=(.+?) fogell=(.+?) \(prefix text excluded, coverage compared and sealed\)$")
 
                     if m.Success then
-                        Some(word m.Groups[1].Value, word m.Groups[2].Value)
+                        match word m.Groups[1].Value, word m.Groups[2].Value with
+                        | Some j, Some f -> Some(j, f)
+                        | _ -> None
                     else
                         None
 

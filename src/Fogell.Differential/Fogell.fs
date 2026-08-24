@@ -1078,13 +1078,13 @@ module FogellSide =
                 )
             else
 
-            let outputLines =
+            let outputLines, timestampCounts =
                 let idReplacements =
                     runCtx.DurableIds()
                     |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
                     |> List.ofSeq
 
-                Trace.normaliseOutputShaped
+                Trace.normaliseOutputShapedWithTimestampCoverage
                     declaresTimestamps
                     false
                     ((workspace, "${WORKSPACE}") :: idReplacements)
@@ -1100,14 +1100,9 @@ module FogellSide =
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  Timestamps =
-                      // same denominator as Jenkins.fs: the COMPARED output
-                      // gated on the declaration, for the reason stated in Jenkins.fs
-                      ((if declaresTimestamps then
-                            runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
-                        else
-                            0),
-                       List.length outputLines)
+                  // FG-118: the counts come from the exact same tagged survivor
+                  // list as Output, including every contextual suppression.
+                  Timestamps = timestampCounts
                   ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
             // FG-177. Checkout writes only a provisional revision record. The

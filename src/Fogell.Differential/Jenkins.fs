@@ -288,7 +288,7 @@ module Jenkins =
 
                     // hoisted so the timestamp coverage can use the SAME list the
                     // comparison uses as its denominator
-                    let outputLines =
+                    let outputLines, timestampCounts =
                         let fromBanner =
                             rawLines
                             |> Array.tryPick (fun l ->
@@ -296,7 +296,12 @@ module Jenkins =
                                 if m.Success then Some m.Groups[1].Value else None)
 
                         let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
-                        Trace.normaliseOutputShaped declaresTimestamps true [ ws, "${WORKSPACE}" ] envReplacements rawLines
+                        Trace.normaliseOutputShapedWithTimestampCoverage
+                            declaresTimestamps
+                            true
+                            [ ws, "${WORKSPACE}" ]
+                            envReplacements
+                            rawLines
 
                     let trace =
                         { Result = terminal
@@ -311,29 +316,10 @@ module Jenkins =
                           // Jenkins does not tell us whether the script had a
                           // parallel block; the side that parses does.
                           Concurrent = false
-                          Timestamps =
-                              // THE DENOMINATOR IS THE COMPARED OUTPUT, arrived at
-                              // by measuring twice and being wrong twice. Against
-                              // raw non-blank lines Jenkins read PARTIAL (2/21);
-                              // against `normaliseLine` survivors, PARTIAL (2/20).
-                              // Both were the wrong question: `Output` is built by
-                              // `normaliseOutputShaped`, a deeper filter, and only
-                              // its survivors are ever compared. Jenkins stamps
-                              // what the BUILD prints — not its own [Pipeline]
-                              // annotations, banners or Started/Finished rows —
-                              // and those are excluded anyway, so counting them
-                              // judged an engine against lines nobody compares.
-                              // GATED on the declaration, for the same reason
-                              // the strip is: a timestamp-shaped line is only
-                              // decoration when the script asked for it. Ungated,
-                              // a build printing a literal `[ISO-8601] value` was
-                              // counted, rendered and SEALED as `timestamps()`
-                              // coverage in a case that never used the option.
-                              ((if declaresTimestamps then
-                                    rawLines |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
-                                else
-                                    0),
-                               List.length outputLines)
+                          // FG-118: the counts come from the same tagged survivor
+                          // list as Output. A stamped annotation can no longer
+                          // offset an unstamped line that is actually compared.
+                          Timestamps = timestampCounts
                           ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps rawLines }
 
                     Ok trace

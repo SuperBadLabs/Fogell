@@ -67,15 +67,12 @@ type Trace =
       /// same number of lines, so comparing them would manufacture divergences
       /// out of an accident of formatting.
       ///
-      /// STATED LIMIT (FG-118). The numerator counts stamped RAW lines and the
-      /// denominator is the COMPARED output length, because the shaping pipeline
-      /// filters with cross-line context and does not report which source lines
-      /// survived. A stamped line that is suppressed can therefore offset an
-      /// unstamped line that is compared, and the pair still classifies `all`.
-      /// It catches a total miss and an ordinary partial implementation — both
-      /// planted and verified — but it is NOT a per-line proof, and this comment
-      /// says so rather than letting the receipt imply one. FG-118 threads
-      /// survivor flags through `normaliseOutputInnerWhen` and makes it exact.
+      /// FG-118. Both counts come from the SAME final survivor set. Timestamp
+      /// provenance is attached before decoration is stripped and carried through
+      /// the contextual shaping pipeline, so a stamped annotation that is later
+      /// suppressed cannot offset an unstamped line that is actually compared.
+      /// `all` therefore means every compared survivor carried the prefix; it says
+      /// nothing about suppressed Jenkins narration or other raw console lines.
       Timestamps: int * int
 
       /// Whether the engine reported a reason for a non-success.
@@ -360,14 +357,16 @@ module Trace =
     /// existed — the comparison, the seal and the receipt body — and two of them
     /// disagreed about `stamped > total`, so a proof could compare one fact and
     /// seal another.
-    let timestampCoverage (stamped: int, total: int) =
-        // STAMPED IS THE EVIDENCE, so it is tested first. `total = 0` meant
-        // "none" even when stamped was positive — a `timestamps()` pipeline
-        // whose only build output is a suppressed `ERROR:` diagnostic has
-        // (1, 0), which then compared equal to an engine that never stamped at
-        // all. Zero comparable lines is not zero stamping.
-        if stamped = 0 then "none"
-        elif stamped >= total then "all"
+    /// The one validity rule for a timestamp-count pair, shared by comparison,
+    /// rendering and receipt extraction. Production derives both values from one
+    /// survivor list, but externally supplied records and receipts are hostile.
+    let timestampCountsValid (stamped: int, total: int) =
+        stamped >= 0 && total >= 0 && stamped <= total
+
+    let timestampCoverage ((stamped, total) as counts) =
+        if not (timestampCountsValid counts) then "invalid"
+        elif stamped = 0 then "none"
+        elif stamped = total then "all"
         else "partial"
 
     /// `stripTimestamps` — whether the SCRIPT declared `options { timestamps() }`.
@@ -434,7 +433,14 @@ module Trace =
     /// `+ test -d /each/engine's/root` is one command with two spellings, not two
     /// commands. Applied to every line: the same substitution an author's
     /// `$WORKSPACE` reference would produce on either side.
-    let internal normaliseOutputInnerWhen (stripTimestamps: bool) (lines: string seq) : string list =
+    type private TaggedLine =
+        { Text: string
+          HadTimestampPrefix: bool }
+
+    let private normaliseOutputInnerTaggedWhen
+        (stripTimestamps: bool)
+        (lines: TaggedLine seq)
+        : TaggedLine list =
         // Two engine-narration shapes are recognised by CONTEXT, never by their text
         // alone, because a build can legitimately print either:
         //
@@ -450,7 +456,7 @@ module Trace =
         // so they are gated instead.
         let all = lines |> Seq.toArray
 
-        let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
+        let clean (l: TaggedLine) = (stripDecoration stripTimestamps l.Text).Trim()
 
         let cleaned = all |> Array.map clean
 
@@ -525,11 +531,21 @@ module Trace =
             prevRaw <- raw
 
             if not suppress then
-                match normaliseLineWhen stripTimestamps all[i] with
+                match normaliseLineWhen stripTimestamps all[i].Text with
                 | Some l ->
                     if not hasAnnotations || pastFirstOutputStep || not (isPreambleBanner l) then
-                        yield l
+                        yield
+                            { Text = l
+                              HadTimestampPrefix = all[i].HadTimestampPrefix }
                 | None -> () ]
+
+    let internal normaliseOutputInnerWhen (stripTimestamps: bool) (lines: string seq) : string list =
+        lines
+        |> Seq.map (fun line ->
+            { Text = line
+              HadTimestampPrefix = stripTimestamps && hasTimestampPrefix line })
+        |> normaliseOutputInnerTaggedWhen stripTimestamps
+        |> List.map (fun line -> line.Text)
 
     /// The environment names whose ENGINE-INHERITED values are canonicalised to
     /// `${'$'}{NAME}` in each engine's own trace. The compared xtrace expands what a
@@ -539,12 +555,12 @@ module Trace =
     let canonicalisedEnvNames =
         [ "WORKSPACE"; "PATH"; "HOME"; "HOSTNAME"; "USER"; "LOGNAME"; "SHELL"; "JAVA_HOME"; "TMPDIR"; "PWD" ]
 
-    let internal normaliseOutputWithInner2
+    let private normaliseOutputWithInnerTagged2
         (stripTimestamps: bool)
         (globalReplacements: (string * string) list)
         (traceOnlyReplacements: (string * string) list)
-        (lines: string seq)
-        : string list =
+        (lines: TaggedLine seq)
+        : TaggedLine list =
         let order rs =
             rs
             |> List.filter (fun ((v: string), _) -> v <> "" && v.Length >= 4)
@@ -553,9 +569,10 @@ module Trace =
         let orderedGlobal = order globalReplacements
         let orderedTrace = order traceOnlyReplacements
 
-        let canonical (l: string) =
+        let canonical (line: TaggedLine) =
             let g =
-                orderedGlobal |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) l
+                orderedGlobal
+                |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) line.Text
 
             // ENV values rewrite only on xtrace rows — engine-generated lines where
             // expansions actually appear. Ordinary output keeps its literals, which
@@ -565,12 +582,28 @@ module Trace =
             // stated mimicry residual; a script that CHANGES PS4 forfeits env
             // canonicalisation on its custom-prefixed rows and any inherited-value
             // difference there diverges VISIBLY — declared, fail-closed.)
-            if Text.RegularExpressions.Regex.IsMatch(g.TrimStart(), @"^\++ ") then
-                orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
-            else
-                g
+            let text =
+                if Text.RegularExpressions.Regex.IsMatch(g.TrimStart(), @"^\++ ") then
+                    orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
+                else
+                    g
 
-        normaliseOutputInnerWhen stripTimestamps (lines |> Seq.map canonical)
+            { line with Text = text }
+
+        normaliseOutputInnerTaggedWhen stripTimestamps (lines |> Seq.map canonical)
+
+    let internal normaliseOutputWithInner2
+        (stripTimestamps: bool)
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
+        (lines: string seq)
+        : string list =
+        lines
+        |> Seq.map (fun line ->
+            { Text = line
+              HadTimestampPrefix = stripTimestamps && hasTimestampPrefix line })
+        |> normaliseOutputWithInnerTagged2 stripTimestamps globalReplacements traceOnlyReplacements
+        |> List.map (fun line -> line.Text)
 
     let normaliseLine (line: string) : string option = normaliseLineWhen false line
 
@@ -583,6 +616,37 @@ module Trace =
     /// ordinary replacements instead, so a fogell-side spoof with a different id
     /// stays literal — a cross-engine spoof pair therefore DIVERGES visibly
     /// rather than collapsing to one token.
+    let normaliseOutputShapedWithTimestampCoverage
+        (stripTimestamps: bool)
+        (applyDurableShape: bool)
+        (globalReplacements: (string * string) list)
+        (traceOnlyReplacements: (string * string) list)
+        (lines: string seq)
+        : string list * (int * int) =
+        let shaped (l: string) =
+            if applyDurableShape then
+                Text.RegularExpressions.Regex.Replace(l, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
+            else
+                l
+
+        let survivors =
+            lines
+            |> Seq.map (fun line ->
+                { Text = shaped line
+                  // Capture provenance before any decoration is stripped or
+                  // contextual filtering can remove the line. The declaration
+                  // gate keeps a user's timestamp-shaped literal ordinary.
+                  HadTimestampPrefix = stripTimestamps && hasTimestampPrefix line })
+            |> normaliseOutputWithInnerTagged2 stripTimestamps globalReplacements traceOnlyReplacements
+
+        let output = survivors |> List.map (fun line -> line.Text)
+
+        let stamped =
+            survivors
+            |> List.sumBy (fun line -> if line.HadTimestampPrefix then 1 else 0)
+
+        output, (stamped, List.length survivors)
+
     let normaliseOutputShaped
         (stripTimestamps: bool)
         (applyDurableShape: bool)
@@ -590,13 +654,13 @@ module Trace =
         (traceOnlyReplacements: (string * string) list)
         (lines: string seq)
         : string list =
-        let shaped (l: string) =
-            if applyDurableShape then
-                Text.RegularExpressions.Regex.Replace(l, "(@tmp/durable-)[0-9a-f]{8}(/script\.sh)", "$1<id>$2")
-            else
-                l
-
-        normaliseOutputWithInner2 stripTimestamps globalReplacements traceOnlyReplacements (lines |> Seq.map shaped)
+        normaliseOutputShapedWithTimestampCoverage
+            stripTimestamps
+            applyDurableShape
+            globalReplacements
+            traceOnlyReplacements
+            lines
+        |> fst
 
     let normaliseOutputWith (replacements: (string * string) list) (lines: string seq) : string list =
         normaliseOutputWithInner2 false replacements [] lines
@@ -641,15 +705,15 @@ module Trace =
           "  which compare as a MULTISET; those receipts say so under `## Output comparison notes`"
           "compared: canonical workspace hash over sorted (path, content-hash) pairs"
           "excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines"
-          "compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:"
+          "compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:"
           "  timestamps() coverage. Two engines read two clocks, so the instants can never"
           "  agree; an engine that IGNORED the option, or honoured it for only some lines,"
           "  would otherwise compare equal to one that honoured it fully. Line COUNTS are"
           "  printed but never compared — the engines do not emit the same number of lines."
-          "  LIMIT: the numerator counts stamped RAW lines while the denominator is the"
-          "  compared-output length, so a stamped-but-suppressed line can offset an"
-          "  unstamped compared one. Catches a total miss and an ordinary partial"
-          "  implementation (both planted); not a per-line proof. FG-118 makes it exact."
+          "  FG-118: prefix provenance follows each line through the complete contextual"
+          "  normaliser, and both counts come from its final survivor set. `all` means every"
+          "  compared survivor carried a prefix; suppressed narration and other raw console"
+          "  lines are outside both output comparison and this coverage claim."
           "  FG-053: this exclusion was CLAIMED and unimplemented until a case first used"
           "  the option, and read as true only because none did."
           "excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines"

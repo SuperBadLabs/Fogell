@@ -1186,6 +1186,244 @@ let timestampPrefixIsConditional =
                   "an engine's prefix is at column zero; a build's is not"
           } ]
 
+/// FG-118. Timestamp coverage belongs to the lines that survive the complete
+/// contextual normaliser, not to the raw console. Keeping the prefix bit beside
+/// its own line is load-bearing: filtering first and zipping by index recreates
+/// the same false `all` as counting raw prefixes independently.
+let timestampCoverageUsesComparedSurvivors =
+    let timestamp = "[2026-08-03T03:54:07.729Z] "
+    let stamped line = timestamp + line
+
+    let normalise declaresTimestamps lines =
+        Trace.normaliseOutputShapedWithTimestampCoverage
+            declaresTimestamps
+            false
+            []
+            []
+            lines
+
+    let trace counts =
+        { Result = "success"
+          Output = [ "visible" ]
+          WorkspaceHash = "workspace"
+          WorkspaceFiles = []
+          Timestamps = counts
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let receipt file jenkinsCounts fogellCounts =
+        Compare.receipt
+            file
+            (Text.Encoding.UTF8.GetBytes "pipeline { }")
+            "2.568.1"
+            []
+            (Result.Ok(trace jenkinsCounts))
+            (Result.Ok(trace fogellCounts))
+
+    testList
+        "FG-118 timestamp coverage uses the exact compared survivors"
+        [ test "A1 stamped graph narration cannot offset an unstamped survivor" {
+              let raw =
+                  [ stamped "[Pipeline] Start of Pipeline"
+                    stamped "[Pipeline] echo"
+                    "visible"
+                    stamped "[Pipeline] End of Pipeline" ]
+
+              let output, counts = normalise true raw
+
+              Expect.equal output [ "visible" ] "only the build output survives"
+              Expect.equal
+                  (Trace.normaliseOutputShaped true false [] [] raw)
+                  output
+                  "the existing text-only API projects the same survivor list"
+              Expect.equal counts (0, 1) "the suppressed prefixes are not evidence"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the unstamped survivor decides coverage"
+          }
+
+          test "A2 mixed stamped and unstamped survivors are partial" {
+              let output, counts =
+                  normalise
+                      true
+                      [ stamped "[Pipeline] Start of Pipeline"
+                        stamped "[Pipeline] echo"
+                        stamped "+ echo stamped"
+                        "unstamped"
+                        stamped "[Pipeline] End of Pipeline" ]
+
+              Expect.equal output [ "+ echo stamped"; "unstamped" ] "both build lines survive"
+              Expect.equal counts (1, 2) "only the stamped survivor is counted"
+              Expect.equal (Trace.timestampCoverage counts) "partial" "one of two is partial"
+          }
+
+          test "A3 unstamped suppressed narration does not dilute all survivors" {
+              let output, counts =
+                  normalise
+                      true
+                      [ "[Pipeline] Start of Pipeline"
+                        "[Pipeline] echo"
+                        stamped "+ echo stamped"
+                        "[Pipeline] End of Pipeline" ]
+
+              Expect.equal output [ "+ echo stamped" ] "the stamped build line survives"
+              Expect.equal counts (1, 1) "the denominator excludes raw narration"
+              Expect.equal (Trace.timestampCoverage counts) "all" "every survivor is stamped"
+          }
+
+          test "A4 a stamped line suppressed as a diagnostic yields empty coverage" {
+              let output, counts = normalise true [ stamped "ERROR: refused before output" ]
+              Expect.isEmpty output "diagnostics are compared through the reason bit, not output"
+              Expect.equal counts (0, 0) "a suppressed prefix is not a compared prefix"
+              Expect.equal (Trace.timestampCoverage counts) "none" "an empty survivor set is none"
+          }
+
+          test "A5 without a declaration a timestamp-shaped user line stays literal" {
+              let literal = stamped "printed by the build"
+              let output, counts = normalise false [ literal ]
+              Expect.equal output [ literal ] "shape alone never makes decoration"
+              Expect.equal counts (0, 1) "an undeclared literal contributes no coverage"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the option is absent"
+          }
+
+          test "A6 ANSI before a real timestamp retains prefix provenance" {
+              let decorated = "\u001b[32m" + stamped "+ echo colour" + "\u001b[0m"
+              let mutable enumerations = 0
+
+              let oneShot =
+                  seq {
+                      enumerations <- enumerations + 1
+
+                      if enumerations > 1 then
+                          failwith "timestamp normalisation enumerated its input twice"
+
+                      yield decorated
+                  }
+
+              let output, counts = normalise true oneShot
+              Expect.equal output [ "+ echo colour" ] "both engine decorations are stripped"
+              Expect.equal counts (1, 1) "ANSI does not hide timestamp provenance"
+              Expect.equal (Trace.timestampCoverage counts) "all" "the only survivor was stamped"
+              Expect.equal enumerations 1 "output and coverage are derived in one input pass"
+          }
+
+          test "A7 cross-line warning suppression keeps flags attached to their source lines" {
+              let output, counts =
+                  normalise
+                      true
+                      [ stamped
+                            "Warning: A secret was passed to \"echo\" using Groovy String interpolation, which is insecure."
+                        stamped "Affected argument(s) used the following variable(s): [TOKEN]"
+                        "visible-after-warning" ]
+
+              Expect.equal output [ "visible-after-warning" ] "the warning sequence is contextual narration"
+              Expect.equal counts (0, 1) "deleted leading rows do not shift their flags onto the survivor"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the survivor itself was unstamped"
+          }
+
+          test "A8 only exact positive equality classifies all" {
+              Expect.equal (Trace.timestampCoverage (0, 0)) "none" "empty evidence is none"
+              Expect.equal (Trace.timestampCoverage (1, 0)) "invalid" "a positive zero-denominator pair is invalid"
+              Expect.equal (Trace.timestampCoverage (2, 1)) "invalid" "an over-count is invalid"
+              Expect.equal (Trace.timestampCoverage (-1, 1)) "invalid" "a negative stamped count is invalid"
+              Expect.equal (Trace.timestampCoverage (0, -1)) "invalid" "a negative total is invalid"
+              Expect.equal (Trace.timestampCoverage (1, 1)) "all" "exact positive equality is all"
+              Expect.equal (Trace.timestampCoverage (1, 2)) "partial" "strictly interior coverage is partial"
+
+              let contract = String.concat "\n" Trace.comparisonContract
+              Expect.stringContains contract "both counts come from its final survivor set" "new receipts state the exact rule"
+              Expect.isFalse (contract.Contains "approximate") "new receipts do not claim the retired approximation"
+              Expect.isFalse (contract.Contains "stamped RAW") "new receipts do not describe the retired numerator"
+          }
+
+          test "A9 an invalid side diverges by engine and never by shared classification" {
+              let verdict, _ = Compare.traces [] (trace (1, 0)) (trace (0, 0))
+
+              match verdict with
+              | Diverged [ (InvalidTimestampCounts("jenkins", 1, 0) as reason) ] ->
+                  Expect.stringContains
+                      reason.Describe
+                      "engine=jenkins stamped=1 total=0"
+                      "the diagnostic preserves the engine and impossible counts"
+              | other -> failtest $"expected the invalid Jenkins tuple alone, got {other}"
+          }
+
+          test "A10 equally invalid sides cannot cancel into Proven" {
+              let verdict, _ = Compare.traces [] (trace (0, -1)) (trace (0, -1))
+
+              match verdict with
+              | Diverged
+                  [ InvalidTimestampCounts("jenkins", 0, -1)
+                    InvalidTimestampCounts("fogell", 0, -1) ] ->
+                  ()
+              | other -> failtest $"expected one named divergence per invalid engine, got {other}"
+          }
+
+          test "A11 an invalid zero-stamped tuple renders visibly and cannot verify" {
+              let validReceipt = receipt "timestamp-counts.Jenkinsfile" (0, 0) (0, 0)
+              let invalidReceipt = receipt "timestamp-counts.Jenkinsfile" (0, -1) (0, -1)
+              let validText = Compare.render validReceipt
+              let invalidText = Compare.render invalidReceipt
+
+              Expect.isFalse (validText.Contains "timestamps():") "valid none remains quiet"
+              Expect.stringContains
+                  invalidText
+                  "timestamps(): jenkins=INVALID (0/-1) fogell=INVALID (0/-1)"
+                  "invalid tuples are never hidden by the stamped-positive render gate"
+              Expect.notEqual invalidText validText "invalid evidence cannot render like valid none"
+
+              match
+                  Compare.verifySealedText
+                      (Compare.receiptFileName invalidReceipt.File)
+                      invalidText
+              with
+              | Compare.SealUnreadable _
+              | Compare.SealRefused _ -> ()
+              | other -> failtest $"a generated invalid receipt must not verify, got {other.Describe}"
+          }
+
+          test "A12 the verifier accepts only valid timestamp count relations" {
+              let validReceipt = receipt "valid-partial.Jenkinsfile" (1, 2) (1, 2)
+              let validText = Compare.render validReceipt
+              let name = Compare.receiptFileName validReceipt.File
+
+              Expect.equal
+                  (Compare.verifySealedText name validText)
+                  Compare.SealValid
+                  "the control receipt is structurally valid before mutation"
+
+              for bad in
+                  [ "PARTIAL (-1/2)"
+                    "PARTIAL (1/-2)"
+                    "PARTIAL (1/0)"
+                    "PARTIAL (0/2)"
+                    "PARTIAL (2/1)"
+                    "PARTIAL (2/2)"
+                    "all (0)"
+                    "all (-1)"
+                    "PARTIAL (999999999999/1000000000000)"
+                    "PARTIAL (oops)" ] do
+                  let forged = validText.Replace("PARTIAL (1/2)", bad)
+
+                  match Compare.verifySealedText name forged with
+                  | Compare.SealUnreadable _
+                  | Compare.SealRefused _ -> ()
+                  | other -> failtest $"invalid coverage '{bad}' must be unreadable/refused, got {other.Describe}"
+          }
+
+          test "A13 an unrecognized lexical coverage class fails by seal mismatch" {
+              let validReceipt = receipt "valid-all.Jenkinsfile" (1, 1) (1, 1)
+              let validText = Compare.render validReceipt
+              let name = Compare.receiptFileName validReceipt.File
+              let forged = validText.Replace("jenkins=all (1)", "jenkins=alligator (1)")
+
+              Expect.notEqual forged validText "the hostile lexical class is planted nonvacuously"
+
+              match Compare.verifySealedText name forged with
+              | Compare.SealMismatch(stored, recomputed) ->
+                  Expect.notEqual recomputed stored "<unparseable> participates in seal recomputation"
+              | other -> failtest $"an unknown lexical class must fail by seal mismatch, got {other.Describe}"
+          } ]
+
 /// FG-174. `WalkerRules.returnContract` is the ONE answer to "what does this call
 /// return", read by the static refusal and by the runtime publisher. It exists because
 /// deciding it at each site produced three separate review findings, so the rule is
@@ -3952,4 +4190,5 @@ let main argv =
               concurrentFoldAccounting
               continuationResolution
               returnFlagContract
-              timestampPrefixIsConditional ])
+              timestampPrefixIsConditional
+              timestampCoverageUsesComparedSurvivors ])
