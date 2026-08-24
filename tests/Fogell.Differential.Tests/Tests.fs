@@ -3,6 +3,7 @@ module Fogell.Differential.Tests
 open System
 open Expecto
 open Fogell.Differential
+open Fogell.Groovy.Interpreter
 open Fogell.Ir
 
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
@@ -2953,6 +2954,161 @@ let genuineNullRuntime =
                       "all four wrapper results reached Groovy with the measured values")
           } ]
 
+/// FG-203. Jenkins' `env` is one live object. A Groovy alias observes wrapper
+/// overlays and their restoration; replacing the VMap behind the owned `env`
+/// cell leaves every previously captured alias pointing at a stale snapshot.
+let liveEnvAliasRestoration =
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg203-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let hostileSource =
+        "pipeline { agent any stages { stage('probe') { steps { script { "
+        + "def before = env; def inside; "
+        + "echo \"before:${before.FG203_ALIAS_SCOPE}:${before.FG203_ALIAS_INNER}:${env.FG203_ALIAS_SCOPE}\"; "
+        + "withEnv(['FG203_ALIAS_SCOPE=outer']) { inside = env; "
+        + "echo \"outer:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "withEnv(['FG203_ALIAS_SCOPE=inner', 'FG203_ALIAS_INNER=yes']) { "
+        + "echo \"inner:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\" }; "
+        + "echo \"restored:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "try { withEnv(['FG203_ALIAS_SCOPE=fault', 'FG203_ALIAS_INNER=fault']) { "
+        + "echo \"during-fault:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "def ignored = 1 / 0 } } catch (Exception caught) { }; "
+        + "echo \"after-fault:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\" }; "
+        + "echo \"after:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_SCOPE}\"; "
+        + "if (before.FG203_ALIAS_SCOPE == null && inside.FG203_ALIAS_SCOPE == null "
+        + "&& env.FG203_ALIAS_SCOPE == null && env.FG203_ALIAS_INNER == null) { "
+        + "sh 'printf fresh > alias-result.txt' } else { sh 'printf stale > alias-result.txt' } "
+        + "} } } } }"
+
+    testList
+        "FG-203 live hosted env aliases"
+        [ test "aliases track nested overlays and normal plus fault restoration" {
+              withWorkspace "live" (fun root workspace ->
+                  match FogellSide.run [] root "job" hostileSource with
+                  | Error why -> failtestf "live env alias pipeline was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the caught body fault does not fail the build"
+                      Expect.equal
+                          trace.Output
+                          [ "before:null:null:null"
+                            "outer:outer:outer:null"
+                            "inner:inner:inner:yes"
+                            "restored:outer:outer:null"
+                            "during-fault:fault:fault:fault"
+                            "after-fault:outer:outer:null"
+                            "after:null:null:null"
+                            "+ printf fresh" ]
+                          "aliases captured before and inside the wrapper remain one live environment view"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "alias-result.txt")))
+                          "fresh"
+                          "the fresh branch ran, so null restoration was observed rather than inferred")
+          }
+
+          test "an Env.empty host reuses one escaped map across later wrappers and finally" {
+              let overlay: (string * string) list ref = ref []
+              let log = ResizeArray<string>()
+
+              let host: PerformStep =
+                  { Perform =
+                      fun _ name positional _ runBody ->
+                          match name, positional with
+                          | "withEnv", [ VList entries ] ->
+                              let bindings =
+                                  entries.Value
+                                  |> List.choose (function
+                                      | VStr entry ->
+                                          match entry.Split([| '=' |], 2) with
+                                          | [| key; value |] -> Some(key, value)
+                                          | _ -> None
+                                      | _ -> None)
+
+                              let saved = overlay.Value
+                              overlay.Value <- bindings @ saved
+
+                              try
+                                  runBody |> Option.iter (fun run -> run ())
+                              finally
+                                  overlay.Value <- saved
+                          | "echo", [ value ] -> log.Add(Value.toDisplay value)
+                          | _ -> runBody |> Option.iter (fun run -> run ())
+
+                          VNull
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> overlay.Value
+                    TakesBlock = fun name -> name = "withEnv" }
+
+              let source =
+                  "def saved; "
+                  + "withEnv(['FG203_MINTED=one']) { saved = env; echo \"one:${saved.FG203_MINTED}\" }; "
+                  + "echo \"after-one:${saved.FG203_MINTED}\"; "
+                  + "withEnv(['FG203_MINTED=two']) { echo \"two:${saved.FG203_MINTED}\" }; "
+                  + "echo \"after-two:${saved.FG203_MINTED}\"; "
+                  + "def env = saved; "
+                  + "withEnv(['FG203_MINTED=shadow']) { echo \"shadow:${saved.FG203_MINTED}:${env.FG203_MINTED}\" }; "
+                  + "try { withEnv(['FG203_MINTED=fault']) { echo \"fault:${saved.FG203_MINTED}:${env.FG203_MINTED}\"; def ignored = 1 / 0 } } catch (Exception caught) { }; "
+                  + "echo \"after-fault:${saved.FG203_MINTED}:${env.FG203_MINTED}\""
+
+              let script =
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Ok parsed -> parsed
+                  | Error error -> failtestf "direct hosted alias probe did not parse: %O" error
+
+              let outcome =
+                  Interpreter.runHosted
+                      host
+                      Budget.defaults
+                      (set [ "echo"; "withEnv" ])
+                      Env.empty
+                      script
+
+              Expect.isNone outcome.Fault "the direct hosted seam completed"
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "one:one"
+                    "after-one:null"
+                    "two:two"
+                    "after-two:null"
+                    "shadow:shadow:shadow"
+                    "fault:fault:fault"
+                    "after-fault:null:null" ]
+                  "a minted alias stays live after its cell scope ends, through shadowing and fault exit"
+          }
+
+          test "a script-owned env map remains local across a nested wrapper" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "withEnv(['FG203_ALIAS_SCOPE=outer']) { "
+                  + "def env = [FG203_ALIAS_SCOPE: 'local']; def saved = env; "
+                  + "withEnv(['FG203_ALIAS_SCOPE=inner']) { "
+                  + "echo \"local-inner:${env.FG203_ALIAS_SCOPE}:${saved.FG203_ALIAS_SCOPE}\" }; "
+                  + "echo \"local-after:${env.FG203_ALIAS_SCOPE}:${saved.FG203_ALIAS_SCOPE}\" } "
+                  + "} } } } }"
+
+              withWorkspace "local" (fun root _ ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "script-owned env control was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the ordinary map stays usable"
+                      Expect.equal
+                          trace.Output
+                          [ "local-inner:local:local"; "local-after:local:local" ]
+                          "host refresh never mutates or replaces a script-owned env map")
+          } ]
+
 /// FG-177. The retained six-build oracle schedule, executed against Fogell's
 /// real Git walker for BOTH producers. The remote refs advance from pipeline
 /// post so the next retained build sees a new revision while one job, its
@@ -4820,6 +4976,7 @@ let main argv =
             [ hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
+              liveEnvAliasRestoration
               scmReturnMapRuntime
               workspaceManifestV2
               jenkinsBuildDataAttestation
