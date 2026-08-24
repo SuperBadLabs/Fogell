@@ -152,13 +152,20 @@ let private plainIdent: P<string> =
 
 // --- literals --------------------------------------------------------------
 
-let private escaped: P<char> =
-    skipChar '\\' >>. anyChar
-    |>> function
-        | 'n' -> '\n'
-        | 't' -> '\t'
-        | 'r' -> '\r'
-        | c -> c
+let private decodeEscape =
+    function
+    | 'n' -> '\n'
+    | 't' -> '\t'
+    | 'r' -> '\r'
+    | c -> c
+
+let private escaped: P<char> = skipChar '\\' >>. anyChar |>> decodeEscape
+
+/// The narrow named-key form does not claim Groovy's physical line-continuation
+/// escapes. Keep the ordinary escape decoder shared, but fail closed rather
+/// than turning an unsupported backslash-break into key text.
+let private escapedWithoutPhysicalBreak: P<char> =
+    skipChar '\\' >>. satisfy (fun c -> c <> '\n' && c <> '\r') |>> decodeEscape
 
 let private singleQuoted: P<Expr> =
     between (skipString "'") (skipString "'") (manyChars (escaped <|> satisfy (fun c -> c <> '\'' && c <> '\n')))
@@ -217,6 +224,18 @@ let private gstring (q: string) : P<Expr> =
             else
                 EGString parts
 
+/// A double-quoted named-argument key is constant source text, not a GString.
+/// This deliberately has its own single-line boundary: the shared `gstring`
+/// parser also serves triple-double literals, where physical breaks are valid.
+let private doubleQuotedConstantName: P<Expr> =
+    between
+        (skipString "\"")
+        (skipString "\"")
+        (manyChars (
+            escapedWithoutPhysicalBreak
+            <|> satisfy (fun c -> c <> '"' && c <> '$' && c <> '\\' && c <> '\n' && c <> '\r')))
+    |>> EStr
+
 let private literal: P<Expr> =
     lexeme (
         choice
@@ -261,11 +280,18 @@ let private listOrMap: P<Expr> =
 let private arg: P<Arg> =
     // FG-180. A named argument's NAME may be a string literal — `parallel
     // 'UI Tests': { … }` is how real corpus files label parallel branches.
-    // Constant strings only, mirroring `mapKey`: Groovy assembles named
-    // arguments into a map literal, and a computed key is a different
-    // construct this grammar does not claim.
+    // Constant strings only: Groovy assembles named arguments into a map
+    // literal, and a computed key is a different construct this grammar does
+    // not claim. The named-key double-quote parser refuses interpolation and
+    // physical line breaks while sharing the ordinary string escape decoder;
+    // the general GString parser stays unchanged because it also serves valid
+    // multiline triple-double literals.
     let strName =
-        lexeme (attempt tripleSingle <|> singleQuoted)
+        lexeme (
+            choice
+                [ attempt tripleSingle
+                  attempt singleQuoted
+                  attempt doubleQuotedConstantName ])
         >>= function
             | EStr s -> preturn s
             | _ -> fail "named-argument name must be a constant string"

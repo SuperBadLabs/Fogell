@@ -50,7 +50,7 @@ bmustiata_jenny.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untruste
 boozallen_devsecops-example-helloworld.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 bszeti_kubernetes-integration-test.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 buildit_jenkins-pipeline-libraries.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-camiloribeiro_cdeasy.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '}' @1:6
+camiloribeiro_cdeasy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 captjt_jenkins-pipeline-express.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 charlires_golang-docker-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 choiis_Cpp-IOCP-Server.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2

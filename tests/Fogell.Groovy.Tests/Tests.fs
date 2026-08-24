@@ -2780,6 +2780,77 @@ let fg180Grammar =
               Expect.isTrue (parses "parallel('UI Tests': { echo 'x' })\n") "parenthesised"
           }
 
+          test "double-quoted constant names keep their decoded AST names in both call forms" {
+              match ast "parallel(\"UI\\tTests\": { echo 'x' }, 'API': { echo 'y' })\n" with
+              | [ SExpr(
+                    ECall(
+                        FreeCall "parallel",
+                        [ ANamed("UI\tTests", EClosure _); ANamed("API", EClosure _) ],
+                        None
+                    )
+                  ) ] -> ()
+              | other -> failtestf "wrong parenthesised AST: %A" other
+
+              match ast "parallel \"UI\\\"Tests\": { echo 'x' }, 'API': { echo 'y' }\n" with
+              | [ SExpr(
+                    ECall(
+                        FreeCall "parallel",
+                        [ ANamed("UI\"Tests", EClosure _); ANamed("API", EClosure _) ],
+                        None
+                    )
+                  ) ] -> ()
+              | other -> failtestf "wrong command-form AST: %A" other
+          }
+
+          test "double-quoted named keys use the same escape decoding as string values" {
+              match ast "f(\"line\\nname\": \"line\\nname\")\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EStr value) ], None)) ] ->
+                  Expect.equal name value "the key and value share the string decoder"
+                  Expect.equal name "line\nname" "the escape is decoded, not retained as source text"
+              | other -> failtestf "wrong AST: %A" other
+
+              match ast "f(\"\\$branch\": 1)\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed("$branch", EInt 1L) ], None)) ] -> ()
+              | other -> failtestf "an escaped dollar is literal key text, got: %A" other
+          }
+
+          test "raw physical breaks are refused and line-continuation escapes stay fail-closed" {
+              for source in
+                  [ "f(\"line\nname\": 1)\n"
+                    "f(\"line\rname\": 1)\n"
+                    "f(\"line\r\nname\": 1)\n" ] do
+                  Expect.isFalse (parses source) $"an ordinary double-quoted key is single-line: {source}"
+
+              for source in
+                  [ "f(\"line\\\nname\": 1)\n"
+                    "f(\"line\\\rname\": 1)\n"
+                    "f(\"line\\\r\nname\": 1)\n" ] do
+                  Expect.isFalse
+                      (parses source)
+                      $"physical line-continuation escapes are an explicit fail-closed residual: {source}"
+
+              match ast "def label = \"\"\"line\nname\"\"\"\n" with
+              | [ SDef("label", Some(EStr "line\nname")) ] -> ()
+              | other -> failtestf "triple-double multiline literal regressed: %A" other
+          }
+
+          test "interpolated double-quoted names remain refused" {
+              for source in
+                  [ "f(\"$branch\": 1)\n"
+                    "f(\"${branch}\": 1)\n"
+                    "f(\"prefix-${branch}\": 1)\n" ] do
+                  Expect.isFalse (parses source) $"a GString is not a constant key: {source.Trim()}"
+          }
+
+          test "mixed-quote duplicate names keep the FG-174 refusal" {
+              for source in
+                  [ "f('same': 1, \"same\": 2)\n"
+                    "f(\"same\": 1, 'same': 2)\n"
+                    "f 'same': 1, \"same\": 2\n"
+                    "f('$branch': 1, \"\\$branch\": 2)\n" ] do
+                  Expect.isFalse (parses source) $"decoded names collide regardless of quote kind: {source.Trim()}"
+          }
+
           test "an index assignment is not swallowed into a command call" {
               match ast "builds['a'] = { echo 'x' }" with
               | [ SAssign(EIndex(EVar "builds", _), EClosure _) ] -> ()
