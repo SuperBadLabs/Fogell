@@ -1,0 +1,40 @@
+utc: 2026-08-24T09:07:57Z
+host: HeMan
+head: 4679790c939007f8b2af7cd9450ce02c3f29d7e0
+tree: ef0e6ee4fc2b8034dc0f69163eb4ac979f16516d
+dotnet: 10.0.301
+jenkins-url: http://127.0.0.1:18099
+jenkins-core: 2.568.1
+jenkins-host: luigi
+jenkins-container: jenkins-lab
+jenkins-image-name: localhost/jenkins-rich:local
+jenkins-image-id: 7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
+engine-build-input-status: clean against HEAD (tracked and untracked)
+engine-build-project: tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+engine-build-configuration: Release
+engine-build-mode: --no-incremental (no stale output reuse)
+engine-build-pathspecs:
+  Fogell.slnx
+  global.json
+  :(glob)Directory.Build.*
+  :(glob)Directory.Packages.*
+  :(icase)nuget.config
+  src
+  tools
+
+implementation-sha256:
+6aeb0f51ec442f5f4a981e25ed19341d5d06f19c0f1e08ff6ec646527598bb2d  tests/Fogell.Differential.Tests/Tests.fs
+eb68a76e5a0d9ec460c8b92809db01d12db506ca3f9d52be19141a64c9d0857e  scripts/check-fg037-step-ceiling.py
+7cdcc818d458b5dc360abb4c0ba2e08a121f6040ed6317617cd3fe032a053d93  scripts/prove-fg037-step-ceiling.sh
+31ff0ec4e4b41406e7e1e77923509c504d4394f6cc912635281e90423a2577ad  scripts/run-fg037-step-ceiling-probe.sh
+
+worktree-status:
+ M docs/COMPARISON-MATRIX.md
+ M docs/EXECUTION_BOARD.md
+ M docs/adr/0005-inherited-jenkins-semantics.md
+ M docs/architecture/BASELINE.md
+ M tests/Fogell.Differential.Tests/Tests.fs
+?? docs/tickets/FG-037.md
+?? scripts/check-fg037-step-ceiling.py
+?? scripts/prove-fg037-step-ceiling.sh
+?? scripts/run-fg037-step-ceiling-probe.sh

@@ -1270,6 +1270,47 @@ let controllerProcessGroupExtinction =
                   "an uncertain outer probe blocks terminal publication"
           } ]
 
+/// FG-037. Declarative Jenkins compiles the steps in one stage into a JVM
+/// method and reaches its argument ceiling at step 251. Fogell's IR is a list,
+/// so the corresponding local guarantee is that every one of 400 ordered
+/// top-level steps is admitted and executed. This is deliberately an in-process
+/// regression test; the pinned-Jenkins boundary is retained separately by the
+/// live, non-build-gated FG-037 probe.
+let noStepCeiling =
+    testList
+        "FG-037 no steps-per-stage ceiling"
+        [ test "400 ordered steps all execute" {
+              let expected = [ 1..400 ] |> List.map (fun i -> $"FG037-{i:D3}")
+
+              let steps =
+                  expected
+                  |> List.map (fun marker -> $"echo '{marker}'")
+                  |> String.concat "\n"
+
+              let source =
+                  "pipeline { agent any stages { stage('four-hundred') { steps {\n"
+                  + steps
+                  + "\n} } } }"
+
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg037-" + Guid.NewGuid().ToString("N"))
+
+              try
+                  match FogellSide.run [] root "fg037-four-hundred" source with
+                  | Error why -> failtestf "400-step pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the 400-step stage completes"
+
+                      let markers =
+                          trace.Output
+                          |> List.filter (fun line -> line.StartsWith("FG037-", StringComparison.Ordinal))
+
+                      Expect.equal markers expected "all 400 unique markers execute once and in order"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          } ]
+
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
 ///
@@ -7951,6 +7992,7 @@ let main argv =
               controllerWorkerTiming
               controllerStateRoot
               controllerProcessGroupExtinction
+              noStepCeiling
               hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
