@@ -825,7 +825,54 @@ let secrets =
               let env = Secrets.environmentFor [ explicitBinding; other ] |> Map.ofList
 
               Expect.equal (Map.tryFind "TOKEN_FILE" env) (Some "explicit-secret") "the requested value wins"
+
+              let preservingOuter =
+                  Secrets.environmentForPreserving (Set.ofList [ "TOKEN_FILE" ]) [ explicitBinding; other ]
+                  |> Map.ofList
+
+              Expect.equal
+                  (Map.tryFind "TOKEN_FILE" preservingOuter)
+                  (Some "explicit-secret")
+                  "a current explicit value still shadows a preserved outer name"
+
               Secrets.revoke [ explicitBinding; other ]
+          }
+
+          test "generated companions preserve exact outer names and keep unused names" {
+              let root = tempRoot ()
+              let token = Secrets.bind root "TOKEN" "text-secret"
+              let user = Secrets.bind root "USER" "measured-user"
+              let cert = Secrets.bindBytes root "CERT" (Text.Encoding.UTF8.GetBytes "certificate")
+
+              let actual =
+                  Secrets.environmentForPreserving
+                      (Set.ofList [ "TOKEN_FILE"; "USER_FILE"; "cert_file" ])
+                      [ token; user; cert ]
+
+              Expect.equal
+                  actual
+                  [ "TOKEN", "text-secret"
+                    "USER", "measured-user"
+                    "CERT", cert.FilePath
+                    "CERT_FILE", cert.FilePath ]
+                  "values stay lexical, exact protected companions disappear, and an unused companion remains"
+
+              Expect.equal
+                  (Secrets.environmentForPreserving (Set.ofList [ "CERT_FILE" ]) [ cert ])
+                  [ "CERT", cert.FilePath ]
+                  "an exact protected companion is suppressed for a binary file-style binding too"
+
+              Expect.equal
+                  (Secrets.environmentForPreserving (Set.ofList [ "token_file" ]) [ token ])
+                  [ "TOKEN", "text-secret"; "TOKEN_FILE", token.FilePath ]
+                  "environment names remain case-sensitive"
+
+              Expect.equal
+                  (Secrets.environmentFor [ token; user; cert ])
+                  (Secrets.environmentForPreserving Set.empty [ token; user; cert ])
+                  "the legacy no-outer-environment entry point is byte-for-byte equivalent"
+
+              Secrets.revoke [ token; user; cert ]
           }
 
           test "a stash name cannot escape the stash root" {

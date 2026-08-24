@@ -131,7 +131,11 @@ module Secrets =
     /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
     /// file path (our addition). Masking on every output path is what actually
     /// protects the value — see FG-071 — not its absence from the environment.
-    let environmentFor (bindings: SecretBinding list) =
+    ///
+    /// A requested value belongs to the current lexical scope and may shadow an outer
+    /// name. A generated `_FILE` companion is only an additive Fogell convenience, so
+    /// it must not shadow a name the enclosing environment already owns.
+    let environmentForPreserving (preserved: Set<string>) (bindings: SecretBinding list) =
         // REVIEW FIX (Codex, PR #15 round 5): the overlay is last-wins, so a generated
         // `X_FILE` companion could overwrite a variable the Jenkinsfile had EXPLICITLY
         // requested as `X_FILE` — handing the body a path where its configured credential
@@ -145,10 +149,16 @@ module Secrets =
 
         let companions =
             bindings
-            |> List.filter (fun b -> not (requested.Contains b.PathVariable))
+            |> List.filter (fun b ->
+                not (requested.Contains b.PathVariable)
+                && not (preserved.Contains b.PathVariable))
             |> List.map (fun b -> b.PathVariable, b.FilePath)
 
         values @ companions
+
+    /// Compatibility entry point for callers with no enclosing environment to protect.
+    let environmentFor (bindings: SecretBinding list) =
+        environmentForPreserving Set.empty bindings
 
     /// FG-070's original, hardened form: the path ONLY, no value. Available for a
     /// caller that accepts the incompatibility.

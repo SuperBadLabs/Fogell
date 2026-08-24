@@ -1368,8 +1368,21 @@ module WalkerOrchestration =
                     let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                     emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
+                    // FG-044b(b). Explicit variables requested by THIS wrapper are
+                    // lexical and may shadow outer values. Generated `_FILE` companions
+                    // are Fogell-only conveniences: they may fill an unused name, never
+                    // overwrite a pipeline, stage, withEnv or outer-credential binding.
+                    let currentPlain = List.ofSeq plainEnv
+
+                    let preservedNames =
+                        envForWith (ctx.EnvOverlay @ currentPlain) stage
+                        |> List.map fst
+                        |> Set.ofList
+
                     let overlay =
-                        ctx.EnvOverlay @ List.ofSeq plainEnv @ Secrets.environmentFor bindings
+                        ctx.EnvOverlay
+                        @ currentPlain
+                        @ Secrets.environmentForPreserving preservedNames bindings
                     let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
 
                     for st in step.Block do

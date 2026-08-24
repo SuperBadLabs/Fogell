@@ -5562,6 +5562,161 @@ let credentialKeyBoundaryRefusal =
             Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", oldInline)
           } ]
 
+/// FG-044b(b). A generated `_FILE` companion is a Fogell convenience, not a
+/// lexical binding. It may fill an unused name but must never replace an effective
+/// pipeline/stage/withEnv/outer-credential value.
+let credentialCompanionPreservation =
+    let encode (value: string) =
+        value
+        |> Text.Encoding.UTF8.GetBytes
+        |> Convert.ToBase64String
+
+    let encodedText = encode "text-secret"
+    let credentialSpec = $"live-text\ttext\t{encodedText}"
+
+    let withCredentialStore action =
+        let oldFile = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE"
+        let oldInline = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", null)
+        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", credentialSpec)
+
+        try
+            action ()
+        finally
+            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", oldFile)
+            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", oldInline)
+
+    let run label source check =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-companion-" + Guid.NewGuid().ToString("N"))
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s pipeline refused outside execution: %s" label why
+            | Ok trace -> check root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let expectSuccess label root workspace markers trace =
+        Expect.equal trace.Result "success" $"{label}: wrapper and successors succeed"
+        Expect.isFalse
+            (trace.Output |> List.exists (fun line -> line.Contains "text-secret"))
+            $"{label}: the credential value never reaches captured output"
+
+        for marker in markers do
+            Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, marker))) $"{label}: {marker} proves its arm ran"
+
+        let secretRoot = IO.Path.Combine(root, "_secrets")
+
+        let leftovers =
+            if IO.Directory.Exists secretRoot then
+                IO.Directory.GetFiles(secretRoot, "*", IO.SearchOption.AllDirectories)
+            else
+                [||]
+
+        Expect.isEmpty leftovers $"{label}: every generated secret file is revoked"
+
+    testList
+        "FG-044b(b) credential companions preserve outer bindings"
+        [ test "an inner companion preserves and then restores an outer credential value" {
+              withCredentialStore (fun () ->
+                  let source =
+                      """pipeline {
+  agent any
+  stages {
+    stage('nested') {
+      steps {
+        withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN_FILE')]) {
+          sh 'test -n "$TOKEN_FILE" && touch outer-before.txt'
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) {
+            sh 'test "$TOKEN_FILE" = "$TOKEN" && touch nested.txt'
+          }
+          sh 'test -n "$TOKEN_FILE" && touch outer-after.txt'
+        }
+        sh 'test -z "${TOKEN_FILE+x}" && touch successor.txt'
+      }
+    }
+  }
+}"""
+
+                  run "nested" source (fun root workspace trace ->
+                      expectSuccess
+                          "nested"
+                          root
+                          workspace
+                          [ "outer-before.txt"; "nested.txt"; "outer-after.txt"; "successor.txt" ]
+                          trace))
+          }
+
+          test "stage names are protected while unused and case-distinct companions remain" {
+              withCredentialStore (fun () ->
+                  let source =
+                      """pipeline {
+  agent any
+  environment {
+    PIPE_FILE = 'pipeline-owned'
+  }
+  stages {
+    stage('stage-env') {
+      environment {
+        TOKEN_FILE = 'stage-owned'
+        case_file = 'lower-owned'
+      }
+      steps {
+        withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN'), string(credentialsId: 'live-text', variable: 'PIPE'), string(credentialsId: 'live-text', variable: 'OTHER'), string(credentialsId: 'live-text', variable: 'CASE')]) {
+          sh 'test "$PIPE_FILE" = pipeline-owned && test "$TOKEN_FILE" = stage-owned && test "$case_file" = lower-owned && test -r "$OTHER_FILE" && test -r "$CASE_FILE" && test "$TOKEN" = "$OTHER" && touch stage-protected.txt'
+        }
+        sh 'test "$PIPE_FILE" = pipeline-owned && test "$TOKEN_FILE" = stage-owned && touch stage-restored.txt'
+      }
+    }
+  }
+}"""
+
+                  run "stage" source (fun root workspace trace ->
+                      expectSuccess
+                          "stage"
+                          root
+                          workspace
+                          [ "stage-protected.txt"; "stage-restored.txt" ]
+                          trace))
+          }
+
+          test "an explicit current value shadows withEnv and the outer value returns" {
+              withCredentialStore (fun () ->
+                  let source =
+                      """pipeline {
+  agent any
+  stages {
+    stage('withenv') {
+      steps {
+        withEnv(['TOKEN_FILE=outer-env']) {
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) {
+            sh 'test "$TOKEN_FILE" = outer-env && test -n "$TOKEN" && touch withenv-protected.txt'
+          }
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN_FILE'), string(credentialsId: 'live-text', variable: 'EXPECTED')]) {
+            sh 'test "$TOKEN_FILE" = "$EXPECTED" && touch explicit-shadow.txt'
+          }
+          sh 'test "$TOKEN_FILE" = outer-env && touch withenv-restored.txt'
+        }
+        sh 'test -z "${TOKEN_FILE+x}" && touch withenv-successor.txt'
+      }
+    }
+  }
+}"""
+
+                  run "withEnv" source (fun root workspace trace ->
+                      expectSuccess
+                          "withEnv"
+                          root
+                          workspace
+                          [ "withenv-protected.txt"
+                            "explicit-shadow.txt"
+                            "withenv-restored.txt"
+                            "withenv-successor.txt" ]
+                          trace))
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -5594,5 +5749,6 @@ let main argv =
               timestampCoverageUsesComparedSurvivors
               compileRefusalDisposition
               credentialKeyBoundaryRefusal
+              credentialCompanionPreservation
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])
