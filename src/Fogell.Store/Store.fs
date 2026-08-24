@@ -461,12 +461,18 @@ type Store(connectionString: string) =
             elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
             else $"{queued} attempt(s) queued, none claimable"
 
+    /// FG-064a. The append and its attempt -> node -> build ownership check are
+    /// one statement. IDs are tenant-composite, so the attempt predicate and
+    /// node join both carry the tenant.
     member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
         use conn = openConn ()
         use cmd = conn.CreateCommand()
         cmd.CommandText <-
             "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
-             VALUES (@o, @b, @a, @s, @body)
+             SELECT a.organization_id, n.build_id, a.id, @s, @body
+             FROM attempts a
+             JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
+             WHERE a.organization_id = @o AND a.id = @a AND n.build_id = @b
              ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore

@@ -417,6 +417,139 @@ let logs =
               Expect.equal (store.ReadLog(org, a.BuildId, 0) |> List.length) 1 "still one chunk"
           }
 
+          test "an attempt cannot append to another build or consume its real sequence" {
+              let org, project = freshProject ()
+              let first = admitOk (newBuild org project "log-bound-first" [ "b" ])
+              let second = admitOk (newBuild org project "log-bound-second" [ "b" ])
+
+              Expect.isFalse
+                  (store.AppendLog(org, second.BuildId, first.AttemptId, 7, "poison"))
+                  "wrong-build append is rejected"
+
+              Expect.isEmpty (store.ReadLog(org, second.BuildId, 0)) "wrong build received no line"
+
+              Expect.isTrue
+                  (store.AppendLog(org, first.BuildId, first.AttemptId, 7, "real"))
+                  "the rejected append did not consume the attempt's sequence"
+
+              Expect.equal (store.ReadLog(org, first.BuildId, 0)) [ 7, "real" ] "correct lineage appends exactly once"
+          }
+
+          test "a nonexistent attempt cannot append and a valid attempt still can at the same sequence" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "log-bound-missing" [ "b" ])
+              let missing = AttemptId(Guid.NewGuid())
+
+              Expect.isFalse
+                  (store.AppendLog(org, admitted.BuildId, missing, 11, "invented"))
+                  "an unregistered attempt is rejected"
+
+              Expect.isEmpty (store.ReadLog(org, admitted.BuildId, 0)) "invented attempt produced no line"
+
+              Expect.isTrue
+                  (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 11, "registered"))
+                  "the real attempt can use the same sequence"
+
+              Expect.equal
+                  (store.ReadLog(org, admitted.BuildId, 0))
+                  [ 11, "registered" ]
+                  "only the registered attempt's line is visible"
+          }
+
+          test "an attempt from another tenant cannot append to a valid local build" {
+              let firstOrg, firstProject = freshProject ()
+              let secondOrg, secondProject = freshProject ()
+              let foreign = admitOk (newBuild firstOrg firstProject "log-bound-foreign" [ "b" ])
+              let local = admitOk (newBuild secondOrg secondProject "log-bound-local" [ "b" ])
+
+              Expect.isFalse
+                  (store.AppendLog(secondOrg, foreign.BuildId, foreign.AttemptId, 17, "wrong-org"))
+                  "a valid build-attempt lineage cannot be claimed by another organization"
+
+              Expect.isTrue
+                  (store.AppendLog(firstOrg, foreign.BuildId, foreign.AttemptId, 17, "foreign-owner"))
+                  "the rejected tenant claim did not consume the real lineage's sequence"
+
+              Expect.equal
+                  (store.ReadLog(firstOrg, foreign.BuildId, 0))
+                  [ 17, "foreign-owner" ]
+                  "the owning organization can append"
+
+              Expect.isFalse
+                  (store.AppendLog(secondOrg, local.BuildId, foreign.AttemptId, 13, "foreign"))
+                  "the organization and attempt must belong to one lineage"
+
+              Expect.isEmpty (store.ReadLog(secondOrg, local.BuildId, 0)) "foreign attempt produced no local line"
+
+              Expect.isTrue
+                  (store.AppendLog(secondOrg, local.BuildId, local.AttemptId, 13, "local"))
+                  "the local lineage remains writable at that sequence"
+
+              Expect.equal (store.ReadLog(secondOrg, local.BuildId, 0)) [ 13, "local" ] "only local data is visible"
+          }
+
+          test "composite node and attempt identities cannot splice a cross-tenant lineage" {
+              let ownerOrg, ownerProject = freshProject ()
+              let source = admitOk (newBuild ownerOrg ownerProject "log-composite-source" [ "b" ])
+              let target = admitOk (newBuild ownerOrg ownerProject "log-composite-target" [ "b" ])
+              let otherOrg, otherProject = freshProject ()
+
+              // IDs are composite with organization_id, not globally unique. Build a
+              // hostile but schema-valid second lineage that reuses all three UUIDs.
+              // A join on UUID alone can splice it into the owner's request.
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use tx = conn.BeginTransaction()
+
+              use build = conn.CreateCommand()
+              build.Transaction <- tx
+              build.CommandText <-
+                  "INSERT INTO builds
+                     (id, organization_id, project_id, number, idempotency_key, status)
+                   VALUES (@b, @o, @p, 1, @key, 'queued')"
+              build.Parameters.AddWithValue("b", target.BuildId.Value) |> ignore
+              build.Parameters.AddWithValue("o", otherOrg.Value) |> ignore
+              build.Parameters.AddWithValue("p", otherProject.Value) |> ignore
+              build.Parameters.AddWithValue("key", "log-composite-hostile") |> ignore
+              build.ExecuteNonQuery() |> ignore
+
+              use node = conn.CreateCommand()
+              node.Transaction <- tx
+              node.CommandText <-
+                  "INSERT INTO nodes
+                     (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
+                   VALUES (@n, @o, @b, 'hostile', 0, 'trusted-linux', ARRAY['linux'], 'queued')"
+              node.Parameters.AddWithValue("n", source.NodeId.Value) |> ignore
+              node.Parameters.AddWithValue("o", otherOrg.Value) |> ignore
+              node.Parameters.AddWithValue("b", target.BuildId.Value) |> ignore
+              node.ExecuteNonQuery() |> ignore
+
+              use attempt = conn.CreateCommand()
+              attempt.Transaction <- tx
+              attempt.CommandText <-
+                  "INSERT INTO attempts
+                     (id, organization_id, node_id, ordinal, state, restore_epoch)
+                   SELECT @a, @o, @n, 0, 'queued', restore_epoch
+                   FROM controller_metadata WHERE singleton"
+              attempt.Parameters.AddWithValue("a", source.AttemptId.Value) |> ignore
+              attempt.Parameters.AddWithValue("o", otherOrg.Value) |> ignore
+              attempt.Parameters.AddWithValue("n", source.NodeId.Value) |> ignore
+              attempt.ExecuteNonQuery() |> ignore
+              tx.Commit()
+
+              Expect.isFalse
+                  (store.AppendLog(ownerOrg, target.BuildId, source.AttemptId, 19, "spliced"))
+                  "composite identities cannot be joined through another organization"
+
+              Expect.isEmpty (store.ReadLog(ownerOrg, target.BuildId, 0)) "target build received no spliced line"
+
+              Expect.isTrue
+                  (store.AppendLog(ownerOrg, source.BuildId, source.AttemptId, 19, "owned"))
+                  "the rejected splice did not consume the owner's sequence"
+
+              Expect.equal (store.ReadLog(ownerOrg, source.BuildId, 0)) [ 19, "owned" ] "owner lineage remains exact"
+          }
+
           test "cancellation is recorded and visible in the snapshot" {
               let org, project = freshProject ()
               let a = admitOk (newBuild org project "cancel" [ "b" ])
