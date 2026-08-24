@@ -1,6 +1,8 @@
 module Fogell.Pipeline.Parser.Tests
 
 open System
+open System.Security.Cryptography
+open System.Text
 open Expecto
 open Fogell.Ir
 open Fogell.Admission
@@ -24,6 +26,24 @@ let private expectDuplicateWhen key body =
     Expect.equal e.Code MalformedSyntax "a named admission refusal"
     Expect.stringContains e.Message $"duplicate named argument `{key}`" "the duplicated key is preserved across parser backtracking"
     Expect.isGreaterThan e.Position.Line 0L "the refusal has a source position"
+
+type private FuzzXorShift64(initialState: uint64) =
+    let mutable state = initialState
+
+    member _.NextUInt64() =
+        state <- state ^^^ (state <<< 13)
+        state <- state ^^^ (state >>> 7)
+        state <- state ^^^ (state <<< 17)
+        state
+
+    member this.NextInt(exclusiveMaximum: int) =
+        int (this.NextUInt64() % uint64 exclusiveMaximum)
+
+type private MalformedFuzzCase =
+    { Label: string
+      Family: string
+      Source: string
+      Expected: ErrorCode * int64 * int64 }
 
 /// FG-004: bounds are applied BEFORE the recursive grammar, so hostile input
 /// can never reach it. Each limit has a named code and a position.
@@ -247,6 +267,392 @@ let sourceExcerpts =
                   (diagnostic MalformedSyntax 1L 401L "right" line)
                   $"malformed_syntax at 1:401: right\n…{clipped}\n{rightCaret}"
                   "the EOF edge has no trailing ellipsis"
+          } ]
+
+/// FG-004b. The fixed-seed generator is intentionally length-delimited and
+/// every generated source is malformed by construction. This is a bounded
+/// robustness sweep, not a grammar fuzzer claiming arbitrary coverage.
+let malformedInputSweep =
+    let seed = 0x46472D30303462UL
+    let inputCount = 10_000
+
+    let exact label family source code line column =
+        { Label = label
+          Family = family
+          Source = source
+          Expected = code, line, column }
+
+    let depthSource prefix opener = prefix + String.replicate 65 opener
+
+    let boundaries =
+        let missingRootClose =
+            "pipeline { agent any stages { stage('x') { steps { echo 'x' } } }"
+
+        let escapedQuoteScalar =
+            "'a\\'" + String.replicate Limits.defaults.MaxScalarBytes "b" + "'"
+
+        [ exact "empty" "empty-or-trivia" "" EmptySource 1L 1L
+          exact "trivia" "empty-or-trivia" " \t\r\n" EmptySource 1L 1L
+          exact "no-pipeline" "no-pipeline" "node { echo 'x' }" NoPipelineBlock 1L 1L
+          exact
+              "source-limit-exact"
+              "source-limit"
+              (String.replicate Limits.defaults.MaxSourceBytes "x")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "source-limit-plus-one"
+              "source-limit"
+              (String.replicate (Limits.defaults.MaxSourceBytes + 1) "x")
+              SourceTooLarge
+              1L
+              1L
+          exact
+              "one-contiguous-identifier"
+              "node-limit"
+              (String.replicate (Limits.defaults.MaxNodes + 1) "x")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "node-limit-exact"
+              "node-limit"
+              (String.replicate Limits.defaults.MaxNodes "x ")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "node-limit-plus-one"
+              "node-limit"
+              (String.replicate (Limits.defaults.MaxNodes + 1) "x ")
+              TooManyNodes
+              1L
+              (int64 (2 * Limits.defaults.MaxNodes + 2))
+          exact
+              "brace-depth-exact"
+              "brace-depth"
+              (String.replicate Limits.defaults.MaxDepth "{")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "brace-depth-plus-one"
+              "brace-depth"
+              (depthSource "" "{")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "bracket-depth-exact"
+              "bracket-depth"
+              (String.replicate Limits.defaults.MaxDepth "[")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "bracket-depth-plus-one"
+              "bracket-depth"
+              (depthSource "" "[")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "parenthesis-depth-exact"
+              "parenthesis-depth"
+              (String.replicate Limits.defaults.MaxDepth "(")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "parenthesis-depth-plus-one"
+              "parenthesis-depth"
+              (depthSource "" "(")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "single-scalar-content-limit-minus-one"
+              "single-scalar-limit"
+              ("'" + String.replicate (Limits.defaults.MaxScalarBytes - 1) "a" + "'")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "single-scalar-content-limit"
+              "single-scalar-limit"
+              ("'" + String.replicate Limits.defaults.MaxScalarBytes "a" + "'")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 3L)
+          exact
+              "single-scalar-limit-plus-one"
+              "single-scalar-limit"
+              ("'" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "'")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
+              "escaped-quote-keeps-scalar-open"
+              "single-scalar-limit"
+              escapedQuoteScalar
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 6L)
+          exact
+              "double-scalar-limit-plus-one"
+              "double-scalar-limit"
+              ("\"" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "\"")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
+              "lf-resets-depth-position"
+              "lf-depth"
+              (depthSource "x\n" "{")
+              NestingTooDeep
+              2L
+              66L
+          exact
+              "crlf-resets-depth-position"
+              "crlf-depth"
+              (depthSource "x\r\n" "{")
+              NestingTooDeep
+              2L
+              66L
+          exact
+              "missing-pipeline-close"
+              "missing-close"
+              missingRootClose
+              MalformedSyntax
+              1L
+              (int64 missingRootClose.Length + 1L) ]
+
+    let token (rng: FuzzXorShift64) length =
+        let alphabet = "0123456789abcdef"
+        String(Array.init length (fun _ -> alphabet.[rng.NextInt alphabet.Length]))
+
+    let generatedCase (rng: FuzzXorShift64) ordinal =
+        let payload = token rng (8 + rng.NextInt 24)
+        let label suffix = $"generated-{suffix}-{ordinal:D5}-len-{payload.Length:D2}"
+
+        match ordinal % 6 with
+        | 0 ->
+            let length = ordinal / 6 + 5
+            let whitespace = " \t\r\n"
+            let source = String(Array.init length (fun _ -> whitespace.[rng.NextInt whitespace.Length]))
+            exact (label "trivia") "empty-or-trivia" source EmptySource 1L 1L
+        | 1 ->
+            exact
+                (label "no-pipeline")
+                "no-pipeline"
+                ($"node {{ echo 'x' }} // {ordinal:D5}-{payload}")
+                NoPipelineBlock
+                1L
+                1L
+        | 2 ->
+            let source =
+                "pipeline { agent any stages { stage('x') { steps { echo '"
+                + $"{ordinal:D5}-{payload}"
+                + "' } } }"
+
+            exact
+                (label "missing-close")
+                "missing-close"
+                source
+                MalformedSyntax
+                1L
+                (int64 source.Length + 1L)
+        | family ->
+            let opener, familyName =
+                match family with
+                | 3 -> "{", "brace-depth"
+                | 4 -> "[", "bracket-depth"
+                | _ -> "(", "parenthesis-depth"
+
+            let prefix = $"case_{ordinal:D5}_{payload} "
+
+            exact
+                (label familyName)
+                familyName
+                (depthSource prefix opener)
+                NestingTooDeep
+                1L
+                (int64 prefix.Length + 66L)
+
+    let cases () =
+        let rng = FuzzXorShift64(seed)
+        let generatedCount = inputCount - boundaries.Length
+
+        boundaries
+        @ [ for ordinal in 0 .. generatedCount - 1 -> generatedCase rng ordinal ]
+        |> List.toArray
+
+    let appendUInt64LittleEndian (hash: IncrementalHash) value =
+        let bytes = Array.init 8 (fun shift -> byte (value >>> (8 * shift)))
+        hash.AppendData bytes
+
+    let appendInt32LittleEndian (hash: IncrementalHash) value =
+        let unsigned = uint32 value
+        let bytes = Array.init 4 (fun shift -> byte (unsigned >>> (8 * shift)))
+        hash.AppendData bytes
+
+    let appendLengthDelimitedUtf16 (hash: IncrementalHash) (value: string) =
+        let bytes = Encoding.Unicode.GetBytes value
+        appendInt32LittleEndian hash bytes.Length
+        hash.AppendData bytes
+
+    let corpusDigest (inputs: MalformedFuzzCase array) =
+        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+        appendUInt64LittleEndian hash seed
+        appendInt32LittleEndian hash inputs.Length
+
+        for input in inputs do
+            appendLengthDelimitedUtf16 hash input.Label
+            appendLengthDelimitedUtf16 hash input.Source
+
+        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
+
+    let requiredFamilies =
+        set
+            [ "empty-or-trivia"
+              "no-pipeline"
+              "missing-close"
+              "brace-depth"
+              "bracket-depth"
+              "parenthesis-depth"
+              "source-limit"
+              "node-limit"
+              "single-scalar-limit"
+              "double-scalar-limit"
+              "lf-depth"
+              "crlf-depth" ]
+
+    testList
+        "FG-004b deterministic malformed-input sweep"
+        [ test "the fixed-seed length-delimited corpus is exact and replayable" {
+              let first = cases ()
+              let replay = cases ()
+              let firstDigest = corpusDigest first
+              let replayDigest = corpusDigest replay
+
+              Expect.equal first.Length inputCount "exactly 10,000 malformed inputs are generated"
+              Expect.equal replay.Length inputCount "the replay has the same exact size"
+
+              for index in 0 .. inputCount - 1 do
+                  Expect.equal replay.[index].Label first.[index].Label $"label replay at index {index}"
+
+                  Expect.isTrue
+                      (String.Equals(replay.[index].Source, first.[index].Source, StringComparison.Ordinal))
+                      $"source code units replay at index {index}"
+
+              Expect.equal replayDigest firstDigest "the complete length-delimited corpus replays byte-for-byte"
+              Expect.equal
+                  firstDigest
+                  "774ac3ced0365dff265edef6cd1977a91ddd3654af584421beba0d8e706634ae"
+                  "the fixed seed and recipe corpus are pinned"
+
+              Expect.equal
+                  (first |> Array.map (fun input -> input.Label) |> Set.ofArray |> Set.count)
+                  inputCount
+                  "every generated case label is unique"
+
+              Expect.equal
+                  (first |> Array.map (fun input -> input.Source) |> Set.ofArray |> Set.count)
+                  inputCount
+                  "every malformed source is unique"
+
+              let observedFamilies = first |> Array.map (fun input -> input.Family) |> Set.ofArray
+              Expect.equal observedFamilies requiredFamilies "every named malformed family is present"
+
+              for family in requiredFamilies do
+                  Expect.isGreaterThan
+                      (first |> Array.filter (fun input -> input.Family = family) |> Array.length)
+                      0
+                      $"the {family} recipe is non-vacuous"
+
+              printfn "FG004B_GENERATED=%d FG004B_CORPUS_SHA256=%s FG004B_FAMILIES=%d" first.Length firstDigest observedFamilies.Count
+          }
+
+          test "all 10,000 inputs return typed positioned refusals" {
+              let inputs = cases ()
+              let mutable refused = 0
+              let mutable exactBoundaries = 0
+              let mutable observedCodes = Set.empty
+
+              for index in 0 .. inputs.Length - 1 do
+                  let input = inputs.[index]
+                  let result =
+                      try
+                          Parser.parse input.Source
+                      with ex ->
+                          let exceptionType = ex.GetType()
+                          let typeName =
+                              if String.IsNullOrWhiteSpace exceptionType.FullName then
+                                  exceptionType.Name
+                              else
+                                  exceptionType.FullName
+
+                          failtestf
+                              "unhandled parser exception; seed=0x%016X; index=%d; label=%s; exception-type=%s"
+                              seed
+                              index
+                              input.Label
+                              typeName
+
+                  match result with
+                  | Ok _ ->
+                      failtestf
+                          "guaranteed-malformed input was accepted; seed=0x%016X; index=%d; label=%s"
+                          seed
+                          index
+                          input.Label
+                  | Error error ->
+                      refused <- refused + 1
+                      let wire = expectedWireName error.Code
+                      observedCodes <- Set.add wire observedCodes
+
+                      Expect.equal
+                          (ErrorCode.toWireString error.Code)
+                          wire
+                          $"stable exhaustive wire code at index {index} ({input.Label})"
+
+                      Expect.isFalse
+                          (String.IsNullOrWhiteSpace error.Message)
+                          $"nonblank refusal message at index {index} ({input.Label})"
+
+                      Expect.isGreaterThanOrEqual
+                          error.Position.Line
+                          1L
+                          $"positive refusal line at index {index} ({input.Label})"
+
+                      Expect.isGreaterThanOrEqual
+                          error.Position.Column
+                          1L
+                          $"positive refusal column at index {index} ({input.Label})"
+
+                      let code, line, column = input.Expected
+                      exactBoundaries <- exactBoundaries + 1
+                      Expect.equal error.Code code $"exact boundary code at index {index} ({input.Label})"
+                      Expect.equal error.Position.Line line $"exact boundary line at index {index} ({input.Label})"
+                      Expect.equal error.Position.Column column $"exact boundary column at index {index} ({input.Label})"
+
+              Expect.equal refused inputCount "all 10,000 inputs were refused"
+              Expect.equal exactBoundaries inputCount "every refusal code and position is pinned"
+
+              Expect.equal
+                  observedCodes
+                  (set
+                      [ "empty_source"
+                        "no_pipeline_block"
+                        "malformed_syntax"
+                        "source_too_large"
+                        "too_many_nodes"
+                        "nesting_too_deep"
+                        "scalar_too_long" ])
+                  "the sweep exercises every claimed admission/parser refusal class"
+
+              printfn "FG004B_REFUSED=%d FG004B_EXACT_BOUNDARIES=%d FG004B_CODES=%d" refused exactBoundaries observedCodes.Count
           } ]
 
 let declarativeDetection =
@@ -1365,6 +1771,7 @@ let main argv =
             "Fogell.Pipeline.Parser"
             [ admissionLimits
               sourceExcerpts
+              malformedInputSweep
               declarativeDetection
               structure
               invalidEightEscape
