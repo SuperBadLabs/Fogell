@@ -122,3 +122,14 @@ jobs:
           if echo "$out" | grep -q "^skipped:"; then
             echo "Store tests were SKIPPED — postgres service not reachable"; exit 1
           fi
+
+      - name: backup/restore drill and hostile proof (FG-085a)
+        # The postgres:16 service is also the client-tool distribution. Keeping
+        # pg_dump/pg_restore inside that container gives the drill exact-major
+        # tools without a mutable apt install or network download.
+        env:
+          FOGELL_CONTAINER_RUNTIME: docker
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          ./scripts/prove-backup-restore-drill.sh
+          ./scripts/backup-restore-drill.sh
