@@ -223,6 +223,7 @@ let stringModel =
             (positional |> List.mapi (fun i _ -> $"#{i}"))
             @ (named |> List.map fst)
           Block = []
+          HasBlock = false
           LiteralNamedArgs = Set.ofList literalNamed
           LiteralPositionalArgs = Set.ofList literalPos
           ExpressionArgs = Set.ofList exprArgs
@@ -4164,6 +4165,250 @@ script says Checking out Revision {laterCheckout} (spoof)
               Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
+/// FG-123a. Pipeline `options { ansiColor(...) }` is a Declarative directive,
+/// not the block-taking scripted step with the same name. Jenkins refuses a
+/// trailing closure while compiling the model, before checkout or build effects.
+let ansiColorTrailingBlocks =
+    let duplicateError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor option is declared more than once"
+
+    let blockError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option does not accept a trailing block"
+
+    let arityError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
+
+    let option hasBlock positional named =
+        { Name = "ansiColor"
+          Positional = positional
+          Named = named
+          ArgumentOrder =
+            (positional |> List.mapi (fun i _ -> $"#{i}"))
+            @ (named |> List.map fst)
+          Block = []
+          HasBlock = hasBlock
+          LiteralNamedArgs = Set.empty
+          LiteralPositionalArgs = Set.empty
+          ExpressionArgs = Set.empty
+          InterpolationSource = []
+          RawArgs = ""
+          ScriptBody = None
+          Position = Position.zero }
+
+    let reject options =
+        let emitted = ResizeArray<string>()
+        let rejected = FogellSide.rejectInvalidAnsiColor emitted.Add options
+        rejected, emitted |> Seq.toList
+
+    let rejectSource source =
+        match Fogell.Pipeline.Parser.Parser.parse source with
+        | Error why -> failtestf "expected an ansiColor model, got %A" why
+        | Ok pipeline -> reject pipeline.Options
+
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg123a-{label}-{Guid.NewGuid():N}")
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let invalidPipeline optionBody =
+        "pipeline { agent any options { "
+        + optionBody
+        + " } stages { stage('must-not-run') { steps { sh 'touch stage-marker.txt' } } } "
+        + "post { always { sh 'touch post-marker.txt' } } }"
+
+    let assertCompileRefusal label source root workspace =
+        match FogellSide.run [] root "job" source with
+        | Error why -> failtestf "%s did not reach the compile-shaped refusal: %s" label why
+        | Ok trace ->
+            Expect.equal trace.Result "failure" $"{label}: terminal result"
+            Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+            Expect.isEmpty trace.Output $"{label}: the diagnostic is normalized as engine narration"
+            Expect.isEmpty trace.EngineNotes $"{label}: no unrelated note substitutes for the refusal"
+            Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace is empty"
+            Expect.equal
+                trace.WorkspaceHash
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                $"{label}: exact empty-workspace digest"
+
+            Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+            Expect.isEmpty
+                (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                 |> Seq.toList)
+                $"{label}: no stage, option-body, post or scaffolding effect"
+
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+        start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+        start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+        start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+        for arg in args do
+            start.ArgumentList.Add arg
+
+        use child = Diagnostics.Process.Start start
+        let stdout = child.StandardOutput.ReadToEnd()
+        let stderr = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+
+        if child.ExitCode <> 0 then
+            failtestf "git %s failed (%d): %s" (String.concat " " args) child.ExitCode stderr
+
+        stdout.Trim()
+
+    testList
+        "FG-123a ansiColor trailing closure"
+        [ test "the production-owned diagnostic preserves duplicate, block, then arity precedence" {
+              let valid = option false [ "'xterm'" ] []
+              let closure = option true [ "'xterm'" ] []
+              let badArity = option false [ "'xterm'"; "'vga'" ] []
+
+              Expect.equal (reject []) (false, []) "absence emits nothing"
+              Expect.equal (reject [ valid ]) (false, []) "ordinary positional form remains valid"
+              Expect.equal
+                  (reject [ option false [] [ "colorMapName", "'xterm'" ] ])
+                  (false, [])
+                  "ordinary named form remains valid"
+              Expect.equal (reject [ closure ]) (true, [ blockError ]) "an empty parsed block is still a closure"
+              Expect.equal (reject [ badArity ]) (true, [ arityError ]) "arity remains the final single-option check"
+              Expect.equal
+                  (reject [ option true [ "'xterm'"; "'vga'" ] [] ])
+                  (true, [ blockError ])
+                  "block ownership precedes bad arity"
+
+              for declarations in [ [ valid; closure ]; [ closure; valid ]; [ badArity; closure ] ] do
+                  Expect.equal
+                      (reject declarations)
+                      (true, [ duplicateError ])
+                      "duplicate cardinality owns the exact single diagnostic before shape"
+          }
+
+          test "duplicates across source orders and option sections retain the duplicate owner" {
+              let oneSection first second =
+                  $"pipeline {{ agent any options {{ {first}; {second} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+              let twoSections first second =
+                  $"pipeline {{ agent any options {{ {first} }} options {{ {second} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+              for source in
+                  [ oneSection "ansiColor('xterm')" "ansiColor('xterm') {}"
+                    oneSection "ansiColor('xterm') {}" "ansiColor('xterm')"
+                    twoSections "ansiColor('xterm')" "ansiColor('xterm') {}"
+                    twoSections "ansiColor('xterm') {}" "ansiColor('xterm')" ] do
+                  Expect.equal (rejectSource source) (true, [ duplicateError ]) "duplicate precedence survives parsing"
+
+              let mixedInvalid =
+                  "pipeline { agent any options { ansiColor('xterm', 'vga') {} } "
+                  + "stages { stage('S') { steps { sh 'true' } } } }"
+
+              Expect.equal
+                  (rejectSource mixedInvalid)
+                  (true, [ blockError ])
+                  "a parsed closure owns the diagnostic before its bad arity"
+          }
+
+          test "empty, trivia, separator and nonempty closures refuse before every effect" {
+              for label, optionBody in
+                  [ "empty", "ansiColor('xterm') {}"
+                    "comment", "ansiColor('xterm') { /* trivia only */ }"
+                    "line-comment", "ansiColor('xterm') { // trivia only\n }"
+                    "semicolon", "ansiColor('xterm') { ; }"
+                    "nonempty", "ansiColor('xterm') { sh 'touch option-body-marker.txt' }" ] do
+                  withWorkspace label (fun root workspace ->
+                      assertCompileRefusal label (invalidPipeline optionBody) root workspace)
+          }
+
+          test "hosted synthetic calls retain their trailing-body presence" {
+              withWorkspace "hosted-presence" (fun root workspace ->
+                  let source =
+                      "pipeline { agent any stages { stage('hosted') { steps { script { "
+                      + "dir('nested') { sh 'printf hosted > marker.txt' }"
+                      + " } } } } }"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "hosted body presence control refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the hosted wrapper body runs"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "nested", "marker.txt")))
+                          "hosted"
+                          "the synthetic Step carried runBody presence into dispatch")
+          }
+
+          test "valid positional, named and brace-text controls make TERM observable" {
+              for label, optionBody, expected in
+                  [ "positional", "ansiColor('xterm')", "xterm"
+                    "named", "ansiColor(colorMapName: 'vga')", "vga"
+                    "argument-brace", "ansiColor('x{term}')", "x{term}" ] do
+                  withWorkspace label (fun root workspace ->
+                      let source =
+                          "pipeline { agent any options { "
+                          + optionBody
+                          + " } stages { stage('term') { steps { sh 'printf %s \"$TERM\" > term.txt' } } } }"
+
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s valid control refused: %s" label why
+                      | Ok trace ->
+                          Expect.equal trace.Result "success" $"{label}: build succeeds"
+                          Expect.equal
+                              (IO.File.ReadAllText(IO.Path.Combine(workspace, "term.txt")))
+                              expected
+                              $"{label}: ansiColor's TERM behavior remains load-bearing")
+          }
+
+          test "a locally attested matching SCM definition is refused before checkout" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg123a-scm-{Guid.NewGuid():N}")
+              let sourceRepo = IO.Path.Combine(root, "source")
+              let bareRepo = IO.Path.Combine(root, "remote.git")
+              let workspaceRoot = IO.Path.Combine(root, "workspace")
+              let workspace = IO.Path.Combine(workspaceRoot, "job")
+              let script = invalidPipeline "ansiColor('xterm') {}"
+
+              try
+                  IO.Directory.CreateDirectory(sourceRepo) |> ignore
+                  IO.Directory.CreateDirectory(workspaceRoot) |> ignore
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), script)
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "attested FG-123a definition" ] |> ignore
+                  Expect.equal
+                      (runGit sourceRepo [ "show"; "HEAD:Jenkinsfile" ])
+                      script
+                      "the supplied model exactly matches the committed SCM Jenkinsfile"
+
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+                  let scm = { Url = bareRepo; Branch = "main" }
+
+                  match FogellSide.runScm [] workspaceRoot "job" scm script with
+                  | Error why -> failtestf "matching local SCM did not reach ansiColor refusal: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "compile refusal controls SCM result"
+                      Expect.isTrue trace.ReportedFailureReason "SCM refusal remains explained"
+                      Expect.isEmpty trace.Output "no checkout or stage narration survives"
+                      Expect.isEmpty trace.WorkspaceFiles "checkout produced no semantic files"
+                      Expect.isTrue (IO.Directory.Exists workspace) "workspace setup completed"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                           |> Seq.toList)
+                          "no .git, checkout, stage, option-body or post effect"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          } ]
+
 /// FG-130a. Jenkins refuses an argument-bearing `parallelsAlwaysFailFast`
 /// while compiling the Declarative model. The refusal must therefore happen
 /// before every stage and pipeline-post effect; merely treating `(false)` as
@@ -4177,6 +4422,7 @@ let parallelsAlwaysFailFastArguments =
             (positional |> List.mapi (fun i _ -> $"#{i}"))
             @ (named |> List.map fst)
           Block = []
+          HasBlock = false
           LiteralNamedArgs = Set.empty
           LiteralPositionalArgs = Set.empty
           ExpressionArgs = Set.empty
@@ -4592,4 +4838,5 @@ let main argv =
               returnFlagContract
               timestampPrefixIsConditional
               timestampCoverageUsesComparedSurvivors
-              parallelsAlwaysFailFastArguments ])
+              parallelsAlwaysFailFastArguments
+              ansiColorTrailingBlocks ])

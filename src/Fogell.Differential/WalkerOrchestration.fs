@@ -2353,6 +2353,7 @@ module WalkerOrchestration =
                                                   Positional = positional |> List.map Value.toDisplay
                                                   Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
                                                   Block = []
+                                                  HasBlock = runBody.IsSome
                                                   // ALREADY EVALUATED by the interpreter, so no
                                                   // further interpolation: see the literal marking
                                                   // that fixed the re-rendered approval prompt.
@@ -2369,8 +2370,14 @@ module WalkerOrchestration =
                                                   Position = step.Position }
 
                                             let dispatchCtx =
-                                                match runBody with
-                                                | Some thunk ->
+                                                // A synthetic call obeys the same IR contract as a
+                                                // parsed one: source/body presence is explicit and
+                                                // cannot be recovered from the empty Declarative
+                                                // Block. Matching both values makes a constructor
+                                                // that drops HasBlock fail instead of silently
+                                                // dropping a hosted wrapper body.
+                                                match called.HasBlock, runBody with
+                                                | true, Some thunk ->
                                                     { atCtx with
                                                         HostedBody = Some(runBodyIn thunk)
                                                         HostedArgs = Some(positional, named) }
@@ -2378,10 +2385,13 @@ module WalkerOrchestration =
                                                 // stale runner inherited from an enclosing wrapper
                                                 // would let a body-less call run some other call's
                                                 // block.
-                                                | None ->
+                                                | false, None ->
                                                     { atCtx with
                                                         HostedBody = None
                                                         HostedArgs = Some(positional, named) }
+                                                | _ ->
+                                                    Interpreter.raiseHostedCallRefused
+                                                        $"script block: hosted step `{name}` has inconsistent trailing-block presence"
 
                                             // The deadline a hosted `timeout` established wins over
                                             // the one captured when the script started; without this

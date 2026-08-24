@@ -972,6 +972,69 @@ let structure =
 /// open a slashy. The over-broad fix (every `/` opens a span) was an approval
 /// bypass — `input message: 10 / 2` lost its prompt — and the narrow one here
 /// must hold both directions at both scanner sites.
+/// FG-123a. `Block` carries parsed children, so it deliberately collapses an
+/// absent trailing block and an empty one to the same list. Option validation
+/// needs source PRESENCE, including trivia-only bodies Jenkins still sees as a
+/// closure. Keep that fact in the IR rather than trying to reconstruct it from
+/// raw arguments or braces that may be ordinary string content.
+let stepBlockPresence =
+    let pipeline optionBody =
+        $"pipeline {{ agent any options {{ {optionBody} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+    let ansi optionBody =
+        let parsed = ok (pipeline optionBody)
+        parsed.Options |> List.find (fun option -> option.Name = "ansiColor")
+
+    testList
+        "FG-123a trailing-block presence"
+        [ test "absent, empty, comment, separator and nonempty blocks remain distinct" {
+              let absent = ansi "ansiColor('xterm')"
+              Expect.isFalse absent.HasBlock "an ordinary option has no trailing block"
+              Expect.isEmpty absent.Block "absence still has no parsed children"
+
+              for label, source in
+                  [ "empty", "ansiColor('xterm') {}"
+                    "line-comment", "ansiColor('xterm') { // trivia only\n }"
+                    "block-comment", "ansiColor('xterm') { /* trivia only */ }"
+                    "semicolon", "ansiColor('xterm') { ; }" ] do
+                  let option = ansi source
+                  Expect.isTrue option.HasBlock $"{label}: source presence survives"
+                  Expect.isEmpty option.Block $"{label}: trivia invents no child step"
+
+              let nonempty = ansi "ansiColor('xterm') { sh 'inside' }"
+              Expect.isTrue nonempty.HasBlock "a populated trailing block is present"
+              Expect.equal (nonempty.Block |> List.map (fun step -> step.Name)) [ "sh" ] "its child still parses"
+          }
+
+          test "braces inside arguments are not mistaken for a trailing block" {
+              for source in
+                  [ "ansiColor('x{term}')"
+                    "ansiColor(colorMapName: 'x}term')" ] do
+                  let option = ansi source
+                  Expect.isFalse option.HasBlock $"argument content is not a block: {source}"
+                  Expect.isEmpty option.Block "argument braces create no children"
+          }
+
+          test "script bodies carry the same source-presence bit" {
+              let withoutBody = ok (mk "    stage('S') { steps { script() } }")
+              let absent = withoutBody.Stages.[0].Steps.[0]
+              Expect.isFalse absent.HasBlock "bodyless script is absent"
+              Expect.isNone absent.ScriptBody "bodyless script has no source"
+
+              let withBody = ok (mk "    stage('S') { steps { script { /* empty */ } } }")
+              let present = withBody.Stages.[0].Steps.[0]
+              Expect.isTrue present.HasBlock "opaque script body is present"
+              Expect.isSome present.ScriptBody "opaque source is retained"
+              Expect.isEmpty present.Block "script source is never reparsed as declarative children"
+          }
+
+          test "an unterminated trailing block remains a named syntax rejection" {
+              let malformed =
+                  "pipeline { agent any options { ansiColor('xterm') { sh 'inside' } stages { stage('S') { steps { sh 'true' } } } }"
+
+              Expect.equal (err malformed).Code MalformedSyntax "the missing option-block brace cannot downgrade to absence"
+          } ]
+
 let slashyPosition =
     let steps body =
         mk $"    stage(\"S\") {{\n      steps {{\n{body}\n      }}\n    }}"
@@ -1031,4 +1094,10 @@ let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testList "Fogell.Pipeline.Parser" [ admissionLimits; declarativeDetection; structure; slashyPosition ])
+        (testList
+            "Fogell.Pipeline.Parser"
+            [ admissionLimits
+              declarativeDetection
+              structure
+              stepBlockPresence
+              slashyPosition ])

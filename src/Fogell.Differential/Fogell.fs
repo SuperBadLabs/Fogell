@@ -76,6 +76,43 @@ module FogellSide =
         else
             false
 
+    let private ansiColorMap (option: Step) =
+        match option.Positional, option.Named with
+        | [ map ], [] -> Some map
+        | [], [ ("colorMapName", map) ] -> Some map
+        | _ -> None
+
+    /// FG-123a. Declarative `ansiColor` is an option declaration, not the
+    /// block-taking scripted step of the same name. Jenkins rejects every
+    /// trailing-block spelling while compiling the model, including `{}` and
+    /// trivia-only bodies whose parsed `Block` list is empty.
+    ///
+    /// One operation owns both classification and the emitted diagnostic so
+    /// production cannot substitute unrelated narration after a helper test has
+    /// pinned the right reason. Duplicate cardinality remains the first owner;
+    /// only a single declaration reaches block-presence and then arity checks.
+    let rejectInvalidAnsiColor (emit: string -> unit) (options: Step list) =
+        let declarations = options |> List.filter (fun option -> option.Name = "ansiColor")
+
+        let rejection =
+            if List.length declarations > 1 then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor option is declared more than once"
+            elif declarations |> List.exists (fun option -> option.HasBlock) then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option does not accept a trailing block"
+            elif declarations |> List.exists (fun option -> (ansiColorMap option).IsNone) then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
+            else
+                None
+
+        match rejection with
+        | Some diagnostic ->
+            emit diagnostic
+            true
+        | None -> false
+
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
@@ -398,7 +435,7 @@ module FogellSide =
             let ansiColorOptions =
                 pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
 
-            // Jenkins' ansiColor step exposes ONE parameter, the colour map name.
+            // Jenkins' ansiColor option exposes ONE parameter, the colour map name.
             // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
             // argument silently dropped — the same fail-open shape the timestamps
             // arg check closed, and every entry is validated for the same reason
@@ -408,22 +445,6 @@ module FogellSide =
             // either way. A positional-only check REFUSED the named form, which
             // is worse than the fail-open it replaced: it rejects a Jenkinsfile
             // Jenkins accepts.
-            let ansiColorMap (o: Step) =
-                match o.Positional, o.Named with
-                | [ m ], [] -> Some m
-                | [], [ ("colorMapName", m) ] -> Some m
-                | _ -> None
-
-            let ansiColorArgError =
-                if List.length ansiColorOptions > 1 then
-                    // Declarative rejects a repeated option at compile time; we
-                    // silently applied the first and ignored the rest.
-                    Some "the ansiColor option is declared more than once"
-                elif ansiColorOptions |> List.exists (fun o -> (ansiColorMap o).IsNone) then
-                    Some "the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
-                else
-                    None
-
             // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
             // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
             // enables the wrapper for the whole build or not at all, so honouring
@@ -795,13 +816,12 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
 
-            match ansiColorArgError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+            let ansiColorRejected = rejectInvalidAnsiColor emit pipeline.Options
+
+            if ansiColorRejected then
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
-            | None -> ()
 
             match unstableArgError with
             | Some e ->
@@ -938,7 +958,7 @@ module FogellSide =
             // must override it, because a declaration applies INSIDE the wrapper.
             let ansiColorEnv =
                 match ansiColorOptions with
-                | [ o ] when ansiColorArgError.IsNone ->
+                | [ o ] when not ansiColorRejected ->
                     match ansiColorMap o with
                     | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
                     | None -> []
