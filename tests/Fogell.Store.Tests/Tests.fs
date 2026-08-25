@@ -93,6 +93,45 @@ let private checkpointCountForOrg (org: OrganizationId) =
     cmd.Parameters.AddWithValue("o", org.Value) |> ignore
     cmd.ExecuteScalar() :?> int64 |> int
 
+let private terminalAttempt org project key =
+    let admitted = admitOk (newBuild org project key [ "retry" ])
+
+    let fence =
+        match store.OfferAttempt(org, admitted.AttemptId, $"retry-agent-{key}", 60) with
+        | Ok value -> value
+        | Error error -> failtestf "offer failed: %s" error
+
+    Expect.isTrue
+        (store.AcceptAttempt(org, admitted.AttemptId, fence, $"retry-agent-{key}"))
+        "retry parent accepted"
+
+    match
+        store.PublishTerminal(
+            org,
+            admitted.AttemptId,
+            fence,
+            $"retry-agent-{key}",
+            Failure)
+    with
+    | Ok() -> admitted
+    | Error error -> failtestf "terminal publication failed: %s" error
+
+let private decideRetryOk org parent limit child =
+    match store.DecideRetry(org, parent, limit, child) with
+    | Ok outcome -> outcome
+    | Error error -> failtestf "retry decision failed: %A" error
+
+let private retryDecisionCount (org: OrganizationId) (parent: AttemptId) =
+    use conn = new Npgsql.NpgsqlConnection(connectionString)
+    conn.Open()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <-
+        "SELECT count(*) FROM retry_decisions
+         WHERE organization_id = @o AND parent_attempt_id = @a"
+    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+    cmd.Parameters.AddWithValue("a", parent.Value) |> ignore
+    cmd.ExecuteScalar() :?> int64 |> int
+
 let private readLog org project build fromSequence =
     match store.ReadLog(org, project, build, fromSequence) with
     | Some chunks -> chunks
@@ -146,6 +185,21 @@ let migrations =
                       (string value)
                       "1ce854dd3de720521eac6afc7322f2b098b644f07460a959b0df8edcf9f319c6"
                       "migration 0003 exact source checksum"
+          }
+
+          test "retry decision migration 0004 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0004'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0004 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "cea314ca6fdbb18dd5fea9d3edb1efff2c9d61acee9bec4f68d4048c2e980096"
+                      "migration 0004 exact source checksum"
           } ]
 
 let admission =
@@ -1000,6 +1054,533 @@ let effectCheckpoints =
               Expect.equal (checkpointCount org admitted.AttemptId) 0 "invalid inputs are side-effect free"
           } ]
 
+/// FG-027b Store foundation. This proves durable retry arbitration and replay;
+/// scheduler/controller retry policy and dispatch remain deliberately outside
+/// this package.
+let retryDecisions =
+    testList
+        "FG-027b persistent retry decisions"
+        [ test "focused suite proves live PostgreSQL migration 0004" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "SELECT current_setting('server_version_num')::int,
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0004')"
+              use reader = cmd.ExecuteReader()
+              Expect.isTrue (reader.Read()) "live PostgreSQL returned one marker row"
+              Expect.isGreaterThan (reader.GetInt32 0) 0 "real server version"
+              Expect.isTrue (reader.GetBoolean 1) "migration 0004 installed"
+              printfn "FG027B_LIVE_PG=1 FG027B_SCHEMA=0004 FG027B_CONCURRENCY=16"
+          }
+
+          test "fresh child decision atomically creates child decision event and outbox" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-atomic"
+              let outboxBefore = store.CountOutbox org
+              let childId = AttemptId(Guid.NewGuid())
+              let outcome = decideRetryOk org parent.AttemptId 2 childId
+
+              Expect.isFalse outcome.WasReplay "fresh decision"
+
+              match outcome.Persisted.Decision.Outcome with
+              | BudgetExhausted -> failtest "budget unexpectedly exhausted"
+              | ChildCreated child ->
+                  Expect.equal child.Id childId "proposed identity became the child"
+                  Expect.equal child.OrganizationId org "tenant retained"
+                  Expect.equal child.Ordinal 1 "ordinal incremented exactly once"
+                  Expect.equal child.RetryOf (Some parent.AttemptId) "immutable parent link"
+                  Expect.equal child.State Queued "creation snapshot is queued"
+                  Expect.equal child.Fence Fence.initial "creation fence is initial"
+                  Expect.isNone child.LeaseOwner "creation has no lease"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "SELECT state, fence, retry_of, result IS NULL,
+                          lease_owner IS NULL AND lease_expires_at IS NULL
+                   FROM attempts
+                   WHERE organization_id = @o AND id = @a"
+              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("a", childId.Value) |> ignore
+              use reader = cmd.ExecuteReader()
+              Expect.isTrue (reader.Read()) "child committed"
+              Expect.equal (reader.GetString 0) "queued" "durable child starts queued"
+              Expect.equal (reader.GetInt64 1) 0L "durable child starts at fence zero"
+              Expect.equal (reader.GetGuid 2) parent.AttemptId.Value "durable ancestry"
+              Expect.isTrue (reader.GetBoolean 3) "child has no result"
+              Expect.isTrue (reader.GetBoolean 4) "child has no lease"
+              Expect.equal (retryDecisionCount org parent.AttemptId) 1 "one decision row"
+              Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 1 "one event"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "one outbox addition"
+          }
+
+          test "replay ignores hostile fresh inputs and returns exact prior bytes" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-replay-hostile"
+              let first = decideRetryOk org parent.AttemptId 2 (AttemptId(Guid.NewGuid()))
+              let replay = decideRetryOk org parent.AttemptId 999 (AttemptId(Guid.NewGuid()))
+
+              Expect.isTrue replay.WasReplay "prior decision recognized"
+              Expect.equal replay.Persisted first.Persisted "replay returns the exact persisted snapshot"
+              Expect.equal (retryDecisionCount org parent.AttemptId) 1 "hostile inputs create nothing"
+              Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 1 "event is not replayed"
+          }
+
+          test "replay returns queued creation snapshot after the live child advances" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-child-moved"
+              let first = decideRetryOk org parent.AttemptId 2 (AttemptId(Guid.NewGuid()))
+
+              let child =
+                  match first.Persisted.Decision.Outcome with
+                  | ChildCreated value -> value
+                  | BudgetExhausted -> failtest "expected a child"
+
+              let liveFence =
+                  match store.OfferAttempt(org, child.Id, "child-agent", 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "child offer failed: %s" error
+
+              Expect.equal liveFence.Value 1L "live child advanced its fence"
+              let replay = decideRetryOk org parent.AttemptId 1 parent.AttemptId
+
+              match replay.Persisted.Decision.Outcome with
+              | BudgetExhausted -> failtest "replay was recomputed from hostile inputs"
+              | ChildCreated snapshot ->
+                  Expect.equal snapshot child "queued creation snapshot is retained"
+
+              Expect.equal replay.Persisted first.Persisted "live state cannot rewrite creation history"
+          }
+
+          test "16 concurrent callers converge on one immutable result" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-race"
+
+              let results =
+                  [ 1..16 ]
+                  |> List.map (fun _ ->
+                      async {
+                          return
+                              Store(connectionString).DecideRetry(
+                                  org,
+                                  parent.AttemptId,
+                                  2,
+                                  AttemptId(Guid.NewGuid()))
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let outcomes =
+                  results
+                  |> Array.map (function
+                      | Ok value -> value
+                      | Error error -> failtestf "concurrent retry decision failed: %A" error)
+
+              Expect.equal (outcomes |> Array.filter (fun value -> not value.WasReplay) |> Array.length) 1 "one writer"
+              Expect.equal (outcomes |> Array.filter (fun value -> value.WasReplay) |> Array.length) 15 "fifteen replays"
+              Expect.equal
+                  (outcomes |> Array.map (fun value -> value.Persisted) |> Array.distinct |> Array.length)
+                  1
+                  "all callers receive one snapshot"
+              Expect.equal (retryDecisionCount org parent.AttemptId) 1 "one durable arbiter row"
+              Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 1 "one event"
+
+              let expected = outcomes.[0].Persisted
+              let replayMarker = $"FG027B_PRELOCK_{Guid.NewGuid():N}"
+              let replayBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              replayBuilder.ApplicationName <- replayMarker
+
+              use blocker = new Npgsql.NpgsqlConnection(connectionString)
+              blocker.Open()
+              use blockerTx = blocker.BeginTransaction()
+              use blockerPidCmd = blocker.CreateCommand()
+              blockerPidCmd.Transaction <- blockerTx
+              blockerPidCmd.CommandText <- "SELECT pg_backend_pid()"
+              let blockerPid = blockerPidCmd.ExecuteScalar() :?> int
+
+              use lockDecision = blocker.CreateCommand()
+              lockDecision.Transaction <- blockerTx
+              lockDecision.CommandText <-
+                  "SELECT parent_attempt_id
+                   FROM retry_decisions
+                   WHERE organization_id = @o AND parent_attempt_id = @a
+                   FOR UPDATE"
+              lockDecision.Parameters.AddWithValue("o", org.Value) |> ignore
+              lockDecision.Parameters.AddWithValue("a", parent.AttemptId.Value) |> ignore
+              Expect.equal
+                  (lockDecision.ExecuteScalar() :?> Guid)
+                  parent.AttemptId.Value
+                  "test holds the exact prior decision row"
+
+              let replayTask =
+                  Async.StartAsTask(async {
+                      return
+                          Store(replayBuilder.ConnectionString).DecideRetry(
+                              org,
+                              parent.AttemptId,
+                              1,
+                              parent.AttemptId)
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let replayWait = Diagnostics.Stopwatch.StartNew()
+
+              let rec replayBlockedOnDecision () =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1
+                           FROM pg_stat_activity
+                           WHERE application_name = @marker
+                             AND state = 'active'
+                             AND wait_event_type = 'Lock'
+                             AND query LIKE '%retry_decisions%'
+                             AND query LIKE '%FOR UPDATE OF d%'
+                             AND @blocker_pid = ANY(pg_blocking_pids(pid))
+                       )"
+                  waiting.Parameters.AddWithValue("marker", replayMarker) |> ignore
+                  waiting.Parameters.AddWithValue("blocker_pid", blockerPid) |> ignore
+
+                  if waiting.ExecuteScalar() :?> bool then
+                      true
+                  elif replayWait.Elapsed >= TimeSpan.FromSeconds 10.0 then
+                      false
+                  else
+                      Threading.Thread.Sleep 20
+                      replayBlockedOnDecision ()
+
+              let mutable barrierEstablished = false
+              let mutable parentLocked = false
+
+              let observationError =
+                  try
+                      try
+                          barrierEstablished <- replayBlockedOnDecision ()
+
+                          if barrierEstablished then
+                              use probe = new Npgsql.NpgsqlConnection(connectionString)
+                              probe.Open()
+                              use probeTx = probe.BeginTransaction()
+                              use lockParent = probe.CreateCommand()
+                              lockParent.Transaction <- probeTx
+                              lockParent.CommandText <-
+                                  "SELECT id
+                                   FROM attempts
+                                   WHERE organization_id = @o AND id = @a
+                                   FOR UPDATE NOWAIT"
+                              lockParent.Parameters.AddWithValue("o", org.Value) |> ignore
+                              lockParent.Parameters.AddWithValue("a", parent.AttemptId.Value) |> ignore
+
+                              try
+                                  lockParent.ExecuteScalar() |> ignore
+                              with :? Npgsql.PostgresException as error when error.SqlState = "55P03" ->
+                                  parentLocked <- true
+
+                          None
+                      with ex ->
+                          Some ex
+                  finally
+                      blockerTx.Rollback()
+
+              let replayResult = replayTask.GetAwaiter().GetResult()
+
+              match observationError with
+              | Some error -> raise error
+              | None -> ()
+
+              Expect.isTrue barrierEstablished "replay visibly blocked on the exact prior decision row"
+              Expect.isTrue parentLocked "replay held the exact parent lock before waiting on prior truth"
+
+              match replayResult with
+              | Ok replay ->
+                  Expect.isTrue replay.WasReplay "blocked call remained a replay"
+                  Expect.equal replay.Persisted expected "blocked replay returned exact prior truth"
+              | Error error -> failtestf "blocked exact replay failed: %A" error
+          }
+
+          test "zero-based boundary creates below the limit and dead-letters at it" {
+              let org, project = freshProject ()
+              let below = terminalAttempt org project "retry-boundary-child"
+              let at = terminalAttempt org project "retry-boundary-dead"
+
+              match (decideRetryOk org below.AttemptId 2 (AttemptId(Guid.NewGuid()))).Persisted.Decision.Outcome with
+              | ChildCreated child -> Expect.equal child.Ordinal 1 "ordinal one is below limit two"
+              | BudgetExhausted -> failtest "below-boundary retry was exhausted"
+
+              let exhausted = decideRetryOk org at.AttemptId 1 (AttemptId(Guid.NewGuid()))
+
+              match exhausted.Persisted.Decision.Outcome with
+              | ChildCreated _ -> failtest "at-boundary retry created a child"
+              | BudgetExhausted ->
+                  Expect.equal
+                      exhausted.Persisted.DeadLetterReason
+                      (Some "attempt budget exhausted")
+                      "exact dead-letter reason"
+          }
+
+          test "dead-letter replay is exact and emits no second publication" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-dead-replay"
+              let first = decideRetryOk org parent.AttemptId 1 (AttemptId(Guid.NewGuid()))
+              let replay = decideRetryOk org parent.AttemptId 999 (AttemptId(Guid.NewGuid()))
+
+              Expect.isTrue replay.WasReplay "dead-letter is replayed"
+              Expect.equal replay.Persisted first.Persisted "dead-letter bytes are stable"
+              Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 1 "single event"
+          }
+
+          test "invalid active cross-tenant and corrupt parents are side-effect free" {
+              let org, project = freshProject ()
+              let active = admitOk (newBuild org project "retry-active" [ "retry" ])
+              let otherOrg, _ = freshProject ()
+
+              match store.DecideRetry(org, active.AttemptId, 2, AttemptId(Guid.NewGuid())) with
+              | Error(RetryLawRejected(ParentNotTerminal Queued)) -> ()
+              | other -> failtestf "active parent returned %A" other
+
+              match store.DecideRetry(otherOrg, active.AttemptId, 2, AttemptId(Guid.NewGuid())) with
+              | Error RetryParentUnavailable -> ()
+              | other -> failtestf "cross-tenant parent returned %A" other
+
+              let terminal = terminalAttempt org project "retry-invalid-child"
+
+              match store.DecideRetry(org, terminal.AttemptId, 2, AttemptId(Guid.Empty)) with
+              | Error(RetryLawRejected(InvalidProposedChildIdentity _)) -> ()
+              | other -> failtestf "empty child returned %A" other
+
+              let corrupt = terminalAttempt org project "retry-corrupt-result"
+              let corruptOutboxBefore = store.CountOutbox org
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use breakResult = conn.CreateCommand()
+              breakResult.CommandText <-
+                  "UPDATE attempts SET result = 'not-a-result'
+                   WHERE organization_id = @o AND id = @a"
+              breakResult.Parameters.AddWithValue("o", org.Value) |> ignore
+              breakResult.Parameters.AddWithValue("a", corrupt.AttemptId.Value) |> ignore
+              Expect.equal (breakResult.ExecuteNonQuery()) 1 "test installed malformed result"
+
+              match store.DecideRetry(org, corrupt.AttemptId, 2, AttemptId(Guid.NewGuid())) with
+              | Error(RetryDecisionCorrupt _) -> ()
+              | other -> failtestf "corrupt parent returned %A" other
+
+              use direct = conn.CreateCommand()
+              direct.CommandText <-
+                  "INSERT INTO retry_decisions
+                     (organization_id, parent_attempt_id, parent_node_id,
+                      parent_ordinal, parent_retry_of, parent_restore_epoch,
+                      attempt_limit, outcome, child_attempt_id, dead_letter_reason)
+                   SELECT organization_id, id, node_id, ordinal, retry_of, restore_epoch,
+                          1, 'budget_exhausted', NULL, 'attempt budget exhausted'
+                   FROM attempts
+                   WHERE organization_id = @o AND id = @a"
+              direct.Parameters.AddWithValue("o", org.Value) |> ignore
+              direct.Parameters.AddWithValue("a", corrupt.AttemptId.Value) |> ignore
+
+              try
+                  direct.ExecuteNonQuery() |> ignore
+                  failtest "direct retry decision over corrupt terminal result unexpectedly succeeded"
+              with :? Npgsql.PostgresException ->
+                  ()
+
+              Expect.equal (retryDecisionCount org active.AttemptId) 0 "active parent unchanged"
+              Expect.equal (retryDecisionCount org terminal.AttemptId) 0 "invalid child unchanged"
+              Expect.equal (retryDecisionCount org corrupt.AttemptId) 0 "corrupt parent unchanged"
+              Expect.equal
+                  (store.CountEvents(org, corrupt.BuildId, "retry.decided"))
+                  0
+                  "corrupt direct insert emitted no event"
+              Expect.equal (store.CountOutbox org) corruptOutboxBefore "corrupt direct insert emitted no outbox row"
+
+              match store.ListRetryDeadLetters org with
+              | Ok listed ->
+                  Expect.isFalse
+                      (listed |> List.exists (fun value -> value.Decision.ParentId = corrupt.AttemptId))
+                      "corrupt parent is absent from dead-letter listing"
+              | Error error -> failtestf "dead-letter list failed: %A" error
+          }
+
+          test "fresh stale-epoch decision is refused while an old prior still replays" {
+              let org, project = freshProject ()
+              let staleFresh = terminalAttempt org project "retry-stale-fresh"
+              store.ActivateRestore() |> ignore
+
+              match store.DecideRetry(org, staleFresh.AttemptId, 2, AttemptId(Guid.NewGuid())) with
+              | Error(RetryRestoreEpochMismatch _) -> ()
+              | other -> failtestf "stale fresh decision returned %A" other
+
+              let priorParent = terminalAttempt org project "retry-prior-before-restore"
+              let first = decideRetryOk org priorParent.AttemptId 2 (AttemptId(Guid.NewGuid()))
+              store.ActivateRestore() |> ignore
+              let replay = decideRetryOk org priorParent.AttemptId 1 priorParent.AttemptId
+
+              Expect.isTrue replay.WasReplay "prior remains replay-authoritative"
+              Expect.equal replay.Persisted first.Persisted "restore cannot rewrite prior history"
+          }
+
+          test "restore metadata lock deterministically serializes a fresh decision" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-restore-lock"
+              let marker = $"FG027B_RESTORE_{Guid.NewGuid():N}"
+              let builder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              builder.ApplicationName <- marker
+
+              use blocker = new Npgsql.NpgsqlConnection(connectionString)
+              blocker.Open()
+              use blockerTx = blocker.BeginTransaction()
+              use lockEpoch = blocker.CreateCommand()
+              lockEpoch.Transaction <- blockerTx
+              lockEpoch.CommandText <-
+                  "SELECT restore_epoch FROM controller_metadata WHERE singleton FOR UPDATE"
+              lockEpoch.ExecuteScalar() |> ignore
+
+              let task =
+                  Async.StartAsTask(async {
+                      return
+                          Store(builder.ConnectionString).DecideRetry(
+                              org,
+                              parent.AttemptId,
+                              2,
+                              AttemptId(Guid.NewGuid()))
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec blocked remaining =
+                  use wait = observer.CreateCommand()
+                  wait.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1 FROM pg_stat_activity
+                           WHERE application_name = @marker
+                             AND state = 'active'
+                             AND wait_event_type = 'Lock'
+                             AND query LIKE '%controller_metadata%'
+                             AND query LIKE '%FOR SHARE%'
+                       )"
+                  wait.Parameters.AddWithValue("marker", marker) |> ignore
+
+                  if wait.ExecuteScalar() :?> bool then true
+                  elif remaining = 0 then false
+                  else
+                      Threading.Thread.Sleep 20
+                      blocked (remaining - 1)
+
+              let barrier = blocked 100
+              use bump = blocker.CreateCommand()
+              bump.Transaction <- blockerTx
+              bump.CommandText <-
+                  "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1 WHERE singleton"
+              Expect.equal (bump.ExecuteNonQuery()) 1 "restore epoch bumped behind held lock"
+              blockerTx.Commit()
+
+              Expect.isTrue barrier "retry waited at the metadata serialization point"
+              Expect.isTrue (task.Wait(TimeSpan.FromSeconds 5.0)) "blocked decision completed"
+
+              match task.Result with
+              | Error(RetryRestoreEpochMismatch _) -> ()
+              | other -> failtestf "post-restore fresh decision returned %A" other
+
+              Expect.equal (retryDecisionCount org parent.AttemptId) 0 "no stale decision committed"
+          }
+
+          test "child identity collision rolls the whole transaction back" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-collision-parent"
+              let occupied = admitOk (newBuild org project "retry-collision-child" [ "retry" ])
+              let outboxBefore = store.CountOutbox org
+
+              match store.DecideRetry(org, parent.AttemptId, 2, occupied.AttemptId) with
+              | Error(RetryStorageFailure _) -> ()
+              | other -> failtestf "occupied child identity returned %A" other
+
+              Expect.equal (retryDecisionCount org parent.AttemptId) 0 "decision rolled back"
+              Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 0 "event rolled back"
+              Expect.equal (store.CountOutbox org) outboxBefore "outbox rolled back"
+
+              let recovered = decideRetryOk org parent.AttemptId 2 (AttemptId(Guid.NewGuid()))
+              Expect.isFalse recovered.WasReplay "parent lock and transaction were released"
+          }
+
+          test "SQL guards reject rewrites and dead-letter listing is tenant ordered" {
+              let org, project = freshProject ()
+              let firstParent = terminalAttempt org project "retry-list-first"
+              let first = decideRetryOk org firstParent.AttemptId 1 (AttemptId(Guid.NewGuid()))
+              let secondParent = terminalAttempt org project "retry-list-second"
+              let second = decideRetryOk org secondParent.AttemptId 1 (AttemptId(Guid.NewGuid()))
+              let foreignOrg, foreignProject = freshProject ()
+              let foreignParent = terminalAttempt foreignOrg foreignProject "retry-list-foreign"
+              decideRetryOk foreignOrg foreignParent.AttemptId 1 (AttemptId(Guid.NewGuid())) |> ignore
+
+              let expectSqlRejected description sql bind =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <- sql
+                  bind cmd
+
+                  try
+                      cmd.ExecuteNonQuery() |> ignore
+                      failtestf "%s unexpectedly succeeded" description
+                  with :? Npgsql.PostgresException ->
+                      ()
+
+              let bindParent (cmd: Npgsql.NpgsqlCommand) =
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", firstParent.AttemptId.Value) |> ignore
+
+              expectSqlRejected
+                  "decision rewrite"
+                  "UPDATE retry_decisions SET attempt_limit = attempt_limit + 1
+                   WHERE organization_id = @o AND parent_attempt_id = @a"
+                  bindParent
+
+              expectSqlRejected
+                  "decision deletion"
+                  "DELETE FROM retry_decisions
+                   WHERE organization_id = @o AND parent_attempt_id = @a"
+                  bindParent
+
+              expectSqlRejected
+                  "attempt lineage rewrite"
+                  "UPDATE attempts SET ordinal = ordinal + 1
+                   WHERE organization_id = @o AND id = @a"
+                  bindParent
+
+              let undecided = terminalAttempt org project "retry-direct-malformed"
+              expectSqlRejected
+                  "direct mismatched parent snapshot"
+                  "INSERT INTO retry_decisions
+                     (organization_id, parent_attempt_id, parent_node_id,
+                      parent_ordinal, parent_restore_epoch, attempt_limit,
+                      outcome, dead_letter_reason)
+                   SELECT @o, a.id, a.node_id, a.ordinal + 1, a.restore_epoch,
+                          1, 'budget_exhausted', 'attempt budget exhausted'
+                   FROM attempts a
+                   WHERE a.organization_id = @o AND a.id = @a"
+                  (fun cmd ->
+                      cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                      cmd.Parameters.AddWithValue("a", undecided.AttemptId.Value) |> ignore)
+
+              let listed =
+                  match store.ListRetryDeadLetters org with
+                  | Ok values -> values
+                  | Error error -> failtestf "dead-letter list failed: %A" error
+
+              let expected =
+                  [ first.Persisted; second.Persisted ]
+                  |> List.sortBy (fun value -> value.DecidedAt, value.Decision.ParentId.Value)
+
+              Expect.equal listed expected "stable tenant-scoped (decided_at, parent_attempt_id) order"
+              Expect.isFalse
+                  (listed |> List.exists (fun value -> value.Decision.ParentId = foreignParent.AttemptId))
+                  "foreign dead letter is not disclosed"
+          } ]
+
 /// FG-061. Scheduling is where a cross-tenant leak or a double-claim would do
 /// real damage, so every property here is tested against the live database.
 let scheduling =
@@ -1380,4 +1961,10 @@ let main argv =
                 (testSequenced
                     (testList
                         "Fogell.Store"
-                        [ migrations; admission; fencing; effectCheckpoints; scheduling; logs ]))
+                        [ migrations
+                          admission
+                          fencing
+                          effectCheckpoints
+                          retryDecisions
+                          scheduling
+                          logs ]))

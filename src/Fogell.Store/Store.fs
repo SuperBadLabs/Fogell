@@ -61,8 +61,29 @@ type EffectAdvance =
     | RecordApplied
     | RecordConfirmed
 
+/// FG-027b. The immutable decision snapshot read from durable storage.  The
+/// embedded Domain value is the exact value originally decided: a child is
+/// reconstructed as queued even after its live attempt has advanced.
+type PersistedRetryDecision =
+    { Decision: RetryDecision
+      DeadLetterReason: string option
+      DecidedAt: DateTimeOffset }
+
+type RetryPersistenceOutcome =
+    { Persisted: PersistedRetryDecision
+      WasReplay: bool }
+
+type RetryPersistenceError =
+    | RetryParentUnavailable
+    | RetryRestoreEpochMismatch of parent: RestoreEpoch * current: RestoreEpoch
+    | RetryLawRejected of RetryDecisionError
+    | RetryDecisionCorrupt of string
+    | RetryStorageFailure of string
+
 /// FG-021/FG-022. The controller's durable truth.
 type Store(connectionString: string) =
+
+    let retryDeadLetterReason = "attempt budget exhausted"
 
     let openConn () =
         let c = new NpgsqlConnection(connectionString)
@@ -72,6 +93,160 @@ type Store(connectionString: string) =
     let effectProjection =
         "organization_id, attempt_id, effect_key, fence, authority_owner,
          restore_epoch, encode(payload_digest, 'hex'), state, uncertain_from"
+
+    let retryProjection =
+        "d.organization_id, d.parent_attempt_id, d.parent_node_id,
+         d.parent_ordinal, d.parent_retry_of, d.parent_restore_epoch,
+         d.attempt_limit, d.outcome, d.child_attempt_id,
+         d.dead_letter_reason, d.decided_at,
+         c.organization_id, c.node_id, c.ordinal, c.retry_of, c.restore_epoch,
+         p.organization_id, p.node_id, p.ordinal, p.retry_of, p.restore_epoch"
+
+    let timestampOffset (value: obj) =
+        match value with
+        | :? DateTimeOffset as timestamp -> timestamp
+        | :? DateTime as timestamp -> DateTimeOffset timestamp
+        | invalid -> failwithf "unexpected PostgreSQL timestamp value %A" invalid
+
+    let attemptStateOfWire state result =
+        match state with
+        | "queued" -> Ok Queued
+        | "offered" -> Ok Offered
+        | "accepted" -> Ok Accepted
+        | "running" -> Ok Running
+        | "finalizing" -> Ok Finalizing
+        | "cancelling" -> Ok Cancelling
+        | "reconciliation_required" -> Ok ReconciliationRequired
+        | "terminal" ->
+            match result |> Option.bind BuildStatus.ofWireString with
+            | Some status -> Ok(Terminal status)
+            | None -> Error "terminal retry parent has no valid result"
+        | invalid -> Error $"retry parent has invalid state '{invalid}'"
+
+    let readRetryParent (reader: System.Data.Common.DbDataReader) =
+        let retryOf =
+            if reader.IsDBNull 4 then None else Some(AttemptId(reader.GetGuid 4))
+
+        let owner =
+            if reader.IsDBNull 8 then None else Some(reader.GetString 8)
+
+        let expiry =
+            if reader.IsDBNull 9 then
+                None
+            else
+                Some(timestampOffset (reader.GetValue 9))
+
+        let result =
+            if reader.IsDBNull 10 then None else Some(reader.GetString 10)
+
+        attemptStateOfWire (reader.GetString 5) result
+        |> Result.map (fun state ->
+            { Id = AttemptId(reader.GetGuid 0)
+              NodeId = NodeId(reader.GetGuid 1)
+              OrganizationId = OrganizationId(reader.GetGuid 2)
+              Ordinal = reader.GetInt32 3
+              RetryOf = retryOf
+              State = state
+              Fence = Fence(reader.GetInt64 6)
+              RestoreEpoch = RestoreEpoch(reader.GetInt64 7)
+              LeaseOwner = owner
+              LeaseExpiresAt = expiry })
+
+    let readPersistedRetryDecision (reader: System.Data.Common.DbDataReader) =
+        let org = OrganizationId(reader.GetGuid 0)
+        let parentId = AttemptId(reader.GetGuid 1)
+        let nodeId = NodeId(reader.GetGuid 2)
+        let ordinal = reader.GetInt32 3
+        let parentRetryOf =
+            if reader.IsDBNull 4 then None else Some(AttemptId(reader.GetGuid 4))
+        let epoch = RestoreEpoch(reader.GetInt64 5)
+        let attemptLimit = reader.GetInt32 6
+        let outcomeWire = reader.GetString 7
+        let childId =
+            if reader.IsDBNull 8 then None else Some(AttemptId(reader.GetGuid 8))
+        let reason =
+            if reader.IsDBNull 9 then None else Some(reader.GetString 9)
+        let decidedAt = timestampOffset (reader.GetValue 10)
+
+        let liveParentRetryOf =
+            if reader.IsDBNull 19 then None else Some(AttemptId(reader.GetGuid 19))
+
+        let parentSnapshotMatches =
+            not (reader.IsDBNull 16)
+            && not (reader.IsDBNull 17)
+            && not (reader.IsDBNull 18)
+            && not (reader.IsDBNull 20)
+            && OrganizationId(reader.GetGuid 16) = org
+            && NodeId(reader.GetGuid 17) = nodeId
+            && reader.GetInt32 18 = ordinal
+            && liveParentRetryOf = parentRetryOf
+            && RestoreEpoch(reader.GetInt64 20) = epoch
+
+        let malformed message = Error(RetryDecisionCorrupt message)
+
+        let snapshot =
+            { ParentId = parentId
+              ParentOrganizationId = org
+              ParentNodeId = nodeId
+              ParentOrdinal = ordinal
+              ParentRetryOf = parentRetryOf
+              ParentRestoreEpoch = epoch
+              AttemptLimit = attemptLimit
+              Outcome = BudgetExhausted }
+
+        match parentSnapshotMatches, outcomeWire, childId, reason with
+        | false, _, _, _ -> malformed "retry decision parent lineage differs from its captured snapshot"
+        | true, "budget_exhausted", None, Some exact when exact = retryDeadLetterReason ->
+            Ok
+                { Decision = snapshot
+                  DeadLetterReason = reason
+                  DecidedAt = decidedAt }
+        | true, "child_created", Some child, None ->
+            if
+                reader.IsDBNull 11
+                || reader.IsDBNull 12
+                || reader.IsDBNull 13
+                || reader.IsDBNull 14
+                || reader.IsDBNull 15
+            then
+                malformed "retry decision child is missing"
+            else
+                let liveOrg = OrganizationId(reader.GetGuid 11)
+                let liveNode = NodeId(reader.GetGuid 12)
+                let liveOrdinal = reader.GetInt32 13
+                let liveRetryOf = AttemptId(reader.GetGuid 14)
+                let liveEpoch = RestoreEpoch(reader.GetInt64 15)
+
+                if
+                    liveOrg <> org
+                    || liveNode <> nodeId
+                    || liveOrdinal <> ordinal + 1
+                    || liveRetryOf <> parentId
+                    || liveEpoch <> epoch
+                then
+                    malformed "retry decision child lineage differs from its creation snapshot"
+                else
+                    let childSnapshot =
+                        { Id = child
+                          NodeId = nodeId
+                          OrganizationId = org
+                          Ordinal = ordinal + 1
+                          RetryOf = Some parentId
+                          State = Queued
+                          Fence = Fence.initial
+                          RestoreEpoch = epoch
+                          LeaseOwner = None
+                          LeaseExpiresAt = None }
+
+                    Ok
+                        { Decision =
+                            { snapshot with
+                                Outcome = ChildCreated childSnapshot }
+                          DeadLetterReason = None
+                          DecidedAt = decidedAt }
+        | true, "budget_exhausted", _, _ -> malformed "budget exhaustion has an invalid child or reason"
+        | true, "child_created", _, _ -> malformed "child creation has an invalid child or reason"
+        | true, invalid, _, _ -> malformed $"retry decision has invalid outcome '{invalid}'"
 
     let payloadDigest (payload: byte array) =
         use sha = SHA256.Create()
@@ -214,6 +389,237 @@ type Store(connectionString: string) =
         use cmd = conn.CreateCommand()
         cmd.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
         RestoreEpoch(cmd.ExecuteScalar() :?> int64)
+
+    /// FG-027b Store foundation. Decide once while holding the restore epoch
+    /// and parent locks, or validate and return the exact creation snapshot of
+    /// the prior durable result. Runtime retry policy and dispatch are outside
+    /// this API.
+    member _.DecideRetry
+        (org: OrganizationId, parentId: AttemptId, attemptLimit: int, proposedChildId: AttemptId)
+        : Result<RetryPersistenceOutcome, RetryPersistenceError> =
+        use conn = openConn ()
+        // READ COMMITTED is deliberate: after waiting for a competing caller's
+        // parent lock, this transaction must see the decision that caller just
+        // committed and replay it. The explicit metadata/parent locks provide
+        // the required serialization.
+        use tx = conn.BeginTransaction(System.Data.IsolationLevel.ReadCommitted)
+
+        let rollback error =
+            try
+                tx.Rollback()
+            with _ ->
+                ()
+
+            Error error
+
+        try
+            // Restore takes the conflicting lock on this singleton before it
+            // touches attempts. Taking the same order here prevents both a
+            // check/use race and a restore-vs-retry deadlock.
+            use epochCmd = conn.CreateCommand()
+            epochCmd.Transaction <- tx
+            epochCmd.CommandText <-
+                "SELECT restore_epoch
+                 FROM controller_metadata
+                 WHERE singleton
+                 FOR SHARE"
+            let currentEpoch = RestoreEpoch(epochCmd.ExecuteScalar() :?> int64)
+
+            use parentCmd = conn.CreateCommand()
+            parentCmd.Transaction <- tx
+            parentCmd.CommandText <-
+                "SELECT id, node_id, organization_id, ordinal, retry_of, state,
+                        fence, restore_epoch, lease_owner, lease_expires_at, result
+                 FROM attempts
+                 WHERE organization_id = @o AND id = @a
+                 FOR UPDATE"
+            parentCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+            parentCmd.Parameters.AddWithValue("a", parentId.Value) |> ignore
+
+            use parentReader = parentCmd.ExecuteReader()
+
+            if not (parentReader.Read()) then
+                parentReader.Close()
+                rollback RetryParentUnavailable
+            else
+                let parentResult = readRetryParent parentReader
+                parentReader.Close()
+
+                match parentResult with
+                | Error reason -> rollback (RetryDecisionCorrupt reason)
+                | Ok parent ->
+                    use priorCmd = conn.CreateCommand()
+                    priorCmd.Transaction <- tx
+                    priorCmd.CommandText <-
+                        $"SELECT {retryProjection}
+                          FROM retry_decisions d
+                          LEFT JOIN attempts p
+                            ON p.organization_id = d.organization_id
+                           AND p.id = d.parent_attempt_id
+                          LEFT JOIN attempts c
+                            ON c.organization_id = d.organization_id
+                           AND c.id = d.child_attempt_id
+                          WHERE d.organization_id = @o
+                            AND d.parent_attempt_id = @a
+                          FOR UPDATE OF d"
+                    priorCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                    priorCmd.Parameters.AddWithValue("a", parentId.Value) |> ignore
+                    use priorReader = priorCmd.ExecuteReader()
+
+                    if priorReader.Read() then
+                        let priorResult = readPersistedRetryDecision priorReader
+                        priorReader.Close()
+
+                        match priorResult with
+                        | Error error -> rollback error
+                        | Ok persisted ->
+                            match
+                                RetryDecision.decide
+                                    parent
+                                    attemptLimit
+                                    proposedChildId
+                                    (Some persisted.Decision)
+                            with
+                            | Error error ->
+                                rollback
+                                    (RetryDecisionCorrupt
+                                        $"persisted retry decision failed Domain replay validation: {error}")
+                            | Ok exact when exact <> persisted.Decision ->
+                                rollback (RetryDecisionCorrupt "Domain replay did not return the persisted decision exactly")
+                            | Ok _ ->
+                                tx.Commit()
+                                Ok
+                                    { Persisted = persisted
+                                      WasReplay = true }
+                    else
+                        priorReader.Close()
+
+                        if parent.RestoreEpoch <> currentEpoch then
+                            rollback (RetryRestoreEpochMismatch(parent.RestoreEpoch, currentEpoch))
+                        else
+                            match RetryDecision.decide parent attemptLimit proposedChildId None with
+                            | Error error -> rollback (RetryLawRejected error)
+                            | Ok decision ->
+                                match decision.Outcome with
+                                | ChildCreated child ->
+                                    use childCmd = conn.CreateCommand()
+                                    childCmd.Transaction <- tx
+                                    childCmd.CommandText <-
+                                        "INSERT INTO attempts
+                                             (id, organization_id, node_id, ordinal, retry_of,
+                                              state, fence, restore_epoch, lease_owner, lease_expires_at, result)
+                                         VALUES
+                                             (@id, @o, @n, @ord, @parent,
+                                              'queued', 0, @epoch, NULL, NULL, NULL)"
+                                    childCmd.Parameters.AddWithValue("id", child.Id.Value) |> ignore
+                                    childCmd.Parameters.AddWithValue("o", child.OrganizationId.Value) |> ignore
+                                    childCmd.Parameters.AddWithValue("n", child.NodeId.Value) |> ignore
+                                    childCmd.Parameters.AddWithValue("ord", child.Ordinal) |> ignore
+                                    childCmd.Parameters.AddWithValue("parent", parent.Id.Value) |> ignore
+                                    childCmd.Parameters.AddWithValue("epoch", child.RestoreEpoch.Value) |> ignore
+                                    childCmd.ExecuteNonQuery() |> ignore
+                                | BudgetExhausted -> ()
+
+                                use decisionCmd = conn.CreateCommand()
+                                decisionCmd.Transaction <- tx
+                                decisionCmd.CommandText <-
+                                    "INSERT INTO retry_decisions
+                                         (organization_id, parent_attempt_id, parent_node_id,
+                                          parent_ordinal, parent_retry_of, parent_restore_epoch,
+                                          attempt_limit, outcome, child_attempt_id, dead_letter_reason)
+                                     VALUES
+                                         (@o, @parent, @node, @ordinal, @retry_of, @epoch,
+                                          @limit, @outcome, @child, @reason)
+                                     RETURNING decided_at"
+                                decisionCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                                decisionCmd.Parameters.AddWithValue("parent", parent.Id.Value) |> ignore
+                                decisionCmd.Parameters.AddWithValue("node", parent.NodeId.Value) |> ignore
+                                decisionCmd.Parameters.AddWithValue("ordinal", parent.Ordinal) |> ignore
+                                decisionCmd.Parameters.Add(
+                                    NpgsqlParameter(
+                                        "retry_of",
+                                        NpgsqlTypes.NpgsqlDbType.Uuid,
+                                        Value =
+                                            match parent.RetryOf with
+                                            | Some value -> box value.Value
+                                            | None -> DBNull.Value))
+                                |> ignore
+                                decisionCmd.Parameters.AddWithValue("epoch", parent.RestoreEpoch.Value) |> ignore
+                                decisionCmd.Parameters.AddWithValue("limit", decision.AttemptLimit) |> ignore
+
+                                match decision.Outcome with
+                                | ChildCreated child ->
+                                    decisionCmd.Parameters.AddWithValue("outcome", "child_created") |> ignore
+                                    decisionCmd.Parameters.Add(
+                                        NpgsqlParameter(
+                                            "child",
+                                            NpgsqlTypes.NpgsqlDbType.Uuid,
+                                            Value = child.Id.Value))
+                                    |> ignore
+                                    decisionCmd.Parameters.Add(
+                                        NpgsqlParameter(
+                                            "reason",
+                                            NpgsqlTypes.NpgsqlDbType.Text,
+                                            Value = DBNull.Value))
+                                    |> ignore
+                                | BudgetExhausted ->
+                                    decisionCmd.Parameters.AddWithValue("outcome", "budget_exhausted") |> ignore
+                                    decisionCmd.Parameters.Add(
+                                        NpgsqlParameter(
+                                            "child",
+                                            NpgsqlTypes.NpgsqlDbType.Uuid,
+                                            Value = DBNull.Value))
+                                    |> ignore
+                                    decisionCmd.Parameters.AddWithValue("reason", retryDeadLetterReason) |> ignore
+
+                                let decidedAt = timestampOffset (decisionCmd.ExecuteScalar())
+                                tx.Commit()
+
+                                Ok
+                                    { Persisted =
+                                        { Decision = decision
+                                          DeadLetterReason =
+                                            match decision.Outcome with
+                                            | ChildCreated _ -> None
+                                            | BudgetExhausted -> Some retryDeadLetterReason
+                                          DecidedAt = decidedAt }
+                                      WasReplay = false }
+        with ex ->
+            rollback (RetryStorageFailure ex.Message)
+
+    member _.ListRetryDeadLetters
+        (org: OrganizationId)
+        : Result<PersistedRetryDecision list, RetryPersistenceError> =
+        try
+            use conn = openConn ()
+            use cmd = conn.CreateCommand()
+            cmd.CommandText <-
+                $"SELECT {retryProjection}
+                  FROM retry_decisions d
+                  LEFT JOIN attempts p
+                    ON p.organization_id = d.organization_id
+                   AND p.id = d.parent_attempt_id
+                  LEFT JOIN attempts c
+                    ON c.organization_id = d.organization_id
+                   AND c.id = d.child_attempt_id
+                  WHERE d.organization_id = @o
+                    AND d.outcome = 'budget_exhausted'
+                  ORDER BY d.decided_at, d.parent_attempt_id"
+            cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+            use reader = cmd.ExecuteReader()
+            let values = ResizeArray<PersistedRetryDecision>()
+            let mutable failure = None
+
+            while reader.Read() && failure.IsNone do
+                match readPersistedRetryDecision reader with
+                | Ok value -> values.Add value
+                | Error error -> failure <- Some error
+
+            match failure with
+            | Some error -> Error error
+            | None -> Ok(List.ofSeq values)
+        with ex ->
+            Error(RetryStorageFailure ex.Message)
 
     /// FG-026 Store foundation. Durably records intent before an external
     /// effect. The payload itself is never stored: its exact bytes are SHA-256
