@@ -19,11 +19,15 @@ for p in tests/*/; do
   # instead of read.
   test_out="$(dotnet run --project "$p" -c Release --no-build 2>&1)"
   test_rc=$?
-  if [ "$test_rc" -ne 0 ]; then
+  test_summary="$(printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1)"
+  if [ "$test_rc" -ne 0 ] || [ -z "$test_summary" ]; then
     fail=1
     printf '%s\n' "$test_out"
+    if [ "$test_rc" -eq 0 ]; then
+      echo "TEST PROJECT PRODUCED NO EXPECTO SUMMARY: $(basename "$p")"
+    fi
   else
-    printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1
+    printf '%s\n' "$test_summary"
   fi
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
