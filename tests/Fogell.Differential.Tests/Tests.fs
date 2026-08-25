@@ -5448,6 +5448,62 @@ let compileRefusalDisposition =
               Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "legacy grammar remains valid"
           } ]
 
+/// The production credential loader remains environment-backed, but its wire decoder
+/// is pure so these contracts do not require process-global fixture state.
+let credentialStoreDecoding =
+    let encodeBytes (value: byte[]) = Convert.ToBase64String value
+    let encodeText (value: string) = value |> Text.Encoding.UTF8.GetBytes |> encodeBytes
+
+    testList
+        "FG-044 credential store wire decoding"
+        [ test "text, binary file and username/password values decode byte-exactly" {
+              let fileBytes = [| 0uy; 1uy; 127uy; 128uy; 255uy |]
+              let encodedText = encodeText "https://example.test/a:b;c"
+              let encodedUserpass = encodeText "measured-user\nmeasured-pass"
+
+              let spec =
+                  String.concat
+                      "\r\n"
+                      [ "# fixture comment"
+                        $"live-text\ttext\t{encodedText}"
+                        $"live-file\tfile\t{encodeBytes fileBytes}"
+                        $"live-user\tuserpass\t{encodedUserpass}" ]
+
+              let decoded = FogellSide.credentialStoreFromSpec spec
+              Expect.equal decoded.Count 3 "comments do not become credentials"
+              Expect.equal decoded["live-text"] (SecretText "https://example.test/a:b;c") "text is exact"
+
+              match decoded["live-file"] with
+              | SecretFile(fileName, bytes) ->
+                  Expect.equal fileName "secret.dat" "the stable materialized filename is retained"
+                  Expect.sequenceEqual bytes fileBytes "file bytes survive without a UTF-8 round trip"
+              | other -> failtestf "file credential decoded as %A" other
+
+              Expect.equal
+                  decoded["live-user"]
+                  (UsernamePassword("measured-user", "measured-pass"))
+                  "the first newline separates username from password"
+          }
+
+          test "empty and malformed entries fail closed" {
+              Expect.isEmpty (FogellSide.credentialStoreFromSpec null) "a missing source is an empty store"
+              Expect.isEmpty (FogellSide.credentialStoreFromSpec "") "an empty source is an empty store"
+              let encodedUserOnly = encodeText "only-a-username"
+              let encodedValue = encodeText "value"
+
+              let spec =
+                  String.concat
+                      "\n"
+                      [ "bad-base64\ttext\t%%%"
+                        $"bad-userpass\tuserpass\t{encodedUserOnly}"
+                        $"bad-kind\tcertificate\t{encodedValue}"
+                        "bad-shape\ttext" ]
+
+              Expect.isEmpty
+                  (FogellSide.credentialStoreFromSpec spec)
+                  "malformed base64, arity, kinds and user/password payloads never create empty credentials"
+          } ]
+
 /// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
 /// and one unsupported sibling refuses the entire wrapper before any binding effect.
 let credentialKeyBoundaryRefusal =
@@ -5906,6 +5962,7 @@ let main argv =
               timestampPrefixIsConditional
               timestampCoverageUsesComparedSurvivors
               compileRefusalDisposition
+              credentialStoreDecoding
               credentialKeyBoundaryRefusal
               credentialCompanionPreservation
               stashDefaultExcludes

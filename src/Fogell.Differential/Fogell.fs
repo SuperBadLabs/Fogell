@@ -120,7 +120,10 @@ module FogellSide =
     /// engines bind the SAME values and a receipt means something. Supplied out of band
     /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
     /// secret never enters the repository.
-    let credentialStore () : Map<string, Credential> =
+    /// Decode the credential wire format independently of its process-level source.
+    /// Keeping this step pure lets callers prove the byte and fail-closed contracts
+    /// without mutating environment variables shared by parallel runs.
+    let credentialStoreFromSpec (spec: string) : Map<string, Credential> =
         // The value of a credential is ARBITRARY BYTES. Two rounds of review found a
         // delimiter bug here: the type was first inferred from the presence of a colon
         // (breaking any secret text holding a URL), and my fix then split entries on a
@@ -132,12 +135,6 @@ module FogellSide =
         //
         // `userpass` decodes to "user\npassword". Supplied via FOGELL_CREDENTIALS_FILE
         // so a real secret never appears in a process listing either.
-        let spec =
-            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
-            | null
-            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
-            | path -> if File.Exists path then File.ReadAllText path else null
-
         match spec with
         | null
         | "" -> Map.empty
@@ -185,6 +182,15 @@ module FogellSide =
                     eprintfn $"FOGELL_CREDENTIALS: '{id}' has malformed base64 and was DROPPED; the step will fail closed"
 
                 Map.ofList entries
+
+    let credentialStore () : Map<string, Credential> =
+        let spec =
+            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
+            | null
+            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+            | path -> if File.Exists path then File.ReadAllText path else null
+
+        credentialStoreFromSpec spec
 
     let rec private scriptBodies (steps: Step list) : string list =
         steps
