@@ -1,7 +1,7 @@
 # Differential receipt — xtrace-continuation-inherited.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         d8c470ef831b51bba916c7221cb6e83f7a24077fa1f845459a1bb15c98b8aed0
+seal:         0c500a91e21f902c6f32a062f138bb1b2639e5f4362bdf970f8e632ddce67481
 case-digest:  5246a5235ba67c3e2145c9368f0af1e1c388a607a0de20d8c04e469b8c444993
 sealed-output: sequence
 
@@ -16,15 +16,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
-  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
+  compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:
     timestamps() coverage. Two engines read two clocks, so the instants can never
     agree; an engine that IGNORED the option, or honoured it for only some lines,
     would otherwise compare equal to one that honoured it fully. Line COUNTS are
     printed but never compared — the engines do not emit the same number of lines.
-    LIMIT: the numerator counts stamped RAW lines while the denominator is the
-    compared-output length, so a stamped-but-suppressed line can offset an
-    unstamped compared one. Catches a total miss and an ordinary partial
-    implementation (both planted); not a per-line proof. FG-118 makes it exact.
+    FG-118: prefix provenance follows each line through the complete contextual
+    normaliser, and both counts come from its final survivor set. `all` means every
+    compared survivor carried a prefix; suppressed narration and other raw console
+    lines are outside both output comparison and this coverage claim.
     FG-053: this exclusion was CLAIMED and unimplemented until a case first used
     the option, and read as true only because none did.
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
@@ -78,13 +78,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     So `--verify-seals` passing does NOT mean this document is unaltered — it means
     the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
     minus fenced regions; it is NOT implemented, so this list is what holds today.
+  RECEIPT STABILITY: run-scoped inherited values used by a deciding
+    canonical fold are rendered and sealed as that fold's token;
+    values not named by a deciding fold remain literal.
 
 ## Jenkins
   result:         success
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (4 lines):
     | + printf %s head
-    | /var/jenkins_home/tail
+    | ${HOME}/tail
     | + echo done
     | done
 
@@ -93,6 +96,6 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   output (4 lines):
     | + printf %s head
-    | /home/srikanth/tail
+    | ${HOME}/tail
     | + echo done
     | done

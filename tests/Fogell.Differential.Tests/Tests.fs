@@ -285,16 +285,25 @@ let stringModel =
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
 
-              // An INHERITED process variable participates in expressions exactly as
-              // it does in the simple-name fallback — measured: declarative resolves a
-              // bare `${PATH}` from the agent environment and succeeds, so an
-              // expression on the same name must not raise.
-              Environment.SetEnvironmentVariable("FOGELL_OSVAR_PROBE", "osval")
+              // FG-222. Approved metadata is supplied explicitly through the same
+              // map as declarations. Expression and simple paths agree without a
+              // process-global probe that races other tests.
+              let withPath = Map.add "PATH" "/fg222/bin:/usr/bin:/bin" env
 
               Expect.equal
-                  (GString.render env (step [ "m", "${FOGELL_OSVAR_PROBE.toUpperCase()}" ] [] [] [] [] []) "m" "${FOGELL_OSVAR_PROBE.toUpperCase()}")
-                  "OSVAL"
-                  "inherited environment reaches expression evaluation"
+                  (GString.render withPath (step [ "m", "${PATH.toUpperCase()}" ] [] [] [] [] []) "m" "${PATH.toUpperCase()}")
+                  "/FG222/BIN:/USR/BIN:/BIN"
+                  "explicit PATH reaches expression evaluation"
+
+              for name in [ "FOGELL_CREDENTIALS"; "DATABASE_URL"; "CONTROLLER_API_TOKEN"; "SSH_AUTH_SOCK" ] do
+                  let envLookup = $"${{env.{name}}}"
+                  let complex = $"${{env.{name} == null ? 'absent' : 'present'}}"
+                  let bare = $"${{{name}}}"
+                  Expect.equal (GString.render env (step [ "m", envLookup ] [] [] [] [] []) "m" envLookup) "null" $"{name} env lookup is absent"
+                  Expect.equal (GString.render env (step [ "m", complex ] [] [] [] [] []) "m" complex) "absent" $"{name} expression is absent"
+                  Expect.throws
+                      (fun () -> GString.render env (step [ "m", bare ] [] [] [] [] []) "m" bare |> ignore)
+                      $"{name} bare lookup cannot fall through to the controller"
 
               // LAZY branches do not raise: Groovy never evaluates the untaken arm,
               // so a missing name there must not fail a build Jenkins accepts.
@@ -815,6 +824,90 @@ let concurrentSealIsOrderStable =
 
               Expect.equal a.OutputComparisonNotes b.OutputComparisonNotes "the same folds, listed in the same order"
               Expect.equal a.Seal b.Seal "so the seal does not move either"
+          }
+
+          test "a deciding HOME fold stores a stable receipt without hiding equal literals" {
+              let make concurrent fogellHome jenkinsOutput fogellOutput =
+                  let env = [ "/var/jenkins_home", "${HOME}"; fogellHome, "${HOME}" ]
+
+                  Compare.receiptWithStableEnvironment
+                      env
+                      "home.Jenkinsfile"
+                      (Text.Encoding.UTF8.GetBytes "pipeline { }")
+                      "2.568.1"
+                      env
+                      (Result.Ok(mkTrace concurrent jenkinsOutput))
+                      (Result.Ok(mkTrace concurrent fogellOutput))
+
+              let first =
+                  make false "/tmp/fogell-diff-first/_agent_home" [ "/var/jenkins_home" ] [ "/tmp/fogell-diff-first/_agent_home" ]
+
+              let second =
+                  make false "/tmp/fogell-diff-second/_agent_home" [ "/var/jenkins_home" ] [ "/tmp/fogell-diff-second/_agent_home" ]
+
+              Expect.equal first.Seal second.Seal "a fresh secure run root does not reseal the evidence"
+              Expect.equal first.Jenkins.Value.Output [ "${HOME}" ] "the Jenkins fold side is canonical"
+              Expect.equal first.Fogell.Value.Output [ "${HOME}" ] "the Fogell fold side is canonical"
+
+              let literal =
+                  make false "/tmp/fogell-diff-literal/_agent_home" [ "/var/jenkins_home" ] [ "/var/jenkins_home" ]
+
+              Expect.isEmpty literal.OutputComparisonNotes "byte-equal literals need no fold"
+              Expect.equal
+                  literal.Jenkins.Value.Output
+                  [ "/var/jenkins_home" ]
+                  "a value not named by a deciding fold stays literal"
+
+              for concurrent in [ false; true ] do
+                  let fogellHome = "/tmp/fogell-diff-mixed/_agent_home"
+                  let equalLiteral = "literal=/var/jenkins_home"
+                  let mixed =
+                      make
+                          concurrent
+                          fogellHome
+                          [ "/var/jenkins_home"; equalLiteral ]
+                          [ fogellHome; equalLiteral ]
+
+                  Expect.isNonEmpty mixed.OutputComparisonNotes "the mixed control uses a HOME fold"
+                  Expect.contains mixed.Jenkins.Value.Output "${HOME}" "the deciding occurrence is stable"
+                  Expect.contains
+                      mixed.Jenkins.Value.Output
+                      equalLiteral
+                      "a separate byte-equal literal remains literal"
+                  Expect.contains
+                      mixed.Fogell.Value.Output
+                      equalLiteral
+                      "the byte-equal literal stays literal on both sides"
+
+              for concurrent in [ false; true ] do
+                  let environment =
+                      [ "JPATH", "${PATH}"
+                        "FPATH", "${PATH}"
+                        "JHOME", "${HOME}"
+                        "FHOME", "${HOME}" ]
+
+                  let pathOnly =
+                      Compare.receiptWithStableEnvironment
+                          [ "JHOME", "${HOME}"; "FHOME", "${HOME}" ]
+                          "path-only.Jenkinsfile"
+                          (Text.Encoding.UTF8.GetBytes "pipeline { }")
+                          "2.568.1"
+                          environment
+                          (Result.Ok(mkTrace concurrent [ "JPATH:JHOME"; "JHOME" ]))
+                          (Result.Ok(mkTrace concurrent [ "FPATH:JHOME"; "JHOME" ]))
+
+                  Expect.isNonEmpty pathOnly.OutputComparisonNotes "PATH decides the mixed fold"
+                  Expect.contains
+                      pathOnly.Jenkins.Value.Output
+                      "JPATH:JHOME"
+                      "HOME text in a PATH-decided pair remains literal"
+                  Expect.contains
+                      pathOnly.Jenkins.Value.Output
+                      "JHOME"
+                      "a separate byte-equal HOME literal remains literal"
+                  Expect.isFalse
+                      ((String.concat "\n" pathOnly.ComparisonContract).Contains "RECEIPT STABILITY")
+                      "no artifact value is claimed stable when HOME did not decide the pair"
           }
         ]
 
@@ -4297,6 +4390,284 @@ script says Checking out Revision {laterSpoof} (spoof)
               with
               | Ok revision -> failtestf "conflicting definitions unexpectedly parsed: %s" revision
               | Error why -> Expect.stringContains why "multiple pre-Pipeline" "ambiguous checkout named"
+          }
+
+          test "controller SCM fetch dynamically receives only its opaque launch profile" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-scm-launch-" + Guid.NewGuid().ToString("N"))
+
+              IO.Directory.CreateDirectory root |> ignore
+              let fakeGit = IO.Path.Combine(root, "git")
+              let log = IO.Path.Combine(root, "launch.env")
+
+              try
+                  IO.File.WriteAllText(
+                      fakeGit,
+                      """#!/bin/sh
+printf '%s\n' __CALL__ >> "$FG222_LOG"
+/usr/bin/env >> "$FG222_LOG"
+if [ "$1" = rev-parse ]; then
+  case "$2" in
+    *commit*) printf '%040d\n' 0 ;;
+    *tree*) printf '%040d\n' 1 ;;
+    *Jenkinsfile*) printf '%040d\n' 2 ;;
+  esac
+elif [ "$1" = show ]; then
+  printf '%s\n' 'pipeline { agent any stages { stage('\''S'\'') { steps { echo '\''ok'\'' } } } }'
+fi
+"""
+                  )
+
+                  IO.File.SetUnixFileMode(
+                      fakeGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let scmSentinel = "fg222-controller-scm-only"
+                  let profile =
+                      LaunchEnvironment.controllerScmFrom
+                          [ "PATH", root
+                            "HOME", IO.Path.Combine(root, "controller-home")
+                            "SSH_AUTH_SOCK", scmSentinel
+                            "FG222_LOG", log ]
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "ignored://fixture" "main" with
+                  | Error why -> failtestf "fake controller fetch failed: %s" why
+                  | Ok remote ->
+                      Expect.stringContains remote.Script "pipeline" "the definition bytes came through the real launcher"
+                      Expect.equal remote.Revision (String.replicate 40 "0") "commit identity came through"
+
+                  let launched = IO.File.ReadAllText log
+                  Expect.equal (launched.Split("__CALL__").Length - 1) 6 "all six Git processes used the profile"
+                  Expect.stringContains launched $"SSH_AUTH_SOCK={scmSentinel}" "controller SCM authority reached controller Git"
+                  for name in [ "FOGELL_CREDENTIALS"; "FOGELL_CREDENTIALS_FILE"; "DATABASE_URL"; "CONTROLLER_API_TOKEN" ] do
+                      Expect.isFalse (launched.Contains($"{name}=")) $"unselected controller control {name} is absent"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "https://user:secret@example.test/repo.git" "main" with
+                  | Ok _ -> failtest "inline SCM credentials were accepted"
+                  | Error why -> Expect.stringContains why "unsafe" "the credential channel is named"
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      6
+                      "unsafe URL refusal happens before a Git process starts"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "ssh://git@example.test/repo.git" "main" with
+                  | Error why -> failtestf "username-only SSH URL was refused: %s" why
+                  | Ok _ -> ()
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      12
+                      "username-only SSH uses controller Git without being mistaken for a password"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "https://example.test/repo.git%3Baccess_token=secret" "main" with
+                  | Ok _ -> failtest "encoded path-parameter credential channel was accepted"
+                  | Error why -> Expect.stringContains why "unsafe" "the encoded channel is named"
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      12
+                      "encoded unsafe URL refusal happens before Git starts"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "controller SCM authority is absent from the subsequent explicit checkout" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-scm-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let source = IO.Path.Combine(root, "source")
+              let bare = IO.Path.Combine(root, "fixture.git")
+              let controllerFakeBin = IO.Path.Combine(root, "controller-fakebin")
+              let buildFakeBin = IO.Path.Combine(root, "build-fakebin")
+              let workspaceRoot = IO.Path.Combine(root, "workspaces")
+              let controllerLog = IO.Path.Combine(root, "controller-git.env")
+              let buildLog = IO.Path.Combine(root, "build-git.env")
+
+              let runGit cwd args =
+                  let start = Diagnostics.ProcessStartInfo()
+                  start.FileName <- "/usr/bin/git"
+                  start.WorkingDirectory <- cwd
+                  start.UseShellExecute <- false
+                  start.RedirectStandardError <- true
+                  start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+                  start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+                  start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+                  start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+                  for arg in args do
+                      start.ArgumentList.Add arg
+
+                  use child = Diagnostics.Process.Start start
+                  let stderr = child.StandardError.ReadToEnd()
+                  child.WaitForExit()
+
+                  if child.ExitCode <> 0 then
+                      let command = String.concat " " args
+                      failwith $"git {command} failed ({child.ExitCode}): {stderr}"
+
+              let script =
+                  "pipeline { agent any options { skipDefaultCheckout() } environment { PATH = '"
+                  + buildFakeBin
+                  + ":${PATH}'\nFG222_BUILD_LOG = '"
+                  + buildLog
+                  + "' } stages { stage('probe') { steps { checkout(scm); sh '/usr/bin/env | /usr/bin/sort > build.env' } } } }"
+
+              try
+                  for path in [ root; source; controllerFakeBin; buildFakeBin; workspaceRoot ] do
+                      IO.Directory.CreateDirectory path |> ignore
+
+                  runGit root [ "init"; "--bare"; bare ]
+                  runGit source [ "init"; "-b"; "main" ]
+                  IO.File.WriteAllText(IO.Path.Combine(source, "Jenkinsfile"), script + "\n")
+                  IO.File.WriteAllText(IO.Path.Combine(source, "payload.txt"), "controller/build boundary\n")
+                  runGit source [ "add"; "Jenkinsfile"; "payload.txt" ]
+                  runGit source [ "commit"; "-m"; "fixture" ]
+                  runGit source [ "remote"; "add"; "origin"; bare ]
+                  runGit source [ "push"; "origin"; "main" ]
+
+                  let sentinel = "fg222-controller-transport-only"
+                  let fakeGit = IO.Path.Combine(controllerFakeBin, "git")
+                  IO.File.WriteAllText(
+                      fakeGit,
+                      "#!/bin/sh\n[ \"$SSH_AUTH_SOCK\" = '"
+                      + sentinel
+                      + "' ] || exit 91\nprintf '%s\\n' __CALL__ >> \"$FG222_LOG\"\n/usr/bin/env >> \"$FG222_LOG\"\nexec /usr/bin/git \"$@\"\n"
+                  )
+                  IO.File.SetUnixFileMode(
+                      fakeGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let buildGit = IO.Path.Combine(buildFakeBin, "git")
+                  IO.File.WriteAllText(
+                      buildGit,
+                      "#!/bin/sh\nprintf '%s\\n' __CALL__ >> \"$FG222_BUILD_LOG\"\n/usr/bin/env >> \"$FG222_BUILD_LOG\"\nexec /usr/bin/git \"$@\"\n"
+                  )
+                  IO.File.SetUnixFileMode(
+                      buildGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let controllerEnvironment =
+                      LaunchEnvironment.controllerScmFrom
+                          [ "PATH", controllerFakeBin + ":/usr/bin:/bin"
+                            "HOME", IO.Path.Combine(root, "controller-home")
+                            "SSH_AUTH_SOCK", sentinel
+                            "GIT_ASKPASS", sentinel
+                            "FG222_LOG", controllerLog ]
+
+                  let scm = { Url = bare; Branch = "main" }
+                  match
+                      FogellSide.runScmWithControllerEnvironment
+                          controllerEnvironment
+                          []
+                          workspaceRoot
+                          "job"
+                          scm
+                          script
+                  with
+                  | Error why -> failtestf "SCM-defined boundary run failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "the SCM-defined build completed"
+
+                  let workspace = IO.Path.Combine(workspaceRoot, "job")
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "payload.txt")))
+                      "controller/build boundary\n"
+                      "explicit checkout obtained the committed workspace"
+
+                  Expect.equal
+                      (IO.File.GetUnixFileMode(FogellSide.agentHome workspaceRoot))
+                      (IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      "the run-scoped build HOME is private"
+
+                  let buildEnvironment = IO.File.ReadAllText(IO.Path.Combine(workspace, "build.env"))
+                  Expect.stringContains
+                      buildEnvironment
+                      $"HOME={FogellSide.agentHome workspaceRoot}"
+                      "the build sees only its run-scoped HOME"
+                  for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
+                      Expect.isFalse
+                          (buildEnvironment.Contains($"{name}="))
+                          $"controller-only {name} is absent from the build"
+
+                  let buildLaunches = IO.File.ReadAllText buildLog
+                  Expect.isGreaterThan
+                      (buildLaunches.Split("__CALL__").Length - 1)
+                      0
+                      "explicit checkout traverses the build-side Git launcher"
+                  Expect.isFalse (buildLaunches.Contains sentinel) "controller authority value is absent from build Git"
+                  Expect.isFalse
+                      (buildLaunches.Contains(IO.Path.Combine(root, "controller-home")))
+                      "controller HOME is absent from build Git"
+                  Expect.isFalse
+                      (buildLaunches.Contains controllerFakeBin)
+                      "controller PATH entries are absent from build Git"
+                  for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
+                      Expect.isFalse
+                          (buildLaunches.Contains($"{name}="))
+                          $"build Git has no controller-only {name}"
+
+                  let controllerLaunches = IO.File.ReadAllText controllerLog
+                  Expect.equal
+                      (controllerLaunches.Split("__CALL__").Length - 1)
+                      6
+                      "only the six definition-fetch calls traverse controller Git"
+                  Expect.equal
+                      (controllerLaunches.Split($"SSH_AUTH_SOCK={sentinel}").Length - 1)
+                      6
+                      "every definition-fetch call receives controller transport authority"
+                  Expect.isFalse
+                      (controllerLaunches.Contains("FG222_BUILD_LOG="))
+                      "the controller fetch has no build-only launch control"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "run-scoped build HOME refuses a pre-existing symlink" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-home-link-" + Guid.NewGuid().ToString("N"))
+
+              let target = IO.Path.Combine(root, "controller-home")
+              IO.Directory.CreateDirectory target |> ignore
+              IO.Directory.CreateSymbolicLink(FogellSide.agentHome root, target) |> ignore
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Ok _ -> failtest "symlinked build HOME was accepted"
+                  | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME is named"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "a pre-existing execution root keeps its caller-owned mode" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-root-mode-" + Guid.NewGuid().ToString("N"))
+
+              let callerMode =
+                  IO.UnixFileMode.UserRead
+                  ||| IO.UnixFileMode.UserWrite
+                  ||| IO.UnixFileMode.UserExecute
+                  ||| IO.UnixFileMode.GroupRead
+                  ||| IO.UnixFileMode.GroupExecute
+
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.SetUnixFileMode(root, callerMode)
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'ok' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "ordinary run failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "the control build ran"
+
+                  Expect.equal
+                      (IO.File.GetUnixFileMode root)
+                      callerMode
+                      "Fogell does not chmod the caller-owned execution root"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
           }
 
           test "SCM attestation URLs encode safe spaces and make unsafe components opaque" {

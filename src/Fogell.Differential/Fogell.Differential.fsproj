@@ -23,4 +23,9 @@
     <ProjectReference Include="../Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <ProjectReference Include="../Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Differential.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

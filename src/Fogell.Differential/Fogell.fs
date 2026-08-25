@@ -11,6 +11,23 @@ open Fogell.Ir
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
 
+    /// A run-scoped agent HOME owned by Fogell rather than by the controller
+    /// account.  Its root is an explicit execution input, never controller
+    /// TMPDIR; the differential harness canonicalises this exact value.
+    let agentHome workspaceRoot = Path.Combine(workspaceRoot, "_agent_home")
+
+    let private privateDirectoryMode =
+        UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
+
+    let private ensurePrivateDirectory path =
+        if Directory.Exists path then
+            if File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint) then
+                invalidOp $"refusing symlinked private directory: {path}"
+
+            File.SetUnixFileMode(path, privateDirectoryMode)
+        else
+            Directory.CreateDirectory(path, privateDirectoryMode) |> ignore
+
     /// Pipeline options accepted by this execution engine. Keeping the behaviour
     /// and any collection-shaped argument exception in one closed descriptor list
     /// prevents the option allowlist and the shared named-collection preflight from
@@ -407,6 +424,7 @@ module FogellSide =
 
     let private runWithCredentialStore
         (credentials: unit -> Map<string, Credential>)
+        (controllerScmEnvironment: ControllerScmEnvironment option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -422,6 +440,11 @@ module FogellSide =
         // Capture the closest Fogell analogue at build entry, before preflight.
         let buildStartTimeInMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         let isRestartedRun = persistence |> Option.exists (fun hooks -> hooks.IsRestartedRun)
+        // The execution root belongs to the caller and may intentionally be a
+        // shared/mounted parent.  Create it when absent, but never chmod or
+        // otherwise reinterpret an existing root; only Fogell's child HOME is
+        // private agent state.
+        Directory.CreateDirectory workspaceRoot |> ignore
         let workspace = Path.Combine(workspaceRoot, jobName)
         // Artifacts and SCM history live outside the workspace hash.
         let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
@@ -442,7 +465,13 @@ module FogellSide =
         let verifyScmDefinition () =
             match scm with
             | Some spec ->
-                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
+                let fetched =
+                    match controllerScmEnvironment with
+                    | Some environment ->
+                        WalkerGit.readRemoteJenkinsfileWithEnvironment environment spec.Url spec.Branch
+                    | None -> WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch
+
+                match fetched with
                 | Result.Error e ->
                     failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
                 | Result.Ok remote ->
@@ -481,6 +510,8 @@ module FogellSide =
         | Ready pipeline ->
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
+            let buildHome = agentHome workspaceRoot
+            ensurePrivateDirectory buildHome
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
@@ -743,14 +774,18 @@ module FogellSide =
             let jenkinsProvided =
                 // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
                 // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
-                [ "BUILD_NUMBER", string buildNumber
-                  "BUILD_ID", string buildNumber
-                  "BUILD_DISPLAY_NAME", $"#{buildNumber}"
-                  "JOB_NAME", jobName
-                  "JOB_BASE_NAME", jobName
-                  "WORKSPACE", Path.Combine(workspaceRoot, jobName)
-                  "EXECUTOR_NUMBER", "0"
-                  "NODE_NAME", "built-in" ]
+                // FG-222: PATH and HOME are the measured compatibility baseline.
+                // They enter the same explicit map used by GStrings, shell and
+                // runtime Git. No other controller variable is build-visible.
+                LaunchEnvironment.buildBaseline buildHome
+                @ [ ("BUILD_NUMBER", string buildNumber)
+                    ("BUILD_ID", string buildNumber)
+                    ("BUILD_DISPLAY_NAME", $"#{buildNumber}")
+                    ("JOB_NAME", jobName)
+                    ("JOB_BASE_NAME", jobName)
+                    ("WORKSPACE", Path.Combine(workspaceRoot, jobName))
+                    ("EXECUTOR_NUMBER", "0")
+                    ("NODE_NAME", "built-in") ]
 
             // FG-105: env resolution and argument rendering live in WalkerArgs.
             let root =
@@ -1220,6 +1255,7 @@ module FogellSide =
         : Result<Trace, string> =
         runWithCredentialStore
             credentialStore
+            None
             envReplacements
             workspaceRoot
             jobName
@@ -1242,7 +1278,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore (fun () -> credentials) envReplacements workspaceRoot jobName 1 None true None None script
+            runWithCredentialStore (fun () -> credentials) None envReplacements workspaceRoot jobName 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1318,6 +1354,32 @@ module FogellSide =
         =
         try
             runWith envReplacements workspaceRoot jobName 1 None true (Some scm) None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// Test seam for proving that controller-only transport authority used for
+    /// definition fetch cannot flow into the subsequent build-side checkout.
+    let internal runScmWithControllerEnvironment
+        (controllerEnvironment: ControllerScmEnvironment)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scm: ScmSpec)
+        (script: string)
+        =
+        try
+            runWithCredentialStore
+                credentialStore
+                (Some controllerEnvironment)
+                envReplacements
+                workspaceRoot
+                jobName
+                1
+                None
+                true
+                (Some scm)
+                None
+                script
         with ex ->
             Result.Error ex.Message
 

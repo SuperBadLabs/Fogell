@@ -1193,10 +1193,10 @@ module WalkerOrchestration =
                     |> List.tryLast
                     |> Option.map snd
                     |> Option.orElse outerPath
-                    |> Option.defaultWith (fun () ->
-                        match Environment.GetEnvironmentVariable "PATH" with
-                        | null -> ""
-                        | p -> p)
+                    // FG-222: every production environment begins with the
+                    // admission snapshot. A synthetic caller that supplies no
+                    // PATH gets no second ambient read here.
+                    |> Option.defaultValue ""
 
                 let bindings =
                     if List.isEmpty pathAdditions then

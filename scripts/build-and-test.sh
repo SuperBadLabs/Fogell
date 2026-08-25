@@ -102,6 +102,15 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 echo "=== sandbox-denial proof (FG-072, blocking) ==="
 ./scripts/prove-sandbox-denials.sh || { echo "SANDBOX-DENIAL PROOF FAILED"; exit 1; }
 
+# FG-222. The host has controller credentials, database configuration and SCM
+# transport authority in its environment. A build receives only the fixed system
+# PATH plus a run-scoped neutral Fogell HOME and explicit pipeline overlays. The proof drives
+# GString, shell and a recording Git launcher, then mutates status and content
+# artifacts to demonstrate that its checker rejects planted regressions.
+echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
+./scripts/prove-control-env-isolation.sh \
+  || { echo "CONTROLLER/BUILD ENVIRONMENT ISOLATION PROOF FAILED"; exit 1; }
+
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.

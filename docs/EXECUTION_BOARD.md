@@ -868,6 +868,8 @@ changed, and the queue above is what orders them.
 
 ---
 
+| FG-222 | **P1** | **PARTIAL** | Build processes inherited controller environment through GString, shell, and Git launch paths | A current-head port now clears every build process environment and applies only fixed system PATH, a run-scoped neutral Fogell HOME beneath the explicit execution root, synthetic Jenkins metadata, and explicit pipeline overlays. Controller HOME/TMPDIR do not select the build HOME, deciding HOME folds have a stable sealed receipt representation, and GString has no ambient fallback. Controller Jenkinsfile fetches use a distinct opaque SCM profile; an integrated SCM-defined test proves a causally required controller sentinel does not reach the following explicit checkout, profile-scoped PATH resolution is dynamic-test proven, and unsafe credential/disclosure URL channels refuse before launch while username-only SSH remains supported. Focused Execution 84/84, Differential 218/218, the real-host proof, and the stock authoritative gate (784/784) pass. The live 275-case oracle produced 278/282 tier-1 receipt builds; four serially reproduced pre-existing empty-`dir` workspace drifts remain, while the three HOME cases proved byte-stable across fresh roots. PARTIAL until those four oracle drifts, exact signed-head review/hosted checks, and publication are closed. Same-UID filesystem/network containment and credential-free prepared private-SCM checkout remain explicit residuals — [→ detail](tickets/FG-222.md) |
+
 ## Standing risks
 
 1. **Acceptance ≠ compatibility.** 93.9% inherited acceptance against 0 proven

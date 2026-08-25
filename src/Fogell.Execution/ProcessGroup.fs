@@ -4,6 +4,147 @@ open System
 open System.Diagnostics
 open System.Threading
 
+/// FG-222. Explicit process environments at the controller/build boundary.
+///
+/// A build receives only the small fixed compatibility baseline at run
+/// entry plus pipeline/stage/withEnv/credential overlays. Controller-owned SCM
+/// fetches have a separate allowlist because SSH agents, Git configuration and
+/// certificate/proxy settings are controller authority and must never become
+/// build input.
+type ControllerScmEnvironment = private ControllerScmEnvironment of (string * string) list
+
+module LaunchEnvironment =
+
+    [<Literal>]
+    let private FallbackPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    let private ambient name =
+        match Environment.GetEnvironmentVariable name with
+        | null
+        | "" -> None
+        | value -> Some(name, value)
+
+    let private selected names = names |> List.choose ambient
+
+    /// The measured environment-of-necessity for Jenkins compatibility. PATH is
+    /// required by ordinary shell commands. HOME is a Fogell-owned neutral path,
+    /// not the controller account's home; three sealed cases require it to exist.
+    /// Everything else must be declared by the build.
+    let buildBaseline agentHome =
+        [ "PATH", FallbackPath
+          "HOME", agentHome ]
+
+    /// Construct an opaque controller-SCM profile from already validated
+    /// controller configuration. It cannot be passed to a build launcher.
+    let internal controllerScmFrom environment = ControllerScmEnvironment environment
+
+    let private isExecutable path =
+        try
+            if not (IO.File.Exists path) then
+                false
+            else
+                let mode = IO.File.GetUnixFileMode path
+                let executeBits =
+                    IO.UnixFileMode.UserExecute
+                    ||| IO.UnixFileMode.GroupExecute
+                    ||| IO.UnixFileMode.OtherExecute
+
+                mode &&& executeBits <> enum<IO.UnixFileMode> 0
+        with _ ->
+            false
+
+    let private resolveExecutable
+        (executable: string)
+        (workingDirectory: string)
+        (environment: (string * string) list)
+        =
+        environment
+        |> List.rev
+        |> List.tryPick (fun (name, value) -> if name = "PATH" then Some value else None)
+        |> Option.bind (fun path ->
+            path.Split(IO.Path.PathSeparator, StringSplitOptions.None)
+            |> Array.map (fun directory ->
+                let root =
+                    if String.IsNullOrEmpty directory then
+                        workingDirectory
+                    elif IO.Path.IsPathRooted directory then
+                        directory
+                    else
+                        IO.Path.Combine(workingDirectory, directory)
+
+                IO.Path.GetFullPath(IO.Path.Combine(root, executable)))
+            |> Array.tryFind isExecutable)
+
+    let resolveBuildExecutable executable workingDirectory environment =
+        resolveExecutable executable workingDirectory environment
+
+    let resolveControllerScmExecutable executable workingDirectory (ControllerScmEnvironment environment) =
+        resolveExecutable executable workingDirectory environment
+
+    /// Controller-only SCM launch input. Additional deployment-specific helper
+    /// variables may be opted in by name through FOGELL_SCM_ENV_ALLOWLIST; that
+    /// control variable is parsed here and is never copied to the child itself.
+    let controllerScmBaseline () =
+        let standard =
+            [ "PATH"
+              "HOME"
+              "USER"
+              "LOGNAME"
+              "XDG_CONFIG_HOME"
+              "SSH_AUTH_SOCK"
+              "SSH_ASKPASS"
+              "GIT_ASKPASS"
+              "GIT_SSH"
+              "GIT_SSH_COMMAND"
+              "GIT_CONFIG_GLOBAL"
+              "GIT_CONFIG_SYSTEM"
+              "GIT_SSL_CAINFO"
+              "SSL_CERT_FILE"
+              "SSL_CERT_DIR"
+              "HTTP_PROXY"
+              "HTTPS_PROXY"
+              "ALL_PROXY"
+              "NO_PROXY"
+              "http_proxy"
+              "https_proxy"
+              "all_proxy"
+              "no_proxy" ]
+
+        let additional =
+            match Environment.GetEnvironmentVariable "FOGELL_SCM_ENV_ALLOWLIST" with
+            | null
+            | "" -> []
+            | value ->
+                value.Split(',', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
+                |> Array.toList
+
+        let chosen =
+            standard @ additional
+            |> List.distinct
+            |> selected
+
+        (if chosen |> List.exists (fun (name, _) -> name = "PATH") then
+             chosen
+         else
+             ("PATH", FallbackPath) :: chosen)
+        |> controllerScmFrom
+
+    /// Replace ProcessStartInfo's inherited dictionary with exactly the build
+    /// map. Last-wins preserves nested overlays.
+    let applyBuildTo (startInfo: ProcessStartInfo) (environment: (string * string) list) =
+        startInfo.Environment.Clear()
+
+        for key, value in environment do
+            startInfo.Environment[key] <- value
+
+    /// Apply controller-only Git transport authority. The opaque argument keeps
+    /// ordinary build launch sites from accidentally accepting this profile.
+    let applyControllerScmTo (startInfo: ProcessStartInfo) (ControllerScmEnvironment environment) =
+        startInfo.Environment.Clear()
+
+        for key, value in environment do
+            startInfo.Environment[key] <- value
+
 /// FG-031/FG-032. Process-group lifecycle containment.
 ///
 /// The mechanism: every step is launched through `setsid`, so the child leads a
@@ -357,10 +498,7 @@ module ProcessGroup =
         psi.RedirectStandardError <- true
         psi.UseShellExecute <- false
 
-        for k, v in request.Environment do
-            psi.Environment[k] <- v
-
-
+        LaunchEnvironment.applyBuildTo psi request.Environment
 
         use proc = new Process()
         proc.StartInfo <- psi

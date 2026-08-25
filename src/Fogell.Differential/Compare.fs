@@ -681,7 +681,8 @@ module Compare =
         let nf, nv = List.length folds, List.length verdict
         $"{file}\n{caseDigestHex}\n{core}\n{sealedOutputMode}\nverdict={nv}\n{joinedVerdict}\n{render jenkins}\n{render fogell}\nfolds={nf}\n{joinedFolds}"
 
-    let receipt
+    let private receiptWithArtifactReplacements
+        (artifactReplacements: (string * string) list)
         (file: string)
         (caseBytes: byte[])
         (core: string)
@@ -689,11 +690,166 @@ module Compare =
         (jenkins: Result<Trace, string>)
         (fogell: Result<Trace, string>)
         : Receipt =
-        let (verdict, folds), j, f =
+        let (verdict, folds), rawJ, rawF =
             match jenkins, fogell with
             | Result.Error e, _ -> (NotComparable(JenkinsFailed e), []), None, None
             | _, Result.Error e -> (NotComparable(FogellFailed e), []), None, None
             | Result.Ok jt, Result.Ok ft -> traces envReplacements jt ft, Some jt, Some ft
+
+        let comparisonReplacements =
+            envReplacements
+            |> List.filter (fun (value, _) -> value <> "" && value.Length >= 4)
+            |> List.sortByDescending (fun (value, _) -> value.Length)
+
+        let artifactReplacementGroups =
+            artifactReplacements
+            |> List.filter (fun (value, _) -> value <> "" && value.Length >= 4)
+            |> List.distinct
+            |> List.groupBy snd
+
+        let canonicalForComparison line =
+            comparisonReplacements
+            |> List.fold (fun (text: string) (raw, token) -> text.Replace(raw, token)) line
+
+        let replacementsNeededByPair left right =
+            if left = right || canonicalForComparison left <> canonicalForComparison right then
+                []
+            else
+                artifactReplacementGroups
+                |> List.choose (fun (token, replacements) ->
+                    let withoutToken =
+                        comparisonReplacements |> List.filter (fun (_, candidate) -> candidate <> token)
+
+                    let canonicalWithoutToken line =
+                        withoutToken
+                        |> List.fold (fun (text: string) (raw, replacement) -> text.Replace(raw, replacement)) line
+
+                    if canonicalWithoutToken left <> canonicalWithoutToken right then
+                        Some replacements
+                    else
+                        None)
+                |> List.concat
+                |> List.sortByDescending (fun (value, _) -> value.Length)
+
+        let stableArtifactLine (replacements: (string * string) list) (line: string) =
+            replacements
+            |> List.fold (fun (text: string) (raw, token) -> text.Replace(raw, token)) line
+
+        let stabiliseSequence jenkinsOutput fogellOutput =
+            let rec walk j f stableJ stableF changed =
+                match j, f with
+                | jh :: jt, fh :: ft when jh = fh ->
+                    walk jt ft (jh :: stableJ) (fh :: stableF) changed
+                | jh :: jt, fh :: ft when canonicalForComparison jh = canonicalForComparison fh ->
+                    let replacements = replacementsNeededByPair jh fh
+                    let stableJHead = stableArtifactLine replacements jh
+                    let stableFHead = stableArtifactLine replacements fh
+
+                    walk
+                        jt
+                        ft
+                        (stableJHead :: stableJ)
+                        (stableFHead :: stableF)
+                        (changed || stableJHead <> jh || stableFHead <> fh)
+                | _ ->
+                    (List.rev stableJ @ j, List.rev stableF @ f), changed
+
+            walk jenkinsOutput fogellOutput [] [] false
+
+        let subtractMultiset (left: string list) (right: string list) =
+            let counts = System.Collections.Generic.Dictionary<string, int>()
+
+            for value in right do
+                counts[value] <-
+                    (match counts.TryGetValue value with
+                     | true, count -> count
+                     | _ -> 0)
+                    + 1
+
+            left
+            |> List.filter (fun value ->
+                match counts.TryGetValue value with
+                | true, count when count > 0 ->
+                    counts[value] <- count - 1
+                    false
+                | _ -> true)
+
+        let stabiliseMultiset jenkinsOutput fogellOutput =
+            // Raw branch order is nondeterministic.  Sort the unmatched raw
+            // occurrences before choosing canonical pairs so receipt
+            // stabilisation cannot add a second order-sensitive decision to a
+            // comparison whose declared mode is a multiset.
+            let jenkinsDifference = subtractMultiset jenkinsOutput fogellOutput |> List.sort
+            let fogellDifference = subtractMultiset fogellOutput jenkinsOutput |> List.sort
+            let fogellByCanonical = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Queue<string>>()
+
+            for value in fogellDifference do
+                let canonical = canonicalForComparison value
+                let queue =
+                    match fogellByCanonical.TryGetValue canonical with
+                    | true, existing -> existing
+                    | _ ->
+                        let created = System.Collections.Generic.Queue<string>()
+                        fogellByCanonical[canonical] <- created
+                        created
+
+                queue.Enqueue value
+
+            let jenkinsPlans = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Queue<string>>()
+            let fogellPlans = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Queue<string>>()
+            let mutable changed = false
+
+            let enqueuePlan
+                (plans: System.Collections.Generic.Dictionary<string, System.Collections.Generic.Queue<string>>)
+                raw
+                stable
+                =
+                let queue =
+                    match plans.TryGetValue raw with
+                    | true, existing -> existing
+                    | _ ->
+                        let created = System.Collections.Generic.Queue<string>()
+                        plans[raw] <- created
+                        created
+
+                queue.Enqueue stable
+
+            for jenkinsValue in jenkinsDifference do
+                let canonical = canonicalForComparison jenkinsValue
+
+                match fogellByCanonical.TryGetValue canonical with
+                | true, candidates when candidates.Count > 0 ->
+                    let fogellValue = candidates.Dequeue()
+                    let replacements = replacementsNeededByPair jenkinsValue fogellValue
+                    let stableJenkins = stableArtifactLine replacements jenkinsValue
+                    let stableFogell = stableArtifactLine replacements fogellValue
+                    enqueuePlan jenkinsPlans jenkinsValue stableJenkins
+                    enqueuePlan fogellPlans fogellValue stableFogell
+                    changed <- changed || stableJenkins <> jenkinsValue || stableFogell <> fogellValue
+                | _ -> ()
+
+            let applyPlans (plans: System.Collections.Generic.Dictionary<string, System.Collections.Generic.Queue<string>>) output =
+                output
+                |> List.map (fun value ->
+                    match plans.TryGetValue value with
+                    | true, replacements when replacements.Count > 0 -> replacements.Dequeue()
+                    | _ -> value)
+
+            (applyPlans jenkinsPlans jenkinsOutput, applyPlans fogellPlans fogellOutput), changed
+
+        let j, f, receiptWasStabilised =
+            match rawJ, rawF with
+            | Some jenkinsTrace, Some fogellTrace when not (List.isEmpty artifactReplacementGroups) ->
+                let (jenkinsOutput, fogellOutput), changed =
+                    if jenkinsTrace.Concurrent || fogellTrace.Concurrent then
+                        stabiliseMultiset jenkinsTrace.Output fogellTrace.Output
+                    else
+                        stabiliseSequence jenkinsTrace.Output fogellTrace.Output
+
+                Some { jenkinsTrace with Output = jenkinsOutput },
+                Some { fogellTrace with Output = fogellOutput },
+                changed
+            | _ -> rawJ, rawF, false
 
         let comparedAsMultiset = comparedAsMultisetIn [ j; f ]
         let caseHex = caseDigest caseBytes
@@ -722,13 +878,10 @@ module Compare =
                     // than no verifier at all. Both now reseal identically across two full
                     // runs.
                     //
-                    // ONLY THE ORDER is dropped. The lines are NOT canonicalised here even
-                    // though the multiset comparison canonicalises before matching: env
-                    // canonicalisation is deterministic run to run, so it is not a source
-                    // of churn, and sealing the canonical form would stop binding the
-                    // inherited VALUES the engines actually printed. Sorting removes
-                    // exactly the nondeterminism and nothing else — content and
-                    // MULTIPLICITY stay bound.
+                    // ONLY THE ORDER is dropped here. A caller may already have
+                    // replaced a run-scoped inherited value with the exact token
+                    // named by a deciding fold; that keeps the receipt stable while
+                    // binding the comparison representation rather than a nonce.
                     Some
                         { Disposition = x.Disposition
                           Result = x.Result
@@ -813,6 +966,12 @@ module Compare =
                      "  ARE sealed: change, add or drop a line and the seal breaks." ]
                else
                    [])
+            @ (if receiptWasStabilised then
+                   [ "RECEIPT STABILITY: run-scoped inherited values used by a deciding"
+                     "  canonical fold are rendered and sealed as that fold's token;"
+                     "  values not needed by that exact compared pair remain literal." ]
+               else
+                   [])
           OutputComparisonNotes = folds
           // Deliberately NOT part of `comparable`, so the seal still hashes what
           // the two engines produced. A case proven on attempt 1 and the same case
@@ -821,6 +980,30 @@ module Compare =
           RecoveredFrom = []
           Seal = sha256Text comparable
           CaseDigest = caseHex }
+
+    let receipt
+        (file: string)
+        (caseBytes: byte[])
+        (core: string)
+        (envReplacements: (string * string) list)
+        (jenkins: Result<Trace, string>)
+        (fogell: Result<Trace, string>)
+        : Receipt =
+        receiptWithArtifactReplacements [] file caseBytes core envReplacements jenkins fogell
+
+    /// Store run-scoped inherited values canonically only when their fold
+    /// actually decided the comparison.  Used by the differential CLI so a
+    /// secure per-run HOME does not churn otherwise identical sealed receipts.
+    let receiptWithStableEnvironment
+        (artifactReplacements: (string * string) list)
+        (file: string)
+        (caseBytes: byte[])
+        (core: string)
+        (envReplacements: (string * string) list)
+        (jenkins: Result<Trace, string>)
+        (fogell: Result<Trace, string>)
+        : Receipt =
+        receiptWithArtifactReplacements artifactReplacements file caseBytes core envReplacements jenkins fogell
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
     /// diffed and hashed alongside the code.

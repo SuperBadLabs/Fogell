@@ -228,6 +228,145 @@ let shellExecution =
               | None -> failtest "must carry a diagnostic"
           } ]
 
+let environmentIsolation =
+    testList
+        "FG-222 controller environment isolation"
+        [ test "build launch replacement clears pre-seeded controller controls" {
+              let psi = ProcessStartInfo("/bin/true")
+              let planted =
+                  [ "FOGELL_CREDENTIALS", "fg222-inline-control"
+                    "DATABASE_URL", "postgres://controller/fg222"
+                    "CONTROLLER_API_TOKEN", "fg222-api-control"
+                    "SSH_AUTH_SOCK", "fg222-agent-control" ]
+
+              for name, value in planted do
+                  psi.Environment[name] <- value
+
+              let requestedPath = "/fg222/request:/usr/bin:/bin"
+              let neutralHome = "/tmp/fogell-agent-home"
+              LaunchEnvironment.applyBuildTo
+                  psi
+                  [ "PATH", requestedPath
+                    "HOME", neutralHome
+                    "DECLARED", "pipeline-value" ]
+
+              Expect.equal psi.Environment.Count 3 "no ambient or pre-seeded key survives replacement"
+              Expect.equal psi.Environment["PATH"] requestedPath "explicit PATH remains"
+              Expect.equal psi.Environment["HOME"] neutralHome "neutral build HOME remains"
+              Expect.equal psi.Environment["DECLARED"] "pipeline-value" "declared value remains"
+
+              for name, value in planted do
+                  Expect.isFalse (psi.Environment.ContainsKey name) $"{name} is absent"
+                  Expect.isFalse (psi.Environment.Values.Contains value) $"{name} value is absent"
+          }
+
+          test "a real shell receives only neutral metadata and declared input" {
+              let neutralHome = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-home-test")
+              let environment =
+                  LaunchEnvironment.buildBaseline neutralHome
+                  @ [ "DECLARED", "pipeline-value" ]
+
+              Expect.equal
+                  environment
+                  [ "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    "HOME", neutralHome
+                    "DECLARED", "pipeline-value" ]
+                  "the implicit baseline cannot widen without changing this contract"
+
+              let result =
+                  Executor.runStep
+                      { request (tempRoot ()) "/usr/bin/env | /usr/bin/sort" with
+                          Environment = environment }
+
+              Expect.equal result.Status Success "the shell completed"
+              Expect.stringContains result.Stdout "DECLARED=pipeline-value" "declared env is present"
+              Expect.stringContains result.Stdout $"HOME={neutralHome}" "neutral HOME is present"
+              Expect.stringContains result.Stdout "PATH=" "approved PATH is present"
+
+              for name in [ "FOGELL_CREDENTIALS"; "FOGELL_CREDENTIALS_FILE"; "DATABASE_URL"; "CONTROLLER_API_TOKEN"; "SSH_AUTH_SOCK" ] do
+                  Expect.isFalse (result.Stdout.Contains $"{name}=") $"{name} is absent from the child"
+          }
+
+          test "the production controller SCM snapshot copies only approved names" {
+              let planted =
+                  [ "SSH_AUTH_SOCK", "fg222-approved-agent"
+                    "FG222_CUSTOM_SCM", "fg222-approved-custom"
+                    "FOGELL_SCM_ENV_ALLOWLIST", "FG222_CUSTOM_SCM"
+                    "CONTROLLER_API_TOKEN", "fg222-denied-api"
+                    "AWS_SECRET_ACCESS_KEY", "fg222-denied-aws" ]
+
+              let previous =
+                  planted |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable name)
+
+              try
+                  for name, value in planted do
+                      Environment.SetEnvironmentVariable(name, value)
+
+                  let psi = ProcessStartInfo("/bin/true")
+                  LaunchEnvironment.applyControllerScmTo psi (LaunchEnvironment.controllerScmBaseline ())
+
+                  let allowed =
+                      set
+                          [ "PATH"; "HOME"; "USER"; "LOGNAME"; "XDG_CONFIG_HOME"
+                            "SSH_AUTH_SOCK"; "SSH_ASKPASS"; "GIT_ASKPASS"; "GIT_SSH"; "GIT_SSH_COMMAND"
+                            "GIT_CONFIG_GLOBAL"; "GIT_CONFIG_SYSTEM"; "GIT_SSL_CAINFO"
+                            "SSL_CERT_FILE"; "SSL_CERT_DIR"
+                            "HTTP_PROXY"; "HTTPS_PROXY"; "ALL_PROXY"; "NO_PROXY"
+                            "http_proxy"; "https_proxy"; "all_proxy"; "no_proxy"
+                            "FG222_CUSTOM_SCM" ]
+
+                  for key in psi.Environment.Keys do
+                      Expect.isTrue (allowed.Contains key) $"production SCM profile contains only approved key {key}"
+
+                  Expect.equal psi.Environment["SSH_AUTH_SOCK"] "fg222-approved-agent" "standard SCM authority is present"
+                  Expect.equal psi.Environment["FG222_CUSTOM_SCM"] "fg222-approved-custom" "opted-in authority is present"
+                  Expect.isFalse (psi.Environment.ContainsKey "FOGELL_SCM_ENV_ALLOWLIST") "the selector is not copied"
+                  Expect.isFalse (psi.Environment.ContainsKey "CONTROLLER_API_TOKEN") "unapproved API control is absent"
+                  Expect.isFalse (psi.Environment.ContainsKey "AWS_SECRET_ACCESS_KEY") "unapproved cloud control is absent"
+              finally
+                  for name, value in previous do
+                      Environment.SetEnvironmentVariable(name, value)
+          }
+
+          test "Git resolution obeys relative empty executable and missing PATH entries" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-path-" + Guid.NewGuid().ToString("N"))
+              let tools = IO.Path.Combine(root, "tools")
+              let blocked = IO.Path.Combine(root, "blocked")
+              IO.Directory.CreateDirectory tools |> ignore
+              IO.Directory.CreateDirectory blocked |> ignore
+
+              let executable = IO.Path.Combine(tools, "git")
+              let currentExecutable = IO.Path.Combine(root, "git")
+              let nonExecutable = IO.Path.Combine(blocked, "git")
+
+              try
+                  for path in [ executable; currentExecutable; nonExecutable ] do
+                      IO.File.WriteAllText(path, "#!/bin/sh\nexit 0\n")
+
+                  let executableMode =
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+
+                  IO.File.SetUnixFileMode(executable, executableMode)
+                  IO.File.SetUnixFileMode(currentExecutable, executableMode)
+                  IO.File.SetUnixFileMode(nonExecutable, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+
+                  Expect.equal
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", "blocked:tools" ])
+                      (Some executable)
+                      "relative PATH is resolved from the child cwd and skips a non-executable candidate"
+
+                  Expect.equal
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", "" ])
+                      (Some currentExecutable)
+                      "an empty PATH entry names the child cwd"
+
+                  Expect.isNone
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", IO.Path.Combine(root, "missing") ])
+                      "an unusable explicit PATH fails closed instead of falling back to controller PATH"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          } ]
+
 let containment =
     testList
         "FG-031/032 process group containment"
@@ -3036,6 +3175,7 @@ let main argv =
                 "Fogell.Execution"
                 [ workspaceHygiene
                   shellExecution
+                  environmentIsolation
                   containment
                   eventDrivenWaits
                   credentialKeyBoundaries

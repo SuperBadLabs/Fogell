@@ -5,6 +5,7 @@ open System.IO
 open System.Security.Cryptography
 open System.Text
 open Fogell.Domain
+open Fogell.Execution
 
 /// FG-111/FG-052. The `git` step: a real clone/fetch into the workspace, and
 /// Jenkins' git-plugin narration in its measured wording and order.
@@ -34,41 +35,36 @@ open Fogell.Domain
 /// folded two-sidedly to ${GITVERSION} by the harness, never suppressed.
 module WalkerGit =
 
-    /// Produce a receipt-safe representation of a Git remote. Absolute URIs are
-    /// canonicalised (which percent-encodes spaces) only when every component is
-    /// safe to disclose. Userinfo, query, fragment, URI path parameters and
-    /// malformed/non-URI spellings are represented only by a one-way digest.
-    /// Engine notes must never become a credential exfiltration path.
-    let attestationUrl (url: string) =
-        let opaque () =
-            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
-            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
+    type private GitLaunchEnvironment =
+        | Build of (string * string) list
+        | ControllerScm of ControllerScmEnvironment
 
-        let hasStrictUtf8PercentEncoding (value: string) =
-            try
-                let bytes = ResizeArray<byte>()
-                let mutable index = 0
+    let private hasStrictUtf8PercentEncoding (value: string) =
+        try
+            let bytes = ResizeArray<byte>()
+            let mutable index = 0
 
-                while index < value.Length do
-                    if value[index] = '%' then
-                        if index + 2 >= value.Length then
-                            invalidArg (nameof value) "truncated percent escape"
+            while index < value.Length do
+                if value[index] = '%' then
+                    if index + 2 >= value.Length then
+                        invalidArg (nameof value) "truncated percent escape"
 
-                        bytes.Add(Convert.ToByte(value.Substring(index + 1, 2), 16))
-                        index <- index + 3
-                    else
-                        let next = value.IndexOf('%', index)
-                        let finish = if next < 0 then value.Length else next
-                        Encoding.UTF8.GetBytes(value.Substring(index, finish - index))
-                        |> bytes.AddRange
-                        index <- finish
+                    bytes.Add(Convert.ToByte(value.Substring(index + 1, 2), 16))
+                    index <- index + 3
+                else
+                    let next = value.IndexOf('%', index)
+                    let finish = if next < 0 then value.Length else next
+                    Encoding.UTF8.GetBytes(value.Substring(index, finish - index))
+                    |> bytes.AddRange
+                    index <- finish
 
-                let strictUtf8 = UTF8Encoding(false, true)
-                strictUtf8.GetString(bytes.ToArray()) |> ignore
-                true
-            with _ ->
-                false
+            let strictUtf8 = UTF8Encoding(false, true)
+            strictUtf8.GetString(bytes.ToArray()) |> ignore
+            true
+        with _ ->
+            false
 
+    let private safeAbsoluteUrl (url: string) =
         let mutable parsed = Unchecked.defaultof<Uri>
 
         if Uri.TryCreate(url, UriKind.Absolute, &parsed) then
@@ -85,17 +81,49 @@ module WalkerGit =
                     with _ ->
                         false
 
-            if
-                String.IsNullOrEmpty parsed.UserInfo
-                && String.IsNullOrEmpty parsed.Query
-                && String.IsNullOrEmpty parsed.Fragment
-                && safePath
-            then
-                parsed.AbsoluteUri
+            let safeUser =
+                if String.IsNullOrEmpty parsed.UserInfo then
+                    true
+                elif parsed.Scheme.Equals("ssh", StringComparison.OrdinalIgnoreCase) then
+                    try
+                        hasStrictUtf8PercentEncoding parsed.UserInfo
+                        && Uri.UnescapeDataString(parsed.UserInfo).IndexOfAny [| ':'; '@'; '/'; '?'; '#' |] < 0
+                    with _ ->
+                        false
+                else
+                    false
+
+            if safeUser && String.IsNullOrEmpty parsed.Query && String.IsNullOrEmpty parsed.Fragment && safePath then
+                Some parsed
             else
-                opaque ()
+                None
         else
-            opaque ()
+            None
+
+    /// Produce a receipt-safe representation of a Git remote. Absolute URIs are
+    /// canonicalised only when every component is safe to disclose. A username-
+    /// only SSH URI is configuration, not an inline password; other userinfo,
+    /// query, fragment, path-parameter, and malformed spellings stay opaque.
+    let attestationUrl (url: string) =
+        match safeAbsoluteUrl url with
+        | Some parsed -> parsed.AbsoluteUri
+        | None ->
+            let digest = SHA256.HashData(Encoding.UTF8.GetBytes url)
+            $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}"
+
+    let private controllerScmUrlIsSafe (url: string) =
+        let mutable parsed = Unchecked.defaultof<Uri>
+
+        if Uri.TryCreate(url, UriKind.Absolute, &parsed) then
+            safeAbsoluteUrl url |> Option.isSome
+        else
+            // SCP-like SSH remotes have no inline password/query channel and are
+            // still supported. Malformed spellings fail later in Git by name.
+            try
+                hasStrictUtf8PercentEncoding url
+                && Uri.UnescapeDataString(url).IndexOfAny [| ';'; '?'; '#' |] < 0
+            with _ ->
+                false
 
     /// Identity of the exact commit used to load an SCM-defined Jenkinsfile.
     /// Captured in the same private fetch as the bytes, so early evaluation
@@ -112,19 +140,30 @@ module WalkerGit =
     /// narration promises, kill on expiry, and every start failure (missing
     /// binary included) is an Error, never an unhandled throw.
     let private git
-        (env: (string * string) list)
+        (launchEnvironment: GitLaunchEnvironment)
         (waitMs: int)
         (shouldStop: unit -> bool)
         (cwd: string)
         (args: string list)
         : Result<string, string> =
         try
-            let psi = Diagnostics.ProcessStartInfo("git")
+            let gitExecutable =
+                (match launchEnvironment with
+                 | Build env -> LaunchEnvironment.resolveBuildExecutable "git" cwd env
+                 | ControllerScm env -> LaunchEnvironment.resolveControllerScmExecutable "git" cwd env)
+                |> Option.defaultWith (fun () ->
+                    raise (FileNotFoundException("git is not executable in the explicit launch PATH")))
+
+            let psi = Diagnostics.ProcessStartInfo(gitExecutable)
             args |> List.iter psi.ArgumentList.Add
             psi.WorkingDirectory <- cwd
-            // the EFFECTIVE build environment (environment/withEnv resolved) —
-            // exactly what the shell path hands its subprocesses
-            env |> List.iter (fun (k, v) -> psi.Environment[k] <- v)
+            match launchEnvironment with
+            | Build env ->
+                // The effective build environment, exactly as shell receives it.
+                LaunchEnvironment.applyBuildTo psi env
+            | ControllerScm env ->
+                // Pre-definition fetch authority is a distinct opaque profile.
+                LaunchEnvironment.applyControllerScmTo psi env
             psi.RedirectStandardOutput <- true
             psi.RedirectStandardError <- true
             psi.UseShellExecute <- false
@@ -479,7 +518,7 @@ module WalkerGit =
             else
                 narration |> Option.iter emit
 
-                match git env (bound ()) shouldStop cwd args with
+                match git (Build env) (bound ()) shouldStop cwd args with
                 | Ok out ->
                     checkCancelled ()
                     if cancelled then None else Some out
@@ -499,7 +538,7 @@ module WalkerGit =
             if failure.IsNone && not cancelled then
                 emit narration
 
-                match git env (bound ()) shouldStop cwd args with
+                match git (Build env) (bound ()) shouldStop cwd args with
                 | Ok _ -> checkCancelled ()
                 | Result.Error e when e.StartsWith "exit " -> checkCancelled ()
                 | Result.Error e ->
@@ -554,7 +593,7 @@ module WalkerGit =
             if failure.IsSome then
                 false
             else
-                match git env (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
+                match git (Build env) (bound ()) shouldStop cwd [ "rev-parse"; "--resolve-git-dir"; Path.Combine(cwd, ".git") ] with
                 | Ok _ -> false
                 | Result.Error _ -> true
 
@@ -631,7 +670,7 @@ module WalkerGit =
             // from the silent existence query as absence; transport/cancel
             // failures still fail the checkout.
             if style = GitStep && not fresh && failure.IsNone && not cancelled then
-                match git env (bound ()) shouldStop cwd [ "show-ref"; "--verify"; "--quiet"; $"refs/heads/{branch}" ] with
+                match git (Build env) (bound ()) shouldStop cwd [ "show-ref"; "--verify"; "--quiet"; $"refs/heads/{branch}" ] with
                 | Ok _ ->
                     checkCancelled ()
                     deleteExistingLocalBranch <- not cancelled
@@ -729,41 +768,62 @@ module WalkerGit =
     /// must hold for EVERY SCM case (including skipDefaultCheckout, where no
     /// workspace checkout exists to compare against). Shallow fetch into a
     /// throwaway dir; any failure is an Error the caller refuses on.
-    let readRemoteJenkinsfile (url: string) (branch: string) : Result<RemoteJenkinsfile, string> =
+    let internal readRemoteJenkinsfileWithEnvironment
+        (environment: ControllerScmEnvironment)
+        (url: string)
+        (branch: string)
+        : Result<RemoteJenkinsfile, string> =
         let tmp = Path.Combine(Path.GetTempPath(), "fogell-scm-verify-" + Guid.NewGuid().ToString "N")
 
-        try
-            try
-                Directory.CreateDirectory tmp |> ignore
-                let noStop () = false
+        if not (controllerScmUrlIsSafe url) then
+            Result.Error "SCM URL contains unsafe credential or disclosure components; configure controller-side transport authority instead"
+        else
+            let result =
+                try
+                    Directory.CreateDirectory(
+                        tmp,
+                        UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
+                    )
+                    |> ignore
+                    let noStop () = false
 
-                let run what args =
-                    match git [] 600_000 noStop tmp args with
-                    | Ok out -> Ok out
-                    | Result.Error e -> Result.Error $"{what} ({e})"
+                    let run what args =
+                        match git (ControllerScm environment) 600_000 noStop tmp args with
+                        | Ok out -> Ok out
+                        | Result.Error e -> Result.Error $"{what} ({e})"
 
-                run "git init" [ "init"; tmp ]
-                |> Result.bind (fun _ -> run "git fetch" [ "fetch"; "--depth"; "1"; "--"; url; branch ])
-                |> Result.bind (fun _ ->
-                    run "git rev-parse commit" [ "rev-parse"; "FETCH_HEAD^{commit}" ]
-                    |> Result.bind (fun revision ->
-                        run "git rev-parse tree" [ "rev-parse"; "FETCH_HEAD^{tree}" ]
-                        |> Result.bind (fun tree ->
-                            run "git rev-parse Jenkinsfile" [ "rev-parse"; "FETCH_HEAD:Jenkinsfile" ]
-                            |> Result.bind (fun blob ->
-                                run "git show Jenkinsfile" [ "show"; "FETCH_HEAD:Jenkinsfile" ]
-                                |> Result.map (fun script ->
-                                    { Script = script
-                                      Revision = revision
-                                      Tree = tree
-                                      JenkinsfileBlob = blob })))))
-            with ex ->
-                Result.Error ex.Message
-        finally
-            try
-                Directory.Delete(tmp, true)
-            with _ ->
-                ()
+                    run "git init" [ "init"; tmp ]
+                    |> Result.bind (fun _ -> run "git fetch" [ "fetch"; "--depth"; "1"; "--"; url; branch ])
+                    |> Result.bind (fun _ ->
+                        run "git rev-parse commit" [ "rev-parse"; "FETCH_HEAD^{commit}" ]
+                        |> Result.bind (fun revision ->
+                            run "git rev-parse tree" [ "rev-parse"; "FETCH_HEAD^{tree}" ]
+                            |> Result.bind (fun tree ->
+                                run "git rev-parse Jenkinsfile" [ "rev-parse"; "FETCH_HEAD:Jenkinsfile" ]
+                                |> Result.bind (fun blob ->
+                                    run "git show Jenkinsfile" [ "show"; "FETCH_HEAD:Jenkinsfile" ]
+                                    |> Result.map (fun script ->
+                                        { Script = script
+                                          Revision = revision
+                                          Tree = tree
+                                          JenkinsfileBlob = blob })))))
+                with ex ->
+                    Result.Error ex.Message
+
+            let cleanupFailure =
+                try
+                    if Directory.Exists tmp then
+                        Directory.Delete(tmp, true)
+                    None
+                with ex ->
+                    Some ex.Message
+
+            match cleanupFailure with
+            | Some why -> Result.Error $"SCM verification cleanup failed ({why})"
+            | None -> result
+
+    let readRemoteJenkinsfile (url: string) (branch: string) : Result<RemoteJenkinsfile, string> =
+        readRemoteJenkinsfileWithEnvironment (LaunchEnvironment.controllerScmBaseline ()) url branch
 
     /// The `git` step's public face. Its closed result is the step's value; it
     /// does not export GIT_* to later steps merely by returning those entries.
