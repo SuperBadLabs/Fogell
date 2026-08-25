@@ -1,0 +1,23 @@
+note: no credential store at /home/srikanth/projects/fogell-worktrees/custodian-fg222-port/.fogell-credentials.tsv — withCredentials cases will fail closed. Run scripts/provision-credentials.sh first.
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab bash -c \"printf %s c2V0I...
+
+  fg177-wrapper-body-result.Jenkinsfile          re-running (diverged, attempt 2 of 3)
+  fg177-wrapper-body-result.Jenkinsfile          re-running (diverged, attempt 3 of 3)
+  fg177-wrapper-body-result.Jenkinsfile          DIVERGED(1)      fg177-wrapper-body-result.receipt.txt
+        workspace hash: jenkins=e3b0c44298fc fogell=7c75a2f68382
+  post-exit-env-read-fault.Jenkinsfile           re-running (diverged, attempt 2 of 3)
+  post-exit-env-read-fault.Jenkinsfile           re-running (diverged, attempt 3 of 3)
+  post-exit-env-read-fault.Jenkinsfile           DIVERGED(1)      post-exit-env-read-fault.receipt.txt
+        workspace hash: jenkins=e3b0c44298fc fogell=117f0ce0cd31
+  script-closure-mutates-enclosing.Jenkinsfile   re-running (diverged, attempt 2 of 3)
+  script-closure-mutates-enclosing.Jenkinsfile   re-running (diverged, attempt 3 of 3)
+  script-closure-mutates-enclosing.Jenkinsfile   DIVERGED(1)      script-closure-mutates-enclosing.receipt.txt
+        workspace hash: jenkins=cb2c01e61a9c fogell=ca1389bf3885
+  script-return-is-closure-local.Jenkinsfile     re-running (diverged, attempt 2 of 3)
+  script-return-is-closure-local.Jenkinsfile     re-running (diverged, attempt 3 of 3)
+  script-return-is-closure-local.Jenkinsfile     DIVERGED(1)      script-return-is-closure-local.receipt.txt
+        workspace hash: jenkins=f4a8617fb49f fogell=6c2abaf88bcd
+
+tier-1 proven (incl. workspace): 0 / 4
+proven-partial (result+output):  0 / 4

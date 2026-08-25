@@ -1,0 +1,7 @@
+commit 20ec7cbc8171be8dd7b0e6f1c2df15e7abe65406
+Author:     Srikanth Remani <srikanth.remani@gmail.com>
+AuthorDate: Tue Aug 25 00:19:12 2026 -0500
+Commit:     Srikanth Remani <srikanth.remani@gmail.com>
+CommitDate: Tue Aug 25 00:19:12 2026 -0500
+
+    security: isolate build environment authority

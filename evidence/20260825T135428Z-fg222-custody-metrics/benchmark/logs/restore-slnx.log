@@ -1,0 +1,26 @@
+  Determining projects to restore...
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Execution/Fogell.Execution.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Watch.Inbox/Fogell.Watch.Inbox.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy/Fogell.Groovy.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Ir/Fogell.Ir.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Journal/Fogell.Journal.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Admission/Fogell.Admission.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Domain/Fogell.Domain.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Store/Fogell.Store.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Differential/Fogell.Differential.fsproj (in 483 ms).
+  Restored /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Run.Host/Fogell.Run.Host.fsproj (in 483 ms).

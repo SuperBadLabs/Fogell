@@ -1,0 +1,34 @@
+  Fogell.Watch.Inbox -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Watch.Inbox/bin/Release/net10.0/Fogell.Watch.Inbox.dll
+  Fogell.Domain -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Domain.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll
+  Fogell.Journal -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Journal/bin/Release/net10.0/Fogell.Journal.dll
+  Fogell.Store -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Store/bin/Release/net10.0/Fogell.Store.dll
+  Fogell.Admission -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Crash.Harness -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Crash.Harness/bin/Release/net10.0/fogell-crash-harness.dll
+  Fogell.Groovy -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
+  Fogell.Journal.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Journal.Tests/bin/Release/net10.0/Fogell.Journal.Tests.dll
+  Fogell.Store.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Store.Tests/bin/Release/net10.0/Fogell.Store.Tests.dll
+  Fogell.Groovy.Parser -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Execution -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/Parser.fs(925,121): warning FS0040: This and other recursive references to the object(s) being defined will be checked for initialization-soundness at runtime through the use of a delayed reference. This is because you are defining one or more recursive objects, rather than recursive functions. This warning may be suppressed by using '#nowarn "40"' or '--nowarn:40'. [/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj]
+  Fogell.Pipeline.Parser -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Execution.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+  Fogell.Groovy.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Groovy.Tests/bin/Release/net10.0/Fogell.Groovy.Tests.dll
+  Fogell.Corpus.Score -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Corpus.Score/bin/Release/net10.0/fogell-score.dll
+  Fogell.Pipeline.Parser.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+  Fogell.Controller.Api -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Differential -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Controller.Api.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+  Fogell.Differential.Cli -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
+  Fogell.Run.Host -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host.dll
+  Fogell.Differential.Tests -> /tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+
+Build succeeded.
+
+/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/Parser.fs(925,121): warning FS0040: This and other recursive references to the object(s) being defined will be checked for initialization-soundness at runtime through the use of a delayed reference. This is because you are defining one or more recursive objects, rather than recursive functions. This warning may be suppressed by using '#nowarn "40"' or '--nowarn:40'. [/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/src/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:11.13
