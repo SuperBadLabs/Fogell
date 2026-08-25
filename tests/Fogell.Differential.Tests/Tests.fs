@@ -5717,6 +5717,204 @@ let credentialCompanionPreservation =
                           trace))
           } ]
 
+/// FG-044b(d). The public stash flag is interpreted by the walker, while the
+/// actual Ant selection remains owned by Fogell.Execution.Stash. These runtime
+/// controls make omission, both booleans, restore, user excludes and the
+/// all-filtered failure boundary observable through the real dispatcher.
+let stashDefaultExcludes =
+    let stashDirectory (root: string) (name: string) =
+        let slug =
+            String(name |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '-') |> Seq.toArray)
+            |> fun value -> value.Trim '-'
+            |> fun value -> if value = "" then "stash" else value.Substring(0, min 40 value.Length)
+
+        use sha = Security.Cryptography.SHA256.Create()
+        let digest = sha.ComputeHash(Text.Encoding.UTF8.GetBytes name) |> Convert.ToHexString
+        let safeName = slug + "-" + digest.Substring(0, 12).ToLowerInvariant()
+
+        IO.Path.Combine(
+            root,
+            "_artifacts",
+            "_stash",
+            "job#build-1",
+            "stashes",
+            safeName
+        )
+
+    let withRun label source assertions =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg044bd-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s stash pipeline was refused before execution: %s" label why
+            | Ok trace -> assertions root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline flag assertion =
+        "pipeline { agent any stages { stage('stash') { steps { "
+        + "sh 'mkdir -p .git && printf hidden > .git/config && printf visible > visible.txt && printf drop > drop.txt'; "
+        + "stash name: 'bundle', includes: '**', excludes: 'drop.txt'"
+        + flag
+        + "; deleteDir(); unstash 'bundle'; "
+        + "sh 'test -f visible.txt && test ! -e drop.txt && "
+        + assertion
+        + " && printf restored > restored.txt' "
+        + "} } } }"
+
+    testList
+        "FG-044b(d) stash default excludes runtime"
+        [ test "omitted and true exclude SCM metadata while false restores it" {
+              for label, flag, hiddenAssertion, hiddenPresent in
+                  [ "omitted", "", "test ! -e .git/config", false
+                    "true", ", useDefaultExcludes: true", "test ! -e .git/config", false
+                    "false", ", useDefaultExcludes: false", "test -f .git/config", true ] do
+                  withRun label (pipeline flag hiddenAssertion) (fun _ workspace trace ->
+                      Expect.equal trace.Result "success" $"{label}: stash, wipe and restore complete"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "visible.txt")))
+                          $"{label}: ordinary included content restores"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "drop.txt")))
+                          $"{label}: caller excludes remain authoritative"
+                      Expect.equal
+                          (IO.File.Exists(IO.Path.Combine(workspace, ".git", "config")))
+                          hiddenPresent
+                          $"{label}: exact useDefaultExcludes behavior reaches restore"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "restored.txt")))
+                          "restored"
+                          $"{label}: the successor ran only after a usable restore")
+          }
+
+          test "an all-default-excluded stash follows allowEmpty without running a failed successor" {
+              let source allowEmpty successor =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p .git && printf hidden > .git/config'; "
+                  + "stash name: 'hidden-only', includes: '.git/config'"
+                  + allowEmpty
+                  + "; "
+                  + successor
+                  + " } } } post { always { sh 'touch post-marker.txt' } } }"
+
+              withRun "required" (source "" "sh 'touch successor.txt'") (fun _ workspace trace ->
+                  Expect.equal trace.Result "failure" "the default allowEmpty:false fails after filtering"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, ".git", "config")))
+                      "selection never deletes the source"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                      "the failed stash stops its stage successor"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "post-marker.txt")))
+                      "the established pipeline post path is unchanged")
+
+              let allowedSuccessor =
+                  "deleteDir(); unstash 'hidden-only'; sh 'test ! -e .git/config && touch allowed.txt'"
+
+              withRun
+                  "allowed"
+                  (source ", allowEmpty: true" allowedSuccessor)
+                  (fun _ workspace trace ->
+                      Expect.equal trace.Result "success" "allowEmpty:true permits the filtered-empty stash"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "allowed.txt")))
+                          "an empty stash restores and its successor runs"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "post-marker.txt")))
+                          "post remains available after success")
+          }
+
+          test "strict malformed booleans create no fresh stash directory or later effects" {
+              for label, argument in
+                  [ "other word", "'yes'"
+                    "wrong case", "'True'"
+                    "padded", "' true '" ] do
+                  let source =
+                      "pipeline { agent any stages { stage('stash') { steps { "
+                      + "sh 'printf visible > visible.txt'; "
+                      + $"stash name: 'bundle', includes: '**', useDefaultExcludes: {argument}; "
+                      + "sh 'touch successor.txt' } } } }"
+
+                  withRun $"malformed-{label.Replace(' ', '-')}" source (fun root workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: an unrecognised boolean is fail-closed"
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal remains explained"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "visible.txt")))
+                          $"{label}: the preceding effect establishes that execution reached stash"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                          $"{label}: the malformed flag stops the successor"
+
+                      let target = stashDirectory root "bundle"
+                      Expect.isFalse
+                          (IO.Directory.Exists target)
+                          $"{label}: the exact controller-side stash target was never created"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(root, "_artifacts", "_stash")))
+                          $"{label}: even the stash-store root stays absent on a fresh malformed call")
+          }
+
+          test "a malformed same-name replacement preserves seeded inventory and bytes" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p nested && printf seed-one > seed.txt && printf seed-two > nested/data.txt'; "
+                  + "stash name: 'bundle', includes: 'seed.txt,nested/**', useDefaultExcludes: false; "
+                  + "sh 'printf replacement > replacement.txt'; "
+                  + "stash name: 'bundle', includes: 'replacement.txt', useDefaultExcludes: 'yes'; "
+                  + "sh 'touch successor.txt' } } } }"
+
+              withRun "malformed-replace" source (fun root workspace trace ->
+                  Expect.equal trace.Result "failure" "the malformed replacement is fail-closed"
+                  Expect.isTrue trace.ReportedFailureReason "the replacement refusal remains explained"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "replacement.txt")))
+                      "the pre-replacement marker establishes exact execution order"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                      "the malformed replacement stops its successor"
+
+                  let target = stashDirectory root "bundle"
+                  Expect.isTrue (IO.Directory.Exists target) "the exact seeded stash directory survives"
+
+                  let inventory =
+                      IO.Directory.EnumerateFiles(target, "*", IO.SearchOption.AllDirectories)
+                      |> Seq.map (fun path -> IO.Path.GetRelativePath(target, path).Replace('\\', '/'))
+                      |> Seq.sort
+                      |> Seq.toList
+
+                  Expect.equal
+                      inventory
+                      [ "nested/data.txt"; "seed.txt" ]
+                      "the malformed call neither deletes nor adds to the seeded inventory"
+
+                  let directories =
+                      IO.Directory.EnumerateDirectories(target, "*", IO.SearchOption.AllDirectories)
+                      |> Seq.map (fun path -> IO.Path.GetRelativePath(target, path).Replace('\\', '/'))
+                      |> Seq.sort
+                      |> Seq.toList
+
+                  Expect.equal directories [ "nested" ] "the seeded directory inventory is byte-layout stable"
+                  Expect.sequenceEqual
+                      (IO.File.ReadAllBytes(IO.Path.Combine(target, "seed.txt")))
+                      (Text.Encoding.UTF8.GetBytes "seed-one")
+                      "the first seeded payload remains byte-exact"
+                  Expect.sequenceEqual
+                      (IO.File.ReadAllBytes(IO.Path.Combine(target, "nested", "data.txt")))
+                      (Text.Encoding.UTF8.GetBytes "seed-two")
+                      "the nested seeded payload remains byte-exact"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(target, "replacement.txt")))
+                      "no replacement payload reached controller storage")
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -5750,5 +5948,6 @@ let main argv =
               compileRefusalDisposition
               credentialKeyBoundaryRefusal
               credentialCompanionPreservation
+              stashDefaultExcludes
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])

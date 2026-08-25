@@ -750,6 +750,135 @@ let credentialKeyBoundaries =
                           $"{label}/{quoteLabel}: the exact supported id remains observable"
           } ]
 
+/// FG-044b(d). Jenkins stash uses Ant's default excludes unless the exact
+/// useDefaultExcludes flag is false. Keep this at the Stash boundary so every
+/// caller shares the same selection rule and a walker-only fix cannot pass.
+let stashDefaultExcludes =
+    testList
+        "FG-044b(d) stash Ant default excludes"
+        [ test "all 28 defaults are case-sensitive, literal includes cannot override them, and false opts out" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              Directory.CreateDirectory workspace |> ignore
+
+              let excluded =
+                  [ "temp/result.txt~"
+                    "temp/#result.txt#"
+                    "temp/.#result.txt"
+                    "temp/%result.txt%"
+                    "temp/._result.txt"
+                    "files/CVS"
+                    "directories/CVS/hidden.txt"
+                    "meta/.cvsignore"
+                    "files/SCCS"
+                    "directories/SCCS/hidden.txt"
+                    "meta/vssver.scc"
+                    "files/.svn"
+                    "directories/.svn/hidden.txt"
+                    "files/.git"
+                    "directories/.git/hidden.txt"
+                    "meta/.gitattributes"
+                    "meta/.gitignore"
+                    "meta/.gitmodules"
+                    "files/.hg"
+                    "directories/.hg/hidden.txt"
+                    "meta/.hgignore"
+                    "meta/.hgsub"
+                    "meta/.hgsubstate"
+                    "meta/.hgtags"
+                    "files/.bzr"
+                    "directories/.bzr/hidden.txt"
+                    "meta/.bzrignore"
+                    "meta/.DS_Store" ]
+
+              let caseNear =
+                  [ "temp/result.txt~x"
+                    "temp/x#result.txt#"
+                    "temp/x.#result.txt"
+                    "temp/x%result.txt%"
+                    "temp/x._result.txt"
+                    "files/Cvs"
+                    "directories/Cvs/hidden.txt"
+                    "meta/.CVSIGNORE"
+                    "files/Sccs"
+                    "directories/Sccs/hidden.txt"
+                    "meta/VSSVER.SCC"
+                    "files/.SVN"
+                    "directories/.SVN/hidden.txt"
+                    "files/.GIT"
+                    "directories/.GIT/hidden.txt"
+                    "meta/.GitAttributes"
+                    "meta/.GitIgnore"
+                    "meta/.GitModules"
+                    "files/.HG"
+                    "directories/.HG/hidden.txt"
+                    "meta/.HGIgnore"
+                    "meta/.HGSub"
+                    "meta/.HGSubState"
+                    "meta/.HGTags"
+                    "files/.BZR"
+                    "directories/.BZR/hidden.txt"
+                    "meta/.BZRIgnore"
+                    "meta/.DS_STORE" ]
+
+              let write relative =
+                  let path = Path.Combine(workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, relative)
+
+              let literal = "literal/.git/config"
+
+              for relative in excluded @ caseNear @ [ literal; "visible.txt"; "user/drop.txt" ] do
+                  write relative
+
+              let save name patterns defaults =
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      name
+                      patterns
+                      [ "user/drop.txt" ]
+                      defaults
+                      (fun () -> false)
+                  |> fst
+
+              let savedDefault = save "defaults" [ "**" ] true
+              let expectedDefault = caseNear @ [ "visible.txt" ] |> Set.ofList
+
+              Expect.equal
+                  (Set.ofList savedDefault)
+                  expectedDefault
+                  "all defaults are removed, every case-near path remains, and caller excludes still win"
+
+              let savedWithoutDefaults = save "disabled" [ "**" ] false
+              let expectedWithoutDefaults = excluded @ caseNear @ [ literal; "visible.txt" ] |> Set.ofList
+
+              Expect.equal
+                  (Set.ofList savedWithoutDefaults)
+                  expectedWithoutDefaults
+                  "false disables only Ant defaults and never disables the caller's excludes"
+
+              Expect.isEmpty (save "literal-default" [ literal ] true) "a literal include cannot override a default exclude"
+              Expect.equal (save "literal-disabled" [ literal ] false) [ literal ] "false admits that same literal path"
+
+              Directory.Delete(workspace, true)
+              Directory.CreateDirectory workspace |> ignore
+
+              match Stash.restore store "build-1" workspace "defaults" (fun () -> false) with
+              | Error why -> failtestf "default-filtered stash did not restore: %s" why
+              | Ok restored ->
+                  Expect.equal restored savedDefault "restore returns the exact filtered stash inventory"
+                  Expect.isTrue (File.Exists(Path.Combine(workspace, "visible.txt"))) "ordinary content restores"
+                  Expect.isTrue
+                      (File.Exists(Path.Combine(workspace, caseNear.Head)))
+                      "a case-near control restores"
+                  Expect.isFalse
+                      (File.Exists(Path.Combine(workspace, excluded.Head)))
+                      "a default-excluded file was never copied into controller storage"
+          } ]
+
 /// FG-070/071. The properties that make secret handling better than Jenkins',
 /// each asserted against a real subprocess.
 let secrets =
@@ -893,15 +1022,15 @@ let secrets =
               File.WriteAllText(canary, "must survive")
 
               for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
-                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] (fun () -> false)
+                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] true (fun () -> false)
                   Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
 
               Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
               Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
 
               // Distinct hostile names must not collide with each other either.
-              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] (fun () -> false)
-              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] (fun () -> false)
+              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] true (fun () -> false)
+              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] true (fun () -> false)
               Expect.equal a b "both saved"
 
               match Stash.restore store "build-1" ws "x" (fun () -> false) with
@@ -2910,6 +3039,7 @@ let main argv =
                   containment
                   eventDrivenWaits
                   credentialKeyBoundaries
+                  stashDefaultExcludes
                   secrets
                   deadProcessDetection
                   externalInterrupt

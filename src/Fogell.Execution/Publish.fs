@@ -80,9 +80,11 @@ module Publish =
         Regex("^" + escaped + "$", options)
 
     // Ant 1.10.17 DirectoryScanner.DEFAULTEXCLUDES. JUnit creates a FileSet and
-    // leaves useDefaultExcludes at its true default, so these exclusions remain
+    // leaves useDefaultExcludes at its true default; stash does the same unless
+    // its public flag is explicitly false. These exclusions therefore remain
     // active even when an include names one of the paths literally. The pinned
-    // list is case-sensitive and deliberately private to JUnit report selection.
+    // list is case-sensitive and shared only by those two Ant-backed selectors;
+    // archive retains its established matcher and behavior.
     let private antDefaultExcludePatterns =
         [ "**/*~"
           "**/#*#"
@@ -116,7 +118,7 @@ module Publish =
     let private antDefaultExcludeRegexes =
         antDefaultExcludePatterns |> List.map (compileGlobRegex true)
 
-    let private isAntDefaultExcluded (relative: string) =
+    let internal isAntDefaultExcluded (relative: string) =
         antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
@@ -1029,6 +1031,7 @@ module Stash =
         (name: string)
         (patterns: string list)
         (excludes: string list)
+        (useDefaultExcludes: bool)
         (abort: unit -> bool)
         =
         let target = dir store buildKey name
@@ -1045,6 +1048,10 @@ module Stash =
             |> List.collect (Publish.expandGlob workspace)
             |> List.distinct
             |> List.filter (fun f -> not (excluded.Contains f))
+            // Ant's defaults are an independent filter, not implicit include
+            // patterns. They still win when the Jenkinsfile names a hidden path
+            // literally; only useDefaultExcludes:false disables this filter.
+            |> List.filter (fun f -> not useDefaultExcludes || not (Publish.isAntDefaultExcluded f))
             |> List.sort
 
         // Same during-and-after-copy polling as the archive path: a `stash` inside a

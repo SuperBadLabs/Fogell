@@ -1889,22 +1889,43 @@ module WalkerOrchestration =
                         |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
                         |> Option.defaultValue []
 
-                    let saved, aborted = Stash.save store stashKey cwd n includes excludes abort
+                    // StashStep.useDefaultExcludes is a boolean with a true default.
+                    // It used to be admitted by WalkerRules but ignored here, which
+                    // both leaked .git metadata by default and made an explicit false
+                    // ineffective. Refuse an unrecognised rendered value before
+                    // Stash.save deletes/recreates controller-side storage.
+                    let useDefaultExcludes =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "useDefaultExcludes" then Some v else None)
+                        |> Option.map (function
+                            | "true" -> Ok true
+                            | "false" -> Ok false
+                            | invalid -> Error invalid)
+                        |> Option.defaultValue (Ok true)
 
-                    if aborted then
-                        applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
-                    elif List.isEmpty saved && not allowEmpty then
-                        // MEASURED: Jenkins FAILS the build here (default
-                        // allowEmpty: false) — the pipeline stops and later steps do
-                        // not run. Reporting success would let the build continue
-                        // having silently lost the inputs it asked for, and a later
-                        // `unstash` would succeed with nothing.
-                        // Receipt: `stash-empty-fails`.
-                        emit $"ERROR: No files included in stash ‘{n}’"
+                    match useDefaultExcludes with
+                    | Error invalid ->
+                        emit $"ERROR: stash useDefaultExcludes must be true or false, got ‘{invalid}’"
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
-                    else
-                        emit $"Stashed {saved.Length} file(s)"
+                    | Ok useDefaults ->
+                        let saved, aborted =
+                            Stash.save store stashKey cwd n includes excludes useDefaults abort
+
+                        if aborted then
+                            applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
+                        elif List.isEmpty saved && not allowEmpty then
+                            // MEASURED: Jenkins FAILS the build here (default
+                            // allowEmpty: false) — the pipeline stops and later steps do
+                            // not run. Reporting success would let the build continue
+                            // having silently lost the inputs it asked for, and a later
+                            // `unstash` would succeed with nothing.
+                            // Receipt: `stash-empty-fails`.
+                            emit $"ERROR: No files included in stash ‘{n}’"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        else
+                            emit $"Stashed {saved.Length} file(s)"
 
             | "unstash", _ ->
                 let step = renderStepArgs ctx stage step
