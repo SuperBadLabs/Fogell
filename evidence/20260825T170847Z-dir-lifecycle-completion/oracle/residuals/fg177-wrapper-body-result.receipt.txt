@@ -1,8 +1,8 @@
-# Differential receipt — post-exit-env-read.Jenkinsfile
+# Differential receipt — fg177-wrapper-body-result.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2911e8530d5cf002094d6a5bdb7b0fdf016f3bf880acaee006f0b802cc48800f
-case-digest:  0dc400bf185059b5bd786ce02cd1e553986c4369d353c9c9aebce1636f0655c2
+seal:         1c39a6907a69da576e500ec22a59d316dc7d9aabe51c0d2bf6c1028c48182257
+case-digest:  b5db7f4995a166c4b9c8335dc373ea1ed1401d1cbb9a8100b6fe02a6d364a57f
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -78,18 +78,24 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 117f0ce0cd317e850af22b8926b25db6858457eef9f0a4cc335f14be6113ab0a
-  output (2 lines):
-    | + true
-    | after:null
-  workspace:
-    08a2afecc9fe  s/
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (7 lines):
+    | Timeout set to expire in 1 min 0 sec
+    | + exit 1
+    | Retrying
+    | dir:43
+    | timeout:timeout:7
+    | retry:3:retry
+    | withEnv:inside:9
 
 ## Fogell
   result:         success
-  workspace-hash: 117f0ce0cd317e850af22b8926b25db6858457eef9f0a4cc335f14be6113ab0a
-  output (2 lines):
-    | + true
-    | after:null
-  workspace:
-    08a2afecc9fe  s/
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (7 lines):
+    | Timeout set to expire in 1 min 0 sec
+    | + exit 1
+    | Retrying
+    | dir:43
+    | timeout:timeout:7
+    | retry:3:retry
+    | withEnv:inside:9

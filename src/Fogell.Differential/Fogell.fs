@@ -972,6 +972,9 @@ module FogellSide =
                             runCtx
                             root
                             workspace
+                            (fun () ->
+                                Workspace.materializeUnder workspace workspace
+                                |> Result.mapError (fun e -> e.Describe))
                             None
                             jenkinsProvided
                             artifactRoot

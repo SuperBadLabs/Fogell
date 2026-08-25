@@ -3283,9 +3283,9 @@ let scmReturnMapRuntime =
                     "git(url: '" + bare + "', branch: '" + branch + "')"
 
             "pipeline { agent any options { skipDefaultCheckout() } stages { stage('capture') { steps { script { "
-            + "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = "
+            + "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = dir('nested-scm') { "
             + producerCall
-            + "; echo \"FG177-RUNTIME:${env.BUILD_NUMBER}:${value.keySet().join(',')}:${value.GIT_COMMIT}:${value.GIT_PREVIOUS_COMMIT}:${value.GIT_PREVIOUS_SUCCESSFUL_COMMIT}\"; "
+            + " }; echo \"FG177-RUNTIME:${env.BUILD_NUMBER}:${value.keySet().join(',')}:${value.GIT_COMMIT}:${value.GIT_PREVIOUS_COMMIT}:${value.GIT_PREVIOUS_SUCCESSFUL_COMMIT}\"; "
             + "if (env.BUILD_NUMBER == '2') { sh 'exit 7' }"
             + " } } } } "
             + advancePost
@@ -3411,6 +3411,9 @@ let scmReturnMapRuntime =
             Expect.isFalse
                 (firstFailureTraces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                 "partial history refuses before the first Git narration"
+            Expect.isEmpty
+                firstFailureTraces.[1].WorkspaceFiles
+                "partial history refuses before nested SCM workspace materialization"
 
             resetRefs ()
             let unstableScript =
@@ -3427,6 +3430,9 @@ let scmReturnMapRuntime =
             Expect.isFalse
                 (unstable.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                 "unstable predecessor refuses before the first Git narration"
+            Expect.isEmpty
+                unstable.[1].WorkspaceFiles
+                "unstable history refuses before nested SCM workspace materialization"
 
             // A provisional or damaged controller-side record is evidence of
             // interrupted/corrupt history, never permission to fall back to an
@@ -3437,8 +3443,8 @@ let scmReturnMapRuntime =
                 resetRefs ()
                 let damaged =
                     (pipeline "git" "main").Replace(
-                        "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = ",
-                        $"if (env.BUILD_NUMBER == '2') {{ sh '{damage}'; deleteDir() }}; def value = "
+                        "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = dir('nested-scm') { ",
+                        $"if (env.BUILD_NUMBER == '2') {{ sh '{damage}'; deleteDir() }}; def value = dir('nested-scm') {{ "
                     )
 
                 let traces =
@@ -3449,6 +3455,9 @@ let scmReturnMapRuntime =
                 Expect.isFalse
                     (traces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                     $"{label}: refusal precedes the first Git narration"
+                Expect.isEmpty
+                    traces.[1].WorkspaceFiles
+                    $"{label}: refusal precedes nested SCM workspace materialization"
 
             let scmHistoryDir jobName =
                 IO.Path.Combine(workspaceRoot, "_artifacts", "_scm", jobName)
@@ -6302,6 +6311,157 @@ let stashDefaultExcludes =
                       "no replacement payload reached controller storage")
           } ]
 
+let dirWorkspaceLifecycle =
+    let withRun label source assertions =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-dir-lifecycle-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s pipeline was refused before execution: %s" label why
+            | Ok trace -> assertions workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline steps =
+        "pipeline { agent any stages { stage('lifecycle') { steps { "
+        + steps
+        + " } } } }"
+
+    testList
+        "dir workspace lifecycle parity"
+        [ test "a logical-only dir body does not materialize a directory" {
+              withRun
+                  "logical-only"
+                  (pipeline "dir('logical-only') { echo 'ok' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "the logical body completes"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "logical-only")))
+                          "dir alone only changes the body context"
+                      Expect.isEmpty trace.WorkspaceFiles "no physical workspace entry is reported")
+          }
+
+          test "nested and hosted logical-only bodies leave no parent scaffolding" {
+              withRun
+                  "nested-hosted"
+                  (pipeline
+                      "script { dir('outer') { dir('inner') { echo 'ok' } }; dir('hosted') { echo 'also-ok' } }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "both hosted bodies complete"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "outer")))
+                          "an absent nested leaf does not manufacture its parent"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "hosted")))
+                          "hosted dir follows the same logical rule")
+          }
+
+          test "a durable shell launch materializes and retains its empty dir" {
+              withRun
+                  "durable-empty"
+                  (pipeline "dir('shell-empty') { sh 'touch transient.txt; rm transient.txt' }")
+                  (fun workspace trace ->
+                      let target = IO.Path.Combine(workspace, "shell-empty")
+                      Expect.equal trace.Result "success" "the durable task completes"
+                      Expect.isTrue (IO.Directory.Exists target) "durable-task materializes its cwd"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                          "the empty physical cwd is retained after the task"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "shell-empty/"
+                          "Trace v2 records the retained empty cwd")
+          }
+
+          test "nested durable materialization retains only the physical leaf" {
+              withRun
+                  "nested-durable"
+                  (pipeline "dir('outer') { dir('inner') { sh 'true' } }")
+                  (fun workspace trace ->
+                      let outer = IO.Path.Combine(workspace, "outer")
+                      let inner = IO.Path.Combine(outer, "inner")
+                      Expect.equal trace.Result "success" "the nested durable task completes"
+                      Expect.isTrue (IO.Directory.Exists inner) "the nested cwd is materialized"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "outer/inner/"
+                          "Trace v2 records the empty nested leaf"
+                      Expect.isFalse
+                          (trace.WorkspaceFiles |> List.map fst |> List.contains "outer/")
+                          "the non-empty parent is not an empty-leaf record")
+          }
+
+          test "a failed shell still retains the cwd it materialized" {
+              withRun
+                  "failed-shell"
+                  (pipeline "dir('failed') { sh 'exit 7' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "failure" "the shell exit fails the build"
+                      Expect.isTrue
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "failed")))
+                          "launch-time materialization survives failure"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "failed/"
+                          "the failed task's empty cwd remains observable")
+          }
+
+          test "deleteDir empties a materialized cwd without deleting that cwd" {
+              withRun
+                  "delete-materialized"
+                  (pipeline "dir('cleaned') { sh 'touch payload.txt'; deleteDir() }")
+                  (fun workspace trace ->
+                      let target = IO.Path.Combine(workspace, "cleaned")
+                      Expect.equal trace.Result "success" "the cleanup completes"
+                      Expect.isTrue (IO.Directory.Exists target) "deleteDir preserves its current directory"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                          "deleteDir removes the payload"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "cleaned/"
+                          "Trace v2 records the preserved empty cwd")
+          }
+
+          test "a rejected shell call does not materialize its logical dir" {
+              withRun
+                  "rejected-shell"
+                  (pipeline
+                      "dir('rejected') { sh script: 'touch must-not-run.txt', returnStatus: 'true' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "failure" "the malformed typed flag is refused"
+                      Expect.isTrue trace.ReportedFailureReason "the refusal is explained"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "rejected")))
+                          "argument refusal precedes durable workspace materialization")
+          }
+
+          test "pre-existing dirs survive logical bodies while deleteDir does not create absent ones" {
+              withRun
+                  "existing-and-delete"
+                  (pipeline
+                      "sh 'mkdir -p existing'; dir('existing') { echo 'kept' }; dir('absent') { deleteDir() }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "both logical bodies complete"
+                      Expect.isTrue
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "existing")))
+                          "an existing empty directory is preserved"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "existing/"
+                          "Trace v2 records the pre-existing empty directory"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "absent")))
+                          "deleteDir on a logical absent cwd is a no-op, not mkdir")
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -6337,5 +6497,6 @@ let main argv =
               credentialKeyBoundaryRefusal
               credentialCompanionPreservation
               stashDefaultExcludes
+              dirWorkspaceLifecycle
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])

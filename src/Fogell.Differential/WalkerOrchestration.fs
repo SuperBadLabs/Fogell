@@ -214,6 +214,11 @@ module WalkerOrchestration =
         let credentialStore = deps.Credentials
         let previousBuild = deps.PreviousBuild
         let persistence = deps.Persistence
+
+        let materializeScmCwd (cwd: string) () =
+            Workspace.materializeUnder workspaceRoot cwd
+            |> Result.mapError (fun e -> e.Describe)
+
         // Jenkins scopes a stash to the BUILD that saved it — receipt
         // `stash-not-carried`: build 2's unstash of build 1's stash FAILS.
         let stashKey = $"{deps.JobName}#build-{deps.BuildNumber}"
@@ -1767,6 +1772,7 @@ module WalkerOrchestration =
                             runCtx
                             ctx
                             cwd
+                            (materializeScmCwd cwd)
                             deadline
                             (envForWith ctx.EnvOverlay stage)
                             artifactRoot
@@ -1830,6 +1836,7 @@ module WalkerOrchestration =
                             runCtx
                             ctx
                             cwd
+                            (materializeScmCwd cwd)
                             deadline
                             (envForWith ctx.EnvOverlay stage)
                             artifactRoot
@@ -1967,7 +1974,14 @@ module WalkerOrchestration =
                     | Result.Ok _ -> ()
 
             | "dir", (sub :: _) ->
-                // `dir('x') { … }` — nested cwd, auto-created
+                // `dir('x') { … }` — establish a nested LOGICAL cwd. Jenkins'
+                // PushdStep only replaces the FilePath in the body context; it does
+                // not create that path. A durable shell task materialises its FilePath
+                // later, when it launches. This distinction is observable in the v2
+                // workspace manifest: `dir('x') { echo 'ok' }` leaves no `x/`, while
+                // `dir('x') { sh 'true' }` leaves an empty `x/` behind. Eager creation
+                // here made four live-oracle cases retain directories Jenkins never
+                // created. See WalkerStep for the shell-side materialisation boundary.
                 let sub = (renderStepArgs ctx stage step).Positional |> List.head
 
                 match Workspace.resolveUnder cwd sub with
@@ -1975,21 +1989,15 @@ module WalkerOrchestration =
                     emit $"dir refused: {e.Describe}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                // BEFORE the directory is created. Jenkins rejects a body-less `dir`
-                // before establishing any context, and creating `child/` and THEN failing
-                // leaves a side effect behind on a build that should not have touched the
-                // workspace. Ordering matters here in a way the receipt cannot see: the
-                // manifest hashes FILES, so an extra EMPTY directory is invisible to it —
-                // which is also why the case below no longer claims to prove agreement on
-                // side effects. Raised by the pre-push verifier, which was careful to note
-                // this is a side-effect blind spot rather than another false success.
+                // BEFORE a body context is established. Jenkins rejects a body-less
+                // `dir` without touching the workspace. Trace v2 records empty physical
+                // leaf directories, so this ordering is held by the same receipt rather
+                // than hidden behind a file-only manifest.
                 | Result.Ok _ when Option.isNone ctx.HostedBody && List.isEmpty step.Block ->
                     emit "ERROR: dir step must be called with a body"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 | Result.Ok target ->
-                    Directory.CreateDirectory target |> ignore
-
                     // `target`, NOT `cwd`. Restructuring the dispatcher for the
                     // nested-wrapper fix reintroduced `cwd` here, and the body
                     // wrote to the stage root instead of the subdirectory. Both
@@ -1998,11 +2006,11 @@ module WalkerOrchestration =
                     // manifest is (path, hash) pairs and not a content digest.
                     // FG-172. A HOSTED body is Groovy, not a `Step list`, so it is run
                     // through the runner the script host supplied — and it is handed
-                    // `target`, the directory this arm just established, for the same
+                    // `target`, the logical directory this arm established, for the same
                     // reason the loop below takes `target` rather than `cwd`. That
                     // distinction cost a defect once already: the body wrote to the stage
                     // root and only the workspace manifest's PATHS caught it.
-                    // The body-less case is refused ABOVE, before the directory exists,
+                    // The body-less case is refused ABOVE before any context is changed,
                     // so only the two real shapes reach here.
                     match ctx.HostedBody with
                     | Some runBody -> runBody { ctx with HostedBody = None } target

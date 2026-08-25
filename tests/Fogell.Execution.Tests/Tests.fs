@@ -143,6 +143,76 @@ let workspaceHygiene =
               match Workspace.createFresh root k with
               | Result.Error(Workspace.AlreadyExists _) -> ()
               | other -> failtestf "reuse must be refused, got %A" other
+          }
+
+          test "materialization creates nested targets and is idempotent under contention" {
+              let root = tempRoot ()
+              let target = Path.Combine(root, "nested", "cwd")
+
+              let results =
+                  [ 1..16 ]
+                  |> List.map (fun _ -> async { return Workspace.materializeUnder root target })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              for result in results do
+                  match result with
+                  | Result.Ok() -> ()
+                  | Result.Error e -> failtestf "concurrent materialization failed: %s" e.Describe
+
+              Expect.isTrue (Directory.Exists target) "the exact nested cwd exists"
+              Expect.isEmpty
+                  (Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                  "materialization adds no payload"
+
+              match Workspace.materializeUnder root root with
+              | Result.Ok() -> ()
+              | Result.Error e -> failtestf "the established attempt root was refused: %s" e.Describe
+          }
+
+          test "materialization refuses outside targets and existing symlink components" {
+              let root = tempRoot ()
+              let outside = tempRoot ()
+              let sentinel = Path.Combine(outside, "sentinel.txt")
+              File.WriteAllText(sentinel, "unchanged")
+
+              match Workspace.materializeUnder root (Path.Combine(outside, "escaped")) with
+              | Result.Error _ -> ()
+              | Result.Ok() -> failtest "outside target was materialized"
+
+              let finalLink = Path.Combine(root, "final-link")
+              Directory.CreateSymbolicLink(finalLink, outside) |> ignore
+
+              match Workspace.materializeUnder root finalLink with
+              | Result.Error(Workspace.SymlinkComponent _) -> ()
+              | other -> failtestf "expected final SymlinkComponent, got %A" other
+
+              let parentLink = Path.Combine(root, "parent-link")
+              Directory.CreateSymbolicLink(parentLink, outside) |> ignore
+
+              match Workspace.materializeUnder root (Path.Combine(parentLink, "child")) with
+              | Result.Error(Workspace.SymlinkComponent _) -> ()
+              | other -> failtestf "expected parent SymlinkComponent, got %A" other
+
+              Expect.isFalse (Directory.Exists(Path.Combine(outside, "escaped"))) "outside target was untouched"
+              Expect.isFalse (Directory.Exists(Path.Combine(outside, "child"))) "symlink target was not followed"
+              Expect.equal (File.ReadAllText sentinel) "unchanged" "outside sentinel bytes are unchanged"
+          }
+
+          test "materialization reports file collisions without throwing" {
+              let root = tempRoot ()
+              let fileTarget = Path.Combine(root, "file-target")
+              File.WriteAllText(fileTarget, "payload")
+
+              match Workspace.materializeUnder root fileTarget with
+              | Result.Error(Workspace.MaterializationFailed _) -> ()
+              | other -> failtestf "expected MaterializationFailed, got %A" other
+
+              match Workspace.materializeUnder root (Path.Combine(fileTarget, "child")) with
+              | Result.Error(Workspace.NonDirectoryParent _) -> ()
+              | other -> failtestf "expected NonDirectoryParent, got %A" other
+
+              Expect.equal (File.ReadAllText fileTarget) "payload" "colliding file bytes are unchanged"
           } ]
 
 let shellExecution =

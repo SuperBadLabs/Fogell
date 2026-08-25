@@ -1,8 +1,8 @@
-# Differential receipt — post-exit-env-read.Jenkinsfile
+# Differential receipt — script-return-is-closure-local.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         2911e8530d5cf002094d6a5bdb7b0fdf016f3bf880acaee006f0b802cc48800f
-case-digest:  0dc400bf185059b5bd786ce02cd1e553986c4369d353c9c9aebce1636f0655c2
+seal:         0ae0437ec86c282de4475bd6797118f4c91e50643b5ed36c688a5bee51d10bca
+case-digest:  31c6ce9d41dba082b089e8f5d0e305037a3d22f9802f7787248b5e8d8121b802
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -78,18 +78,16 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 117f0ce0cd317e850af22b8926b25db6858457eef9f0a4cc335f14be6113ab0a
-  output (2 lines):
-    | + true
-    | after:null
+  workspace-hash: f4a8617fb49f9d89c3f3ebac11d8f552a9795082258fff3a35adab7997ecdd71
+  output (1 lines):
+    | + echo after
   workspace:
-    08a2afecc9fe  s/
+    7b9a72466d39  after.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 117f0ce0cd317e850af22b8926b25db6858457eef9f0a4cc335f14be6113ab0a
-  output (2 lines):
-    | + true
-    | after:null
+  workspace-hash: f4a8617fb49f9d89c3f3ebac11d8f552a9795082258fff3a35adab7997ecdd71
+  output (1 lines):
+    | + echo after
   workspace:
-    08a2afecc9fe  s/
+    7b9a72466d39  after.txt

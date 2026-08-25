@@ -473,6 +473,7 @@ module WalkerGit =
         (runCtx: WalkerCtx)
         (ctx: BranchCtx)
         (cwd: string)
+        (materializeCwd: unit -> Result<unit, string>)
         (deadline: Deadline option)
         (env: (string * string) list)
         (artifactRoot: string)
@@ -584,6 +585,15 @@ module WalkerGit =
                 | _, _, Some BuildStatus.NotBuilt
                 | _, _, None ->
                     Some "SCM retained history has no trustworthy finalized predecessor result"
+
+        // `dir` supplies a logical FilePath only. Jenkins' SCM launch consumes and
+        // materialises it, but only AFTER retained-history admission. Keeping this
+        // boundary here preserves the fail-closed promise above: corrupt or unlicensed
+        // history cannot create even an empty nested workspace before it is refused.
+        if failure.IsNone then
+            match materializeCwd () with
+            | Result.Ok() -> ()
+            | Result.Error why -> failure <- Some $"workspace materialization ({why})"
 
         // The REAL discriminator (a `.git` that is a worktree FILE, not a
         // directory, must not read as fresh): ran silently here, narrated in
@@ -827,9 +837,9 @@ module WalkerGit =
 
     /// The `git` step's public face. Its closed result is the step's value; it
     /// does not export GIT_* to later steps merely by returning those entries.
-    let runStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch =
-        runWithStyle GitStep runCtx ctx cwd deadline env artifactRoot jobKey buildNumber url branch
+    let runStep runCtx ctx cwd materializeCwd deadline env artifactRoot jobKey buildNumber url branch =
+        runWithStyle GitStep runCtx ctx cwd materializeCwd deadline env artifactRoot jobKey buildNumber url branch
 
     /// FG-052. `checkout scm` and the Declarative auto-checkout stage.
-    let runCheckout runCtx ctx cwd deadline env artifactRoot jobKey buildNumber (scm: ScmSpec) =
-        runWithStyle GitScm runCtx ctx cwd deadline env artifactRoot jobKey buildNumber scm.Url scm.Branch
+    let runCheckout runCtx ctx cwd materializeCwd deadline env artifactRoot jobKey buildNumber (scm: ScmSpec) =
+        runWithStyle GitScm runCtx ctx cwd materializeCwd deadline env artifactRoot jobKey buildNumber scm.Url scm.Branch

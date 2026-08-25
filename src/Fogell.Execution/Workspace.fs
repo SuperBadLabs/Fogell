@@ -20,6 +20,7 @@ module Workspace =
         | NonDirectoryParent of string
         | AlreadyExists of string
         | OutsideRoot of string
+        | MaterializationFailed of string * string
 
         member this.Describe =
             match this with
@@ -29,6 +30,7 @@ module Workspace =
             | NonDirectoryParent p -> $"'{p}' has a parent that is not a directory"
             | AlreadyExists p -> $"'{p}' already exists; each attempt gets a fresh workspace"
             | OutsideRoot p -> $"'{p}' resolves outside the canonical workspace root"
+            | MaterializationFailed(p, why) -> $"'{p}' could not be materialized beneath the workspace: {why}"
 
     /// Validate a *relative* path a pipeline asked for (e.g. `dir('sub/deep')`).
     let validateRelative (relative: string) : Result<unit, Error> =
@@ -86,6 +88,39 @@ module Workspace =
                 relative.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
                 |> Array.toList
                 |> check canonicalRoot
+
+    /// Materialize an already-resolved logical cwd immediately before an effect
+    /// which Jenkins proves creates it (durable task or SCM launch). Re-resolving
+    /// from the attempt root at the launch boundary narrows the check/create race
+    /// after `dir` established its logical FilePath. Callers must not
+    /// use this for context-only or read-only steps: absence is observable state.
+    let materializeUnder (root: string) (target: string) : Result<unit, Error> =
+        let canonicalRoot = Path.GetFullPath root
+        let canonicalTarget = Path.GetFullPath target
+
+        if canonicalTarget = canonicalRoot then
+            if Directory.Exists canonicalRoot then
+                let rootInfo = DirectoryInfo canonicalRoot
+
+                if rootInfo.LinkTarget = null then
+                    Result.Ok()
+                else
+                    Result.Error(SymlinkComponent target)
+            else
+                Result.Error(MaterializationFailed(target, "workspace root does not exist"))
+        else
+            let relative = Path.GetRelativePath(canonicalRoot, canonicalTarget)
+
+            match resolveUnder canonicalRoot relative with
+            | Result.Error e -> Result.Error e
+            | Result.Ok resolved when resolved <> canonicalTarget ->
+                Result.Error(OutsideRoot target)
+            | Result.Ok resolved ->
+                try
+                    Directory.CreateDirectory resolved |> ignore
+                    Result.Ok()
+                with ex ->
+                    Result.Error(MaterializationFailed(relative, $"{ex.GetType().Name}: {ex.Message}"))
 
     /// Create a fresh workspace for an attempt. Refuses to reuse a directory:
     /// a leftover workspace is how one build's output contaminates the next.
