@@ -3,6 +3,7 @@ module Fogell.Differential.Tests
 open System
 open Expecto
 open Fogell.Differential
+open Fogell.Execution
 open Fogell.Groovy.Interpreter
 open Fogell.Ir
 
@@ -5450,21 +5451,11 @@ let compileRefusalDisposition =
 /// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
 /// and one unsupported sibling refuses the entire wrapper before any binding effect.
 let credentialKeyBoundaryRefusal =
-    let credentialSpec =
-        let encode (value: string) =
-            value
-            |> Text.Encoding.UTF8.GetBytes
-            |> Convert.ToBase64String
-
-        let text = encode "text-secret"
-        let file = encode "file-secret"
-        let userpass = encode "measured-user\nmeasured-pass"
-
-        String.concat
-            "\n"
-            [ $"live-text\ttext\t{text}"
-              $"live-file\tfile\t{file}"
-              $"live-user\tuserpass\t{userpass}" ]
+    let credentials =
+        Map.ofList
+            [ "live-text", SecretText "text-secret"
+              "live-file", SecretFile("secret.dat", Text.Encoding.UTF8.GetBytes "file-secret")
+              "live-user", UsernamePassword("measured-user", "measured-pass") ]
 
     let pipeline bindings body successor =
         "pipeline { agent any stages { stage('credentials') { steps { "
@@ -5478,7 +5469,7 @@ let credentialKeyBoundaryRefusal =
         let workspace = IO.Path.Combine(root, "job")
 
         try
-            match FogellSide.run [] root "job" source with
+            match FogellSide.runWithCredentials credentials [] root "job" source with
             | Error why -> failtestf "credential boundary pipeline refused outside execution: %s" why
             | Ok trace -> check root workspace trace
         finally
@@ -5488,13 +5479,6 @@ let credentialKeyBoundaryRefusal =
     testList
         "FG-044b(c) credential key boundary refuses atomically"
         [ test "mixed valid and prefixed-key requests refuse atomically in either sibling order" {
-        let oldFile = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE"
-        let oldInline = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
-
-        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", null)
-        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", credentialSpec)
-
-        try
             let cases =
                 [ "string",
                   "string(credentialsId: 'live-text', variable: 'GOOD')",
@@ -5557,41 +5541,20 @@ let credentialKeyBoundaryRefusal =
                 Expect.isTrue
                     (IO.File.Exists(IO.Path.Combine(workspace, "valid-successor.txt")))
                     "the ordinary successor ran")
-        finally
-            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", oldFile)
-            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", oldInline)
           } ]
 
 /// FG-044b(b). A generated `_FILE` companion is a Fogell convenience, not a
 /// lexical binding. It may fill an unused name but must never replace an effective
 /// pipeline/stage/withEnv/outer-credential value.
 let credentialCompanionPreservation =
-    let encode (value: string) =
-        value
-        |> Text.Encoding.UTF8.GetBytes
-        |> Convert.ToBase64String
-
-    let encodedText = encode "text-secret"
-    let credentialSpec = $"live-text\ttext\t{encodedText}"
-
-    let withCredentialStore action =
-        let oldFile = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE"
-        let oldInline = Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
-        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", null)
-        Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", credentialSpec)
-
-        try
-            action ()
-        finally
-            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS_FILE", oldFile)
-            Environment.SetEnvironmentVariable("FOGELL_CREDENTIALS", oldInline)
+    let credentials = Map.ofList [ "live-text", SecretText "text-secret" ]
 
     let run label source check =
         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-companion-" + Guid.NewGuid().ToString("N"))
         let workspace = IO.Path.Combine(root, "job")
 
         try
-            match FogellSide.run [] root "job" source with
+            match FogellSide.runWithCredentials credentials [] root "job" source with
             | Error why -> failtestf "%s pipeline refused outside execution: %s" label why
             | Ok trace -> check root workspace trace
         finally
@@ -5620,9 +5583,8 @@ let credentialCompanionPreservation =
     testList
         "FG-044b(b) credential companions preserve outer bindings"
         [ test "an inner companion preserves and then restores an outer credential value" {
-              withCredentialStore (fun () ->
-                  let source =
-                      """pipeline {
+              let source =
+                  """pipeline {
   agent any
   stages {
     stage('nested') {
@@ -5640,19 +5602,18 @@ let credentialCompanionPreservation =
   }
 }"""
 
-                  run "nested" source (fun root workspace trace ->
-                      expectSuccess
-                          "nested"
-                          root
-                          workspace
-                          [ "outer-before.txt"; "nested.txt"; "outer-after.txt"; "successor.txt" ]
-                          trace))
+              run "nested" source (fun root workspace trace ->
+                  expectSuccess
+                      "nested"
+                      root
+                      workspace
+                      [ "outer-before.txt"; "nested.txt"; "outer-after.txt"; "successor.txt" ]
+                      trace)
           }
 
           test "stage names are protected while unused and case-distinct companions remain" {
-              withCredentialStore (fun () ->
-                  let source =
-                      """pipeline {
+              let source =
+                  """pipeline {
   agent any
   environment {
     PIPE_FILE = 'pipeline-owned'
@@ -5673,19 +5634,18 @@ let credentialCompanionPreservation =
   }
 }"""
 
-                  run "stage" source (fun root workspace trace ->
-                      expectSuccess
-                          "stage"
-                          root
-                          workspace
-                          [ "stage-protected.txt"; "stage-restored.txt" ]
-                          trace))
+              run "stage" source (fun root workspace trace ->
+                  expectSuccess
+                      "stage"
+                      root
+                      workspace
+                      [ "stage-protected.txt"; "stage-restored.txt" ]
+                      trace)
           }
 
           test "an explicit current value shadows withEnv and the outer value returns" {
-              withCredentialStore (fun () ->
-                  let source =
-                      """pipeline {
+              let source =
+                  """pipeline {
   agent any
   stages {
     stage('withenv') {
@@ -5705,16 +5665,16 @@ let credentialCompanionPreservation =
   }
 }"""
 
-                  run "withEnv" source (fun root workspace trace ->
-                      expectSuccess
-                          "withEnv"
-                          root
-                          workspace
-                          [ "withenv-protected.txt"
-                            "explicit-shadow.txt"
-                            "withenv-restored.txt"
-                            "withenv-successor.txt" ]
-                          trace))
+              run "withEnv" source (fun root workspace trace ->
+                  expectSuccess
+                      "withEnv"
+                      root
+                      workspace
+                      [ "withenv-protected.txt"
+                        "explicit-shadow.txt"
+                        "withenv-restored.txt"
+                        "withenv-successor.txt" ]
+                      trace)
           } ]
 
 /// FG-044b(d). The public stash flag is interpreted by the walker, while the

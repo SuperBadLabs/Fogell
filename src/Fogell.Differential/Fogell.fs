@@ -399,7 +399,8 @@ module FogellSide =
             | Result.Ok pipeline -> Ready pipeline
             | Result.Error why -> EngineUnavailable why
 
-    let internal runWith
+    let private runWithCredentialStore
+        (credentials: unit -> Map<string, Credential>)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1032,7 +1033,7 @@ module FogellSide =
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
-                      Credentials = credentialStore
+                      Credentials = credentials
                       PreviousBuild = previousBuild
                       BuildNumber = buildNumber
                       Scm = scm
@@ -1199,6 +1200,45 @@ module FogellSide =
             // finalized marker, so later history refuses to invent one.
             WalkerGit.finalizeBuild artifactRoot jobName buildNumber terminalStatus
             Result.Ok trace
+
+    let internal runWith
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
+        (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
+        (script: string)
+        : Result<Trace, string> =
+        runWithCredentialStore
+            credentialStore
+            envReplacements
+            workspaceRoot
+            jobName
+            buildNumber
+            previousBuild
+            freshWorkspace
+            scm
+            persistence
+            script
+
+    /// Run one Jenkinsfile with an explicit credential store. This entrypoint is
+    /// intended for hermetic callers such as the differential fixtures: credentials
+    /// remain scoped to this run instead of being published through process-global
+    /// environment variables that unrelated parallel runs can observe.
+    let runWithCredentials
+        (credentials: Map<string, Credential>)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (script: string)
+        =
+        try
+            runWithCredentialStore (fun () -> credentials) envReplacements workspaceRoot jobName 1 None true None None script
+        with ex ->
+            Result.Error ex.Message
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
