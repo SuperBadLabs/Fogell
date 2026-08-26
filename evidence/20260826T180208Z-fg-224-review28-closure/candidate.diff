@@ -1,0 +1,362 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 9417b9a..00d9ab7 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. Review27 closes Codex `3867267809`: `RequireReconciliation` now needs the exact owner/fence, live lease, and current restore epoch, so expired or pre-restore workers publish nothing while the lease scanner or restore path owns disposition. It also closes `3867267816`: whitespace-only required configuration, including the local trust pool, refuses startup before admission. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 34/34, Differential is 272/272, Store is 91/91, and the aggregate locked gate is 906/906. Exact-head hosted gates, fresh Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. Review27 closes Codex `3867267809`: `RequireReconciliation` now needs the exact owner/fence, live lease, and current restore epoch, so expired or pre-restore workers publish nothing while the lease scanner or restore path owns disposition. It also closes `3867267816`: whitespace-only required configuration, including the local trust pool, refuses startup before admission. Review28 closes Codex `3867404726`: after `BeginExecution` but before any `Process.Start`, a setup failure disposes partial process ownership and performs one fenced requeue before logging, restoring queued lineage without reconciliation publication; an actual attempted launch remains conservatively reasoned reconciliation. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 34/34, Differential is 273/273, Store is 91/91, and the aggregate locked gate is 907/907. Fresh exact-head hosted gates and Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 9bda899..46add4d 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -121,6 +121,15 @@ and build and publishes one `attempt.reconciliation_required` event plus one
+ `build.reconciliation_required` outbox row with reason `lease_expired`. The safe
+ pre-launch `offered` → `queued` transition emits neither record.
+ 
++`BeginExecution` is the durable running transition, but the child still has not
++started while the worker obtains the next log sequence and prepares event and
++process-start state. A failure inside that known-unstarted setup boundary makes
++one immediate fenced requeue before diagnostics, returning attempt, node, and
++build to `queued` without a reconciliation event or outbox row. Once
++`Process.Start` has been attempted, a false return or exception is treated as
++ambiguous and retains reasoned `launcher_failed` reconciliation; the worker does
++not convert an attempted launch into the safe setup-only requeue path.
++
+ ## Acceptance and recovery checks
+ 
+ From HeMan, with the PostgreSQL container and host port selected:
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 16aec57..5a599f2 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -203,6 +203,18 @@ is reconciled by restore; an insert that waits is born in the new epoch.
+   `FOGELL_LOCAL_TRUST_POOL` now returns the stable required-setting error before
+   startup rather than producing a controller whose Store rejects every admission.
+ 
++## Review 28 closure
++
++- Codex finding `3867404726` is closed by making the post-`BeginExecution`,
++  pre-`Process.Start` boundary explicit. All fallible sequence, event-state,
++  process-start configuration, and unstarted `Process` setup is prepared before
++  launch is attempted. If that setup fails, the worker disposes any partially
++  owned process object, invokes one fenced `RequeueOwnedAttempt` before logging,
++  and returns the attempt, node, and build to `queued` without reconciliation,
++  event, or outbox publication. Once `Process.Start` is attempted, false or
++  exceptional launch outcomes retain the conservative reasoned
++  `launcher_failed` reconciliation path.
++
+ These are local exact-tree closure claims only. Exact-head hosted gates, fresh
+ Copilot/Codex review coverage, publication, and merge remain outstanding.
+ 
+@@ -229,12 +241,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 91/91 passed;
+ - Controller API: 34/34 passed;
+-- Differential: 272/272 passed;
++- Differential: 273/273 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 906 main-suite tests and every blocking
++locked repository gate also passes all 907 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index c0197f3..deb1763 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -37,6 +37,31 @@ module internal WorkerControl =
+         else
+             true
+ 
++    [<RequireQualifiedAccess>]
++    type PreLaunchDisposition =
++        | Requeued
++        | AuthorityLost
++        | RequeueFailed of exn
++
++    let prepareBeforeChildLaunch prepare requeue diagnose =
++        try
++            Some(prepare ())
++        with setupError ->
++            // BeginExecution has committed Running, but no Process.Start has
++            // been attempted. Durable disposition therefore precedes every
++            // fallible diagnostic and is invoked exactly once.
++            let disposition =
++                try
++                    if requeue () then
++                        PreLaunchDisposition.Requeued
++                    else
++                        PreLaunchDisposition.AuthorityLost
++                with requeueError ->
++                    PreLaunchDisposition.RequeueFailed requeueError
++
++            diagnose setupError disposition
++            None
++
+     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
+         task {
+             try
+@@ -312,41 +337,85 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                     "FG-224 claim {AttemptId} was cancelled before child launch",
+                     claim.AttemptId.Value)
+             | Ok ExecutionStarted ->
+-                let mutable sequence = store.NextLogSequence(claim.OrganizationId, claim.AttemptId)
+-                let eventState =
+-                    { Offset = 0L
+-                      Tail = Array.empty
+-                      DiscardingOversizedFrame = false }
++                let prepared =
++                    WorkerControl.prepareBeforeChildLaunch
++                        (fun () ->
++                            let initialSequence = store.NextLogSequence(claim.OrganizationId, claim.AttemptId)
++                            let eventState =
++                                { Offset = 0L
++                                  Tail = Array.empty
++                                  DiscardingOversizedFrame = false }
++
++                            let start = ProcessStartInfo(config.SetsidPath)
++                            start.ArgumentList.Add config.RunHostPath
++                            start.ArgumentList.Add definitionPath
++                            start.ArgumentList.Add workspaceRoot
++                            start.ArgumentList.Add buildKey
++                            start.ArgumentList.Add journalPath
++                            start.UseShellExecute <- false
++                            start.RedirectStandardOutput <- true
++                            start.RedirectStandardError <- true
++                            start.CreateNoWindow <- true
++                            start.Environment.Clear()
++                            start.Environment["PATH"] <- "/usr/bin:/bin"
++                            start.Environment["HOME"] <- neutralHome
++                            start.Environment["TMPDIR"] <- tempRoot
++                            start.Environment["FOGELL_EVENT_FILE"] <- eventPath
++                            start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
++                            start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
++                            // Project-scoped numbering is durable admission truth. Passing
++                            // only the build UUID made the child fall back to build 1 for
++                            // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
++                            // another build's external resources.
++                            start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
++
++                            let child = new Process()
++
++                            try
++                                child.StartInfo <- start
++                                initialSequence, eventState, child
++                            with _ ->
++                                child.Dispose()
++                                reraise ())
++                        (fun () ->
++                            store.RequeueOwnedAttempt(
++                                claim.OrganizationId,
++                                claim.AttemptId,
++                                claim.Fence,
++                                owner))
++                        (fun setupError disposition ->
++                            match disposition with
++                            | WorkerControl.PreLaunchDisposition.Requeued ->
++                                logger.LogError(
++                                    setupError,
++                                    "FG-224 pre-launch setup failed for {AttemptId}; the unstarted attempt was requeued",
++                                    claim.AttemptId.Value)
++                            | WorkerControl.PreLaunchDisposition.AuthorityLost ->
++                                logger.LogWarning(
++                                    setupError,
++                                    "FG-224 pre-launch setup failed for {AttemptId}; the unstarted requeue lost authority",
++                                    claim.AttemptId.Value)
++                            | WorkerControl.PreLaunchDisposition.RequeueFailed requeueError ->
++                                logger.LogError(
++                                    AggregateException(
++                                        "pre-launch setup and fenced requeue both failed",
++                                        setupError,
++                                        requeueError),
++                                    "FG-224 pre-launch setup and requeue failed for {AttemptId}",
++                                    claim.AttemptId.Value))
++
++                if Option.isNone prepared then
++                    return ()
++
++                let initialSequence, eventState, preparedChild = Option.get prepared
++                let mutable sequence = initialSequence
+                 let mutable cancelled = false
+                 let mutable interrupted = false
+                 let mutable leaseLost = false
+                 let mutable terminalDrainConfirmed = false
+                 let mutable reconciliationReason = "worker_exception"
+ 
+-                use child = new Process()
+-                let start = ProcessStartInfo(config.SetsidPath)
+-                start.ArgumentList.Add config.RunHostPath
+-                start.ArgumentList.Add definitionPath
+-                start.ArgumentList.Add workspaceRoot
+-                start.ArgumentList.Add buildKey
+-                start.ArgumentList.Add journalPath
+-                start.UseShellExecute <- false
+-                start.RedirectStandardOutput <- true
+-                start.RedirectStandardError <- true
+-                start.CreateNoWindow <- true
+-                start.Environment.Clear()
+-                start.Environment["PATH"] <- "/usr/bin:/bin"
+-                start.Environment["HOME"] <- neutralHome
+-                start.Environment["TMPDIR"] <- tempRoot
+-                start.Environment["FOGELL_EVENT_FILE"] <- eventPath
+-                start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
+-                start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
+-                // Project-scoped numbering is durable admission truth. Passing
+-                // only the build UUID made the child fall back to build 1 for
+-                // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
+-                // another build's external resources.
+-                start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
+-                child.StartInfo <- start
++                use child = preparedChild
+ 
+                 let launchResult =
+                     WorkerLaunch.tryStart
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 14ba3f6..2290c03 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -646,6 +646,107 @@ let controllerWorkerTiming =
+               Expect.equal launcherChecks 3 "the admitted boundary checks launchers once"
+               Expect.equal stateRootChecks 2 "the admitted boundary checks state root once"
+               Expect.isEmpty unavailable "the ready path does not requeue the offered claim"
++          }
++
++          test "pre-launch setup dispositions exactly once before diagnostics" {
++              let order = ResizeArray<string>()
++              let setupError = InvalidOperationException("next sequence unavailable")
++              let mutable observedDisposition = None
++
++              let failed : int option =
++                  WorkerControl.prepareBeforeChildLaunch
++                      (fun () ->
++                          order.Add "setup"
++                          raise setupError)
++                      (fun () ->
++                          order.Add "requeue"
++                          true)
++                      (fun observedError disposition ->
++                          order.Add "diagnostic"
++                          Expect.isTrue
++                              (Object.ReferenceEquals(observedError, setupError))
++                              "the exact setup exception reaches diagnostics"
++                          observedDisposition <- Some disposition)
++
++              Expect.equal failed None "a failed setup cannot cross Process.Start"
++              Expect.equal
++                  (List.ofSeq order)
++                  [ "setup"; "requeue"; "diagnostic" ]
++                  "one durable disposition precedes the first diagnostic"
++              Expect.equal
++                  observedDisposition
++                  (Some WorkerControl.PreLaunchDisposition.Requeued)
++                  "successful fenced recovery is classified exactly"
++
++              order.Clear()
++              observedDisposition <- None
++              let lostAuthority : int option =
++                  WorkerControl.prepareBeforeChildLaunch
++                      (fun () ->
++                          order.Add "setup"
++                          raise setupError)
++                      (fun () ->
++                          order.Add "requeue"
++                          false)
++                      (fun _ disposition ->
++                          order.Add "diagnostic"
++                          observedDisposition <- Some disposition)
++
++              Expect.equal lostAuthority None "lost recovery authority still blocks Process.Start"
++              Expect.equal
++                  (List.ofSeq order)
++                  [ "setup"; "requeue"; "diagnostic" ]
++                  "authority loss is returned once before diagnostics"
++              Expect.equal
++                  observedDisposition
++                  (Some WorkerControl.PreLaunchDisposition.AuthorityLost)
++                  "a false fenced Store result remains distinct from success and exception"
++
++              order.Clear()
++              observedDisposition <- None
++              let prepared =
++                  WorkerControl.prepareBeforeChildLaunch
++                      (fun () ->
++                          order.Add "setup"
++                          42)
++                      (fun () ->
++                          order.Add "unexpected-requeue"
++                          true)
++                      (fun _ disposition ->
++                          order.Add "unexpected-diagnostic"
++                          observedDisposition <- Some disposition)
++
++              Expect.equal prepared (Some 42) "successful setup returns its owned launch inputs"
++              Expect.equal (List.ofSeq order) [ "setup" ] "success performs no disposition or diagnostic"
++              Expect.equal observedDisposition None "success has no recovery outcome"
++
++              order.Clear()
++              let requeueError = InvalidOperationException("database unavailable")
++              let mutable observedRequeueError = None
++              let failedRequeue : int option =
++                  WorkerControl.prepareBeforeChildLaunch
++                      (fun () ->
++                          order.Add "setup"
++                          raise setupError)
++                      (fun () ->
++                          order.Add "requeue"
++                          raise requeueError)
++                      (fun _ disposition ->
++                          order.Add "diagnostic"
++
++                          match disposition with
++                          | WorkerControl.PreLaunchDisposition.RequeueFailed error ->
++                              observedRequeueError <- Some error
++                          | other -> failtestf "expected requeue failure, got %A" other)
++
++              Expect.equal failedRequeue None "a throwing Store callback still blocks launch"
++              Expect.equal
++                  (List.ofSeq order)
++                  [ "setup"; "requeue"; "diagnostic" ]
++                  "a throwing requeue is attempted once and classified before diagnostics"
++              Expect.isTrue
++                  (Object.ReferenceEquals(observedRequeueError.Value, requeueError))
++                  "the exact Store failure reaches the outcome diagnostic"
+           } ]
+ 
+ let controllerStateRoot =
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 2ca8e54..bbc16be 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -2097,6 +2097,7 @@ let fencing =
+               let org, project = freshProject ()
+               let admitted = admitOk (newBuild org project "owned-requeue-rollup" [ "build" ])
+               let owner = "local:verified-extinction"
++              let outboxBefore = store.CountOutbox org
+ 
+               let claim =
+                   match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+@@ -2133,6 +2134,15 @@ let fencing =
+               Expect.isTrue (row.IsDBNull 4) "requeue cleared the old lease expiry"
+               row.Close()
+ 
++              Expect.equal
++                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "known pre-launch extinction emits no reconciliation event"
++              Expect.equal
++                  (store.CountOutbox org)
++                  outboxBefore
++                  "known pre-launch extinction emits no reconciliation outbox"
++
+               let replacement =
+                   match store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60) with
+                   | Ok(Some value) -> value

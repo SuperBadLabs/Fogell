@@ -37,6 +37,31 @@ module internal WorkerControl =
         else
             true
 
+    [<RequireQualifiedAccess>]
+    type PreLaunchDisposition =
+        | Requeued
+        | AuthorityLost
+        | RequeueFailed of exn
+
+    let prepareBeforeChildLaunch prepare requeue diagnose =
+        try
+            Some(prepare ())
+        with setupError ->
+            // BeginExecution has committed Running, but no Process.Start has
+            // been attempted. Durable disposition therefore precedes every
+            // fallible diagnostic and is invoked exactly once.
+            let disposition =
+                try
+                    if requeue () then
+                        PreLaunchDisposition.Requeued
+                    else
+                        PreLaunchDisposition.AuthorityLost
+                with requeueError ->
+                    PreLaunchDisposition.RequeueFailed requeueError
+
+            diagnose setupError disposition
+            None
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -312,41 +337,85 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     "FG-224 claim {AttemptId} was cancelled before child launch",
                     claim.AttemptId.Value)
             | Ok ExecutionStarted ->
-                let mutable sequence = store.NextLogSequence(claim.OrganizationId, claim.AttemptId)
-                let eventState =
-                    { Offset = 0L
-                      Tail = Array.empty
-                      DiscardingOversizedFrame = false }
+                let prepared =
+                    WorkerControl.prepareBeforeChildLaunch
+                        (fun () ->
+                            let initialSequence = store.NextLogSequence(claim.OrganizationId, claim.AttemptId)
+                            let eventState =
+                                { Offset = 0L
+                                  Tail = Array.empty
+                                  DiscardingOversizedFrame = false }
+
+                            let start = ProcessStartInfo(config.SetsidPath)
+                            start.ArgumentList.Add config.RunHostPath
+                            start.ArgumentList.Add definitionPath
+                            start.ArgumentList.Add workspaceRoot
+                            start.ArgumentList.Add buildKey
+                            start.ArgumentList.Add journalPath
+                            start.UseShellExecute <- false
+                            start.RedirectStandardOutput <- true
+                            start.RedirectStandardError <- true
+                            start.CreateNoWindow <- true
+                            start.Environment.Clear()
+                            start.Environment["PATH"] <- "/usr/bin:/bin"
+                            start.Environment["HOME"] <- neutralHome
+                            start.Environment["TMPDIR"] <- tempRoot
+                            start.Environment["FOGELL_EVENT_FILE"] <- eventPath
+                            start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
+                            start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
+                            // Project-scoped numbering is durable admission truth. Passing
+                            // only the build UUID made the child fall back to build 1 for
+                            // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
+                            // another build's external resources.
+                            start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
+
+                            let child = new Process()
+
+                            try
+                                child.StartInfo <- start
+                                initialSequence, eventState, child
+                            with _ ->
+                                child.Dispose()
+                                reraise ())
+                        (fun () ->
+                            store.RequeueOwnedAttempt(
+                                claim.OrganizationId,
+                                claim.AttemptId,
+                                claim.Fence,
+                                owner))
+                        (fun setupError disposition ->
+                            match disposition with
+                            | WorkerControl.PreLaunchDisposition.Requeued ->
+                                logger.LogError(
+                                    setupError,
+                                    "FG-224 pre-launch setup failed for {AttemptId}; the unstarted attempt was requeued",
+                                    claim.AttemptId.Value)
+                            | WorkerControl.PreLaunchDisposition.AuthorityLost ->
+                                logger.LogWarning(
+                                    setupError,
+                                    "FG-224 pre-launch setup failed for {AttemptId}; the unstarted requeue lost authority",
+                                    claim.AttemptId.Value)
+                            | WorkerControl.PreLaunchDisposition.RequeueFailed requeueError ->
+                                logger.LogError(
+                                    AggregateException(
+                                        "pre-launch setup and fenced requeue both failed",
+                                        setupError,
+                                        requeueError),
+                                    "FG-224 pre-launch setup and requeue failed for {AttemptId}",
+                                    claim.AttemptId.Value))
+
+                if Option.isNone prepared then
+                    return ()
+
+                let initialSequence, eventState, preparedChild = Option.get prepared
+                let mutable sequence = initialSequence
                 let mutable cancelled = false
                 let mutable interrupted = false
                 let mutable leaseLost = false
                 let mutable terminalDrainConfirmed = false
                 let mutable reconciliationReason = "worker_exception"
 
-                use child = new Process()
-                let start = ProcessStartInfo(config.SetsidPath)
-                start.ArgumentList.Add config.RunHostPath
-                start.ArgumentList.Add definitionPath
-                start.ArgumentList.Add workspaceRoot
-                start.ArgumentList.Add buildKey
-                start.ArgumentList.Add journalPath
-                start.UseShellExecute <- false
-                start.RedirectStandardOutput <- true
-                start.RedirectStandardError <- true
-                start.CreateNoWindow <- true
-                start.Environment.Clear()
-                start.Environment["PATH"] <- "/usr/bin:/bin"
-                start.Environment["HOME"] <- neutralHome
-                start.Environment["TMPDIR"] <- tempRoot
-                start.Environment["FOGELL_EVENT_FILE"] <- eventPath
-                start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
-                start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
-                // Project-scoped numbering is durable admission truth. Passing
-                // only the build UUID made the child fall back to build 1 for
-                // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
-                // another build's external resources.
-                start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
-                child.StartInfo <- start
+                use child = preparedChild
 
                 let launchResult =
                     WorkerLaunch.tryStart

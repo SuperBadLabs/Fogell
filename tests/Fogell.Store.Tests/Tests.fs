@@ -2097,6 +2097,7 @@ let fencing =
               let org, project = freshProject ()
               let admitted = admitOk (newBuild org project "owned-requeue-rollup" [ "build" ])
               let owner = "local:verified-extinction"
+              let outboxBefore = store.CountOutbox org
 
               let claim =
                   match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
@@ -2132,6 +2133,15 @@ let fencing =
               Expect.isTrue (row.IsDBNull 3) "requeue cleared the old lease owner"
               Expect.isTrue (row.IsDBNull 4) "requeue cleared the old lease expiry"
               row.Close()
+
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "known pre-launch extinction emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBefore
+                  "known pre-launch extinction emits no reconciliation outbox"
 
               let replacement =
                   match store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60) with

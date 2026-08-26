@@ -121,6 +121,15 @@ and build and publishes one `attempt.reconciliation_required` event plus one
 `build.reconciliation_required` outbox row with reason `lease_expired`. The safe
 pre-launch `offered` → `queued` transition emits neither record.
 
+`BeginExecution` is the durable running transition, but the child still has not
+started while the worker obtains the next log sequence and prepares event and
+process-start state. A failure inside that known-unstarted setup boundary makes
+one immediate fenced requeue before diagnostics, returning attempt, node, and
+build to `queued` without a reconciliation event or outbox row. Once
+`Process.Start` has been attempted, a false return or exception is treated as
+ambiguous and retains reasoned `launcher_failed` reconciliation; the worker does
+not convert an attempted launch into the safe setup-only requeue path.
+
 ## Acceptance and recovery checks
 
 From HeMan, with the PostgreSQL container and host port selected:

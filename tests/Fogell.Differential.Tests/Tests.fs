@@ -646,6 +646,107 @@ let controllerWorkerTiming =
               Expect.equal launcherChecks 3 "the admitted boundary checks launchers once"
               Expect.equal stateRootChecks 2 "the admitted boundary checks state root once"
               Expect.isEmpty unavailable "the ready path does not requeue the offered claim"
+          }
+
+          test "pre-launch setup dispositions exactly once before diagnostics" {
+              let order = ResizeArray<string>()
+              let setupError = InvalidOperationException("next sequence unavailable")
+              let mutable observedDisposition = None
+
+              let failed : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          true)
+                      (fun observedError disposition ->
+                          order.Add "diagnostic"
+                          Expect.isTrue
+                              (Object.ReferenceEquals(observedError, setupError))
+                              "the exact setup exception reaches diagnostics"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal failed None "a failed setup cannot cross Process.Start"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "one durable disposition precedes the first diagnostic"
+              Expect.equal
+                  observedDisposition
+                  (Some WorkerControl.PreLaunchDisposition.Requeued)
+                  "successful fenced recovery is classified exactly"
+
+              order.Clear()
+              observedDisposition <- None
+              let lostAuthority : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          false)
+                      (fun _ disposition ->
+                          order.Add "diagnostic"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal lostAuthority None "lost recovery authority still blocks Process.Start"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "authority loss is returned once before diagnostics"
+              Expect.equal
+                  observedDisposition
+                  (Some WorkerControl.PreLaunchDisposition.AuthorityLost)
+                  "a false fenced Store result remains distinct from success and exception"
+
+              order.Clear()
+              observedDisposition <- None
+              let prepared =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          42)
+                      (fun () ->
+                          order.Add "unexpected-requeue"
+                          true)
+                      (fun _ disposition ->
+                          order.Add "unexpected-diagnostic"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal prepared (Some 42) "successful setup returns its owned launch inputs"
+              Expect.equal (List.ofSeq order) [ "setup" ] "success performs no disposition or diagnostic"
+              Expect.equal observedDisposition None "success has no recovery outcome"
+
+              order.Clear()
+              let requeueError = InvalidOperationException("database unavailable")
+              let mutable observedRequeueError = None
+              let failedRequeue : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          raise requeueError)
+                      (fun _ disposition ->
+                          order.Add "diagnostic"
+
+                          match disposition with
+                          | WorkerControl.PreLaunchDisposition.RequeueFailed error ->
+                              observedRequeueError <- Some error
+                          | other -> failtestf "expected requeue failure, got %A" other)
+
+              Expect.equal failedRequeue None "a throwing Store callback still blocks launch"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "a throwing requeue is attempted once and classified before diagnostics"
+              Expect.isTrue
+                  (Object.ReferenceEquals(observedRequeueError.Value, requeueError))
+                  "the exact Store failure reaches the outcome diagnostic"
           } ]
 
 let controllerStateRoot =
