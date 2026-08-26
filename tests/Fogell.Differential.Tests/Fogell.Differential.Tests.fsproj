@@ -5,14 +5,11 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../src/Fogell.Controller.Host/Config.fs" Link="Config.fs" />
-    <Compile Include="../../src/Fogell.Controller.Host/EventStream.fs" Link="EventStream.fs" />
-    <Compile Include="../../src/Fogell.Controller.Host/ProcessGroup.fs" Link="ProcessGroup.fs" />
-    <Compile Include="../../src/Fogell.Controller.Host/WorkerScheduling.fs" Link="WorkerScheduling.fs" />
     <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Fogell.Differential/Fogell.Differential.fsproj" />
+    <ProjectReference Include="../../src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Expecto" Version="10.2.1" />

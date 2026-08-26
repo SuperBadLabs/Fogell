@@ -120,15 +120,10 @@ module RetryDecision =
         then
             Error(InvalidProposedChildIdentity proposedChildId)
         else
-            let child =
-                { parent with
-                    Id = proposedChildId
-                    Ordinal = nextOrdinal
-                    RetryOf = Some parent.Id
-                    State = Queued
-                    Fence = Fence.initial
-                    LeaseOwner = None
-                    LeaseExpiresAt = None }
+            // Attempt.retryOf is the single authority-reset constructor. Keeping
+            // the law here delegated to it prevents future Attempt fields from
+            // diverging between direct retries and persisted retry decisions.
+            let child = Attempt.retryOf proposedChildId parent
 
             Ok
                 { ParentId = parent.Id

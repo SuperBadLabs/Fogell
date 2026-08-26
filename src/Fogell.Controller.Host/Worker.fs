@@ -316,32 +316,77 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
                 child.StartInfo <- start
 
-                let launched =
+                let launchResult =
                     WorkerLaunch.tryStart
+                        (fun () -> stoppingToken.IsCancellationRequested)
                         child.Start
-                        (fun error ->
-                            match error with
-                            | Some ex ->
+
+                let launched =
+                    match launchResult with
+                    | WorkerLaunch.Launched -> true
+                    | WorkerLaunch.LaunchSuppressed ->
+                        // BeginExecution already made the attempt Running, but
+                        // the cancellation check proved no child was launched.
+                        // Verified extinction therefore permits an immediate
+                        // fenced requeue instead of waiting for lease expiry.
+                        let requeued =
+                            try
+                                store.RequeueOwnedAttempt(
+                                    claim.OrganizationId,
+                                    claim.AttemptId,
+                                    claim.Fence,
+                                    owner)
+                            with ex ->
                                 logger.LogError(
                                     ex,
-                                    "FG-224 trusted launcher failed for {AttemptId}; reconciliation is required",
+                                    "FG-224 shutdown requeue failed for {AttemptId}",
                                     claim.AttemptId.Value)
-                            | None ->
-                                logger.LogError(
-                                    "FG-224 trusted launcher returned false for {AttemptId}; reconciliation is required",
-                                    claim.AttemptId.Value)
+                                false
 
-                            if
-                                not
-                                    (store.RequireReconciliation(
-                                        claim.OrganizationId,
-                                        claim.AttemptId,
-                                        claim.Fence,
-                                        owner))
-                            then
-                                logger.LogWarning(
-                                    "FG-224 launch-failure reconciliation lost authority for {AttemptId}",
-                                    claim.AttemptId.Value))
+                        if requeued then
+                            logger.LogInformation(
+                                "FG-224 shutdown suppressed launch and requeued {AttemptId}",
+                                claim.AttemptId.Value)
+                        else
+                            logger.LogWarning(
+                                "FG-224 shutdown requeue lost authority for {AttemptId}",
+                                claim.AttemptId.Value)
+
+                        false
+                    | WorkerLaunch.LaunchFailed error ->
+                        // Attempt durable disposition before diagnostics: even a
+                        // fallible logger cannot strand known launch failure.
+                        let reconciled =
+                            try
+                                store.RequireReconciliation(
+                                    claim.OrganizationId,
+                                    claim.AttemptId,
+                                    claim.Fence,
+                                    owner)
+                            with ex ->
+                                logger.LogError(
+                                    ex,
+                                    "FG-224 launch-failure reconciliation threw for {AttemptId}",
+                                    claim.AttemptId.Value)
+                                false
+
+                        match error with
+                        | Some ex ->
+                            logger.LogError(
+                                ex,
+                                "FG-224 trusted launcher failed for {AttemptId}; reconciliation is required",
+                                claim.AttemptId.Value)
+                        | None ->
+                            logger.LogError(
+                                "FG-224 trusted launcher returned false for {AttemptId}; reconciliation is required",
+                                claim.AttemptId.Value)
+
+                        if not reconciled then
+                            logger.LogWarning(
+                                "FG-224 launch-failure reconciliation lost authority for {AttemptId}",
+                                claim.AttemptId.Value)
+
+                        false
 
                 if launched then
                     let mutable dispositionRecorded = false

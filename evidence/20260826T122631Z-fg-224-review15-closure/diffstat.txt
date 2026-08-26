@@ -1,0 +1,11 @@
+ .../Fogell.Controller.Host.fsproj                  |  8 ++
+ src/Fogell.Controller.Host/Worker.fs               | 85 +++++++++++++++++-----
+ src/Fogell.Controller.Host/WorkerLaunch.fs         | 32 ++++----
+ src/Fogell.Domain/RetryDecision.fs                 | 13 +---
+ .../Fogell.Controller.Api.Tests.fsproj             |  4 +-
+ tests/Fogell.Controller.Api.Tests/Tests.fs         | 37 ++++++----
+ .../Fogell.Controller.Api.Tests/packages.lock.json | 17 +++++
+ .../Fogell.Differential.Tests.fsproj               |  5 +-
+ tests/Fogell.Differential.Tests/packages.lock.json | 55 ++++++++++++++
+ tests/Fogell.Domain.Tests/RetryDecisionTests.fs    |  1 +
+ 10 files changed, 195 insertions(+), 62 deletions(-)

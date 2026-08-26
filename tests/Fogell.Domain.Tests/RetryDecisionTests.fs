@@ -70,6 +70,7 @@ let tests =
               Expect.equal child.RestoreEpoch original.RestoreEpoch "restore epoch is preserved"
               Expect.isNone child.LeaseOwner "lease owner is cleared"
               Expect.isNone child.LeaseExpiresAt "lease expiry is cleared"
+              Expect.equal child (Attempt.retryOf proposed original) "the canonical retry constructor owns authority reset"
               Expect.equal original snapshot "the parent record remains byte-for-byte semantic history"
           }
 

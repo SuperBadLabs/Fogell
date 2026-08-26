@@ -72,6 +72,16 @@
           "Fogell.Store": "[1.0.0, )"
         }
       },
+      "fogell.controller.host": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Controller.Api": "[1.0.0, )",
+          "Fogell.Execution": "[1.0.0, )",
+          "Fogell.Journal": "[1.0.0, )",
+          "Fogell.Store": "[1.0.0, )"
+        }
+      },
       "fogell.differential": {
         "type": "Project",
         "dependencies": {
@@ -121,6 +131,13 @@
         }
       },
       "fogell.ir": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      },
+      "fogell.journal": {
         "type": "Project",
         "dependencies": {
           "FSharp.Core": "[10.1.301, )",

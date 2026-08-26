@@ -1,0 +1,11 @@
+M  src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+M  src/Fogell.Controller.Host/Worker.fs
+M  src/Fogell.Controller.Host/WorkerLaunch.fs
+M  src/Fogell.Domain/RetryDecision.fs
+M  tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+M  tests/Fogell.Controller.Api.Tests/Tests.fs
+M  tests/Fogell.Controller.Api.Tests/packages.lock.json
+M  tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
+M  tests/Fogell.Differential.Tests/packages.lock.json
+M  tests/Fogell.Domain.Tests/RetryDecisionTests.fs
+?? evidence/.20260826T122631Z-fg-224-review15-closure.partial.wA0ULT/

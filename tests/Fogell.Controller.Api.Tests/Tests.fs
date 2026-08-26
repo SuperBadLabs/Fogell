@@ -184,22 +184,33 @@ let private executionLauncherValidation =
                   | Error error ->
                       Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
 
-              let mutable observed = None
-              let started =
+              let mutable startEffects = 0
+              let suppressed =
                   WorkerLaunch.tryStart
+                      (fun () -> true)
+                      (fun () ->
+                          startEffects <- startEffects + 1
+                          true)
+              Expect.equal suppressed WorkerLaunch.LaunchSuppressed "shutdown suppresses launch at the OS edge"
+              Expect.equal startEffects 0 "a pre-cancelled launch creates no user effect"
+
+              let thrown =
+                  WorkerLaunch.tryStart
+                      (fun () -> false)
                       (fun () -> raise (InvalidOperationException "simulated exec failure"))
-                      (fun error -> observed <- error)
+              match thrown with
+              | WorkerLaunch.LaunchFailed(Some (:? InvalidOperationException as error)) ->
+                  Expect.equal error.Message "simulated exec failure" "the failure result preserves the cause"
+              | other -> failtestf "launch exception was not preserved: %A" other
 
-              Expect.isFalse started "a Process.Start exception is converted to launch failure"
-              match observed with
-              | Some (:? InvalidOperationException as error) ->
-                  Expect.equal error.Message "simulated exec failure" "the reconciliation callback receives the cause"
-              | other -> failtestf "launch exception did not reach the reconciliation callback: %A" other
-
-              let mutable falseCallbacks = 0
-              let returnedFalse = WorkerLaunch.tryStart (fun () -> false) (fun _ -> falseCallbacks <- falseCallbacks + 1)
-              Expect.isFalse returnedFalse "a false Process.Start result is a launch failure"
-              Expect.equal falseCallbacks 1 "the false result invokes reconciliation exactly once"
+              Expect.equal
+                  (WorkerLaunch.tryStart (fun () -> false) (fun () -> false))
+                  (WorkerLaunch.LaunchFailed None)
+                  "a false Process.Start result is explicit failure"
+              Expect.equal
+                  (WorkerLaunch.tryStart (fun () -> false) (fun () -> true))
+                  WorkerLaunch.Launched
+                  "a successful Process.Start result is explicit"
           } ]
 
 /// FG-060. Authorization is proven BEFORE anything else, because every other
