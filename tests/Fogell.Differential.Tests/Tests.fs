@@ -603,6 +603,49 @@ let controllerWorkerTiming =
                   (cache.Cached())
                   "the failed fresh result prevents another claim without probing again"
               Expect.equal probes 2 "the forced failure also updates the idle cache"
+          }
+
+          test "post-offer dependency loss selects one immediate recovery before execution" {
+              let unavailable = ResizeArray<WorkerControl.PostOfferDependency>()
+              let mutable launcherChecks = 0
+              let mutable stateRootChecks = 0
+
+              let afterOffer launcherReady stateRootReady =
+                  WorkerControl.afterOfferReady
+                      (fun () ->
+                          launcherChecks <- launcherChecks + 1
+                          launcherReady)
+                      (fun () ->
+                          stateRootChecks <- stateRootChecks + 1
+                          stateRootReady)
+                      unavailable.Add
+
+              Expect.isFalse (afterOffer false true) "launcher loss refuses the offered claim"
+              Expect.equal launcherChecks 1 "launcher readiness is checked first"
+              Expect.equal stateRootChecks 0 "launcher loss short-circuits the durable probe"
+              Expect.equal
+                  (List.ofSeq unavailable)
+                  [ WorkerControl.PostOfferDependency.ExecutionLaunchers ]
+                  "launcher loss invokes the shared recovery exactly once with its precise cause"
+              Expect.equal
+                  (WorkerControl.postOfferDependencyName unavailable[0])
+                  "execution launchers"
+                  "launcher refusal retains its log cause"
+
+              unavailable.Clear()
+              Expect.isFalse (afterOffer true false) "state-root loss refuses the offered claim"
+              Expect.equal launcherChecks 2 "the second boundary rechecks launchers"
+              Expect.equal stateRootChecks 1 "state-root readiness follows a live launcher"
+              Expect.equal
+                  (List.ofSeq unavailable)
+                  [ WorkerControl.PostOfferDependency.StateRoot ]
+                  "state-root loss invokes the same recovery exactly once with its precise cause"
+
+              unavailable.Clear()
+              Expect.isTrue (afterOffer true true) "live dependencies admit execution"
+              Expect.equal launcherChecks 3 "the admitted boundary checks launchers once"
+              Expect.equal stateRootChecks 2 "the admitted boundary checks state root once"
+              Expect.isEmpty unavailable "the ready path does not requeue the offered claim"
           } ]
 
 let controllerStateRoot =

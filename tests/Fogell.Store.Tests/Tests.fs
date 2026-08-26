@@ -2009,10 +2009,10 @@ let fencing =
               Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the scan race emits one outbox row total"
           }
 
-          test "an unstarted offered claim requeues without reconciliation and advances its replacement fence" {
+          test "an unstarted launcher-loss claim requeues without reconciliation and advances its replacement fence" {
               let org, project = freshProject ()
               let admitted = admitOk (newBuild org project "offered-readiness-requeue" [ "build" ])
-              let owner = "local:unavailable-state-root"
+              let owner = "local:unavailable-launcher"
 
               let claim =
                   match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
@@ -2061,7 +2061,7 @@ let fencing =
                   outboxBefore
                   "an unstarted offer emits no reconciliation outbox"
 
-              let replacementOwner = "local:restored-state-root"
+              let replacementOwner = "local:restored-launcher"
               let replacement =
                   match
                       store.ClaimNextExecution(

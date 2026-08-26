@@ -18,6 +18,25 @@ module internal WorkerControl =
         | PollElapsed
         | ShutdownRequested
 
+    [<RequireQualifiedAccess>]
+    type PostOfferDependency =
+        | ExecutionLaunchers
+        | StateRoot
+
+    let postOfferDependencyName = function
+        | PostOfferDependency.ExecutionLaunchers -> "execution launchers"
+        | PostOfferDependency.StateRoot -> "state root"
+
+    let afterOfferReady launchersReady stateRootReady onUnavailable =
+        if not (launchersReady ()) then
+            onUnavailable PostOfferDependency.ExecutionLaunchers
+            false
+        elif not (stateRootReady ()) then
+            onUnavailable PostOfferDependency.StateRoot
+            false
+        else
+            true
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -639,44 +658,50 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             requireReconciliation reconciliationReason
         }
 
+    let requeueUnstartedClaim dependency (claim: ExecutionClaim) =
+        let dependencyName = WorkerControl.postOfferDependencyName dependency
+
+        let requeueResult =
+            try
+                Ok(
+                    store.RequeueOwnedAttempt(
+                        claim.OrganizationId,
+                        claim.AttemptId,
+                        claim.Fence,
+                        owner))
+            with ex ->
+                Error ex
+
+        match requeueResult with
+        | Ok true ->
+            logger.LogInformation(
+                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted attempt was requeued",
+                dependencyName,
+                claim.AttemptId.Value)
+        | Ok false ->
+            logger.LogWarning(
+                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted requeue lost authority",
+                dependencyName,
+                claim.AttemptId.Value)
+        | Error ex ->
+            logger.LogError(
+                ex,
+                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted requeue failed",
+                dependencyName,
+                claim.AttemptId.Value)
+
     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
         task {
             // Recheck every runtime dependency after the offer and before
             // definition materialization or BeginExecution. No child exists at
             // this boundary, so unavailable durable storage can return the
             // fenced offer to FIFO immediately rather than waiting for expiry.
-            if not (ControllerConfig.executionLaunchersReady config) then
-                logger.LogError(
-                    "FG-224 execution launchers became unavailable before claim {AttemptId}; the attempt was not started",
-                    claim.AttemptId.Value)
-            elif not (stateRootReadiness.Fresh()) then
-                logger.LogError(
-                    "FG-224 state root became unavailable before claim {AttemptId}; the attempt was not started",
-                    claim.AttemptId.Value)
-
-                let requeued =
-                    try
-                        store.RequeueOwnedAttempt(
-                            claim.OrganizationId,
-                            claim.AttemptId,
-                            claim.Fence,
-                            owner)
-                    with ex ->
-                        logger.LogError(
-                            ex,
-                            "FG-224 state-root requeue failed for {AttemptId}",
-                            claim.AttemptId.Value)
-                        false
-
-                if requeued then
-                    logger.LogInformation(
-                        "FG-224 unavailable state root requeued unstarted claim {AttemptId}",
-                        claim.AttemptId.Value)
-                else
-                    logger.LogWarning(
-                        "FG-224 unavailable state-root requeue lost authority for {AttemptId}",
-                        claim.AttemptId.Value)
-            else
+            if
+                WorkerControl.afterOfferReady
+                    (fun () -> ControllerConfig.executionLaunchersReady config)
+                    stateRootReadiness.Fresh
+                    (fun dependency -> requeueUnstartedClaim dependency claim)
+            then
                 do! runReadyClaim claim stoppingToken
         }
 

@@ -68,8 +68,16 @@ to `/usr/bin/setsid`; startup refuses before binding unless that exact file is
 executable by the service identity. Readiness and the worker claim boundary
 recheck both executables and the state root, so later removal returns 503 and
 cannot start new work. A cached state-root success may permit an offer, but the
-worker forces a fresh probe before materialization and fenced-requeues the
-unstarted offer if that probe fails. It never recreates a missing root.
+worker checks the launchers first and performs the fresh state-root probe only
+when they are available. Either dependency loss calls the same immediate fenced
+requeue before logging. The still-unstarted attempt, node, and build return to
+`queued`; the lease owner and expiry are cleared; and no event or outbox row is
+published. Requeue requires the current owner, fence, unexpired lease, and
+restore epoch through the attempt → node → build lock order; a replacement claim
+advances the fence. A concurrent cancellation request remains set for the
+replacement to observe before launch. Neither loss path materializes work,
+begins execution, or enters reconciliation. The worker never recreates a missing
+root.
 Put the state root on storage whose loss/recovery policy matches the PostgreSQL
 database; an incomplete journal is a reconciliation
 event, not permission to guess success.
