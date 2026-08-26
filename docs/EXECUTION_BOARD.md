@@ -755,7 +755,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
 | FG-080 | P1 | TODO | Reproducible packaging: single self-contained artifact + image, digest recorded | two builds of the same commit produce the same digest |
-| FG-081 | P1 | TODO | Migration + rollback rehearsal: forward, back, forward; logical DB hash identical | zero foreign-key violations at each phase |
+| FG-081 | P1 | **DONE** | Migration + restore-based rollback rehearsal: N−1 → N → N−1 → N over non-empty durable state | rollback logical hash equals pre-upgrade; second-forward equals first-forward; all 4 phases rebuild cleanly and revalidate every FK; archive/data/FK/forward fault controls and 4 direct mutants reject — [→ detail](tickets/FG-081.md) |
 | FG-082 | P1 | TODO | Crash / kill / reboot campaign: running + queued builds reconcile, no escaped child | integrity check clean; one recovery event per build |
 | FG-083 | P2 | TODO | Saturation: bounded queue, explicit HTTP 503 with `Retry-After`, no unbounded executor | N-trigger lanes admit exactly the configured capacity |
 | FG-084 | P2 | TODO | Soak: ≥ 10 min sustained, memory and FD bounded, zero restarts | RSS ceiling and FD range recorded |

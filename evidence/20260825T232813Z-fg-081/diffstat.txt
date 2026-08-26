@@ -1,0 +1,7 @@
+ .github/workflows/gate.yml                |  11 +
+ docs/EXECUTION_BOARD.md                   |   2 +-
+ docs/runbooks/migration-rollback.md       |  80 ++++++++
+ docs/tickets/FG-081.md                    |  43 ++++
+ scripts/migration-rollback-drill.sh       | 325 ++++++++++++++++++++++++++++++
+ scripts/prove-migration-rollback-drill.sh | 132 ++++++++++++
+ 6 files changed, 592 insertions(+), 1 deletion(-)

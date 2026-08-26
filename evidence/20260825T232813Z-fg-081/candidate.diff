@@ -1,0 +1,636 @@
+diff --git a/.github/workflows/gate.yml b/.github/workflows/gate.yml
+index b324fe9..754c379 100644
+--- a/.github/workflows/gate.yml
++++ b/.github/workflows/gate.yml
+@@ -133,3 +133,14 @@ jobs:
+         run: |
+           ./scripts/prove-backup-restore-drill.sh
+           ./scripts/backup-restore-drill.sh
++
++      - name: migration rollback rehearsal and hostile proof (FG-081)
++        # Restore-based rollback is a PostgreSQL property. Run the positive
++        # forward/back/forward sequence and its false-green controls against the
++        # same exact-major service/client container used by the backup drill.
++        env:
++          FOGELL_CONTAINER_RUNTIME: docker
++          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
++        run: |
++          ./scripts/prove-migration-rollback-drill.sh
++          ./scripts/migration-rollback-drill.sh
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 3bcbaa1..a0891f9 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -755,7 +755,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | id | pri | status | item | acceptance |
+ |---|---|---|---|---|
+ | FG-080 | P1 | TODO | Reproducible packaging: single self-contained artifact + image, digest recorded | two builds of the same commit produce the same digest |
+-| FG-081 | P1 | TODO | Migration + rollback rehearsal: forward, back, forward; logical DB hash identical | zero foreign-key violations at each phase |
++| FG-081 | P1 | **DONE** | Migration + restore-based rollback rehearsal: N−1 → N → N−1 → N over non-empty durable state | rollback logical hash equals pre-upgrade; second-forward equals first-forward; all 4 phases rebuild cleanly and revalidate every FK; archive/data/FK/forward fault controls and 4 direct mutants reject — [→ detail](tickets/FG-081.md) |
+ | FG-082 | P1 | TODO | Crash / kill / reboot campaign: running + queued builds reconcile, no escaped child | integrity check clean; one recovery event per build |
+ | FG-083 | P2 | TODO | Saturation: bounded queue, explicit HTTP 503 with `Retry-After`, no unbounded executor | N-trigger lanes admit exactly the configured capacity |
+ | FG-084 | P2 | TODO | Soak: ≥ 10 min sustained, memory and FD bounded, zero restarts | RSS ceiling and FD range recorded |
+diff --git a/docs/runbooks/migration-rollback.md b/docs/runbooks/migration-rollback.md
+new file mode 100644
+index 0000000..6adebfe
+--- /dev/null
++++ b/docs/runbooks/migration-rollback.md
+@@ -0,0 +1,80 @@
++# Migration rollback rehearsal
++
++Fogell rolls a failed schema upgrade back by restoring the pre-upgrade custom
++archive, not by attempting handwritten destructive `DOWN` SQL. The restored
++database is then the source for a later retry of the same forward migration.
++
++The automated rehearsal is intentionally destructive only inside database names
++beginning `fogell_fg081_`:
++
++```bash
++FOGELL_PG_CONTAINER=<postgres-container> \
++  ./scripts/migration-rollback-drill.sh
++```
++
++It requires `psql`, `pg_dump`, and `pg_restore` from the same PostgreSQL major as
++the server. The tools are taken from the named database container. The role must
++be able to create and drop the drill's private databases and apply migrations.
++
++## What the drill does
++
++1. Validates a contiguous migration inventory and pins every migration by
++   SHA-256.
++2. Creates a private database at N−1 and seeds all durable tables, including a
++   live fenced effect checkpoint and an immutable retry decision.
++3. Rebuilds N−1 into a clean database. Restoration re-creates every foreign key;
++   any orphan makes `pg_restore --single-transaction --exit-on-error` fail.
++4. Takes a custom-format rollback archive and records its SHA-256.
++5. Applies migration N, checks its expected tenant-composite keys, and performs
++   another clean-room rebuild.
++6. Rechecks the archive bytes, drops only the private primary database, restores
++   N−1, and requires the canonical logical hash to equal the original N−1 hash.
++7. Applies N again, clean-room rebuilds it, and requires its canonical logical
++   hash to equal the first N state.
++8. Removes every private database and scratch file on success, refusal, signal,
++   or tool failure.
++
++The logical hash binds canonical clean-room schema, all business-table INSERT
++rows, migration version/checksum ledger, and sequence definitions/state. Raw
++custom-archive bytes are integrity-checked but are not claimed reproducible.
++
++Run the hostile proof alongside the drill:
++
++```bash
++FOGELL_PG_CONTAINER=<postgres-container> \
++  ./scripts/prove-migration-rollback-drill.sh
++```
++
++It plants archive tampering, rollback data drift, a missing forward FK, and a
++skipped second forward. It also installs byte-changing mutants that remove the
++archive, rollback, and second-forward comparisons and broaden the private
++database namespace. Every candidate fault must refuse, while each mutant must
++expose the corresponding false pass.
++
++## Production operator sequence
++
++The automation never points at a production database. For a production upgrade:
++
++1. Quiesce writers and record the deployed commit, schema-migration ledger, and
++   PostgreSQL server/client major versions.
++2. Create a custom archive with `pg_dump --format=custom`; record its SHA-256 and
++   prove `pg_restore --list` can read it. Copy it to the approved backup location.
++3. Rehearse restoring that exact archive into a new empty database before
++   touching the live database.
++4. Apply the migration through Fogell's checksummed migration runner. Validate
++   the ledger, constraints, and application smoke tests before reopening writes.
++5. If rollback is required, quiesce again and retain the failed-forward database
++   for diagnosis. Restore the recorded archive into a new empty database with
++   `--single-transaction --exit-on-error`, validate it, then switch the controller
++   connection to the restored database. Do not overwrite the failed database.
++6. Retry the forward migration only after the failure is understood; rehearse
++   against a copy first.
++
++## Boundaries
++
++The drill covers only the newest migration against the immediately preceding
++schema, with no concurrent writers. It proves logical equality and FK-clean
++restore on one PostgreSQL major. It does not prove downgrade SQL, cross-major
++upgrade, physical-page equality, point-in-time recovery, encryption, off-host
++retention, production-scale duration, replication/failover, or a live connection
++cutover. Those require separate operational tickets and evidence.
+diff --git a/docs/tickets/FG-081.md b/docs/tickets/FG-081.md
+new file mode 100644
+index 0000000..0646778
+--- /dev/null
++++ b/docs/tickets/FG-081.md
+@@ -0,0 +1,43 @@
++# FG-081 — migration and rollback rehearsal
++
++Status: **DONE locally; publication remains owner-controlled**.
++
++Fogell now has an executable restore-based rollback contract for its newest
++PostgreSQL migration. `scripts/migration-rollback-drill.sh` constructs the full
++N−1 state, applies N, restores N−1 from a hash-bound custom archive, and applies N
++again. Each of the four observed phases—pre, first forward, rollback, and second
++forward—is rebuilt in a separate clean database so PostgreSQL must re-create and
++validate every foreign key from the stored rows.
++
++The fixture covers organizations, projects, builds, nodes, three attempt states,
++events, outbox, logs, an authority-valid effect checkpoint, a canonical retry
++child, the retry decision trigger's publications, migration ledger rows, and
++sequence state. This is deliberately more than an empty-schema migration test.
++
++The logical digest combines canonical clean-room schema, sorted business-table
++rows, exact migration version/checksum ledger, and sequence configuration/state.
++The rollback digest must equal pre-upgrade; second-forward must equal first-
++forward. The rollback archive is SHA-256 checked both before and immediately
++before use.
++
++The hostile proof runs a positive live rehearsal, requires four candidate
++faults to refuse, and kills four byte-changing mutants. The covered false-green
++paths are archive tampering after hashing, restored data drift, missing latest-
++migration FK, skipped second forward, removal of each principal hash comparison,
++and an overbroad database namespace.
++
++The CI workflow runs the proof and standalone drill against its PostgreSQL 16
++service using server-matched client tools. The operator procedure and explicit
++non-goals are in `docs/runbooks/migration-rollback.md`.
++
++Local HeMan development result for migrations `0004 → 0005 → 0004 → 0005`:
++
++- rollback canonical hash equalled the pre-upgrade hash;
++- second-forward canonical hash equalled first-forward;
++- all four clean-room FK rebuilds succeeded;
++- all four planted candidate faults refused;
++- all four byte-changing mutants were killed;
++- every generated `fogell_fg081_*` database was removed.
++
++The authoritative exact-head repository gate, evidence manifest, and signed
++commit identity are recorded at closure rather than predicted here.
+diff --git a/scripts/migration-rollback-drill.sh b/scripts/migration-rollback-drill.sh
+new file mode 100755
+index 0000000..816a145
+--- /dev/null
++++ b/scripts/migration-rollback-drill.sh
+@@ -0,0 +1,325 @@
++#!/usr/bin/env bash
++# FG-081 — rehearse the newest migration forward, restore-based rollback, and
++# the same forward migration again against real PostgreSQL.
++set -euo pipefail
++export LC_ALL=C
++
++die() {
++  printf 'FG-081 REFUSED: %s\n' "$*" >&2
++  exit 1
++}
++
++valid_database_name() {
++  [[ "${1:-}" =~ ^fogell_fg081_[0-9_]+_(primary|audit_(pre|forward1|rollback|forward2))$ ]]
++}
++
++if [[ "${1:-}" == "--validate-db-name" ]]; then
++  [[ $# -eq 2 ]] || die "--validate-db-name requires exactly one value"
++  valid_database_name "$2" || die "database name is outside the private rehearsal namespace: $2"
++  printf 'VALID %s\n' "$2"
++  exit 0
++elif [[ $# -ne 0 ]]; then
++  die "unexpected arguments"
++fi
++
++runtime="${FOGELL_CONTAINER_RUNTIME:-docker}"
++container="${FOGELL_PG_CONTAINER:-}"
++pg_user="${FOGELL_PG_USER:-fogell}"
++admin_db="${FOGELL_PG_ADMIN_DB:-fogell}"
++[[ "$runtime" == "docker" || "$runtime" == "podman" ]] || die "container runtime must be docker or podman"
++command -v "$runtime" >/dev/null 2>&1 || die "$runtime is unavailable"
++[[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "FOGELL_PG_CONTAINER must be a literal container name or id"
++[[ "$pg_user" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsafe PostgreSQL user"
++[[ "$admin_db" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsafe administrative database"
++
++for fault in \
++  FG081_TEST_CORRUPT_ARCHIVE_AFTER_HASH \
++  FG081_TEST_CORRUPT_ROLLBACK_DATA \
++  FG081_TEST_DROP_FORWARD_FK \
++  FG081_TEST_SKIP_SECOND_FORWARD; do
++  value="${!fault:-0}"
++  [[ "$value" == "0" || "$value" == "1" ]] || die "$fault must be 0 or 1"
++done
++
++script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++repo_root="${FG081_REPO_ROOT:-$(cd "$script_dir/.." && pwd)}"
++[[ "$repo_root" == /* && -d "$repo_root" ]] || die "FG081_REPO_ROOT must be an existing absolute directory"
++migration_root="$repo_root/src/Fogell.Store/migrations"
++[[ -d "$migration_root" ]] || die "migration directory is missing"
++
++run_tool() { "$runtime" exec -i "$container" "$@"; }
++psql_admin() { run_tool psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$pg_user" -d "$admin_db" "$@"; }
++psql_db() {
++  local database=$1
++  shift
++  valid_database_name "$database" || die "database escaped rehearsal namespace: $database"
++  run_tool psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$pg_user" -d "$database" "$@"
++}
++
++sha256_file() {
++  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
++  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
++  else die "no SHA-256 utility is available"
++  fi
++}
++
++token="$(date -u +%Y%m%d%H%M%S)_$$_${RANDOM}"
++[[ "$token" =~ ^[0-9_]+$ ]] || die "internal token is malformed"
++primary_db="fogell_fg081_${token}_primary"
++valid_database_name "$primary_db" || die "generated primary database name is unsafe"
++
++scratch="$(mktemp -d "${TMPDIR:-/tmp}/fogell-fg081.XXXXXX")"
++case "$scratch" in
++  "${TMPDIR:-/tmp}"/fogell-fg081.*) ;;
++  *) die "unsafe scratch path: $scratch" ;;
++esac
++declare -A created=()
++completed=0
++validated_hash=""
++
++drop_database() {
++  local database=$1
++  valid_database_name "$database" || return 97
++  psql_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" >/dev/null
++  psql_admin -c "DROP DATABASE $database" >/dev/null
++  unset "created[$database]"
++}
++
++create_database() {
++  local database=$1
++  valid_database_name "$database" || die "refusing to create unsafe database: $database"
++  local present
++  present="$(psql_admin -c "SELECT count(*) FROM pg_database WHERE datname = '$database'" | tr -d '[:space:]')"
++  [[ "$present" == "0" ]] || die "generated database already exists: $database"
++  psql_admin -c "CREATE DATABASE $database" >/dev/null
++  created["$database"]=1
++}
++
++cleanup() {
++  local original_rc=$?
++  local cleanup_rc=0
++  trap - EXIT INT TERM
++  set +e
++  for database in "${!created[@]}"; do
++    drop_database "$database" || cleanup_rc=1
++  done
++  case "$scratch" in
++    "${TMPDIR:-/tmp}"/fogell-fg081.*) rm -rf -- "$scratch" || cleanup_rc=1 ;;
++    *) cleanup_rc=1 ;;
++  esac
++  if [[ "$cleanup_rc" -ne 0 ]]; then
++    printf 'FG-081 REFUSED: cleanup did not remove only owned databases and scratch\n' >&2
++    exit 1
++  fi
++  if [[ "$original_rc" -eq 0 && "$completed" -ne 1 ]]; then
++    printf 'FG-081 REFUSED: drill exited before every phase completed\n' >&2
++    exit 1
++  fi
++  exit "$original_rc"
++}
++trap cleanup EXIT
++trap 'exit 130' INT
++trap 'exit 143' TERM
++
++server_version_num="$(psql_admin -c 'SHOW server_version_num' | tr -d '[:space:]')"
++[[ "$server_version_num" =~ ^[0-9]{6}$ ]] || die "server version is malformed"
++server_major=$((10#$server_version_num / 10000))
++for tool in psql pg_dump pg_restore; do
++  version="$(run_tool "$tool" --version)" || die "$tool --version failed"
++  [[ "$version" =~ ([0-9]+)\. ]] || die "cannot parse $tool version"
++  [[ "${BASH_REMATCH[1]}" -eq "$server_major" ]] || die "$tool/server major mismatch"
++done
++
++shopt -s nullglob
++migrations=("$migration_root"/*.sql)
++shopt -u nullglob
++[[ "${#migrations[@]}" -ge 2 ]] || die "at least two migrations are required"
++declare -A seen_versions=()
++prior_number=0
++versions=()
++checksums=()
++for migration in "${migrations[@]}"; do
++  filename="$(basename "$migration")"
++  [[ "$filename" =~ ^([0-9]{4})_[a-z0-9_]+\.sql$ ]] || die "malformed migration filename: $filename"
++  version="${BASH_REMATCH[1]}"
++  number=$((10#$version))
++  [[ "$number" -eq $((prior_number + 1)) ]] || die "migration versions are not contiguous at $version"
++  [[ -z "${seen_versions[$version]+x}" ]] || die "duplicate migration version: $version"
++  seen_versions["$version"]=1
++  versions+=("$version")
++  checksum="$(sha256_file "$migration")"
++  [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || die "malformed migration checksum"
++  checksums+=("$checksum")
++  prior_number=$number
++done
++latest_index=$((${#migrations[@]} - 1))
++latest_version="${versions[$latest_index]}"
++previous_version="${versions[$((latest_index - 1))]}"
++
++apply_migration() {
++  local database=$1 index=$2
++  psql_db "$database" < "${migrations[$index]}" >/dev/null
++  psql_db "$database" -c \
++    "INSERT INTO schema_migrations (version, checksum, applied_at) VALUES ('${versions[$index]}', '${checksums[$index]}', '2026-08-26T00:00:00Z')" >/dev/null
++}
++
++create_database "$primary_db"
++psql_db "$primary_db" -c \
++  "CREATE TABLE schema_migrations (version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT clock_timestamp())" >/dev/null
++for ((index=0; index<latest_index; index++)); do apply_migration "$primary_db" "$index"; done
++
++# The pre-upgrade fixture reaches every tenant-bearing table available at N-1,
++# including live effect authority and an immutable retry decision.
++psql_db "$primary_db" >/dev/null <<'SQL'
++UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
++INSERT INTO organizations (id, slug) VALUES ('10000000-0000-0000-0000-000000000081', 'fg081-org');
++INSERT INTO projects (id, organization_id, slug)
++VALUES ('20000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081', 'fg081-project');
++INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, created_at)
++VALUES ('30000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
++        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, '2026-08-25T01:00:00Z');
++INSERT INTO nodes (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
++VALUES ('40000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
++        '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux','docker'], 'running');
++INSERT INTO attempts
++  (id, organization_id, node_id, ordinal, retry_of, state, fence, restore_epoch, lease_owner, lease_expires_at, result, created_at)
++VALUES
++  ('50000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
++   '40000000-0000-0000-0000-000000000081', 0, NULL, 'terminal', 3, 2, NULL, NULL, 'failure', '2026-08-25T01:01:00Z'),
++  ('50000000-0000-0000-0000-000000000082', '10000000-0000-0000-0000-000000000081',
++   '40000000-0000-0000-0000-000000000081', 1, '50000000-0000-0000-0000-000000000081', 'queued', 0, 2, NULL, NULL, NULL, '2026-08-25T01:02:00Z'),
++  ('50000000-0000-0000-0000-000000000083', '10000000-0000-0000-0000-000000000081',
++   '40000000-0000-0000-0000-000000000081', 2, NULL, 'running', 4, 2, 'agent-81', '2099-01-01T00:00:00Z', NULL, '2026-08-25T01:03:00Z');
++INSERT INTO events (organization_id, build_id, attempt_id, kind, payload, created_at)
++VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-000000000081',
++        '50000000-0000-0000-0000-000000000083', 'fg081.fixture', '{"unicode":"π","flags":[true,false]}'::jsonb, '2026-08-25T01:04:00Z');
++INSERT INTO outbox (organization_id, topic, body, published_at, created_at)
++VALUES ('10000000-0000-0000-0000-000000000081', 'fg081.fixture', '{"ordinal":81}'::jsonb, NULL, '2026-08-25T01:05:00Z');
++INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body, created_at)
++VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-000000000081',
++        '50000000-0000-0000-0000-000000000083', 81, 'quoted '' value | unicode π', '2026-08-25T01:06:00Z');
++INSERT INTO effect_checkpoints
++  (organization_id, attempt_id, effect_key, fence, authority_owner, restore_epoch, payload_digest, state, prepared_at)
++VALUES ('10000000-0000-0000-0000-000000000081', '50000000-0000-0000-0000-000000000083',
++        'publish', 4, 'agent-81', 2, decode(repeat('ab', 32), 'hex'), 'prepared', '2026-08-25T01:07:00Z');
++INSERT INTO retry_decisions
++  (organization_id, parent_attempt_id, parent_node_id, parent_ordinal, parent_retry_of,
++   parent_restore_epoch, attempt_limit, outcome, child_attempt_id, dead_letter_reason, decided_at)
++VALUES ('10000000-0000-0000-0000-000000000081', '50000000-0000-0000-0000-000000000081',
++        '40000000-0000-0000-0000-000000000081', 0, NULL, 2, 3, 'child_created',
++        '50000000-0000-0000-0000-000000000082', NULL, '2026-08-25T01:08:00Z');
++SELECT setval(pg_get_serial_sequence('events','id'), 810, true);
++SELECT setval(pg_get_serial_sequence('outbox','id'), 820, true);
++SELECT setval(pg_get_serial_sequence('log_chunks','id'), 830, true);
++SQL
++
++normalize_schema() {
++  awk '
++    /^\\restrict / { token=$2; print "\\restrict FG081_TRANSPORT_KEY"; next }
++    /^\\unrestrict / { if ($2 != token) exit 41; print "\\unrestrict FG081_TRANSPORT_KEY"; next }
++    { print }
++  ' "$1" > "$2" || die "schema transport guards are malformed"
++}
++
++capture_phase() {
++  local database=$1 label=$2 prefix="$scratch/$2"
++  run_tool pg_dump -U "$pg_user" -d "$database" --schema-only --format=plain --encoding=UTF8 --quote-all-identifiers > "$prefix.schema.raw"
++  normalize_schema "$prefix.schema.raw" "$prefix.schema"
++  if ! run_tool pg_dump -U "$pg_user" -d "$database" --data-only --inserts --column-inserts --rows-per-insert=1 \
++    --exclude-table=schema_migrations --encoding=UTF8 > "$prefix.data.raw" 2> "$prefix.data.stderr"; then
++    cat "$prefix.data.stderr" >&2
++    die "$label data inventory dump failed"
++  fi
++  awk '/^INSERT INTO / { print }' "$prefix.data.raw" | LC_ALL=C sort > "$prefix.data"
++  psql_db "$database" -c "SELECT version || E'\\t' || checksum FROM schema_migrations ORDER BY version" > "$prefix.ledger"
++  psql_db "$database" > "$prefix.sequences" <<'SQL'
++SELECT format(
++  'SELECT %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || %L || E''\t'' || last_value::text || E''\t'' || is_called::text FROM %I.%I',
++  n.nspname, c.relname, s.seqstart::text, s.seqincrement::text,
++  s.seqmax::text, s.seqmin::text, s.seqcache::text, s.seqcycle::text,
++  n.nspname, c.relname)
++FROM pg_class c
++JOIN pg_namespace n ON n.oid = c.relnamespace
++JOIN pg_sequence s ON s.seqrelid = c.oid
++WHERE n.nspname = 'public'
++ORDER BY c.relname
++\gexec
++SQL
++  [[ -s "$prefix.schema" && -s "$prefix.data" && -s "$prefix.ledger" && -s "$prefix.sequences" ]] || die "empty logical inventory at $label"
++  {
++    printf 'schema %s\n' "$(sha256_file "$prefix.schema")"
++    printf 'data %s\n' "$(sha256_file "$prefix.data")"
++    printf 'ledger %s\n' "$(sha256_file "$prefix.ledger")"
++    printf 'sequences %s\n' "$(sha256_file "$prefix.sequences")"
++  } > "$prefix.components"
++  sha256_file "$prefix.components"
++}
++
++validate_fk_rebuild() {
++  local database=$1 label=$2 audit_db="fogell_fg081_${token}_audit_$2"
++  local invalid fk_count
++  invalid="$(psql_db "$database" -c "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND NOT convalidated" | tr -d '[:space:]')"
++  fk_count="$(psql_db "$database" -c "SELECT count(*) FROM pg_constraint WHERE contype = 'f'" | tr -d '[:space:]')"
++  [[ "$invalid" == "0" && "$fk_count" -gt 0 ]] || die "$label has invalid or no foreign keys"
++  run_tool pg_dump -U "$pg_user" -d "$database" --format=custom > "$scratch/$label.audit.custom"
++  [[ -s "$scratch/$label.audit.custom" ]] || die "$label clean-room archive is empty"
++  create_database "$audit_db"
++  run_tool pg_restore -U "$pg_user" -d "$audit_db" --exit-on-error --single-transaction < "$scratch/$label.audit.custom" >/dev/null \
++    || die "$label clean-room FK rebuild failed"
++  audit_invalid="$(psql_db "$audit_db" -c "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND NOT convalidated" | tr -d '[:space:]')"
++  audit_count="$(psql_db "$audit_db" -c "SELECT count(*) FROM pg_constraint WHERE contype = 'f'" | tr -d '[:space:]')"
++  [[ "$audit_invalid" == "0" && "$audit_count" == "$fk_count" ]] || die "$label clean-room FK inventory differs"
++  source_hash="$(capture_phase "$database" "$label-source")"
++  audit_hash="$(capture_phase "$audit_db" "$label-audit")"
++  cmp -s "$scratch/$label-source.data" "$scratch/$label-audit.data" || die "$label clean-room data differs"
++  cmp -s "$scratch/$label-source.ledger" "$scratch/$label-audit.ledger" || die "$label clean-room ledger differs"
++  cmp -s "$scratch/$label-source.sequences" "$scratch/$label-audit.sequences" || die "$label clean-room sequences differ"
++  # The restored schema is the canonical logical representation. PostgreSQL's
++  # parser removes semantically redundant expression parentheses during a
++  # dump/restore, so raw pre-restore pg_dump text is transport syntax, not a
++  # stable logical schema oracle.
++  validated_hash="$audit_hash"
++  drop_database "$audit_db"
++}
++
++validate_fk_rebuild "$primary_db" pre
++pre_hash="$validated_hash"
++rollback_archive="$scratch/rollback-pre-$latest_version.custom"
++run_tool pg_dump -U "$pg_user" -d "$primary_db" --format=custom > "$rollback_archive" || die "pre-upgrade rollback dump failed"
++[[ -s "$rollback_archive" ]] || die "pre-upgrade rollback archive is empty"
++rollback_archive_sha="$(sha256_file "$rollback_archive")"
++[[ "$rollback_archive_sha" =~ ^[0-9a-f]{64}$ ]] || die "rollback archive hash is malformed"
++if [[ "${FG081_TEST_CORRUPT_ARCHIVE_AFTER_HASH:-0}" == "1" ]]; then printf X >> "$rollback_archive"; fi
++
++apply_migration "$primary_db" "$latest_index"
++if [[ "${FG081_TEST_DROP_FORWARD_FK:-0}" == "1" ]]; then
++  psql_db "$primary_db" -c "ALTER TABLE log_chunks DROP CONSTRAINT log_chunks_attempt_tenant_fk" >/dev/null
++fi
++latest_guards="$(psql_db "$primary_db" -c "SELECT count(*) FROM pg_constraint WHERE conname IN ('events_attempt_tenant_fk','log_chunks_attempt_tenant_fk')" | tr -d '[:space:]')"
++[[ "$latest_guards" == "2" ]] || die "latest migration did not install both tenant-composite attempt keys"
++validate_fk_rebuild "$primary_db" forward1
++forward1_hash="$validated_hash"
++
++[[ "$(sha256_file "$rollback_archive")" == "$rollback_archive_sha" ]] || die "rollback archive changed after its hash was recorded"
++drop_database "$primary_db"
++create_database "$primary_db"
++run_tool pg_restore -U "$pg_user" -d "$primary_db" --exit-on-error --single-transaction < "$rollback_archive" >/dev/null \
++  || die "restore-based rollback failed"
++if [[ "${FG081_TEST_CORRUPT_ROLLBACK_DATA:-0}" == "1" ]]; then
++  psql_db "$primary_db" -c "INSERT INTO outbox (id, organization_id, topic, body) VALUES (999999, '10000000-0000-0000-0000-000000000081', 'fault', '{}'::jsonb)" >/dev/null
++fi
++validate_fk_rebuild "$primary_db" rollback
++rollback_hash="$validated_hash"
++[[ "$rollback_hash" == "$pre_hash" ]] || die "rollback logical hash differs from the pre-upgrade state"
++if [[ "${FG081_TEST_CORRUPT_ROLLBACK_DATA:-0}" == "1" ]]; then
++  psql_db "$primary_db" -c "DELETE FROM outbox WHERE id = 999999" >/dev/null
++fi
++
++if [[ "${FG081_TEST_SKIP_SECOND_FORWARD:-0}" != "1" ]]; then apply_migration "$primary_db" "$latest_index"; fi
++validate_fk_rebuild "$primary_db" forward2
++forward2_hash="$validated_hash"
++[[ "$forward2_hash" == "$forward1_hash" ]] || die "second forward logical hash differs from the first forward state"
++
++completed=1
++printf 'FG-081 PASS previous=%s latest=%s pre=%s rollback=%s forward1=%s forward2=%s archive-sha256=%s fk-phases=4\n' \
++  "$previous_version" "$latest_version" "$pre_hash" "$rollback_hash" "$forward1_hash" "$forward2_hash" "$rollback_archive_sha"
+diff --git a/scripts/prove-migration-rollback-drill.sh b/scripts/prove-migration-rollback-drill.sh
+new file mode 100755
+index 0000000..65f8b41
+--- /dev/null
++++ b/scripts/prove-migration-rollback-drill.sh
+@@ -0,0 +1,132 @@
++#!/usr/bin/env bash
++# FG-081 hostile proof. Requires the same disposable PostgreSQL container as the
++# live drill. Candidate faults must refuse; byte-changing comparison mutants must
++# expose the corresponding false PASS.
++set -euo pipefail
++export LC_ALL=C
++
++script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++repo_root="$(cd "$script_dir/.." && pwd)"
++candidate="$script_dir/migration-rollback-drill.sh"
++[[ -x "$candidate" ]] || { echo "FG-081 proof: candidate is missing or non-executable" >&2; exit 1; }
++[[ -n "${FOGELL_PG_CONTAINER:-}" ]] || { echo "FG-081 proof: FOGELL_PG_CONTAINER is required" >&2; exit 1; }
++
++scratch="$(mktemp -d "${TMPDIR:-/tmp}/fogell-fg081-proof.XXXXXX")"
++case "$scratch" in
++  "${TMPDIR:-/tmp}"/fogell-fg081-proof.*) ;;
++  *) echo "FG-081 proof: unsafe scratch path" >&2; exit 1 ;;
++esac
++cleanup() {
++  local rc=$?
++  trap - EXIT INT TERM
++  case "$scratch" in
++    "${TMPDIR:-/tmp}"/fogell-fg081-proof.*) rm -rf -- "$scratch" ;;
++    *) rc=1 ;;
++  esac
++  exit "$rc"
++}
++trap cleanup EXIT
++trap 'exit 130' INT
++trap 'exit 143' TERM
++
++sha256_file() {
++  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
++  else shasum -a 256 "$1" | awk '{print $1}'
++  fi
++}
++candidate_sha="$(sha256_file "$candidate")"
++
++run_case() {
++  local script=$1 label=$2 fault=${3:-}
++  local rc=0
++  if [[ -n "$fault" ]]; then
++    env FG081_REPO_ROOT="$repo_root" "$fault"=1 "$script" > "$scratch/$label.log" 2>&1 || rc=$?
++  else
++    env FG081_REPO_ROOT="$repo_root" "$script" > "$scratch/$label.log" 2>&1 || rc=$?
++  fi
++  printf '%s\n' "$rc" > "$scratch/$label.exit"
++  return "$rc"
++}
++
++expect_pass() {
++  local script=$1 label=$2 fault=${3:-}
++  run_case "$script" "$label" "$fault" \
++    || { echo "FG-081 proof expected PASS: $label" >&2; tail -40 "$scratch/$label.log" >&2; exit 1; }
++  grep -q '^FG-081 PASS ' "$scratch/$label.log" \
++    || { echo "FG-081 proof got zero exit without PASS: $label" >&2; exit 1; }
++}
++
++expect_refusal() {
++  local script=$1 label=$2 fault=$3 expected=$4
++  if run_case "$script" "$label" "$fault"; then
++    echo "FG-081 proof expected refusal: $label" >&2
++    tail -40 "$scratch/$label.log" >&2
++    exit 1
++  fi
++  grep -Fq "$expected" "$scratch/$label.log" \
++    || { echo "FG-081 proof refusal had the wrong reason: $label" >&2; tail -40 "$scratch/$label.log" >&2; exit 1; }
++  ! grep -q '^FG-081 PASS ' "$scratch/$label.log" \
++    || { echo "FG-081 proof refusal emitted a false PASS: $label" >&2; exit 1; }
++  printf '  refused %-28s %s\n' "$label" "$expected"
++}
++
++make_mutant() {
++  local name=$1 output="$scratch/$1.sh"
++  cp "$candidate" "$output"
++  chmod +x "$output"
++  printf '%s\n' "$output"
++}
++
++assert_mutant() {
++  local mutant=$1
++  bash -n "$mutant"
++  [[ "$(sha256_file "$mutant")" != "$candidate_sha" ]] \
++    || { echo "FG-081 proof mutation did not change bytes: $mutant" >&2; exit 1; }
++  [[ "$(sha256_file "$candidate")" == "$candidate_sha" ]] \
++    || { echo "FG-081 proof changed the candidate" >&2; exit 1; }
++}
++
++echo '=== FG-081 positive live control ==='
++expect_pass "$candidate" positive
++
++echo '=== FG-081 candidate fault refusals ==='
++expect_refusal "$candidate" archive-tamper FG081_TEST_CORRUPT_ARCHIVE_AFTER_HASH \
++  'rollback archive changed after its hash was recorded'
++expect_refusal "$candidate" rollback-drift FG081_TEST_CORRUPT_ROLLBACK_DATA \
++  'rollback logical hash differs from the pre-upgrade state'
++expect_refusal "$candidate" missing-forward-fk FG081_TEST_DROP_FORWARD_FK \
++  'latest migration did not install both tenant-composite attempt keys'
++expect_refusal "$candidate" skipped-second-forward FG081_TEST_SKIP_SECOND_FORWARD \
++  'second forward logical hash differs from the first forward state'
++
++echo '=== FG-081 direct comparison mutants ==='
++m1="$(make_mutant m1-ignore-archive-rehash)"
++perl -0pi -e 's/\[\[ "\$\(sha256_file "\$rollback_archive"\)" == "\$rollback_archive_sha" \]\] \|\| die "rollback archive changed after its hash was recorded"/: # archive rehash removed/' "$m1"
++assert_mutant "$m1"
++expect_pass "$m1" m1-exposed FG081_TEST_CORRUPT_ARCHIVE_AFTER_HASH
++echo '  killed archive-rehash mutant'
++
++m2="$(make_mutant m2-ignore-rollback-hash)"
++perl -0pi -e 's/\[\[ "\$rollback_hash" == "\$pre_hash" \]\] \|\| die "rollback logical hash differs from the pre-upgrade state"/: # rollback hash comparison removed/' "$m2"
++assert_mutant "$m2"
++expect_pass "$m2" m2-exposed FG081_TEST_CORRUPT_ROLLBACK_DATA
++echo '  killed rollback-hash mutant'
++
++m3="$(make_mutant m3-ignore-forward-hash)"
++perl -0pi -e 's/\[\[ "\$forward2_hash" == "\$forward1_hash" \]\] \|\| die "second forward logical hash differs from the first forward state"/: # forward hash comparison removed/' "$m3"
++assert_mutant "$m3"
++expect_pass "$m3" m3-exposed FG081_TEST_SKIP_SECOND_FORWARD
++echo '  killed forward-hash mutant'
++
++m4="$(make_mutant m4-broaden-database-prefix)"
++perl -0pi -e 's/\^fogell_fg081_/^fogell_/' "$m4"
++assert_mutant "$m4"
++if "$candidate" --validate-db-name fogell_123_primary >/dev/null 2>&1; then
++  echo 'FG-081 proof: candidate accepted a foreign database name' >&2; exit 1
++fi
++"$m4" --validate-db-name fogell_123_primary >/dev/null \
++  || { echo 'FG-081 proof: namespace mutant did not expose the foreign name' >&2; exit 1; }
++echo '  killed database-namespace mutant'
++
++[[ "$(sha256_file "$candidate")" == "$candidate_sha" ]] || { echo 'FG-081 proof: candidate hash drifted' >&2; exit 1; }
++printf 'FG-081 PROOF PASS: positive forward/back/forward rehearsal; 4 fault controls refused; 4 byte-changing mutants killed\n'

@@ -133,3 +133,14 @@ jobs:
         run: |
           ./scripts/prove-backup-restore-drill.sh
           ./scripts/backup-restore-drill.sh
+
+      - name: migration rollback rehearsal and hostile proof (FG-081)
+        # Restore-based rollback is a PostgreSQL property. Run the positive
+        # forward/back/forward sequence and its false-green controls against the
+        # same exact-major service/client container used by the backup drill.
+        env:
+          FOGELL_CONTAINER_RUNTIME: docker
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          ./scripts/prove-migration-rollback-drill.sh
+          ./scripts/migration-rollback-drill.sh
