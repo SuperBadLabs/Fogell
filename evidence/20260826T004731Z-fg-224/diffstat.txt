@@ -1,0 +1,19 @@
+ .github/workflows/gate.yml                         |  10 +
+ Fogell.slnx                                        |   1 +
+ docs/EXECUTION_BOARD.md                            |   5 +-
+ docs/runbooks/controller-host.md                   |  77 +++
+ docs/tickets/FG-028.md                             |  13 +-
+ docs/tickets/FG-224.md                             |  65 +++
+ scripts/prove-runnable-controller.sh               | 207 ++++++++
+ src/Fogell.Controller.Api/Router.fs                | 189 ++++---
+ src/Fogell.Controller.Host/Config.fs               | 107 ++++
+ .../Fogell.Controller.Host.fsproj                  |  16 +
+ src/Fogell.Controller.Host/Program.fs              |  93 ++++
+ src/Fogell.Controller.Host/Worker.fs               | 226 ++++++++
+ src/Fogell.Controller.Host/packages.lock.json      |  95 ++++
+ src/Fogell.Store/Store.fs                          | 586 +++++++++++++++++++--
+ .../migrations/0006_runnable_controller.sql        |  83 +++
+ tests/Fogell.Controller.Api.Tests/Tests.fs         |  67 ++-
+ tests/Fogell.Store.Tests/Tests.fs                  | 206 +++++++-
+ tools/Fogell.Run.Host/Program.fs                   |  64 ++-
+ 18 files changed, 1979 insertions(+), 131 deletions(-)

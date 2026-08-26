@@ -46,7 +46,9 @@ let private startServer () =
     Router.map
         { Store = store
           Auth = auth
-          DefaultTrustPool = "trusted-linux" }
+          TrustPool = "trusted-linux"
+          MaxPipelineBytes = 1024 * 1024
+          MaxLogChunks = 1000 }
         app
     |> ignore
 
@@ -150,6 +152,38 @@ let endpoints =
               let code2, body2 = send HttpMethod.Post url (Some token) (Some "api-1") (Some pipeline)
               Expect.equal code2 200 "replay is 200, not a second 201"
               Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
+          }
+
+          test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let firstCode, _ = send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some pipeline)
+              Expect.equal firstCode 201 "control admitted"
+              let changed = pipeline.Replace("echo 'hi'", "echo 'different'")
+              let conflictCode, conflict =
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
+              Expect.equal conflictCode 409 "substitution conflicts"
+              Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
+          }
+
+          test "request placement override and oversized source both fail before admission" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              use request = new HttpRequestMessage(HttpMethod.Post, url)
+              request.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+              request.Headers.TryAddWithoutValidation("idempotency-key", "placement-denied") |> ignore
+              request.Headers.TryAddWithoutValidation("fogell-trust-pool", "privileged") |> ignore
+              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/x-jenkinsfile")
+              use response = client.Send request
+              let denied = response.Content.ReadAsStringAsync().Result
+              Expect.equal (int response.StatusCode) 400 "placement header denied"
+              Expect.stringContains denied "placement_override_forbidden" "stable placement code"
+
+              let oversized = String('x', 1024 * 1024 + 1)
+              let tooLargeCode, tooLarge =
+                  send HttpMethod.Post url (Some token) (Some "oversized") (Some oversized)
+              Expect.equal tooLargeCode 413 "raw byte limit enforced"
+              Expect.stringContains tooLarge "pipeline_too_large" "stable size code"
           }
 
           test "a missing idempotency key is refused with a named code" {
@@ -257,6 +291,16 @@ let endpoints =
               Expect.stringContains missingBody "not_found" "unknown build is named"
           }
 
+          test "a malformed log cursor is refused instead of silently reading from zero" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, body = send HttpMethod.Post url (Some token) (Some "bad-cursor-api") (Some pipeline)
+              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let code, response = send HttpMethod.Get $"{url}/{buildId}/logs?from=banana" (Some token) None None
+              Expect.equal code 400 "invalid cursor"
+              Expect.stringContains response "invalid_log_cursor" "stable cursor code"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -323,6 +367,7 @@ let endpoints =
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let _, body = send HttpMethod.Post url (Some token) (Some "can-1") (Some pipeline)
               let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
 
               let code1, b1 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
               Expect.equal code1 202 "accepted"
@@ -332,16 +377,16 @@ let endpoints =
               Expect.equal code2 202 "a retry is idempotent, not an error"
               Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
 
-              use conn = new Npgsql.NpgsqlConnection(connectionString)
-              conn.Open()
-              use terminal = conn.CreateCommand()
-              terminal.CommandText <-
-                  "UPDATE builds SET status = 'succeeded', cancellation_requested = false
-                    WHERE organization_id = @o AND project_id = @p AND id = @b"
-              terminal.Parameters.AddWithValue("o", org.Value) |> ignore
-              terminal.Parameters.AddWithValue("p", project.Value) |> ignore
-              terminal.Parameters.AddWithValue("b", Guid.Parse buildId) |> ignore
-              Expect.equal (terminal.ExecuteNonQuery()) 1 "terminal control updates the exact build"
+              let fence =
+                  match store.OfferAttempt(org, AttemptId(Guid.Parse attemptId), "api-terminal", 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal"))
+                  "accepted"
+              match store.PublishTerminal(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal", Success) with
+              | Ok _ -> ()
+              | Error error -> failtestf "terminal roll-up failed: %s" error
 
               let terminalCode, terminalBody =
                   send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None

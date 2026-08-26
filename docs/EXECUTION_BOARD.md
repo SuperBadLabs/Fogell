@@ -259,7 +259,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 192 rows, 103 of them DONE, and the open
+**WHY THIS SECTION EXISTS.** The board carries 193 rows, 104 of them DONE, and the open
 89 are spread 4 / 39 / 36 / 10 across P0–P3. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
 until 2026-08-14, and 189 / 86 / 4-36-36-10 for the length of that same pass — FG-198 is the row it filed against itself, and it is the ONLY row added — the rest of the movement is a recount, not new work. NOTHING REGRESSED: two ids each covered two
 different tickets, so a count of unique ids reported 187 while 189 rows existed, and the
@@ -577,7 +577,7 @@ and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
 | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |
 | FG-027 | P1 | TODO | Retry semantics: never rewrite an attempt; one child attempt with immutable link; exhausted budget → dead-letter | replaying the retry decision returns the same child |
 | FG-027a | P1 | **PARTIAL** | Pure immutable retry-decision foundation, intentionally outside `Fogell.Store` | Signed input `7399fa68f6092029563787c9882ad7f18d266ce7` (tree `935c24f91b9e11c7c68ecd5a51c2eac23d0b5750`) adds a Domain law that creates one queued child below a zero-based attempt limit, returns `BudgetExhausted` at the boundary, and validates an exact prior result before replaying it. The decision binds the parent organization, node, ordinal, ancestry, restore epoch and original limit; a child gets the next ordinal, immutable parent link, initial fence and no lease. This is foundation only: there is no Store persistence, transaction/concurrency arbitration, dead-letter or outbox record, or scheduler/controller wiring, and terminal-status retry policy remains external. Parent FG-027 therefore remains TODO. Publication, CI and merge remain — [→ detail](tickets/FG-027a.md) |
-| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 10 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
+| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 11 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
 | FG-029 | P2 | TODO | SQLite single-user mode, explicitly labelled non-production | `KNOWN-LIMITATIONS` states it; startup logs the mode |
 
 ## Wave 3 — Execution and process lifecycle
@@ -736,6 +736,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
 | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
 | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
 | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+| FG-224 | P0 | **DONE** | Runnable, restart-discovered single-node controller | Fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth — [→ detail](tickets/FG-224.md) |
 | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
 | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
 | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |

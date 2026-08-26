@@ -2,9 +2,17 @@ module Fogell.Run.Host.Program
 
 open System
 open System.IO
+open System.Runtime.InteropServices
+open System.Text
 open Fogell.Domain
 open Fogell.Differential
 open Fogell.Journal
+
+[<DllImport("libc", SetLastError = true)>]
+extern int private prctl(int option, unativeint arg2, unativeint arg3, unativeint arg4, unativeint arg5)
+
+[<DllImport("libc")>]
+extern int private getppid()
 
 /// FG-112. The restart lane's HOST: runs a real Jenkinsfile through the real
 /// walker with the FG-025 journal wired in, as a separate killable process —
@@ -43,6 +51,42 @@ open Fogell.Journal
 /// usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]
 [<EntryPoint>]
 let main argv =
+    match Environment.GetEnvironmentVariable "FOGELL_EXPECTED_PARENT_PID" with
+    | null
+    | "" -> ()
+    | raw when OperatingSystem.IsLinux() ->
+        match Int32.TryParse raw with
+        | true, expected when expected > 1 ->
+            // PR_SET_PDEATHSIG=1, SIGKILL=9.  Set the signal first, then close
+            // the fork-to-prctl race by proving the configured parent still
+            // owns us.  This is opt-in so the standalone restart harness keeps
+            // its established process contract.
+            if prctl(1, unativeint 9, unativeint 0, unativeint 0, unativeint 0) <> 0 || getppid() <> expected then
+                eprintfn "controller parent identity changed before supervision was established; refusing"
+                exit 2
+        | _ ->
+            eprintfn "FOGELL_EXPECTED_PARENT_PID must be a positive process id"
+            exit 2
+    | _ ->
+        eprintfn "controller parent-death supervision is supported only on Linux"
+        exit 2
+
+    let eventPath =
+        match Environment.GetEnvironmentVariable "FOGELL_EVENT_FILE" with
+        | null
+        | "" -> None
+        | value -> Some(Path.GetFullPath value)
+
+    let eventGate = obj()
+
+    let emitEvent (body: string) =
+        eventPath
+        |> Option.iter (fun path ->
+            lock eventGate (fun () ->
+                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                let bytes = Encoding.UTF8.GetBytes(if isNull body then "" else body)
+                File.AppendAllText(path, Convert.ToBase64String(bytes) + "\n")))
+
     match Array.toList argv with
     | jenkinsfile :: workspaceRoot :: jobName :: journalArg :: rest when List.length rest <= 1 ->
         let approvalsArg = List.tryHead rest
@@ -172,6 +216,15 @@ let main argv =
         then
             eprintfn $"journal path is inside the workspace ({realWorkspace}) — the fresh-attempt wipe would unlink it; keep it controller-side"
             exit 2
+
+        match eventPath with
+        | Some path when
+            (resolve path).StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || path.StartsWith(workspaceFull + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ->
+            eprintfn $"event file is inside the workspace ({realWorkspace}) — keep controller protocol state outside build control"
+            exit 2
+        | _ -> ()
 
         // FG-046b: the approvals inbox is controller-side for the same reason and
         // by the same two checks — an inbox inside the workspace would have the
@@ -936,6 +989,7 @@ let main argv =
                     // failed attempt's records on the next resume
                     journal.Append(RetryAttemptStarted(stage, n))
                     journal.Sync()
+                    emitEvent $"retry-attempt: {stage}#{n}"
                     liveRetryStages.TryAdd(stage, 0uy) |> ignore
               RetryAttemptsSoFar =
                 fun stage -> Map.tryFind stage plan.RetryAttempts |> Option.defaultValue 1
@@ -943,17 +997,21 @@ let main argv =
                 fun stage i name ->
                     journal.Append(StepStarted(stage, i, name))
                     journal.Sync()
+                    emitEvent $"step-started: {stage}#{i} {name}"
               // WalkerOrchestration calls this before OnStepFinished. That
               // ordering keeps a durably skippable successful JUnit step from
               // losing its separate unstable stage decoration after restart.
               OnStepStageWarning =
                 fun stage i status -> journal.Append(StepStageWarning(stage, i, status))
               OnStepFinished =
-                fun stage i status reason -> journal.AppendStepFinished(stage, i, status, reason)
+                fun stage i status reason ->
+                    journal.AppendStepFinished(stage, i, status, reason)
+                    emitEvent $"step-finished: {stage}#{i} {BuildStatus.toWireString status}"
               OnStageCommitted =
                 fun stage ->
                     journal.Append(StageCommitted stage)
                     journal.Sync()
+                    emitEvent $"stage-committed: {stage}"
               PollInputAnswer = pollInputAnswer
               OnInputClosed =
                 fun stage i occ ->
@@ -1009,7 +1067,9 @@ let main argv =
             journal.Close()
             clearOutstandingPrompts ()
             printfn $"completed: {trace.Result}"
-            for l in trace.Output do printfn "| %s" l
+            for l in trace.Output do
+                printfn "| %s" l
+                emitEvent l
             if trace.Result = "success" then 0 else 1
     | _ ->
         eprintfn "usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]"

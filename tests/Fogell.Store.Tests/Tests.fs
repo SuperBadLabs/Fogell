@@ -35,7 +35,8 @@ let private tenantTables =
       "outbox", "organization_id"
       "log_chunks", "organization_id"
       "effect_checkpoints", "organization_id"
-      "retry_decisions", "organization_id" ]
+      "retry_decisions", "organization_id"
+      "build_definitions", "organization_id" ]
 
 let private freshProject () =
     let org = OrganizationId(Guid.NewGuid())
@@ -44,9 +45,13 @@ let private freshProject () =
     org, project
 
 let private newBuild org project key stages =
+    let stageList = String.concat "," stages
+    let source = $"pipeline:{stageList}"
+
     { OrganizationId = org
       ProjectId = project
       IdempotencyKey = key
+      PipelineSource = Text.Encoding.UTF8.GetBytes source
       StageNames = stages
       RequiredTrustPool = "trusted-linux"
       RequiredCapabilities = [ "linux" ] }
@@ -227,6 +232,21 @@ let migrations =
                       (string value)
                       "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920"
                       "migration 0005 exact source checksum"
+          }
+
+          test "runnable controller migration 0006 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0006'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0006 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "26daeb1153b1a71b945bc897aee2ce1dba9994bc53aa1bdf206e416aa284a7aa"
+                      "migration 0006 exact source checksum"
           } ]
 
 let tenantIsolation =
@@ -250,8 +270,10 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
                         GRANT SELECT, INSERT, UPDATE, DELETE ON
                           organizations, projects, builds, nodes, attempts,
-                          events, outbox, log_chunks, effect_checkpoints, retry_decisions
+                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
+                          build_definitions
                         TO {roleName};
+                        GRANT SELECT ON organization_work_roots TO {roleName};
                         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
@@ -261,6 +283,10 @@ let tenantIsolation =
                   let runtimeConnectionString =
                       $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
                   let runtimeStore = Store(runtimeConnectionString, connectionString)
+
+                  Expect.isTrue
+                      (runtimeStore.RuntimeCapabilities())
+                      "the runtime role has the exact controller database surface"
 
                   do
                       use identityConn = new Npgsql.NpgsqlConnection(runtimeConnectionString)
@@ -308,6 +334,11 @@ let tenantIsolation =
                   let orgA, admissionA = seed "tenant-a"
                   let orgB, admissionB = seed "tenant-b"
 
+                  Expect.containsAll
+                      (runtimeStore.OrganizationIds())
+                      [ orgA; orgB ]
+                      "the UUID-only registry lets a restarted runtime discover tenant scopes"
+
                   let count (conn: Npgsql.NpgsqlConnection) (tx: Npgsql.NpgsqlTransaction option) table predicate =
                       use cmd = conn.CreateCommand()
                       tx |> Option.iter (fun value -> cmd.Transaction <- value)
@@ -319,6 +350,11 @@ let tenantIsolation =
 
                   for table, _ in tenantTables do
                       Expect.equal (count runtime None table "") 0L $"{table} exposes no rows without context"
+
+                  Expect.isGreaterThan
+                      (count runtime None "organization_work_roots" "")
+                      1L
+                      "only UUID work roots are deliberately global"
 
                   use tenantTx = runtime.BeginTransaction()
                   use setTenant = runtime.CreateCommand()
@@ -421,7 +457,10 @@ let tenantIsolation =
                          AND c.relrowsecurity
                          AND c.relforcerowsecurity"
                   rls.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
-                  Expect.equal (rls.ExecuteScalar() :?> int64) 10L "every tenant table enables and forces RLS"
+                  Expect.equal
+                      (rls.ExecuteScalar() :?> int64)
+                      (int64 tenantTables.Length)
+                      "every tenant table enables and forces RLS"
 
                   use policies = catalog.CreateCommand()
                   policies.CommandText <-
@@ -429,7 +468,10 @@ let tenantIsolation =
                        WHERE tablename = ANY(@tables)
                          AND policyname LIKE '%tenant_isolation'"
                   policies.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
-                  Expect.equal (policies.ExecuteScalar() :?> int64) 10L "every tenant table has an isolation policy"
+                  Expect.equal
+                      (policies.ExecuteScalar() :?> int64)
+                      (int64 tenantTables.Length)
+                      "every tenant table has an isolation policy"
 
                   use lineage = catalog.CreateCommand()
                   lineage.CommandText <-
@@ -480,6 +522,83 @@ let admission =
               Expect.equal again.AttemptId first.AttemptId "same attempt"
               Expect.equal (store.CountEvents(org, first.BuildId, "build.admitted")) 1 "still one event"
               Expect.equal (store.CountOutbox org) 1 "still one outbox row"
+          }
+
+          test "idempotency binds the exact source and placement fingerprint" {
+              let org, project = freshProject ()
+              let original = newBuild org project "definition-bound" [ "build" ]
+              let first = admitOk original
+              let replay = admitOk original
+              Expect.equal replay.BuildId first.BuildId "exact bytes replay"
+
+              let substituted =
+                  { original with
+                      PipelineSource = Text.Encoding.UTF8.GetBytes "pipeline:substituted" }
+
+              match store.AdmitBuild substituted with
+              | Error error -> Expect.stringContains error "different pipeline" "payload substitution named"
+              | Ok _ -> failtest "one idempotency key accepted different source bytes"
+
+              let moved = { original with RequiredTrustPool = "privileged" }
+              match store.AdmitBuild moved with
+              | Error error -> Expect.stringContains error "placement policy" "placement substitution named"
+              | Ok _ -> failtest "one idempotency key accepted a different placement policy"
+
+              Expect.equal (store.CountEvents(org, first.BuildId, "build.admitted")) 1 "one admission event"
+              Expect.equal (store.CountOutbox org) 1 "one admission outbox row"
+          }
+
+          test "16 mixed concurrent payloads converge on one immutable definition" {
+              let org, project = freshProject ()
+              let baseInput = newBuild org project "mixed-race" [ "build" ]
+              let sourceA = Text.Encoding.UTF8.GetBytes "pipeline:A"
+              let sourceB = Text.Encoding.UTF8.GetBytes "pipeline:B"
+
+              let results =
+                  [ 0..15 ]
+                  |> List.map (fun index ->
+                      async {
+                          let source = if index % 2 = 0 then sourceA else sourceB
+                          return Store(connectionString).AdmitBuild({ baseInput with PipelineSource = source })
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let accepted = results |> Array.choose (function Ok value -> Some value | Error _ -> None)
+              let refused = results.Length - accepted.Length
+              Expect.equal accepted.Length 8 "all exact replays of the winning bytes succeed"
+              Expect.equal refused 8 "every conflicting payload is refused"
+              Expect.equal (accepted |> Array.map (fun value -> value.BuildId) |> Array.distinct |> Array.length) 1 "one build"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use count = conn.CreateCommand()
+              count.CommandText <-
+                  "SELECT count(*)
+                     FROM build_definitions
+                    WHERE organization_id = @o"
+              count.Parameters.AddWithValue("o", org.Value) |> ignore
+              Expect.equal (count.ExecuteScalar() :?> int64) 1L "one durable definition"
+          }
+
+          test "a new admission is one whole-pipeline execution unit" {
+              let org, project = freshProject ()
+              let input = newBuild org project "whole-pipeline" [ "build"; "test"; "deploy" ]
+              let admitted = admitOk input
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use count = conn.CreateCommand()
+              count.CommandText <-
+                  "SELECT count(*), min(name)
+                     FROM nodes
+                    WHERE organization_id = @o AND build_id = @b"
+              count.Parameters.AddWithValue("o", org.Value) |> ignore
+              count.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              use reader = count.ExecuteReader()
+              Expect.isTrue (reader.Read()) "node aggregate exists"
+              Expect.equal (reader.GetInt64 0) 1L "the runner is scheduled exactly once"
+              Expect.equal (reader.GetString 1) "pipeline" "unit is named honestly"
           }
 
           test "16 concurrent submissions of one key produce exactly one build" {
@@ -543,6 +662,85 @@ let fencing =
                           Expect.equal result (Some "success") "result recorded"
                       | None -> failtest "attempt vanished"
                   | Error e -> failtestf "publication refused: %s" e
+          }
+
+          test "claim carries byte-exact source and terminal publication rolls up atomically" {
+              let org, project = freshProject ()
+              let input = newBuild org project "controller-vertical" [ "build" ]
+              let admitted = admitOk input
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | Ok None -> failtest "new build was not claimable"
+                  | Error error -> failtestf "claim failed: %s" error
+
+              Expect.sequenceEqual claim.PipelineSource input.PipelineSource "exact source bytes survive admission"
+              Expect.equal claim.BuildId admitted.BuildId "claim belongs to admitted build"
+              Expect.isTrue (store.AcceptAttempt(org, claim.AttemptId, claim.Fence, "local:test")) "accepted"
+
+              match store.PublishTerminal(org, claim.AttemptId, claim.Fence, "local:test", Success) with
+              | Error error -> failtestf "terminal roll-up failed: %s" error
+              | Ok _ -> ()
+
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("success", false))
+                  "public status is the same terminal truth"
+              Expect.equal (store.CountEvents(org, admitted.BuildId, "attempt.terminal")) 1 "one terminal event"
+              Expect.equal (store.CountOutbox org) 2 "admission plus terminal outbox"
+          }
+
+          test "claim names a legacy multi-node build instead of silently skipping it" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "legacy-shape" [ "build" ])
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "INSERT INTO nodes
+                       (id, organization_id, build_id, name, ordinal, required_trust_pool,
+                        required_capabilities, status)
+                   VALUES (@id, @o, @b, 'legacy-second-stage', 1, 'trusted-linux', ARRAY['linux'], 'queued')"
+              cmd.Parameters.AddWithValue("id", Guid.NewGuid()) |> ignore
+              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              cmd.ExecuteNonQuery() |> ignore
+
+              match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+              | Error error ->
+                  Expect.stringContains error "single whole-pipeline" "operator gets the reconciliation reason"
+              | Ok _ -> failtest "a legacy multi-node build must not be skipped or executed"
+          }
+
+          test "claim rehashes durable source before execution" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "corrupt-source" [ "build" ])
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+
+              try
+                  use corrupt = conn.CreateCommand()
+                  corrupt.CommandText <-
+                      "ALTER TABLE build_definitions DISABLE TRIGGER build_definitions_guard;
+                       UPDATE build_definitions
+                          SET source_digest = decode(repeat('00', 32), 'hex')
+                        WHERE organization_id = @o AND build_id = @b;
+                       ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
+                  corrupt.Parameters.AddWithValue("o", org.Value) |> ignore
+                  corrupt.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+                  corrupt.ExecuteNonQuery() |> ignore
+
+                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+                  | Error error -> Expect.stringContains error "digest mismatch" "corruption is named"
+                  | Ok _ -> failtest "corrupt source must never be offered for execution"
+              finally
+                  use repair = conn.CreateCommand()
+                  repair.CommandText <-
+                      "ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
+                  repair.ExecuteNonQuery() |> ignore
           }
 
           test "exactly one winner among 16 concurrent publishers" {

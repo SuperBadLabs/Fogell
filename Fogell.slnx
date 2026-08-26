@@ -6,6 +6,7 @@
     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
     <Project Path="src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
+    <Project Path="src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj" />
     <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
