@@ -40,6 +40,10 @@ FOGELL_WORKER_POLL_MS               25..60000, and no more than one third of the
 FOGELL_WORKER_LEASE_SECONDS         10..3600
 ```
 
+Every setting in this list is required, and a whitespace-only value is treated
+as missing. In particular, `FOGELL_LOCAL_TRUST_POOL` must name a nonblank pool;
+startup refuses a blank value before the controller can bind or admit work.
+
 The worker targets renewal after one third of each lease. Keep the poll interval
 at or below that same one-third boundary: if a control check falls immediately
 before the renewal target, the following check still occurs by two thirds of the
@@ -135,9 +139,14 @@ record; the failure remains infrastructure truth and the controller requires
 reconciliation instead of inventing a build failure. A local-worker
 `RequireReconciliation` transition atomically records its stable reason in an
 `attempt.reconciliation_required` event and a `build.reconciliation_required`
-outbox row, and preserves the fence-specific event file. Inspect those records,
-the durable journal, retained event frames, and effect checkpoints before
-deciding recovery. Invalid queued definitions have their own reason event;
+outbox row, and preserves the fence-specific event file. That worker-selected
+transition requires the exact owner and fence, an unexpired lease, and the
+current restore epoch. Once a lease expires, the lease scanner owns disposition:
+an unstarted `offered` attempt returns to `queued` without publication, while a
+started attempt publishes reason `lease_expired`. A pre-restore worker likewise
+publishes nothing; restore recovery owns that stale attempt. Inspect those
+records, the durable journal, retained event frames, and effect checkpoints
+before deciding recovery. Invalid queued definitions have their own reason event;
 their attempt → node → build quarantine and exactly one reasoned reconciliation
 event/outbox pair commit atomically, so a notification never describes a state
 change that did not commit. Lease-expiry and restore transitions remain

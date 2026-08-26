@@ -2262,6 +2262,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             "UPDATE attempts
                 SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
               WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+                AND lease_expires_at > clock_timestamp()
+                AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
                 AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
               RETURNING node_id"
         attemptCmd.Parameters.AddWithValue("o", org.Value) |> ignore

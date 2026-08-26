@@ -374,6 +374,16 @@ let private executionLauncherValidation =
                       Expect.isTrue (ControllerConfig.executionLaunchersReady config) "both configured launchers are executable")
           }
 
+          test "a whitespace-only local trust pool refuses startup" {
+              withConfiguration (fun _ _ ->
+                  Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", " \t ")
+
+                  Expect.equal
+                      (ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher)
+                      (Error "FOGELL_LOCAL_TRUST_POOL is required")
+                      "startup fails before every admission can be rejected by the Store")
+          }
+
           test "a missing trusted launcher refuses startup" {
               withConfiguration (fun root runHost ->
                   let missing = IO.Path.Combine(root, "missing-setsid")

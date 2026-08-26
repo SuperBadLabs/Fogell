@@ -201,8 +201,7 @@ module ControllerConfig =
 
     let private required name =
         match Environment.GetEnvironmentVariable name with
-        | null
-        | "" -> Error $"{name} is required"
+        | value when String.IsNullOrWhiteSpace value -> Error $"{name} is required"
         | value -> Ok value
 
     let private positiveInt name minimum maximum =

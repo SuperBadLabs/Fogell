@@ -1,0 +1,304 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 6956ef5..9417b9a 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 33/33, Differential is 272/272, Store is 89/89, and the aggregate locked gate is 903/903. Exact-head hosted gates, fresh Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. Review27 closes Codex `3867267809`: `RequireReconciliation` now needs the exact owner/fence, live lease, and current restore epoch, so expired or pre-restore workers publish nothing while the lease scanner or restore path owns disposition. It also closes `3867267816`: whitespace-only required configuration, including the local trust pool, refuses startup before admission. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 34/34, Differential is 272/272, Store is 91/91, and the aggregate locked gate is 906/906. Exact-head hosted gates, fresh Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 90f6969..9bda899 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -40,6 +40,10 @@ FOGELL_WORKER_POLL_MS               25..60000, and no more than one third of the
+ FOGELL_WORKER_LEASE_SECONDS         10..3600
+ ```
+ 
++Every setting in this list is required, and a whitespace-only value is treated
++as missing. In particular, `FOGELL_LOCAL_TRUST_POOL` must name a nonblank pool;
++startup refuses a blank value before the controller can bind or admit work.
++
+ The worker targets renewal after one third of each lease. Keep the poll interval
+ at or below that same one-third boundary: if a control check falls immediately
+ before the renewal target, the following check still occurs by two thirds of the
+@@ -135,9 +139,14 @@ record; the failure remains infrastructure truth and the controller requires
+ reconciliation instead of inventing a build failure. A local-worker
+ `RequireReconciliation` transition atomically records its stable reason in an
+ `attempt.reconciliation_required` event and a `build.reconciliation_required`
+-outbox row, and preserves the fence-specific event file. Inspect those records,
+-the durable journal, retained event frames, and effect checkpoints before
+-deciding recovery. Invalid queued definitions have their own reason event;
++outbox row, and preserves the fence-specific event file. That worker-selected
++transition requires the exact owner and fence, an unexpired lease, and the
++current restore epoch. Once a lease expires, the lease scanner owns disposition:
++an unstarted `offered` attempt returns to `queued` without publication, while a
++started attempt publishes reason `lease_expired`. A pre-restore worker likewise
++publishes nothing; restore recovery owns that stale attempt. Inspect those
++records, the durable journal, retained event frames, and effect checkpoints
++before deciding recovery. Invalid queued definitions have their own reason event;
+ their attempt → node → build quarantine and exactly one reasoned reconciliation
+ event/outbox pair commit atomically, so a notification never describes a state
+ change that did not commit. Lease-expiry and restore transitions remain
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index faf405d..16aec57 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -188,6 +188,21 @@ is reconciled by restore; an insert that waits is born in the new epoch.
+   that replacement to observe. Neither path materializes work, begins execution,
+   or enters reconciliation.
+ 
++## Review 27 closure
++
++- Codex finding `3867267809` is closed by requiring a live lease and the current
++  restore epoch, in addition to the exact owner and fence, at the
++  `RequireReconciliation` attempt-row transition. An expired offered claim
++  cannot publish a worker-selected reason and loses atomically to safe lease
++  recovery, which returns the attempt, node, and build to `queued` without an
++  event or outbox row. A pre-restore claim likewise publishes nothing and leaves
++  restore recovery to own the durable disposition. A live current-epoch running
++  owner retains the existing atomic reasoned event/outbox reconciliation path.
++- Codex finding `3867267816` is closed by treating whitespace-only values as
++  missing for every required controller setting. In particular, a whitespace-only
++  `FOGELL_LOCAL_TRUST_POOL` now returns the stable required-setting error before
++  startup rather than producing a controller whose Store rejects every admission.
++
+ These are local exact-tree closure claims only. Exact-head hosted gates, fresh
+ Copilot/Codex review coverage, publication, and merge remain outstanding.
+ 
+@@ -212,14 +227,14 @@ PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 89/89 passed;
+-- Controller API: 33/33 passed;
++- Store: 91/91 passed;
++- Controller API: 34/34 passed;
+ - Differential: 272/272 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 903 main-suite tests and every blocking
++locked repository gate also passes all 906 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index 2b2595c..5ade035 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -201,8 +201,7 @@ module ControllerConfig =
+ 
+     let private required name =
+         match Environment.GetEnvironmentVariable name with
+-        | null
+-        | "" -> Error $"{name} is required"
++        | value when String.IsNullOrWhiteSpace value -> Error $"{name} is required"
+         | value -> Ok value
+ 
+     let private positiveInt name minimum maximum =
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 9c642fe..2486cfd 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -2262,6 +2262,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             "UPDATE attempts
+                 SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
+               WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
++                AND lease_expires_at > clock_timestamp()
++                AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                 AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+               RETURNING node_id"
+         attemptCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index 73cd5a3..0b567b6 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -374,6 +374,16 @@ let private executionLauncherValidation =
+                       Expect.isTrue (ControllerConfig.executionLaunchersReady config) "both configured launchers are executable")
+           }
+ 
++          test "a whitespace-only local trust pool refuses startup" {
++              withConfiguration (fun _ _ ->
++                  Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", " \t ")
++
++                  Expect.equal
++                      (ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher)
++                      (Error "FOGELL_LOCAL_TRUST_POOL is required")
++                      "startup fails before every admission can be rejected by the Store")
++          }
++
+           test "a missing trusted launcher refuses startup" {
+               withConfiguration (fun root runHost ->
+                   let missing = IO.Path.Combine(root, "missing-setsid")
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index e640253..2ca8e54 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -2550,6 +2550,161 @@ let fencing =
+                   "the later valid build can publish terminal truth"
+           }
+ 
++          test "expired offered reconciliation loses atomically to safe lease recovery" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "expired-reconciliation-race" [ "build" ])
++              let owner = "local:expired-reconciliation"
++
++              let claim =
++                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected offered race fixture, got %A" other
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use expire = conn.CreateCommand()
++              expire.CommandText <-
++                  "UPDATE attempts
++                      SET lease_expires_at = clock_timestamp() - interval '1 second'
++                    WHERE organization_id = @o AND id = @a"
++              expire.Parameters.AddWithValue("o", org.Value) |> ignore
++              expire.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
++              Expect.equal (expire.ExecuteNonQuery()) 1 "the offered authority is deterministically expired"
++
++              let outboxBefore = store.CountOutbox org
++              use gate = new System.Threading.ManualResetEventSlim(false)
++              let reconcile =
++                  System.Threading.Tasks.Task.Run(fun () ->
++                      gate.Wait()
++                      Store(connectionString).RequireReconciliation(
++                          org,
++                          claim.AttemptId,
++                          claim.Fence,
++                          owner,
++                          "materialization_failed"))
++              let recover =
++                  System.Threading.Tasks.Task.Run(fun () ->
++                      gate.Wait()
++                      Store(connectionString).RequeueExpiredLocalAttempts org)
++              gate.Set()
++              System.Threading.Tasks.Task.WaitAll
++                  [| reconcile :> System.Threading.Tasks.Task
++                     recover :> System.Threading.Tasks.Task |]
++
++              Expect.isFalse reconcile.Result "expired authority cannot publish reconciliation"
++              Expect.equal recover.Result 1 "lease recovery requeues the still-unstarted offer exactly once"
++              Expect.equal
++                  (store.AttemptState(org, admitted.AttemptId))
++                  (Some("queued", claim.Fence.Value, None))
++                  "the race converges on safe queued attempt truth"
++              Expect.equal
++                  (store.BuildSnapshot(org, project, admitted.BuildId))
++                  (Some("queued", false))
++                  "the node and build remain runnable"
++              Expect.equal
++                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "the expired worker emits no reconciliation event"
++              Expect.equal
++                  (store.CountOutbox org)
++                  outboxBefore
++                  "the expired worker emits no reconciliation outbox"
++
++              let replacement =
++                  match
++                      store.ClaimNextExecution(
++                          org,
++                          "local:replacement-after-expiry",
++                          "trusted-linux",
++                          [ "linux" ],
++                          60)
++                  with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected replacement claim after recovery, got %A" other
++
++              Expect.equal replacement.AttemptId claim.AttemptId "replacement receives the recovered attempt"
++              Expect.equal
++                  replacement.Fence.Value
++                  (claim.Fence.Value + 1L)
++                  "replacement authority advances beyond the expired fence"
++          }
++
++          test "reconciliation requires the current restore epoch and preserves live running semantics" {
++              let org, project = freshProject ()
++              let live = admitOk (newBuild org project "live-running-reconciliation" [ "build" ])
++              let liveOwner = "local:live-reconciliation"
++
++              let liveClaim =
++                  match store.ClaimNextExecution(org, liveOwner, "trusted-linux", [ "linux" ], 60) with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected live reconciliation claim, got %A" other
++
++              Expect.equal
++                  (store.BeginExecution(org, liveClaim.AttemptId, liveClaim.Fence, liveOwner, 60))
++                  (Ok ExecutionStarted)
++                  "the valid post-launch fixture is running"
++              Expect.isTrue
++                  (store.RequireReconciliation(
++                      org,
++                      liveClaim.AttemptId,
++                      liveClaim.Fence,
++                      liveOwner,
++                      "worker_exception"))
++                  "a live current-epoch running owner retains reconciliation authority"
++              Expect.equal
++                  (store.AttemptState(org, live.AttemptId))
++                  (Some("reconciliation_required", liveClaim.Fence.Value, None))
++                  "valid post-launch reconciliation remains durable"
++              Expect.equal
++                  (store.CountEvents(org, live.BuildId, "attempt.reconciliation_required"))
++                  1
++                  "valid post-launch reconciliation publishes its reason"
++
++              let stale = admitOk (newBuild org project "pre-restore-reconciliation" [ "build" ])
++              let staleOwner = "local:pre-restore-reconciliation"
++              let staleClaim =
++                  match store.ClaimNextExecution(org, staleOwner, "trusted-linux", [ "linux" ], 300) with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected pre-restore offered claim, got %A" other
++              let outboxBeforeStaleAttempt = store.CountOutbox org
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use bump = conn.CreateCommand()
++              bump.CommandText <-
++                  "UPDATE controller_metadata
++                      SET restore_epoch = restore_epoch + 1
++                    WHERE singleton"
++              Expect.equal (bump.ExecuteNonQuery()) 1 "the global restore epoch advances behind the offered authority"
++
++              Expect.isFalse
++                  (store.RequireReconciliation(
++                      org,
++                      staleClaim.AttemptId,
++                      staleClaim.Fence,
++                      staleOwner,
++                      "materialization_failed"))
++                  "pre-restore authority cannot publish a worker-selected reconciliation reason"
++              Expect.equal
++                  (store.AttemptState(org, stale.AttemptId))
++                  (Some("offered", staleClaim.Fence.Value, None))
++                  "the stale worker leaves active state untouched for restore recovery"
++              Expect.equal
++                  (store.CountEvents(org, stale.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "the stale worker emits no reconciliation event"
++              Expect.equal
++                  (store.CountOutbox org)
++                  outboxBeforeStaleAttempt
++                  "the stale worker emits no reconciliation outbox"
++
++              store.ActivateRestore() |> ignore
++              Expect.equal
++                  (store.AttemptState(org, stale.AttemptId))
++                  (Some("reconciliation_required", staleClaim.Fence.Value, None))
++                  "restore recovery owns the stale attempt's eventual disposition"
++          }
++
+           test "exactly one winner among 16 concurrent publishers" {
+               let org, project = freshProject ()
+               let a = admitOk (newBuild org project "race-pub" [ "b" ])

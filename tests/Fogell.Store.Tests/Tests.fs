@@ -2550,6 +2550,161 @@ let fencing =
                   "the later valid build can publish terminal truth"
           }
 
+          test "expired offered reconciliation loses atomically to safe lease recovery" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "expired-reconciliation-race" [ "build" ])
+              let owner = "local:expired-reconciliation"
+
+              let claim =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected offered race fixture, got %A" other
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts
+                      SET lease_expires_at = clock_timestamp() - interval '1 second'
+                    WHERE organization_id = @o AND id = @a"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+              Expect.equal (expire.ExecuteNonQuery()) 1 "the offered authority is deterministically expired"
+
+              let outboxBefore = store.CountOutbox org
+              use gate = new System.Threading.ManualResetEventSlim(false)
+              let reconcile =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      gate.Wait()
+                      Store(connectionString).RequireReconciliation(
+                          org,
+                          claim.AttemptId,
+                          claim.Fence,
+                          owner,
+                          "materialization_failed"))
+              let recover =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      gate.Wait()
+                      Store(connectionString).RequeueExpiredLocalAttempts org)
+              gate.Set()
+              System.Threading.Tasks.Task.WaitAll
+                  [| reconcile :> System.Threading.Tasks.Task
+                     recover :> System.Threading.Tasks.Task |]
+
+              Expect.isFalse reconcile.Result "expired authority cannot publish reconciliation"
+              Expect.equal recover.Result 1 "lease recovery requeues the still-unstarted offer exactly once"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("queued", claim.Fence.Value, None))
+                  "the race converges on safe queued attempt truth"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("queued", false))
+                  "the node and build remain runnable"
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "the expired worker emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBefore
+                  "the expired worker emits no reconciliation outbox"
+
+              let replacement =
+                  match
+                      store.ClaimNextExecution(
+                          org,
+                          "local:replacement-after-expiry",
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected replacement claim after recovery, got %A" other
+
+              Expect.equal replacement.AttemptId claim.AttemptId "replacement receives the recovered attempt"
+              Expect.equal
+                  replacement.Fence.Value
+                  (claim.Fence.Value + 1L)
+                  "replacement authority advances beyond the expired fence"
+          }
+
+          test "reconciliation requires the current restore epoch and preserves live running semantics" {
+              let org, project = freshProject ()
+              let live = admitOk (newBuild org project "live-running-reconciliation" [ "build" ])
+              let liveOwner = "local:live-reconciliation"
+
+              let liveClaim =
+                  match store.ClaimNextExecution(org, liveOwner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected live reconciliation claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, liveClaim.AttemptId, liveClaim.Fence, liveOwner, 60))
+                  (Ok ExecutionStarted)
+                  "the valid post-launch fixture is running"
+              Expect.isTrue
+                  (store.RequireReconciliation(
+                      org,
+                      liveClaim.AttemptId,
+                      liveClaim.Fence,
+                      liveOwner,
+                      "worker_exception"))
+                  "a live current-epoch running owner retains reconciliation authority"
+              Expect.equal
+                  (store.AttemptState(org, live.AttemptId))
+                  (Some("reconciliation_required", liveClaim.Fence.Value, None))
+                  "valid post-launch reconciliation remains durable"
+              Expect.equal
+                  (store.CountEvents(org, live.BuildId, "attempt.reconciliation_required"))
+                  1
+                  "valid post-launch reconciliation publishes its reason"
+
+              let stale = admitOk (newBuild org project "pre-restore-reconciliation" [ "build" ])
+              let staleOwner = "local:pre-restore-reconciliation"
+              let staleClaim =
+                  match store.ClaimNextExecution(org, staleOwner, "trusted-linux", [ "linux" ], 300) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected pre-restore offered claim, got %A" other
+              let outboxBeforeStaleAttempt = store.CountOutbox org
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use bump = conn.CreateCommand()
+              bump.CommandText <-
+                  "UPDATE controller_metadata
+                      SET restore_epoch = restore_epoch + 1
+                    WHERE singleton"
+              Expect.equal (bump.ExecuteNonQuery()) 1 "the global restore epoch advances behind the offered authority"
+
+              Expect.isFalse
+                  (store.RequireReconciliation(
+                      org,
+                      staleClaim.AttemptId,
+                      staleClaim.Fence,
+                      staleOwner,
+                      "materialization_failed"))
+                  "pre-restore authority cannot publish a worker-selected reconciliation reason"
+              Expect.equal
+                  (store.AttemptState(org, stale.AttemptId))
+                  (Some("offered", staleClaim.Fence.Value, None))
+                  "the stale worker leaves active state untouched for restore recovery"
+              Expect.equal
+                  (store.CountEvents(org, stale.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "the stale worker emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBeforeStaleAttempt
+                  "the stale worker emits no reconciliation outbox"
+
+              store.ActivateRestore() |> ignore
+              Expect.equal
+                  (store.AttemptState(org, stale.AttemptId))
+                  (Some("reconciliation_required", staleClaim.Fence.Value, None))
+                  "restore recovery owns the stale attempt's eventual disposition"
+          }
+
           test "exactly one winner among 16 concurrent publishers" {
               let org, project = freshProject ()
               let a = admitOk (newBuild org project "race-pub" [ "b" ])
