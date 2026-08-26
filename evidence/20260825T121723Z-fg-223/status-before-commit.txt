@@ -1,0 +1,7 @@
+M  docs/EXECUTION_BOARD.md
+A  docs/tickets/FG-223.md
+M  evidence/README.md
+M  scripts/build-and-test.sh
+A  scripts/prove-seal-evidence.sh
+M  scripts/seal-evidence.sh
+?? evidence/.20260825T121723Z-fg-223.partial.SodIeT/

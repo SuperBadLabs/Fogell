@@ -111,6 +111,14 @@ echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
 ./scripts/prove-control-env-isolation.sh \
   || { echo "CONTROLLER/BUILD ENVIRONMENT ISOLATION PROOF FAILED"; exit 1; }
 
+# FG-223. A checksum-valid bundle is not evidence when a prerequisite failed.
+# The scratch proof plants failures in corpus verification, build, test exit,
+# summary emission and extra-file binding, and first rejects an always-green
+# sealer so the proof's own exit-code oracle is observed failing.
+echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
+./scripts/prove-seal-evidence.sh \
+  || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
+
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.

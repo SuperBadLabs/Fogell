@@ -1,0 +1,489 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 2e210e2..ab85d0c 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -510,7 +510,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
+ | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
+ | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
+ | FG-004 | P0 | **DONE** | Admission bounds: source bytes, node count, nesting depth, scalar length, capped **before** schema compilation | `Limits.precheck` is a single linear scan (no recursion, so it cannot itself overflow). Tests cover empty, 300 KB source, 200-deep nesting, 20 KB scalar, and a 40k-brace bomb — each returns a named code with a position. Full 10k fuzz sweep deferred to FG-004b |
+-| FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees) |
++| FG-005 | P1 | **DONE** | Evidence directory convention: per-ticket dir with diff, tests log, tree, `SHA256SUMS` | `scripts/seal-evidence.sh`; `evidence/README.md` records why `base-commit.txt` + `tree.txt` exist (a prior gate baseline bound only a binary hash and silently compared across trees). FG-223 makes the producer fail closed and atomic rather than treating a checksum over failed logs as a seal |
+ | FG-004b | P1 | TODO | Fuzz sweep: 10k generated malformed inputs through admission + parser | zero crashes, zero unhandled exceptions, every rejection carries a code and position |
+ | FG-006 | P1 | **DONE** | `Fogell.Domain`: build/node/attempt/status model, worst-of status aggregation | property test: aggregation is associative and commutative | — `Fogell.Domain`: 18 Expecto tests pass. worstOf proven a commutative monoid exhaustively over all 25 pairs and 125 triples; ofMany order-independence property-tested; 7-condition publication guard and retry-never-rewrites covered
+ 
+@@ -869,6 +869,7 @@ changed, and the queue above is what orders them.
+ ---
+ 
+ | FG-222 | **P1** | **PARTIAL** | Build processes inherited controller environment through GString, shell, and Git launch paths | Technical acceptance is complete locally. The environment port clears every build process environment and applies only fixed system PATH, a run-scoped neutral Fogell HOME, synthetic Jenkins metadata, and explicit pipeline overlays; controller fetch and build Git remain type-separated profiles. The final workspace-lifecycle slice makes `dir` logical-only and materializes admitted shell/bat and SCM cwd paths at their effect boundary, after retained-history SCM admission. Execution 87/87, Differential 226/226, the real-host proof, and the authoritative 795/795 gate pass. The live 275-case oracle now produces **282/282 tier-1 receipt builds, zero partial**; the four former empty-`dir` residuals and the opposing shell-retains-empty control are fresh and retained under `evidence/20260825T170847Z-dir-lifecycle-completion/`. PARTIAL now means unpublished/unhosted only: exact-head hosted review/CI and publication remain. Same-UID filesystem/network containment and credential-free prepared private-SCM checkout remain explicit residuals — [→ detail](tickets/FG-222.md) |
++| FG-223 | **P1** | **PARTIAL** | `seal-evidence.sh` emitted a checksum-valid bundle after failed corpus/build/test prerequisites | The sealer now validates ticket/extra inputs, stages transactionally, refuses every failed command, empty test inventory, or missing Expecto summary, verifies its manifest, and only then publishes the final directory with no-clobber directory semantics. A HeMan negative control proves the old script returned zero and sealed a forced corpus failure. The blocking scratch proof rejects an always-green fake first, plants prerequisite/inventory/input-boundary failures with no manifest/partial output, proves exactly one concurrent publisher wins, and verifies the positive path. The staged authoritative gate passes 795/795 plus every blocking lane; exact committed-head gate, hosted review/CI, and publication remain — [→ detail](tickets/FG-223.md) |
+ 
+ ## Standing risks
+ 
+diff --git a/docs/tickets/FG-223.md b/docs/tickets/FG-223.md
+new file mode 100644
+index 0000000..47c8f15
+--- /dev/null
++++ b/docs/tickets/FG-223.md
+@@ -0,0 +1,62 @@
++# FG-223 — Make evidence sealing fail closed
++
++Status: **PARTIAL — technical acceptance complete locally; publication and hosted checks remain**
++
++## Problem
++
++`scripts/seal-evidence.sh` used to continue after a failed corpus verification,
++Release build, or test project. It then generated a valid `SHA256SUMS` and printed
++`sealed`. A checksum proved only that the failure logs had not changed; it did not
++prove the measurements passed.
++
++The HeMan pre-fix control forced a nonexistent corpus path. The script returned
++zero, its log contained `CORPUS GATE FAILED`, and the emitted manifest verified.
++That counterexample is retained outside the tree at
++`/tmp/fg223-pre-fix-negative-evidence` with manifest digest
++`24899e95576922a4329145c2c5c3e83cc64997d8adca68460052f08fbb8140de6`.
++
++## Implemented boundary
++
++The sealer now validates its ticket path and every caller-supplied extra, refuses
++reserved or duplicate extra basenames, writes into an exact
++`mktemp` staging directory, and publishes the final ticket directory only after:
++
++1. corpus verification exits zero;
++2. the Release build exits zero;
++3. at least one test project is discovered, and every project exits zero and
++   emits an Expecto completion summary; and
++4. the completed manifest verifies against the staged payloads.
++
++Any failure exits nonzero, names the failed prerequisite, removes the exact
++staging directory, and leaves no `SHA256SUMS` or final evidence directory. An
++existing final destination is refused instead of overwritten, and GNU `mv -T`
++prevents a destination created during the run from absorbing the staging tree.
++
++`scripts/prove-seal-evidence.sh` exercises the script in scratch Git repositories
++with fake corpus and .NET executors. It plants corpus, build, test-exit,
++missing-summary, missing-test-inventory, unsafe-ticket, reserved-extra, and
++missing-extra failures, and checks that none publishes a
++manifest or leaves a partial directory. Its positive control verifies the final
++manifest and test summary. An always-green permissive sealer is rejected first,
++so the proof's exit-code oracle is itself observed failing. Existing-destination
++and simultaneous-publisher controls preserve the first owner and prove exactly
++one atomic winner without nesting the losing staging tree.
++
++The staged authoritative HeMan gate passes 795/795 project tests, the focused
++8/8 FG-207 durability tests, every blocking proof (including FG-223), the live
++228-file compatibility regression check, restart and approval lanes, and terminal
++`OK`. The repaired production sealer then bound that complete log under
++`evidence/20260825T121723Z-fg-223/`. The exact committed-head rerun remains the
++last local acceptance step.
++
++## Acceptance
++
++- The retained pre-fix control demonstrates a checksum-valid false seal.
++- Every planted prerequisite failure exits nonzero and publishes no bundle.
++- A complete positive run publishes atomically and verifies standalone.
++- The proof is blocking in `scripts/build-and-test.sh`.
++- The unmodified authoritative gate passes on the exact signed source head.
++
++The scope is evidence-command integrity. It does not attest the semantic quality
++of a passing test, replace differential receipts, or change GitHub publication
++authority.
+diff --git a/evidence/README.md b/evidence/README.md
+index 2f637c3..5785b35 100644
+--- a/evidence/README.md
++++ b/evidence/README.md
+@@ -16,6 +16,12 @@ One directory per ticket, produced by `scripts/seal-evidence.sh <TICKET>`:
+ A receipt must verify standalone: `cd <dir> && sha256sum -c SHA256SUMS`.
+ A ticket without a receipt is not DONE, no matter what the code does.
+ 
++The producer is fail-closed and transactional. Corpus verification, Release
++build, every test project, and every requested extra must succeed before the
++final directory and `SHA256SUMS` appear. A failed run leaves no object that can
++be mistaken for a seal; `scripts/prove-seal-evidence.sh` is the blocking proof
++of both refusal and the successful standalone-verification path.
++
+ Lesson encoded here: a prior project's gate baseline was named after the release
+ it was meant to gate rather than the build it was captured from, and bound only
+ a binary hash. It silently compared across trees for days. `base-commit.txt` and
+diff --git a/scripts/build-and-test.sh b/scripts/build-and-test.sh
+index 332fac2..dfc0b35 100755
+--- a/scripts/build-and-test.sh
++++ b/scripts/build-and-test.sh
+@@ -111,6 +111,14 @@ echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
+ ./scripts/prove-control-env-isolation.sh \
+   || { echo "CONTROLLER/BUILD ENVIRONMENT ISOLATION PROOF FAILED"; exit 1; }
+ 
++# FG-223. A checksum-valid bundle is not evidence when a prerequisite failed.
++# The scratch proof plants failures in corpus verification, build, test exit,
++# summary emission and extra-file binding, and first rejects an always-green
++# sealer so the proof's own exit-code oracle is observed failing.
++echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
++./scripts/prove-seal-evidence.sh \
++  || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
++
+ # FG-162. Board rows quoting generated counts are re-derived from the committed
+ # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
+ # corpus-dependent scorecard check below.
+diff --git a/scripts/prove-seal-evidence.sh b/scripts/prove-seal-evidence.sh
+new file mode 100755
+index 0000000..79c9e6c
+--- /dev/null
++++ b/scripts/prove-seal-evidence.sh
+@@ -0,0 +1,199 @@
++#!/usr/bin/env bash
++# FG-223. Black-box proof that evidence sealing fails closed and publishes atomically.
++set -euo pipefail
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++TARGET="$ROOT/scripts/seal-evidence.sh"
++LAB="$(mktemp -d /tmp/fogell-fg223-seal-proof.XXXXXX)"
++trap 'rm -rf -- "$LAB"' EXIT
++
++make_case () {
++  local label="$1"
++  local repo="$LAB/$label"
++  mkdir -p "$repo/scripts" "$repo/tests/Sample.Tests" "$repo/fakebin"
++  cp "$TARGET" "$repo/scripts/seal-evidence.sh"
++  chmod +x "$repo/scripts/seal-evidence.sh"
++  printf '<Project Sdk="Microsoft.NET.Sdk" />\n' > "$repo/tests/Sample.Tests/Sample.Tests.fsproj"
++  # shellcheck disable=SC2016 # These are literal lines in the generated fixture.
++  printf '%s\n' '#!/usr/bin/env bash' 'echo "corpus fixture"' 'exit "${FAKE_CORPUS_RC:-0}"' > "$repo/scripts/verify-corpus.sh"
++  chmod +x "$repo/scripts/verify-corpus.sh"
++  # shellcheck disable=SC2016 # Expansion belongs to the generated fake, not this proof.
++  printf '%s\n' \
++    '#!/usr/bin/env bash' \
++    'case "${1:-}" in' \
++    '  build) sleep "${FAKE_BUILD_DELAY:-0}"; echo "Build succeeded."; exit "${FAKE_BUILD_RC:-0}" ;;' \
++    '  run)' \
++    '    if [ "${FAKE_TEST_MODE:-summary}" = summary ]; then' \
++    '      echo "EXPECTO! 1 tests run - 1 passed, 0 failed. Success!"' \
++    '    else' \
++    '      echo "test process returned without a summary"' \
++    '    fi' \
++    '    exit "${FAKE_TEST_RC:-0}" ;;' \
++    '  *) echo "unexpected fake dotnet invocation: $*" >&2; exit 97 ;;' \
++    'esac' > "$repo/fakebin/dotnet"
++  chmod +x "$repo/fakebin/dotnet"
++  (
++    cd "$repo"
++    git init -q
++    git config user.name FG223-Proof
++    git config user.email fg223-proof@example.invalid
++    git add .
++    git commit -qm baseline
++  )
++  printf '%s\n' "$repo"
++}
++
++expect_refusal_at () {
++  local repo="$1"
++  local label="$2"
++  local diagnostic="$3"
++  shift 3
++  local log="$LAB/$label.log"
++  local rc=0
++  (
++    cd "$repo"
++    env PATH="$repo/fakebin:$PATH" "$@" ./scripts/seal-evidence.sh FG-223-PROOF
++  ) > "$log" 2>&1 || rc=$?
++
++  [ "$rc" -ne 0 ] || { echo "FAIL: $label accepted a failed prerequisite"; return 1; }
++  rg -q "$diagnostic" "$log" || { echo "FAIL: $label did not name '$diagnostic'"; cat "$log"; return 1; }
++  if find "$repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
++    echo "FAIL: $label published a manifest after refusal"
++    return 1
++  fi
++  if find "$repo/evidence" -maxdepth 1 -type d -name '*.partial.*' -print -quit 2>/dev/null | rg -q .; then
++    echo "FAIL: $label left a partial bundle"
++    return 1
++  fi
++}
++
++expect_refusal () {
++  local label="$1"
++  local diagnostic="$2"
++  shift 2
++  local repo
++  repo="$(make_case "$label")"
++  expect_refusal_at "$repo" "$label" "$diagnostic" "$@"
++}
++
++# Prove the proof's exit-code oracle is live: an always-green fake sealer must be
++# rejected by the same expectation helper used for every planted prerequisite.
++permissive_repo="$(make_case permissive-control)"
++printf '%s\n' '#!/usr/bin/env bash' 'mkdir -p evidence/forged' 'touch evidence/forged/SHA256SUMS' 'exit 0' > "$permissive_repo/scripts/seal-evidence.sh"
++chmod +x "$permissive_repo/scripts/seal-evidence.sh"
++if expect_refusal_at "$permissive_repo" permissive-control-check "corpus verification failed" env FAKE_CORPUS_RC=7 \
++  > "$LAB/permissive-oracle.log" 2>&1; then
++  echo "FAIL: proof oracle accepted the permissive control"
++  exit 1
++fi
++echo "planted permissive sealer: rejected by proof oracle"
++
++expect_refusal corpus-failure "corpus verification failed" env FAKE_CORPUS_RC=7
++expect_refusal build-failure "Release build failed" env FAKE_BUILD_RC=8
++expect_refusal test-failure "test project failed: Sample.Tests" env FAKE_TEST_RC=9
++expect_refusal missing-summary "test project produced no Expecto summary: Sample.Tests" env FAKE_TEST_MODE=no-summary
++
++no_tests_repo="$(make_case no-tests)"
++rm "$no_tests_repo/tests/Sample.Tests/Sample.Tests.fsproj"
++(
++  cd "$no_tests_repo"
++  git add -u
++  git commit -qm no-tests
++)
++no_tests_log="$LAB/no-tests.log"
++no_tests_rc=0
++(
++  cd "$no_tests_repo"
++  env PATH="$no_tests_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF
++) > "$no_tests_log" 2>&1 || no_tests_rc=$?
++[ "$no_tests_rc" -ne 0 ] || { echo "FAIL: missing test inventory was accepted"; exit 1; }
++rg -q "no test projects were discovered" "$no_tests_log" || { cat "$no_tests_log"; exit 1; }
++
++missing_repo="$(make_case missing-extra)"
++missing_log="$LAB/missing-extra.log"
++missing_rc=0
++(
++  cd "$missing_repo"
++  env PATH="$missing_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF missing.measurement
++) > "$missing_log" 2>&1 || missing_rc=$?
++[ "$missing_rc" -ne 0 ] || { echo "FAIL: missing extra evidence was accepted"; exit 1; }
++rg -q "extra evidence file does not exist" "$missing_log" || { cat "$missing_log"; exit 1; }
++
++collision_repo="$(make_case extra-collision)"
++printf 'forged build log\n' > "$collision_repo/build.log"
++collision_log="$LAB/extra-collision.log"
++collision_rc=0
++(
++  cd "$collision_repo"
++  env PATH="$collision_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF build.log
++) > "$collision_log" 2>&1 || collision_rc=$?
++[ "$collision_rc" -ne 0 ] || { echo "FAIL: reserved extra basename was accepted"; exit 1; }
++rg -q "extra evidence basename is reserved" "$collision_log" || { cat "$collision_log"; exit 1; }
++
++unsafe_repo="$(make_case unsafe-ticket)"
++unsafe_log="$LAB/unsafe-ticket.log"
++unsafe_rc=0
++(
++  cd "$unsafe_repo"
++  env PATH="$unsafe_repo/fakebin:$PATH" ./scripts/seal-evidence.sh ../escape
++) > "$unsafe_log" 2>&1 || unsafe_rc=$?
++[ "$unsafe_rc" -ne 0 ] || { echo "FAIL: unsafe ticket path was accepted"; exit 1; }
++rg -q "ticket id contains unsafe path characters" "$unsafe_log" || { cat "$unsafe_log"; exit 1; }
++
++existing_repo="$(make_case existing-destination)"
++existing_stamp="$(git -C "$existing_repo" log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
++existing_dir="$existing_repo/evidence/${existing_stamp}-fg-223-proof"
++mkdir -p "$existing_dir"
++printf 'owner\n' > "$existing_dir/marker"
++existing_log="$LAB/existing-destination.log"
++existing_rc=0
++(
++  cd "$existing_repo"
++  env PATH="$existing_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF
++) > "$existing_log" 2>&1 || existing_rc=$?
++[ "$existing_rc" -ne 0 ] || { echo "FAIL: existing destination was overwritten"; exit 1; }
++rg -q "evidence destination already exists" "$existing_log" || { cat "$existing_log"; exit 1; }
++[ "$(cat "$existing_dir/marker")" = owner ] || { echo "FAIL: existing destination marker changed"; exit 1; }
++
++concurrent_repo="$(make_case concurrent-publish)"
++(
++  cd "$concurrent_repo"
++  env PATH="$concurrent_repo/fakebin:$PATH" FAKE_BUILD_DELAY=0.2 ./scripts/seal-evidence.sh FG-223-PROOF
++) > "$LAB/concurrent-a.log" 2>&1 &
++concurrent_a=$!
++(
++  cd "$concurrent_repo"
++  env PATH="$concurrent_repo/fakebin:$PATH" FAKE_BUILD_DELAY=0.2 ./scripts/seal-evidence.sh FG-223-PROOF
++) > "$LAB/concurrent-b.log" 2>&1 &
++concurrent_b=$!
++concurrent_a_rc=0
++concurrent_b_rc=0
++wait "$concurrent_a" || concurrent_a_rc=$?
++wait "$concurrent_b" || concurrent_b_rc=$?
++if { [ "$concurrent_a_rc" -eq 0 ] && [ "$concurrent_b_rc" -eq 0 ]; } \
++  || { [ "$concurrent_a_rc" -ne 0 ] && [ "$concurrent_b_rc" -ne 0 ]; }; then
++  echo "FAIL: concurrent publishers did not produce exactly one winner: $concurrent_a_rc/$concurrent_b_rc"
++  exit 1
++fi
++concurrent_bundle="$(find "$concurrent_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
++(
++  cd "$concurrent_bundle"
++  sha256sum -c SHA256SUMS >/dev/null
++)
++[ "$(find "$concurrent_bundle" -mindepth 1 -type d | wc -l)" -eq 0 ] \
++  || { echo "FAIL: losing concurrent staging tree was nested under the winner"; exit 1; }
++
++success_repo="$(make_case success)"
++(
++  cd "$success_repo"
++  env PATH="$success_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/success.log"
++)
++bundle="$(find "$success_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
++[ -n "$bundle" ] || { echo "FAIL: successful seal published no bundle"; exit 1; }
++(
++  cd "$bundle"
++  sha256sum -c SHA256SUMS >/dev/null
++)
++[ "$(find "$bundle" -maxdepth 1 -type f -name 'tests-*.log' | wc -l)" -eq 1 ] \
++  || { echo "FAIL: successful seal omitted the test summary"; exit 1; }
++
++echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, inventory and input-boundary failures publish no manifest; one concurrent publisher wins; success verifies)"
+diff --git a/scripts/seal-evidence.sh b/scripts/seal-evidence.sh
+index 4bb50eb..8e0d7ab 100755
+--- a/scripts/seal-evidence.sh
++++ b/scripts/seal-evidence.sh
+@@ -1,12 +1,39 @@
+ #!/usr/bin/env bash
+-# FG-005 — evidence convention. Seals a ticket's receipt so it verifies standalone.
++# FG-005/FG-223 — evidence convention. Seals a ticket's receipt so it verifies standalone.
+ #   usage: scripts/seal-evidence.sh FG-010 [extra-file ...]
+-set -uo pipefail
++set -euo pipefail
+ cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ TICKET="${1:?usage: seal-evidence.sh <TICKET-ID> [files...]}"; shift || true
++[[ "$TICKET" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
++  || { echo "REFUSING TO SEAL: ticket id contains unsafe path characters: $TICKET" >&2; exit 1; }
+ STAMP="$(git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
+ DIR="evidence/${STAMP}-${TICKET,,}"
+-mkdir -p "$DIR"
++
++fail () {
++  echo "REFUSING TO SEAL: $*" >&2
++  exit 1
++}
++
++# Validate caller-owned inputs before starting the transactional bundle. A missing
++# extra used to be silently skipped, so a manifest could verify while omitting a
++# measurement the caller explicitly asked it to bind.
++declare -A EXTRA_PATHS=()
++declare -A EXTRA_NAMES=()
++for f in "$@"; do
++  [ -f "$f" ] || fail "extra evidence file does not exist or is not a regular file: $f"
++  normalized="${f#./}"
++  name="$(basename "$f")"
++  case "$name" in
++    SHA256SUMS|base-commit.txt|build.log|candidate.diff|corpus-gate.log|diffstat.txt|status-before-commit.txt|tree.txt|tests-*.log)
++      fail "extra evidence basename is reserved by the bundle: $name" ;;
++  esac
++  [[ -z "${EXTRA_NAMES[$name]+present}" ]] || fail "extra evidence basenames collide: $name"
++  EXTRA_PATHS["$normalized"]=1
++  EXTRA_NAMES["$name"]=1
++done
++
++mkdir -p evidence
++[ ! -e "$DIR" ] || fail "evidence destination already exists: $DIR"
+ 
+ # FG-104 review finding: a seal run before `git add` records a diff that OMITS every
+ # untracked file — the FG-104 bundle validated an intermediate patch and left out the audit
+@@ -18,37 +45,92 @@ mkdir -p "$DIR"
+ # evidence-only files into the product commit. They are exempt; everything else is not.
+ # Normalised: `git ls-files` reports `x.log` while a caller naturally writes `./x.log`,
+ # and an exemption that fails on a leading `./` is no exemption at all.
+-EXTRAS=" $(for e in "$@"; do printf '%s ' "${e#./}"; done)"
+-# The bundle THIS run is writing is also untracked while it is being written, so a second
+-# seal tripped over its own output. Exclude the directory being created, and the extras.
+ UNTRACKED="$(git ls-files --others --exclude-standard | while read -r f; do
+   # ALL of evidence/ is output, not input. Excluding only the current run's directory
+   # still tripped over the PREVIOUS bundle, which makes the check circular: you cannot
+   # seal until you stage the last seal. The check exists to catch untracked SOURCE.
+   case "$f" in evidence/*) continue ;; esac
+-  case "$EXTRAS" in *" $f "*) ;; *) printf '%s\n' "$f" ;; esac
++  [[ -n "${EXTRA_PATHS[$f]+present}" ]] || printf '%s\n' "$f"
+ done)"
+ if [ -n "$UNTRACKED" ]; then
+   echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
+-  printf '  %s\n' $UNTRACKED >&2
++  while IFS= read -r f; do printf '  %s\n' "$f"; done <<< "$UNTRACKED" >&2
+   echo "Stage them (git add) so the sealed diff covers the actual change." >&2
+   exit 1
+ fi
+ 
+-git diff HEAD --stat > "$DIR/diffstat.txt" 2>/dev/null
+-git diff HEAD          > "$DIR/candidate.diff" 2>/dev/null
+-git status --short     > "$DIR/status-before-commit.txt"
+-git rev-parse HEAD     > "$DIR/base-commit.txt"
+-git ls-files           > "$DIR/tree.txt"
+-./scripts/verify-corpus.sh > "$DIR/corpus-gate.log" 2>&1 || echo "CORPUS GATE FAILED" >> "$DIR/corpus-gate.log"
+-{ dotnet build -c Release --nologo 2>&1 | tail -20; } > "$DIR/build.log"
+-for t in tests/*/; do
+-  [ -d "$t" ] || continue
+-  n="$(basename "$t")"
+-  dotnet run --project "$t" -c Release --no-build 2>&1 | rg -o "EXPECTO!.*" > "$DIR/tests-$n.log" || true
+-done
+-for f in "$@"; do [ -f "$f" ] && cp "$f" "$DIR/"; done
++# Build the bundle outside its final name. A failed measurement leaves neither a
++# checksum nor a directory that looks sealed; the exact mktemp result is the only
++# path the cleanup trap may remove.
++STAGING="$(mktemp -d "evidence/.${STAMP}-${TICKET,,}.partial.XXXXXX")"
++cleanup () {
++  if [ -n "${STAGING:-}" ] && [ -d "$STAGING" ]; then
++    rm -rf -- "$STAGING"
++  fi
++}
++trap cleanup EXIT
+ 
+-( cd "$DIR" && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS )
++git diff HEAD --stat > "$STAGING/diffstat.txt"
++git diff HEAD          > "$STAGING/candidate.diff"
++git status --short     > "$STAGING/status-before-commit.txt"
++git rev-parse HEAD     > "$STAGING/base-commit.txt"
++git ls-files           > "$STAGING/tree.txt"
++
++if ! ./scripts/verify-corpus.sh > "$STAGING/corpus-gate.log" 2>&1; then
++  cat "$STAGING/corpus-gate.log" >&2
++  fail "corpus verification failed"
++fi
++
++if ! dotnet build -c Release --nologo > "$STAGING/build.log" 2>&1; then
++  tail -20 "$STAGING/build.log" >&2
++  fail "Release build failed"
++fi
++
++tests_run=0
++for t in tests/*/; do
++  n="$(basename "$t")"
++  [ -f "$t/$n.fsproj" ] || continue
++  tests_run=$((tests_run + 1))
++  full_log="$STAGING/.tests-$n.full.log"
++  if ! dotnet run --project "$t" -c Release --no-build > "$full_log" 2>&1; then
++    cat "$full_log" >&2
++    fail "test project failed: $n"
++  fi
++
++  summary="$(rg -o 'EXPECTO!.*' "$full_log" | tail -1 || true)"
++  if [ -z "$summary" ]; then
++    cat "$full_log" >&2
++    fail "test project produced no Expecto summary: $n"
++  fi
++
++  printf '%s\n' "$summary" > "$STAGING/tests-$n.log"
++  rm "$full_log"
++done
++[ "$tests_run" -gt 0 ] || fail "no test projects were discovered"
++
++for f in "$@"; do
++  cp "$f" "$STAGING/"
++done
++
++(
++  cd "$STAGING"
++  mapfile -d '' manifest_files < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z)
++  [ "${#manifest_files[@]}" -gt 0 ] || exit 1
++  sha256sum -- "${manifest_files[@]}" > SHA256SUMS
++  sha256sum -c SHA256SUMS >/dev/null
++)
++
++if mv --help 2>&1 | rg -q -- '--no-target-directory'; then
++  # HeMan and the hosted Linux gate use GNU mv. `-T` refuses a destination that
++  # appears during the run instead of moving the staging directory inside it.
++  mv -T "$STAGING" "$DIR"
++else
++  # Developer portability for non-GNU hosts. Recheck immediately before rename;
++  # the authoritative concurrency guarantee is measured on HeMan's GNU path.
++  [ ! -e "$DIR" ] || fail "evidence destination appeared during sealing: $DIR"
++  mv "$STAGING" "$DIR"
++fi
++STAGING=""
++trap - EXIT
+ echo "sealed $DIR"
+ echo "  manifest: $(sha256sum "$DIR/SHA256SUMS" | cut -c1-16)"
