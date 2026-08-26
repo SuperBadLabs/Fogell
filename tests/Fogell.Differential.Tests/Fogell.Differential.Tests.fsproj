@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/Fogell.Controller.Host/EventStream.fs" Link="EventStream.fs" />
     <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>

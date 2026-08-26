@@ -515,7 +515,11 @@ module FogellSide =
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
-            let runCtx = WalkerCtx.create buildStartTimeInMillis isRestartedRun
+            let runCtx =
+                WalkerCtx.create
+                    buildStartTimeInMillis
+                    isRestartedRun
+                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's

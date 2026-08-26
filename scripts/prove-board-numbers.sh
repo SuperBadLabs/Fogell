@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# FG-162. Proves scripts/audit-board-numbers.bb FAILS on each known-bad state and
-# PASSES the compliant one — in the gate, so a regression that makes the checker stop
-# matching cannot pass CI while the checker is silently broken.
+# FG-162 plus the FG-224 accounting closure. Proves audit-board-numbers.bb FAILS
+# independently on compatibility drift and canonical board-accounting drift, and
+# PASSES the compliant state.
 #
 # The board policy requires exactly this: "a cross-cutting invariant is not a ticket
 # line, it is a sweep with a test." A checker proven only by hand is one the gate
@@ -102,8 +102,132 @@ expect_fail "ledger drift under fixed board" "$LAB/board.md" "$LAB/ledger-drift.
 printf '\n> a row once said "tier3=%d" and was corrected.\n' "$((T3 - 5))" >> "$LAB/board.md"
 expect_pass "quoted retraction (exempt)" "$LAB/board.md" "$LAB/ledger.tsv"
 
+# Ticket accounting is parsed from canonical Wave rows. Each construction below
+# changes a scratch copy only and leaves all unrelated compatibility tokens intact.
+
+# 5. A new legal row must move rows/open/P3. If the audit ever returns to trusting
+# the prose summary, this is the exact manual-increment failure it would miss.
+awk '
+  /^## Standing risks/ && !inserted {
+    print "| FG-9999 | P3 | TODO | planted row | planted acceptance |"
+    inserted=1
+  }
+  { print }
+' "$LAB/board.md" > "$LAB/row-added.md"
+expect_fail "canonical row added without accounting update" "$LAB/row-added.md" "$LAB/ledger.tsv"
+
+# 6. Legal status and priority changes keep the row structurally valid but must move
+# the corresponding derived totals.
+awk '
+  /^\| FG-000 \|/ { sub(/\*\*DONE\*\*/, "**PARTIAL**") }
+  { print }
+' "$LAB/board.md" > "$LAB/status-drift.md"
+expect_fail "legal status drift" "$LAB/status-drift.md" "$LAB/ledger.tsv"
+
+awk '
+  /^\| FG-004b \|/ { sub(/\| P1 \|/, "| P2 |") }
+  { print }
+' "$LAB/board.md" > "$LAB/priority-drift.md"
+expect_fail "legal priority drift" "$LAB/priority-drift.md" "$LAB/ledger.tsv"
+
+# 7. Vocabulary is closed. These cases test legality independently of the summary
+# comparison: replacing one legal cell cannot be accepted as a fifth state or tier.
+awk '
+  /^\| FG-004b \|/ { sub(/\| TODO \|/, "| OPEN |") }
+  { print }
+' "$LAB/board.md" > "$LAB/illegal-status.md"
+expect_fail "illegal status vocabulary" "$LAB/illegal-status.md" "$LAB/ledger.tsv"
+
+awk '
+  /^\| FG-004b \|/ { sub(/\| P1 \|/, "| P9 |") }
+  { print }
+' "$LAB/board.md" > "$LAB/illegal-priority.md"
+expect_fail "illegal priority vocabulary" "$LAB/illegal-priority.md" "$LAB/ledger.tsv"
+
+# 8. Duplicate ids preserve every aggregate, so only the identity check can reject
+# this shape. It directly pins the historical collision that made row and id counts
+# disagree.
+awk '
+  /^\| FG-001 \|/ { sub(/FG-001/, "FG-000") }
+  { print }
+' "$LAB/board.md" > "$LAB/duplicate-id.md"
+expect_fail "duplicate canonical id with unchanged totals" "$LAB/duplicate-id.md" "$LAB/ledger.tsv"
+
+# 9. A ticket-looking row that cannot be parsed is a refusal, not an ignored line.
+# Since an invalid id is excluded from the derived totals, this construction isolates
+# the malformed-row check from summary drift.
+awk '
+  /^## Standing risks/ && !inserted {
+    print "| FG-bad | P1 | TODO | planted malformed row | planted acceptance |"
+    inserted=1
+  }
+  { print }
+' "$LAB/board.md" > "$LAB/malformed-row.md"
+expect_fail "malformed canonical row" "$LAB/malformed-row.md" "$LAB/ledger.tsv"
+
+# 10. The summary is exactly one anchored line. A stale value, absence, or duplicate
+# all fail; quoted history cannot accidentally satisfy this anchored shape.
+awk '
+  /^\*\*BOARD ACCOUNTING \(derived\):/ && !changed {
+    sub(/rows=[0-9]+/, "rows=1")
+    changed=1
+  }
+  { print }
+' "$LAB/board.md" > "$LAB/summary-drift.md"
+expect_fail "derived summary drift" "$LAB/summary-drift.md" "$LAB/ledger.tsv"
+
+awk '!/^\*\*BOARD ACCOUNTING \(derived\):/' "$LAB/board.md" > "$LAB/summary-missing.md"
+expect_fail "missing derived summary" "$LAB/summary-missing.md" "$LAB/ledger.tsv"
+
+awk '
+  { print }
+  /^\*\*BOARD ACCOUNTING \(derived\):/ && !duplicated { print; duplicated=1 }
+' "$LAB/board.md" > "$LAB/summary-duplicate.md"
+expect_fail "duplicate derived summary" "$LAB/summary-duplicate.md" "$LAB/ledger.tsv"
+
+# 11. Wave topology is part of the accounting contract. These three mutations keep
+# every ticket row and aggregate unchanged, so only the exact-heading/nonempty checks
+# can reject them.
+awk '!/^## Wave 3\.5 /' "$LAB/board.md" > "$LAB/wave-missing.md"
+expect_fail "missing expected Wave heading" "$LAB/wave-missing.md" "$LAB/ledger.tsv"
+
+awk '
+  { print }
+  /^## Wave 3\.5 / && !duplicated { print; duplicated=1 }
+' "$LAB/board.md" > "$LAB/wave-duplicate.md"
+expect_fail "duplicate Wave heading" "$LAB/wave-duplicate.md" "$LAB/ledger.tsv"
+
+awk '
+  /^## Wave 3\.5 / && !inserted { print "## Wave 3.4 — planted unexpected Wave"; inserted=1 }
+  { print }
+' "$LAB/board.md" > "$LAB/wave-unexpected.md"
+expect_fail "unexpected Wave heading" "$LAB/wave-unexpected.md" "$LAB/ledger.tsv"
+
+awk '
+  /^## Wave 3\.5 / { held=$0; next }
+  /^## Wave 3\.6 / { print held }
+  { print }
+' "$LAB/board.md" > "$LAB/wave-empty.md"
+expect_fail "expected Wave with no canonical rows" "$LAB/wave-empty.md" "$LAB/ledger.tsv"
+
+# 12. Redirects carry their target's status. The mismatch construction compensates
+# with an unrelated same-priority row, preserving every published aggregate; the
+# missing-target construction changes only the redirect prose.
+awk '
+  /^\| FG-038b \|/ { sub(/\| TODO \|/, "| **DONE** |") }
+  /^\| FG-111 \|/ { sub(/\| \*\*DONE\*\* \|/, "| TODO |") }
+  { print }
+' "$LAB/board.md" > "$LAB/redirect-mismatch.md"
+expect_fail "redirect status disagrees with target" "$LAB/redirect-mismatch.md" "$LAB/ledger.tsv"
+
+awk '
+  /^\| FG-038b \|/ { sub(/MOVED to FG-113/, "MOVED to FG-9998") }
+  { print }
+' "$LAB/board.md" > "$LAB/redirect-missing.md"
+expect_fail "redirect target missing" "$LAB/redirect-missing.md" "$LAB/ledger.tsv"
+
 if [ "$FAILED" -eq 0 ]; then
-  echo "BOARD-NUMBER PROOF: the audit fails every planted drift and passes the compliant and quoted-retraction cases"
+  echo "BOARD-NUMBER PROOF: compatibility, Wave topology, redirect and canonical accounting audits fail every planted drift and pass the compliant and quoted-retraction cases"
 else
   echo "BOARD-NUMBER PROOF FAILED"
   exit 1

@@ -1,0 +1,2652 @@
+diff --git a/.github/workflows/gate.yml b/.github/workflows/gate.yml
+index 754c379..2832a88 100644
+--- a/.github/workflows/gate.yml
++++ b/.github/workflows/gate.yml
+@@ -123,6 +123,16 @@ jobs:
+             echo "Store tests were SKIPPED — postgres service not reachable"; exit 1
+           fi
+ 
++      - name: runnable controller vertical slice (FG-224)
++        # This is the product seam the project suites cannot prove independently:
++        # least-privilege startup, real HTTP admission, supervised Run.Host child,
++        # fenced progressive logs and atomic terminal roll-up on a fresh database.
++        env:
++          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
++          FOGELL_PG_PORT: 55440
++          FOGELL_BUILD_CONFIGURATION: Release
++        run: ./scripts/prove-runnable-controller.sh
++
+       - name: backup/restore drill and hostile proof (FG-085a)
+         # The postgres:16 service is also the client-tool distribution. Keeping
+         # pg_dump/pg_restore inside that container gives the drill exact-major
+diff --git a/Fogell.slnx b/Fogell.slnx
+index c28d4ec..9fdf59f 100644
+--- a/Fogell.slnx
++++ b/Fogell.slnx
+@@ -6,6 +6,7 @@
+     <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
+     <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
+     <Project Path="src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
++    <Project Path="src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj" />
+     <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
+     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
+     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index a0891f9..0374826 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -259,7 +259,7 @@ of trusting the row.
+ 
+ ## Live queue — the reference point for the execution cycle
+ 
+-**WHY THIS SECTION EXISTS.** The board carries 192 rows, 103 of them DONE, and the open
++**WHY THIS SECTION EXISTS.** The board carries 193 rows, 104 of them DONE, and the open
+ 89 are spread 4 / 39 / 36 / 10 across P0–P3. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
+ until 2026-08-14, and 189 / 86 / 4-36-36-10 for the length of that same pass — FG-198 is the row it filed against itself, and it is the ONLY row added — the rest of the movement is a recount, not new work. NOTHING REGRESSED: two ids each covered two
+ different tickets, so a count of unique ids reported 187 while 189 rows existed, and the
+@@ -577,7 +577,7 @@ and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
+ | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |
+ | FG-027 | P1 | TODO | Retry semantics: never rewrite an attempt; one child attempt with immutable link; exhausted budget → dead-letter | replaying the retry decision returns the same child |
+ | FG-027a | P1 | **PARTIAL** | Pure immutable retry-decision foundation, intentionally outside `Fogell.Store` | Signed input `7399fa68f6092029563787c9882ad7f18d266ce7` (tree `935c24f91b9e11c7c68ecd5a51c2eac23d0b5750`) adds a Domain law that creates one queued child below a zero-based attempt limit, returns `BudgetExhausted` at the boundary, and validates an exact prior result before replaying it. The decision binds the parent organization, node, ordinal, ancestry, restore epoch and original limit; a child gets the next ordinal, immutable parent link, initial fence and no lease. This is foundation only: there is no Store persistence, transaction/concurrency arbitration, dead-letter or outbox record, or scheduler/controller wiring, and terminal-status retry policy remains external. Parent FG-027 therefore remains TODO. Publication, CI and merge remain — [→ detail](tickets/FG-027a.md) |
+-| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 10 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
++| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 11 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
+ | FG-029 | P2 | TODO | SQLite single-user mode, explicitly labelled non-production | `KNOWN-LIMITATIONS` states it; startup logs the mode |
+ 
+ ## Wave 3 — Execution and process lifecycle
+@@ -736,6 +736,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
++| FG-224 | P0 | **DONE** | Runnable, restart-discovered single-node controller | Fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+new file mode 100644
+index 0000000..5e56257
+--- /dev/null
++++ b/docs/runbooks/controller-host.md
+@@ -0,0 +1,77 @@
++# Controller host runbook
++
++`Fogell.Controller.Host` is Fogell's runnable single-node controller. It must be
++started with separate runtime and maintenance database capabilities. Startup
++refuses before binding when configuration, migration, or role validation fails.
++
++## Database roles
++
++The runtime identity must be `NOSUPERUSER NOBYPASSRLS` and distinct from the
++maintenance identity. Grant only the runtime surface:
++
++```sql
++GRANT USAGE ON SCHEMA public TO fogell_runtime;
++GRANT SELECT ON controller_metadata TO fogell_runtime;
++GRANT SELECT ON organization_work_roots TO fogell_runtime;
++GRANT SELECT, INSERT, UPDATE, DELETE ON
++  organizations, projects, builds, nodes, attempts, events, outbox, log_chunks,
++  effect_checkpoints, retry_decisions, build_definitions
++TO fogell_runtime;
++GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fogell_runtime;
++```
++
++The maintenance identity applies checksum-pinned migrations during startup and
++must not be used for requests or worker operations.
++
++## Required configuration
++
++```text
++FOGELL_DATABASE_URL                 runtime Npgsql connection string
++FOGELL_MAINTENANCE_DATABASE_URL     distinct migration connection string
++FOGELL_API_TOKEN_FILE               absolute/readable token file, >=32 characters
++FOGELL_LISTEN_URL                   HTTPS, or loopback HTTP for local operation
++FOGELL_STATE_ROOT                   absolute durable controller-state directory
++FOGELL_RUN_HOST_PATH                built Fogell.Run.Host executable
++FOGELL_LOCAL_TRUST_POOL             controller-owned placement pool
++FOGELL_MAX_PIPELINE_BYTES           1024..16777216
++FOGELL_MAX_LOG_CHUNKS               1..10000 returned per request
++FOGELL_WORKER_POLL_MS               25..60000
++FOGELL_WORKER_LEASE_SECONDS         10..3600
++```
++
++Keep the token file and both database strings out of command arguments and logs.
++The runtime state root holds immutable definitions, journals, event frames,
++workspaces, a neutral child home, and temporary files. Put it on storage whose
++loss/recovery policy matches the PostgreSQL database; an incomplete journal is a
++reconciliation event, not permission to guess success.
++
++## Start and observe
++
++Build the solution in locked mode, export the variables above, then start:
++
++```bash
++src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
++```
++
++Use `/health/live` for process liveness and `/health/ready` for runtime database
++reachability. Do not send traffic until readiness returns 200. A graceful stop
++terminates or requeues owned local work; after an ungraceful stop, the next
++controller requeues an expired local lease and consults the existing journal.
++
++## Acceptance and recovery checks
++
++From HeMan, with the PostgreSQL container and host port selected:
++
++```bash
++FOGELL_PG_CONTAINER=fogell-fg060a \
++FOGELL_PG_PORT=55445 \
++FOGELL_BUILD_CONFIGURATION=Release \
++./scripts/prove-runnable-controller.sh
++```
++
++Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
++scratch database, role, state directory, and listener, and removes them on exit.
++If an attempt becomes `reconciliation_required`, inspect its durable journal and
++effect checkpoints before deciding recovery. Never edit `build_definitions` or
++force a terminal status directly: both bypass the evidence the controller uses
++to refuse duplicate or substituted work.
+diff --git a/docs/tickets/FG-028.md b/docs/tickets/FG-028.md
+index 2f6d793..dbc7741 100644
+--- a/docs/tickets/FG-028.md
++++ b/docs/tickets/FG-028.md
+@@ -3,7 +3,8 @@
+ Status: **DONE locally; publication remains owner-controlled**.
+ 
+ Fogell's PostgreSQL tenant boundary is now enforced by the database. Migration
+-`0005_forced_tenant_rls.sql` enables and forces row-level security on all ten
++`0005_forced_tenant_rls.sql`, extended by FG-224's tenant-bearing definition,
++enables and forces row-level security on all eleven
+ tenant-bearing tables. Every policy compares the row's organization with
+ `fogell_current_organization_id()`. With no setting the function returns NULL,
+ so no policy admits a row; malformed UUID context raises instead of widening
+@@ -29,7 +30,7 @@ tenant operations use the first connection. The one-string constructor remains
+ compatible for tests and single-role development, but production should not use
+ a superuser or `BYPASSRLS` role as its runtime connection.
+ 
+-A runtime role needs schema usage, DML on the ten tenant tables, sequence usage,
++A runtime role needs schema usage, DML on the eleven tenant tables, sequence usage,
+ and read access to `controller_metadata`. PostgreSQL also requires an UPDATE
+ privilege for `SELECT ... FOR SHARE`; grant that privilege only on the immutable
+ `singleton` column, never on `restore_epoch`:
+@@ -37,9 +38,11 @@ privilege for `SELECT ... FOR SHARE`; grant that privilege only on the immutable
+ ```sql
+ GRANT USAGE ON SCHEMA public TO fogell_runtime;
+ GRANT SELECT, UPDATE(singleton) ON controller_metadata TO fogell_runtime;
++GRANT SELECT ON organization_work_roots TO fogell_runtime;
+ GRANT SELECT, INSERT, UPDATE, DELETE ON
+   organizations, projects, builds, nodes, attempts,
+-  events, outbox, log_chunks, effect_checkpoints, retry_decisions
++  events, outbox, log_chunks, effect_checkpoints, retry_decisions,
++  build_definitions
+ TO fogell_runtime;
+ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fogell_runtime;
+ ```
+@@ -68,8 +71,8 @@ It then proves:
+   normal pool reset deliberately disabled so it cannot mask a session leak;
+ - malformed context fails with PostgreSQL UUID validation;
+ - a direct cross-tenant insert is rejected by `WITH CHECK`;
+-- all ten tables have both `relrowsecurity` and `relforcerowsecurity` set;
+-- all ten policies and both new composite foreign keys exist;
++- all eleven tables have both `relrowsecurity` and `relforcerowsecurity` set;
++- all eleven policies and both new composite foreign keys exist;
+ - mixed-tenant event and log attempt lineage is rejected by those keys;
+ - the runtime role cannot alter the restore epoch, while global restore succeeds
+   through the separate maintenance connection.
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+new file mode 100644
+index 0000000..b290c2c
+--- /dev/null
++++ b/docs/tickets/FG-224.md
+@@ -0,0 +1,65 @@
++# FG-224 — Runnable, restart-discovered controller
++
++Status: **DONE locally; publication remains owner-controlled**.
++
++## Problem
++
++Fogell had durable admission, scheduling, execution, logs, and an HTTP router,
++but no production process connected them. The API discarded the accepted
++Jenkinsfile bytes, the runner was reachable only as a standalone tool, and a
++terminal attempt did not atomically become the build status returned by the API.
++The result was an engine that could be tested component by component but could
++not accept and complete a build as one service.
++
++## Closed vertical slice
++
++`Fogell.Controller.Host` now performs migration and database-role validation
++before binding, serves health and authenticated API routes, and runs one bounded
++local Linux worker. Admission stores the exact source bytes, a SHA-256 digest,
++and a versioned fingerprint binding source plus controller-owned placement.
++Concurrent replays of one idempotency key converge on that immutable definition;
++source or placement substitution is refused.
++
++The local worker discovers organization UUID roots after restart, claims one
++whole-pipeline execution unit, materializes the exact durable source, and starts
++`Fogell.Run.Host` in its own process group with a cleared environment. The child
++sets a Linux parent-death signal, writes machine log frames outside the workspace,
++and retains its existing journal as terminal authority. The controller renews
++its fenced lease, polls cancellation, terminates the process group on loss of
++authority, and atomically rolls attempt, node, build, terminal event, and outbox
++to one result.
++
++Forced tenant RLS remains the data boundary. The only global runtime relation is
++`organization_work_roots`, containing UUIDs and no tenant slug or record; every
++claim after discovery still opens a transaction-local tenant scope. A queued
++legacy multi-node build or missing/corrupt definition is named and refused rather
++than silently skipped or executed under invented semantics.
++
++## Acceptance
++
++`scripts/prove-runnable-controller.sh` uses a fresh PostgreSQL database and a real
++`NOSUPERUSER NOBYPASSRLS` runtime role. It proves weak-token refusal before bind,
++least-privilege startup, durable queued admission discovered by a restarted
++controller process, real whole-pipeline execution, progressive output through
++the HTTP API, atomic terminal roll-up, exact idempotent replay, source-substitution
++conflict, request placement denial, terminal cancellation conflict, immutable
++definition enforcement, and absence of configured token/password text in host
++logs. The hosted gate runs this proof against its PostgreSQL service.
++
++Focused HeMan acceptance on fresh databases:
++
++- Store: 64/64 passed;
++- Controller API: 21/21 passed; and
++- runnable-controller proof: PASS.
++
++The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
++exact-head repository gate and signed local commit identity are recorded at
++closure rather than predicted here.
++
++## Boundary
++
++This closes a single-process, capacity-one Linux controller. Remote agents,
++mTLS agent protocol, HA leader election, packaging, queue saturation policy, and
++automatic replay of an effect interrupted mid-step remain outside the ticket.
++An interrupted journal without a terminal record still enters reconciliation;
++the controller never treats process exit or stdout as proof of build success.
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+new file mode 100755
+index 0000000..264f0ed
+--- /dev/null
++++ b/scripts/prove-runnable-controller.sh
+@@ -0,0 +1,207 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
++container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
++port=${FOGELL_PG_PORT:-55445}
++database="fogell_fg224_$$_$(date +%s)"
++role="fogell_fg224_runtime_$$_$(date +%s)"
++listen_port=${FOGELL_FG224_PORT:-18083}
++configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
++base_url="http://127.0.0.1:${listen_port}"
++scratch=$(mktemp -d /tmp/fogell-fg224-proof.XXXXXX)
++state_root="$scratch/state"
++token_file="$scratch/token"
++weak_token_file="$scratch/weak-token"
++host_log="$scratch/controller.log"
++host_pid=""
++
++admin() {
++  docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
++}
++
++cleanup() {
++  if [[ -n "$host_pid" ]] && kill -0 "$host_pid" 2>/dev/null; then
++    kill -TERM "$host_pid" 2>/dev/null || true
++    wait "$host_pid" 2>/dev/null || true
++  fi
++  docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
++    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" \
++    -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
++  docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
++    -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
++  case "$scratch" in
++    /tmp/fogell-fg224-proof.*) rm -rf -- "$scratch" ;;
++    *) echo "FG-224 REFUSED: unsafe cleanup path" >&2 ;;
++  esac
++}
++trap cleanup EXIT
++
++controller="$repo/src/Fogell.Controller.Host/bin/$configuration/net10.0/Fogell.Controller.Host"
++run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host"
++[[ -x "$controller" ]] || { echo "FG-224 REFUSED: controller host is not built" >&2; exit 2; }
++[[ -x "$run_host" ]] || { echo "FG-224 REFUSED: run host is not built" >&2; exit 2; }
++
++printf '%s' 'fg224-proof-token-0123456789abcdef' >"$token_file"
++printf '%s' 'weak' >"$weak_token_file"
++chmod 400 "$token_file" "$weak_token_file"
++
++admin postgres -c "CREATE DATABASE $database" >/dev/null
++admin postgres -c "CREATE ROLE $role NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS" >/dev/null
++
++maintenance_url="Host=127.0.0.1;Port=$port;Username=fogell;Password=fogell;Database=$database"
++runtime_url="$maintenance_url;Options=-c role=$role;No Reset On Close=true;Maximum Pool Size=8"
++
++common_env=(
++  "FOGELL_DATABASE_URL=$runtime_url"
++  "FOGELL_MAINTENANCE_DATABASE_URL=$maintenance_url"
++  "FOGELL_LISTEN_URL=$base_url"
++  "FOGELL_STATE_ROOT=$state_root"
++  "FOGELL_RUN_HOST_PATH=$run_host"
++  "FOGELL_LOCAL_TRUST_POOL=trusted-linux"
++  "FOGELL_MAX_PIPELINE_BYTES=1024"
++  "FOGELL_MAX_LOG_CHUNKS=100"
++  "FOGELL_WORKER_POLL_MS=50"
++  "FOGELL_WORKER_LEASE_SECONDS=15"
++)
++
++set +e
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$weak_token_file" "$controller" \
++  >"$scratch/weak.stdout" 2>"$scratch/weak.stderr"
++weak_rc=$?
++set -e
++[[ $weak_rc -eq 2 ]] || { echo "FG-224 REFUSED: weak token did not fail startup before bind" >&2; exit 1; }
++! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
++  || { echo "FG-224 REFUSED: weak startup bound a socket" >&2; exit 1; }
++
++set +e
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" \
++  >"$scratch/capability.stdout" 2>"$scratch/capability.stderr"
++capability_rc=$?
++set -e
++[[ $capability_rc -eq 3 ]] \
++  || { echo "FG-224 REFUSED: incomplete runtime capability did not fail startup" >&2; exit 1; }
++grep -Fq 'runtime database capability is incomplete' "$scratch/capability.stderr" \
++  || { echo "FG-224 REFUSED: runtime capability refusal was not named" >&2; exit 1; }
++! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
++  || { echo "FG-224 REFUSED: incomplete runtime capability bound a socket" >&2; exit 1; }
++
++admin "$database" \
++  -c "GRANT USAGE ON SCHEMA public TO $role" \
++  -c "GRANT SELECT ON controller_metadata TO $role" \
++  -c "GRANT SELECT, INSERT, UPDATE, DELETE ON organizations, projects, builds, nodes, attempts, events, outbox, log_chunks, effect_checkpoints, retry_decisions, build_definitions TO $role" \
++  -c "GRANT SELECT ON organization_work_roots TO $role" \
++  -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $role" >/dev/null
++
++organization=$(tr -d '-' </proc/sys/kernel/random/uuid)
++project=$(tr -d '-' </proc/sys/kernel/random/uuid)
++organization="${organization:0:8}-${organization:8:4}-${organization:12:4}-${organization:16:4}-${organization:20:12}"
++project="${project:0:8}-${project:8:4}-${project:12:4}-${project:16:4}-${project:20:12}"
++admin "$database" \
++  -c "INSERT INTO organizations (id, slug) VALUES ('$organization', 'fg224-org')" \
++  -c "INSERT INTO projects (id, organization_id, slug) VALUES ('$project', '$organization', 'fg224-project')" >/dev/null
++
++# Hold the first worker scan long enough to admit and stop deterministically.
++# The second process uses the production poll setting and must discover the
++# queued build from durable state rather than process memory.
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=10000" \
++  "$controller" >"$host_log" 2>&1 &
++host_pid=$!
++
++ready=0
++for _ in $(seq 1 200); do
++  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
++    ready=1
++    break
++  fi
++  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: controller exited during startup" >&2; exit 1; }
++  sleep 0.05
++done
++[[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: readiness never became healthy" >&2; exit 1; }
++
++builds_url="$base_url/api/v1/organizations/$organization/projects/$project/builds"
++auth="authorization: Bearer fg224-proof-token-0123456789abcdef"
++pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Build\') {\n      steps {\n        echo \'hello-controller\'\n      }\n    }\n  }\n}'
++
++response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$pipeline" "$builds_url")
++build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$response")
++[[ -n "$build_id" ]] || { echo "FG-224 REFUSED: admission returned no build id" >&2; exit 1; }
++
++queued_state=$(admin "$database" -Atc \
++  "SELECT a.state FROM attempts a JOIN nodes n ON n.id=a.node_id AND n.organization_id=a.organization_id WHERE n.build_id='$build_id'")
++[[ "$queued_state" = queued ]] || { echo "FG-224 REFUSED: deterministic restart fixture was not queued" >&2; exit 1; }
++
++kill -TERM "$host_pid"
++wait "$host_pid"
++host_pid=""
++! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
++  || { echo "FG-224 REFUSED: stopped controller still served requests" >&2; exit 1; }
++
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" >>"$host_log" 2>&1 &
++host_pid=$!
++
++ready=0
++for _ in $(seq 1 200); do
++  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
++    ready=1
++    break
++  fi
++  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: restarted controller exited" >&2; exit 1; }
++  sleep 0.05
++done
++[[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: restarted controller never became ready" >&2; exit 1; }
++
++terminal=""
++for _ in $(seq 1 300); do
++  terminal=$(curl -fsS -H "$auth" "$builds_url/$build_id")
++  grep -q '"status":"success"' <<<"$terminal" && break
++  grep -q '"status":"\(failure\|aborted\|reconciliation_required\)"' <<<"$terminal" && {
++    echo "FG-224 REFUSED: build reached $terminal" >&2
++    exit 1
++  }
++  sleep 0.05
++done
++grep -q '"status":"success"' <<<"$terminal" || { echo "FG-224 REFUSED: build did not finish" >&2; exit 1; }
++
++logs=$(curl -fsS -H "$auth" "$builds_url/$build_id/logs")
++grep -q 'hello-controller' <<<"$logs" || { echo "FG-224 REFUSED: executed output did not reach progressive logs" >&2; exit 1; }
++
++replay_code=$(curl -sS -o "$scratch/replay.json" -w '%{http_code}' -X POST -H "$auth" \
++  -H 'idempotency-key: fg224-e2e' -H 'content-type: application/x-jenkinsfile' \
++  --data-binary "$pipeline" "$builds_url")
++[[ "$replay_code" = 200 ]] || { echo "FG-224 REFUSED: exact replay was not idempotent" >&2; exit 1; }
++
++conflict_code=$(curl -sS -o "$scratch/conflict.json" -w '%{http_code}' -X POST -H "$auth" \
++  -H 'idempotency-key: fg224-e2e' -H 'content-type: application/x-jenkinsfile' \
++  --data-binary "${pipeline/hello-controller/substituted}" "$builds_url")
++[[ "$conflict_code" = 409 ]] || { echo "FG-224 REFUSED: source substitution did not conflict" >&2; exit 1; }
++
++placement_code=$(curl -sS -o "$scratch/placement.json" -w '%{http_code}' -X POST -H "$auth" \
++  -H 'idempotency-key: fg224-placement' -H 'fogell-trust-pool: privileged' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$pipeline" "$builds_url")
++[[ "$placement_code" = 400 ]] || { echo "FG-224 REFUSED: caller selected a trust pool" >&2; exit 1; }
++
++cancel_code=$(curl -sS -o "$scratch/cancel.json" -w '%{http_code}' -X POST -H "$auth" "$builds_url/$build_id/cancel")
++[[ "$cancel_code" = 409 ]] || { echo "FG-224 REFUSED: terminal cancellation did not conflict" >&2; exit 1; }
++
++facts=$(admin "$database" -Atc \
++  "SELECT (SELECT count(*) FROM builds WHERE id='$build_id'),
++          (SELECT count(*) FROM build_definitions WHERE build_id='$build_id'),
++          (SELECT count(*) FROM nodes WHERE build_id='$build_id'),
++          (SELECT count(*) FROM events WHERE build_id='$build_id' AND kind='attempt.terminal'),
++          (SELECT count(*) FROM outbox WHERE topic='build.terminal' AND body->>'build'='$build_id')")
++[[ "$facts" = "1|1|1|1|1" ]] || { echo "FG-224 REFUSED: durable vertical slice counts were $facts" >&2; exit 1; }
++
++set +e
++admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','hex') WHERE build_id='$build_id'" >/dev/null 2>&1
++mutate_rc=$?
++set -e
++[[ $mutate_rc -ne 0 ]] || { echo "FG-224 REFUSED: durable definition was mutable" >&2; exit 1; }
++
++if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Password=fogell' "$host_log"; then
++  echo "FG-224 REFUSED: controller log disclosed a configured secret" >&2
++  exit 1
++fi
++
++echo "FG-224 PROOF PASS: restart-discovered durable admission; byte-bound idempotency; fixed placement; supervised whole-pipeline execution; fenced logs; atomic terminal roll-up"
+diff --git a/src/Fogell.Controller.Api/Router.fs b/src/Fogell.Controller.Api/Router.fs
+index 55e3db3..03699f0 100644
+--- a/src/Fogell.Controller.Api/Router.fs
++++ b/src/Fogell.Controller.Api/Router.fs
+@@ -1,6 +1,8 @@
+ namespace Fogell.Controller.Api
+ 
+ open System
++open System.IO
++open System.Text
+ open Microsoft.AspNetCore.Builder
+ open Microsoft.AspNetCore.Http
+ open Microsoft.AspNetCore.Routing
+@@ -16,8 +18,10 @@ open Fogell.Store
+ type ApiState =
+     { Store: Store
+       Auth: Authorization.Config
+-      /// Trust pool assigned to a submission that does not name one.
+-      DefaultTrustPool: string }
++      /// Placement is controller policy. A bearer is not a placement grant.
++      TrustPool: string
++      MaxPipelineBytes: int
++      MaxLogChunks: int }
+ 
+ module Router =
+ 
+@@ -51,6 +55,35 @@ module Router =
+         | true, g -> Some g
+         | _ -> None
+ 
++    let private readBoundedBody (ctx: HttpContext) maxBytes =
++        task {
++            if ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > int64 maxBytes then
++                return Error "pipeline_too_large"
++            else
++                use bytes = new MemoryStream(min maxBytes 65536)
++                let buffer = Array.zeroCreate<byte> 16384
++                let mutable finished = false
++                let mutable tooLarge = false
++
++                while not finished && not tooLarge do
++                    let remaining = maxBytes + 1 - int bytes.Length
++                    let! count =
++                        ctx.Request.Body.ReadAsync(
++                            buffer.AsMemory(0, min buffer.Length remaining),
++                            ctx.RequestAborted)
++
++                    if count = 0 then
++                        finished <- true
++                    else
++                        bytes.Write(buffer, 0, count)
++                        tooLarge <- bytes.Length > int64 maxBytes
++
++                if tooLarge then
++                    return Error "pipeline_too_large"
++                else
++                    return Ok(bytes.ToArray())
++        }
++
+     /// POST …/builds — submit a Jenkinsfile.
+     ///
+     /// The body is the pipeline source. It is PARSED before admission, so a
+@@ -67,55 +100,77 @@ module Router =
+                 | None, _
+                 | _, None -> return! fail ctx 400 "malformed_identifier" "organization and project must be UUIDs" None
+                 | Some org, Some project ->
+-                    match header ctx "idempotency-key" with
+-                    | None ->
+-                        // Required, not optional: without it a retried submission
+-                        // silently creates a second build.
++                    if ctx.Request.Headers.ContainsKey "fogell-trust-pool" then
+                         return!
+-                            fail ctx 400 "idempotency_key_required"
+-                                "an Idempotency-Key header is required so a retry cannot create a second build" None
+-                    | Some key when key.Length > 256 ->
+-                        return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
+-                    | Some key ->
+-                        use reader = new IO.StreamReader(ctx.Request.Body)
+-                        let! source = reader.ReadToEndAsync()
+-
+-                        match Fogell.Pipeline.Parser.Parser.parse source with
+-                        | Result.Error e ->
++                            fail ctx 400 "placement_override_forbidden"
++                                "execution placement is controller policy and cannot be selected by a request" None
++                    else
++                        match header ctx "idempotency-key" with
++                        | None ->
++                            // Required, not optional: without it a retried submission
++                            // silently creates a second build.
+                             return!
+-                                fail ctx 422
+-                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
+-                                    (Fogell.Admission.AdmissionError.render source e)
+-                                    (Some(string e.Position))
+-                        | Result.Ok pipeline ->
+-                            let stages =
+-                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+-                                |> List.map (fun s -> s.Name)
++                                fail ctx 400 "idempotency_key_required"
++                                    "an Idempotency-Key header is required so a retry cannot create a second build" None
++                        | Some key when Encoding.UTF8.GetByteCount key > 256 ->
++                            return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
++                        | Some key ->
++                            let! body = readBoundedBody ctx state.MaxPipelineBytes
+ 
+-                            let trustPool =
+-                                header ctx "fogell-trust-pool" |> Option.defaultValue state.DefaultTrustPool
++                            match body with
++                            | Error _ ->
++                                return!
++                                    fail ctx 413 "pipeline_too_large"
++                                        $"pipeline source must be at most {state.MaxPipelineBytes} bytes" None
++                            | Ok sourceBytes ->
++                                let sourceResult =
++                                    try
++                                        Ok(UTF8Encoding(false, true).GetString sourceBytes)
++                                    with :? DecoderFallbackException ->
++                                        Error "pipeline source must be valid UTF-8"
+ 
+-                            let input =
+-                                { OrganizationId = OrganizationId org
+-                                  ProjectId = ProjectId project
+-                                  IdempotencyKey = key
+-                                  StageNames = stages
+-                                  RequiredTrustPool = trustPool
+-                                  RequiredCapabilities = [ "linux" ] }
++                                match sourceResult with
++                                | Error message -> return! fail ctx 400 "invalid_utf8" message None
++                                | Ok source ->
++                                    match Fogell.Pipeline.Parser.Parser.parse source with
++                                    | Result.Error e ->
++                                        return!
++                                            fail ctx 422
++                                                (Fogell.Admission.ErrorCode.toWireString e.Code)
++                                                (Fogell.Admission.AdmissionError.render source e)
++                                                (Some(string e.Position))
++                                    | Result.Ok pipeline ->
++                                        let stages =
++                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
++                                            |> List.map (fun s -> s.Name)
+ 
+-                            match state.Store.AdmitBuild input with
+-                            | Result.Error e -> return! fail ctx 409 "admission_refused" e None
+-                            | Result.Ok a ->
+-                                let payload: AdmissionResponse =
+-                                    { BuildId = string a.BuildId.Value
+-                                      NodeId = string a.NodeId.Value
+-                                      AttemptId = string a.AttemptId.Value
+-                                      Number = a.Number
+-                                      WasExisting = a.WasExisting }
++                                        let input =
++                                            { OrganizationId = OrganizationId org
++                                              ProjectId = ProjectId project
++                                              IdempotencyKey = key
++                                              PipelineSource = sourceBytes
++                                              StageNames = stages
++                                              RequiredTrustPool = state.TrustPool
++                                              RequiredCapabilities = [ "linux" ] }
+ 
+-                                // 200 for a replay, 201 for a fresh admission —
+-                                // the status code carries the same fact as the body.
+-                                return! json ctx (if a.WasExisting then 200 else 201) payload
++                                        match state.Store.AdmitBuild input with
++                                        | Result.Error e when
++                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
++                                            ->
++                                            return! fail ctx 409 "idempotency_conflict" e None
++                                        | Result.Error _ ->
++                                            return!
++                                                fail ctx 503 "admission_unavailable"
++                                                    "build admission is temporarily unavailable" None
++                                        | Result.Ok a ->
++                                            let payload: AdmissionResponse =
++                                                { BuildId = string a.BuildId.Value
++                                                  NodeId = string a.NodeId.Value
++                                                  AttemptId = string a.AttemptId.Value
++                                                  Number = a.Number
++                                                  WasExisting = a.WasExisting }
++
++                                            return! json ctx (if a.WasExisting then 200 else 201) payload
+         }
+         :> Threading.Tasks.Task
+ 
+@@ -160,25 +215,35 @@ module Router =
+                         match ctx.Request.Query.TryGetValue "from" with
+                         | true, v when v.Count > 0 ->
+                             match Int32.TryParse v.[0] with
+-                            | true, n when n >= 0 -> n
+-                            | _ -> 0
+-                        | _ -> 0
++                            | true, n when n >= 0 -> Ok n
++                            | _ -> Error()
++                        | _ -> Ok 0
+ 
+-                    match state.Store.ReadLog(OrganizationId org, ProjectId project, BuildId build, from) with
+-                    | None -> return! fail ctx 404 "not_found" "no such build" None
+-                    | Some chunks ->
+-                        let next =
+-                            match chunks with
+-                            | [] -> from
+-                            | _ -> (chunks |> List.map fst |> List.max) + 1
++                    match from with
++                    | Error _ -> return! fail ctx 400 "invalid_log_cursor" "from must be a non-negative integer" None
++                    | Ok from ->
++                        match
++                            state.Store.ReadLogPage(
++                                OrganizationId org,
++                                ProjectId project,
++                                BuildId build,
++                                from,
++                                state.MaxLogChunks)
++                        with
++                        | None -> return! fail ctx 404 "not_found" "no such build" None
++                        | Some chunks ->
++                            let next =
++                                match chunks with
++                                | [] -> from
++                                | _ -> (chunks |> List.map fst |> List.max) + 1
+ 
+-                        let payload: LogResponse =
+-                            { BuildId = string build
+-                              FromSequence = from
+-                              NextSequence = next
+-                              Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
++                            let payload: LogResponse =
++                                { BuildId = string build
++                                  FromSequence = from
++                                  NextSequence = next
++                                  Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
+ 
+-                        return! json ctx 200 payload
++                            return! json ctx 200 payload
+         }
+         :> Threading.Tasks.Task
+ 
+@@ -224,7 +289,7 @@ module Router =
+                     let pool =
+                         match ctx.Request.Query.TryGetValue "trustPool" with
+                         | true, v when v.Count > 0 && not (String.IsNullOrWhiteSpace v.[0]) -> v.[0]
+-                        | _ -> state.DefaultTrustPool
++                        | _ -> state.TrustPool
+ 
+                     let payload: ExplainResponse =
+                         { TrustPool = pool
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+new file mode 100644
+index 0000000..51e1a5d
+--- /dev/null
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -0,0 +1,107 @@
++namespace Fogell.Controller.Host
++
++open System
++open System.IO
++
++type ControllerConfig =
++    { RuntimeDatabaseUrl: string
++      MaintenanceDatabaseUrl: string
++      ApiToken: string
++      ListenUrl: string
++      StateRoot: string
++      RunHostPath: string
++      TrustPool: string
++      MaxPipelineBytes: int
++      MaxLogChunks: int
++      PollMilliseconds: int
++      LeaseSeconds: int }
++
++module ControllerConfig =
++
++    let private required name =
++        match Environment.GetEnvironmentVariable name with
++        | null
++        | "" -> Error $"{name} is required"
++        | value -> Ok value
++
++    let private positiveInt name minimum maximum =
++        match required name with
++        | Error error -> Error error
++        | Ok raw ->
++            match Int32.TryParse raw with
++            | true, value when value >= minimum && value <= maximum -> Ok value
++            | _ -> Error $"{name} must be an integer from {minimum} through {maximum}"
++
++    let private combine results =
++        results
++        |> List.choose (function Error value -> Some value | Ok _ -> None)
++        |> function
++            | [] -> Ok()
++            | errors -> Error(String.concat "; " errors)
++
++    let private value =
++        function
++        | Ok item -> item
++        | Error error -> invalidOp error
++
++    let load () =
++        let runtime = required "FOGELL_DATABASE_URL"
++        let maintenance = required "FOGELL_MAINTENANCE_DATABASE_URL"
++        let tokenFile = required "FOGELL_API_TOKEN_FILE"
++        let listen = required "FOGELL_LISTEN_URL"
++        let stateRoot = required "FOGELL_STATE_ROOT"
++        let runHost = required "FOGELL_RUN_HOST_PATH"
++        let trustPool = required "FOGELL_LOCAL_TRUST_POOL"
++        let maxPipeline = positiveInt "FOGELL_MAX_PIPELINE_BYTES" 1024 (16 * 1024 * 1024)
++        let maxLogs = positiveInt "FOGELL_MAX_LOG_CHUNKS" 1 10000
++        let poll = positiveInt "FOGELL_WORKER_POLL_MS" 25 60000
++        let lease = positiveInt "FOGELL_WORKER_LEASE_SECONDS" 10 3600
++
++        match combine [ runtime; maintenance; tokenFile; listen; stateRoot; runHost; trustPool ],
++              combine [ maxPipeline |> Result.map string; maxLogs |> Result.map string; poll |> Result.map string; lease |> Result.map string ] with
++        | Error error, _
++        | _, Error error -> Error error
++        | Ok _, Ok _ ->
++            let runtimeValue = value runtime
++            let maintenanceValue = value maintenance
++            let tokenPath = value tokenFile |> Path.GetFullPath
++            let listenValue = value listen
++            let stateRootValue = value stateRoot |> Path.GetFullPath
++            let runHostValue = value runHost |> Path.GetFullPath
++
++            let uriResult =
++                match Uri.TryCreate(listenValue, UriKind.Absolute) with
++                | true, uri when uri.Scheme = Uri.UriSchemeHttps -> Ok()
++                | true, uri when uri.Scheme = Uri.UriSchemeHttp && uri.IsLoopback -> Ok()
++                | _ -> Error "FOGELL_LISTEN_URL must be HTTPS or loopback HTTP"
++
++            if runtimeValue = maintenanceValue then
++                Error "runtime and maintenance database URLs must be distinct capabilities"
++            elif not (Path.IsPathFullyQualified stateRootValue) then
++                Error "FOGELL_STATE_ROOT must be absolute"
++            elif not (File.Exists runHostValue) then
++                Error "FOGELL_RUN_HOST_PATH does not name a file"
++            elif not (File.Exists tokenPath) then
++                Error "FOGELL_API_TOKEN_FILE does not name a file"
++            else
++                match uriResult with
++                | Error error -> Error error
++                | Ok _ ->
++                    let token = File.ReadAllText(tokenPath).TrimEnd('\r', '\n')
++
++                    if token.Length < 32 || token <> token.Trim() then
++                        Error "API token file must contain at least 32 non-padded characters"
++                    else
++                        Directory.CreateDirectory stateRootValue |> ignore
++                        Ok
++                            { RuntimeDatabaseUrl = runtimeValue
++                              MaintenanceDatabaseUrl = maintenanceValue
++                              ApiToken = token
++                              ListenUrl = listenValue
++                              StateRoot = stateRootValue
++                              RunHostPath = runHostValue
++                              TrustPool = value trustPool
++                              MaxPipelineBytes = value maxPipeline
++                              MaxLogChunks = value maxLogs
++                              PollMilliseconds = value poll
++                              LeaseSeconds = value lease }
+diff --git a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+new file mode 100644
+index 0000000..89fd5d0
+--- /dev/null
++++ b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+@@ -0,0 +1,16 @@
++<Project Sdk="Microsoft.NET.Sdk.Web">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType>
++    <RootNamespace>Fogell.Controller.Host</RootNamespace>
++  </PropertyGroup>
++  <ItemGroup>
++    <Compile Include="Config.fs" />
++    <Compile Include="Worker.fs" />
++    <Compile Include="Program.fs" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="../Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
++    <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
++    <ProjectReference Include="../Fogell.Journal/Fogell.Journal.fsproj" />
++  </ItemGroup>
++</Project>
+diff --git a/src/Fogell.Controller.Host/Program.fs b/src/Fogell.Controller.Host/Program.fs
+new file mode 100644
+index 0000000..4e39255
+--- /dev/null
++++ b/src/Fogell.Controller.Host/Program.fs
+@@ -0,0 +1,93 @@
++module Fogell.Controller.Host.Program
++
++open System
++open Microsoft.AspNetCore.Builder
++open Microsoft.AspNetCore.Hosting
++open Microsoft.AspNetCore.Http
++open Microsoft.Extensions.DependencyInjection
++open Fogell.Controller.Api
++open Fogell.Store
++
++let private health status (ctx: HttpContext) =
++    ctx.Response.StatusCode <- status
++    ctx.Response.ContentType <- "application/json; charset=utf-8"
++    ctx.Response.WriteAsync(if status = 200 then "{\"status\":\"ready\"}" else "{\"status\":\"unavailable\"}")
++
++[<EntryPoint>]
++let main _ =
++    match ControllerConfig.load () with
++    | Error error ->
++        eprintfn "FG-224 startup refused: %s" error
++        2
++    | Ok config ->
++        try
++            // The migration capability is constructed for startup only and is
++            // not retained in request state or injected into the worker.
++            let migrator = Store(config.RuntimeDatabaseUrl, config.MaintenanceDatabaseUrl)
++
++            match migrator.Migrate() with
++            | Error _ ->
++                eprintfn "FG-224 startup refused: database migration failed"
++                3
++            | Ok _ ->
++                let runtimeStore = Store(config.RuntimeDatabaseUrl)
++                let maintenanceIdentity = Store(config.MaintenanceDatabaseUrl).RuntimeDatabaseIdentity()
++
++                match runtimeStore.RuntimeDatabaseIdentity(), maintenanceIdentity with
++                | Error _, _
++                | _, Error _ ->
++                    eprintfn "FG-224 startup refused: database identity check failed"
++                    3
++                | Ok runtime, Ok maintenance when runtime.User = maintenance.User ->
++                    eprintfn "FG-224 startup refused: runtime and maintenance database identities must differ"
++                    3
++                | Ok runtime, _ when runtime.IsSuperuser || runtime.BypassesRls ->
++                    eprintfn "FG-224 startup refused: runtime database identity may bypass tenant isolation"
++                    3
++                | Ok _, Ok _ when not (runtimeStore.RuntimeCapabilities()) ->
++                    eprintfn "FG-224 startup refused: runtime database capability is incomplete"
++                    3
++                | Ok _, Ok _ ->
++                    let auth =
++                        match Authorization.configure config.ApiToken with
++                        | Ok value -> value
++                        | Error error -> invalidOp error
++
++                    let builder = WebApplication.CreateBuilder()
++                    builder.WebHost.UseUrls config.ListenUrl |> ignore
++                    builder.WebHost.ConfigureKestrel(fun options ->
++                        options.Limits.MaxRequestBodySize <- int64 config.MaxPipelineBytes)
++                    |> ignore
++                    builder.Services.AddSingleton<ControllerConfig>(config) |> ignore
++                    builder.Services.AddSingleton<Store>(runtimeStore) |> ignore
++                    builder.Services.AddHostedService<LocalWorker>() |> ignore
++                    let app = builder.Build()
++
++                    app.UseExceptionHandler(fun errorApp ->
++                        errorApp.Run(fun ctx ->
++                            ctx.Response.StatusCode <- 500
++                            ctx.Response.ContentType <- "application/json; charset=utf-8"
++                            ctx.Response.WriteAsync "{\"code\":\"internal_error\",\"message\":\"request failed\",\"position\":null}"))
++                    |> ignore
++
++                    app.MapGet("/health/live", RequestDelegate(fun ctx -> health 200 ctx)) |> ignore
++                    app.MapGet(
++                        "/health/ready",
++                        RequestDelegate(fun ctx ->
++                            health (if runtimeStore.Ping() && runtimeStore.RuntimeCapabilities() then 200 else 503) ctx))
++                    |> ignore
++
++                    Router.map
++                        { Store = runtimeStore
++                          Auth = auth
++                          TrustPool = config.TrustPool
++                          MaxPipelineBytes = config.MaxPipelineBytes
++                          MaxLogChunks = config.MaxLogChunks }
++                        app
++                    |> ignore
++
++                    app.Run()
++                    0
++        with _ ->
++            eprintfn "FG-224 startup refused: controller initialization failed"
++            4
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+new file mode 100644
+index 0000000..25226f3
+--- /dev/null
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -0,0 +1,226 @@
++namespace Fogell.Controller.Host
++
++open System
++open System.Diagnostics
++open System.IO
++open System.Runtime.InteropServices
++open System.Security.Cryptography
++open System.Threading
++open System.Threading.Tasks
++open Microsoft.Extensions.Hosting
++open Microsoft.Extensions.Logging
++open Fogell.Domain
++open Fogell.Journal
++open Fogell.Store
++
++module private Native =
++    [<DllImport("libc", SetLastError = true)>]
++    extern int kill(int pid, int signal)
++
++type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
++    inherit BackgroundService()
++
++    let owner = $"local:{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}"
++
++    let atomicDefinition (path: string) (bytes: byte array) =
++        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
++
++        if File.Exists path then
++            if not (CryptographicOperations.FixedTimeEquals(File.ReadAllBytes path, bytes)) then
++                invalidOp "materialized pipeline definition differs from durable source"
++        else
++            let temporary = path + $".{Guid.NewGuid():N}.tmp"
++            File.WriteAllBytes(temporary, bytes)
++            File.Move(temporary, path)
++
++    let stopGroup (child: Process) =
++        if not child.HasExited then
++            // setsid may not have established the process group yet.  If the
++            // group signal races that exec, terminate the launcher itself so an
++            // exception can never leave an unsupervised child behind.
++            if Native.kill(-child.Id, 15) <> 0 then
++                Native.kill(child.Id, 15) |> ignore
++
++            if not (child.WaitForExit 2000) then
++                if Native.kill(-child.Id, 9) <> 0 then
++                    Native.kill(child.Id, 9) |> ignore
++                child.WaitForExit 5000 |> ignore
++
++    let drainEvents (claim: ExecutionClaim) (eventPath: string) seen sequence =
++        let mutable seenCount = seen
++        let mutable nextSequence = sequence
++
++        if File.Exists eventPath then
++            // AppendAllText publishes one newline-terminated base64 frame.  A
++            // concurrent read may see its final write only partially; the last
++            // split fragment is therefore never consumed until a later read has
++            // observed the terminator.
++            let fragments = File.ReadAllText(eventPath).Split '\n'
++            let completeCount = max 0 (fragments.Length - 1)
++
++            while seenCount < completeCount do
++                let body =
++                    try
++                        Convert.FromBase64String(fragments[seenCount].TrimEnd '\r')
++                        |> Text.Encoding.UTF8.GetString
++                    with _ ->
++                        "controller refused a malformed child log frame"
++
++                store.AppendLogFenced(
++                    claim.OrganizationId,
++                    claim.BuildId,
++                    claim.AttemptId,
++                    claim.Fence,
++                    owner,
++                    nextSequence,
++                    body)
++                |> ignore
++                seenCount <- seenCount + 1
++                nextSequence <- nextSequence + 1
++
++        seenCount, nextSequence
++
++    let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
++        task {
++            let buildKey = claim.BuildId.Value.ToString "N"
++            let orgKey = claim.OrganizationId.Value.ToString "N"
++            let definitionPath = Path.Combine(config.StateRoot, "definitions", orgKey, buildKey, "Jenkinsfile")
++            let journalPath = Path.Combine(config.StateRoot, "journals", orgKey, buildKey + ".journal")
++            let eventPath =
++                Path.Combine(
++                    config.StateRoot,
++                    "events",
++                    orgKey,
++                    $"{claim.AttemptId.Value:N}-{claim.Fence.Value}.events")
++            let workspaceRoot = Path.Combine(config.StateRoot, "workspaces", orgKey)
++            let neutralHome = Path.Combine(config.StateRoot, "neutral-home")
++            let tempRoot = Path.Combine(config.StateRoot, "tmp")
++
++            Directory.CreateDirectory workspaceRoot |> ignore
++            Directory.CreateDirectory neutralHome |> ignore
++            Directory.CreateDirectory tempRoot |> ignore
++            atomicDefinition definitionPath claim.PipelineSource
++
++            if not (store.AcceptAttempt(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)) then
++                logger.LogWarning("FG-224 claim {AttemptId} lost before acceptance", claim.AttemptId.Value)
++            else
++                let mutable sequence = store.NextLogSequence(claim.OrganizationId, claim.AttemptId)
++                let mutable seenEvents = 0
++                let mutable cancelled = false
++                let mutable interrupted = false
++                let mutable leaseLost = false
++
++                use child = new Process()
++                let start = ProcessStartInfo("/usr/bin/setsid")
++                start.ArgumentList.Add config.RunHostPath
++                start.ArgumentList.Add definitionPath
++                start.ArgumentList.Add workspaceRoot
++                start.ArgumentList.Add buildKey
++                start.ArgumentList.Add journalPath
++                start.UseShellExecute <- false
++                start.RedirectStandardOutput <- true
++                start.RedirectStandardError <- true
++                start.CreateNoWindow <- true
++                start.Environment.Clear()
++                start.Environment["PATH"] <- "/usr/bin:/bin"
++                start.Environment["HOME"] <- neutralHome
++                start.Environment["TMPDIR"] <- tempRoot
++                start.Environment["FOGELL_EVENT_FILE"] <- eventPath
++                start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
++                child.StartInfo <- start
++
++                if not (child.Start()) then
++                    store.RequireReconciliation(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
++                    |> ignore
++                else
++                    try
++                        let stdout = child.StandardOutput.ReadToEndAsync()
++                        let stderr = child.StandardError.ReadToEndAsync()
++                        let mutable nextRenewal = DateTimeOffset.UtcNow.AddSeconds(float config.LeaseSeconds / 3.0)
++
++                        while not child.HasExited && not cancelled && not interrupted && not leaseLost do
++                            do! Task.Delay(config.PollMilliseconds)
++                            let seen, next = drainEvents claim eventPath seenEvents sequence
++                            seenEvents <- seen
++                            sequence <- next
++
++                            if stoppingToken.IsCancellationRequested then
++                                interrupted <- true
++                            elif store.BuildCancellationRequested(claim.OrganizationId, claim.BuildId) then
++                                cancelled <- true
++                            elif DateTimeOffset.UtcNow >= nextRenewal then
++                                leaseLost <-
++                                    not
++                                        (store.RenewLease(
++                                            claim.OrganizationId,
++                                            claim.AttemptId,
++                                            claim.Fence,
++                                            owner,
++                                            config.LeaseSeconds))
++                                nextRenewal <- DateTimeOffset.UtcNow.AddSeconds(float config.LeaseSeconds / 3.0)
++
++                        if cancelled || interrupted || leaseLost then
++                            stopGroup child
++                        else
++                            child.WaitForExit()
++
++                        do! Task.WhenAll(stdout :> Task, stderr :> Task)
++                        let seen, next = drainEvents claim eventPath seenEvents sequence
++                        seenEvents <- seen
++                        sequence <- next
++
++                        if cancelled then
++                            store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, BuildStatus.Aborted)
++                            |> ignore
++                        elif interrupted then
++                            store.RequeueOwnedAttempt(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
++                            |> ignore
++                        elif leaseLost then
++                            logger.LogError("FG-224 lease authority was lost for {AttemptId}", claim.AttemptId.Value)
++                        else
++                            Journal.repairTail journalPath
++                            let plan = journalPath |> Journal.read |> Resume.plan
++
++                            match plan.Terminal with
++                            | Some status ->
++                                match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
++                                | Ok _ -> ()
++                                | Error _ ->
++                                    logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
++                            | None ->
++                                store.RequireReconciliation(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
++                                |> ignore
++                    finally
++                        if not child.HasExited then
++                            stopGroup child
++        }
++
++    override _.ExecuteAsync(stoppingToken: CancellationToken) =
++        task {
++            while not stoppingToken.IsCancellationRequested do
++                let mutable claimed = false
++
++                try
++                    for org in store.OrganizationIds() do
++                        if not claimed && not stoppingToken.IsCancellationRequested then
++                            store.RequeueExpiredLocalAttempts org |> ignore
++
++                            match
++                                store.ClaimNextExecution(
++                                    org,
++                                    owner,
++                                    config.TrustPool,
++                                    [ "linux" ],
++                                    config.LeaseSeconds)
++                            with
++                            | Error error -> logger.LogError("FG-224 claim refused: {Reason}", error)
++                            | Ok None -> ()
++                            | Ok(Some claim) ->
++                                claimed <- true
++                                do! runClaim claim stoppingToken
++                with ex ->
++                    logger.LogError(ex, "FG-224 worker iteration failed")
++
++                if not claimed && not stoppingToken.IsCancellationRequested then
++                    do! Task.Delay(config.PollMilliseconds, stoppingToken)
++        }
+diff --git a/src/Fogell.Controller.Host/packages.lock.json b/src/Fogell.Controller.Host/packages.lock.json
+new file mode 100644
+index 0000000..4c17a67
+--- /dev/null
++++ b/src/Fogell.Controller.Host/packages.lock.json
+@@ -0,0 +1,95 @@
++{
++  "version": 1,
++  "dependencies": {
++    "net10.0": {
++      "FSharp.Core": {
++        "type": "Direct",
++        "requested": "[10.1.301, )",
++        "resolved": "10.1.301",
++        "contentHash": "FwQFuqOA1+qQnFl6Vqg6piS83ZRuKJqXJQxOM52M5tNarT2XQ/pMvw8fOOlnhcOYvdZyje2PJ8rK/J64ZI729Q=="
++      },
++      "FParsec": {
++        "type": "Transitive",
++        "resolved": "1.1.1",
++        "contentHash": "Wdjf/gCNLEwd+0nUCDh9jAIIcKGwfhRramySTnTcVVgNC6i4Vp5aJklUJJfvFkEZMYNZEDGcI8pCa36/TmwmSg==",
++        "dependencies": {
++          "FSharp.Core": "4.3.4"
++        }
++      },
++      "Npgsql": {
++        "type": "Transitive",
++        "resolved": "8.0.5",
++        "contentHash": "zRG5V8cyeZLpzJlKzFKjEwkRMYIYnHWJvEor2lWXeccS2E1G2nIWYYhnukB51iz5XsWSVEtqg3AxTWM0QJ6vfg=="
++      },
++      "fogell.admission": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Ir": "[1.0.0, )"
++        }
++      },
++      "fogell.controller.api": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Pipeline.Parser": "[1.0.0, )",
++          "Fogell.Store": "[1.0.0, )"
++        }
++      },
++      "fogell.domain": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )"
++        }
++      },
++      "fogell.groovy": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Ir": "[1.0.0, )"
++        }
++      },
++      "fogell.groovy.parser": {
++        "type": "Project",
++        "dependencies": {
++          "FParsec": "[1.1.1, )",
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Groovy": "[1.0.0, )"
++        }
++      },
++      "fogell.ir": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Domain": "[1.0.0, )"
++        }
++      },
++      "fogell.journal": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Domain": "[1.0.0, )"
++        }
++      },
++      "fogell.pipeline.parser": {
++        "type": "Project",
++        "dependencies": {
++          "FParsec": "[1.1.1, )",
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Groovy.Parser": "[1.0.0, )",
++          "Fogell.Ir": "[1.0.0, )"
++        }
++      },
++      "fogell.store": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Domain": "[1.0.0, )",
++          "Npgsql": "[8.0.5, )"
++        }
++      }
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 97764f7..4a2cd7d 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -1,7 +1,9 @@
+ namespace Fogell.Store
+ 
+ open System
++open System.Buffers.Binary
+ open System.Security.Cryptography
++open System.Text
+ open Npgsql
+ open Fogell.Domain
+ 
+@@ -27,10 +29,32 @@ type NewBuild =
+     { OrganizationId: OrganizationId
+       ProjectId: ProjectId
+       IdempotencyKey: string
++      /// Exact UTF-8 request bytes accepted by the parser.  They are persisted
++      /// atomically with the build and never reconstructed from an AST.
++      PipelineSource: byte array
+       StageNames: string list
+       RequiredTrustPool: string
+       RequiredCapabilities: string list }
+ 
++/// One whole-pipeline execution owned by the local controller.  Nodes retain
++/// stage metadata, but the persisted runner executes the accepted definition
++/// exactly once per build rather than once per stage.
++type ExecutionClaim =
++    { OrganizationId: OrganizationId
++      ProjectId: ProjectId
++      BuildId: BuildId
++      BuildNumber: int
++      NodeId: NodeId
++      AttemptId: AttemptId
++      Fence: Fence
++      PipelineSource: byte array
++      PipelineSha256: string }
++
++type DatabaseIdentity =
++    { User: string
++      IsSuperuser: bool
++      BypassesRls: bool }
++
+ /// FG-026. The durable state of one externally visible effect for one attempt.
+ type EffectCheckpointState =
+     | EffectPrepared
+@@ -294,6 +318,25 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+     let digestHex (digest: byte array) =
+         Convert.ToHexString(digest).ToLowerInvariant()
+ 
++    let admissionFingerprint (source: byte array) (trustPool: string) (capabilities: string list) =
++        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
++
++        let append (bytes: byte array) =
++            let length = Array.zeroCreate<byte> 4
++            BinaryPrimitives.WriteInt32BigEndian(length.AsSpan(), bytes.Length)
++            hash.AppendData length
++            hash.AppendData bytes
++
++        append (Encoding.UTF8.GetBytes "fogell-admission-v1")
++        append source
++        append (Encoding.UTF8.GetBytes trustPool)
++
++        capabilities
++        |> List.sortWith (fun left right -> String.CompareOrdinal(left, right))
++        |> List.iter (Encoding.UTF8.GetBytes >> append)
++
++        hash.GetHashAndReset()
++
+     let readCheckpoint (reader: System.Data.Common.DbDataReader) =
+         let state =
+             match reader.GetString 7 with
+@@ -406,6 +449,75 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+ 
+     member _.Migrate() = Migrations.run maintenanceConnectionString
+ 
++    member _.Ping() =
++        try
++            use conn = openConn ()
++            use cmd = conn.CreateCommand()
++            cmd.CommandText <- "SELECT 1"
++            cmd.ExecuteScalar() :?> int = 1
++        with _ ->
++            false
++
++    member _.RuntimeDatabaseIdentity() : Result<DatabaseIdentity, string> =
++        try
++            use conn = openConn ()
++            use cmd = conn.CreateCommand()
++            cmd.CommandText <-
++                "SELECT current_user, rolsuper, rolbypassrls
++                   FROM pg_roles
++                  WHERE rolname = current_user"
++            use reader = cmd.ExecuteReader()
++
++            if reader.Read() then
++                Ok
++                    { User = reader.GetString 0
++                      IsSuperuser = reader.GetBoolean 1
++                      BypassesRls = reader.GetBoolean 2 }
++            else
++                Error "runtime database identity is unavailable"
++        with ex ->
++            Error ex.Message
++
++    member _.RuntimeCapabilities() =
++        try
++            use conn = openConn ()
++            use cmd = conn.CreateCommand()
++            cmd.CommandText <-
++                "SELECT
++                     has_table_privilege(current_user, 'public.controller_metadata', 'SELECT')
++                     AND has_table_privilege(current_user, 'public.organization_work_roots', 'SELECT')
++                     AND NOT EXISTS (
++                         SELECT 1
++                           FROM unnest(ARRAY[
++                             'organizations', 'projects', 'builds', 'nodes', 'attempts',
++                             'events', 'outbox', 'log_chunks', 'effect_checkpoints',
++                             'retry_decisions', 'build_definitions'
++                           ]) AS required(name)
++                          WHERE NOT has_table_privilege(
++                              current_user,
++                              'public.' || quote_ident(required.name),
++                              'SELECT,INSERT,UPDATE,DELETE'))
++                     AND NOT EXISTS (
++                         SELECT 1
++                           FROM pg_class c
++                           JOIN pg_namespace n ON n.oid = c.relnamespace
++                          WHERE n.nspname = 'public' AND c.relkind = 'S'
++                            AND NOT has_sequence_privilege(current_user, c.oid, 'USAGE,SELECT'))"
++            cmd.ExecuteScalar() :?> bool
++        with _ ->
++            false
++
++    /// Organization UUIDs are the bounded, deliberately non-tenant work scan
++    /// roots.  Slugs and tenant records stay behind forced RLS; every subsequent
++    /// claim still opens a transaction-local tenant context before seeing work.
++    member _.OrganizationIds() : OrganizationId list =
++        use conn = openConn ()
++        use cmd = conn.CreateCommand()
++        cmd.CommandText <- "SELECT organization_id FROM organization_work_roots ORDER BY organization_id"
++        use reader = cmd.ExecuteReader()
++        [ while reader.Read() do
++              yield OrganizationId(reader.GetGuid 0) ]
++
+     member _.CreateProject(org: OrganizationId, orgSlug: string, project: ProjectId, projectSlug: string) =
+         use conn = openConn ()
+         use tx = beginTenantTransaction conn org
+@@ -909,21 +1021,46 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             Error "a build must declare at least one stage"
+         elif String.IsNullOrWhiteSpace input.IdempotencyKey then
+             Error "idempotency key is required"
++        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
++            Error "pipeline source is required"
++        elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
++            Error "a trust pool is required"
+         else
+ 
+         use conn = openConn ()
+         use tx = beginTenantTransaction conn input.OrganizationId
+ 
+         try
++            let sourceDigest = payloadDigest input.PipelineSource
++            let fingerprint =
++                admissionFingerprint input.PipelineSource input.RequiredTrustPool input.RequiredCapabilities
++
++            // Serialise one idempotency key before looking it up.  The unique
++            // constraint remains the database backstop, while this lock lets
++            // concurrent exact replays observe and return the committed winner
++            // instead of surfacing a transient uniqueness error.
++            use idempotencyLock = conn.CreateCommand()
++            idempotencyLock.Transaction <- tx
++            idempotencyLock.CommandText <-
++                "SELECT pg_advisory_xact_lock(hashtextextended(@identity, 0))"
++            idempotencyLock.Parameters.AddWithValue(
++                "identity",
++                $"{input.OrganizationId.Value:N}/{input.ProjectId.Value:N}/{input.IdempotencyKey}")
++            |> ignore
++            idempotencyLock.ExecuteNonQuery() |> ignore
++
+             // Has this key already been admitted? Read inside the transaction so
+             // the unique constraint is the arbiter under concurrency.
+             use existing = conn.CreateCommand()
+             existing.Transaction <- tx
+             existing.CommandText <-
+-                "SELECT b.id, b.number, n.id, a.id
++                "SELECT b.id, b.number, n.id, a.id,
++                        d.source_digest, d.admission_fingerprint
+                  FROM builds b
+                  JOIN nodes n    ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
+                  JOIN attempts a ON a.node_id = n.id  AND a.organization_id = n.organization_id AND a.ordinal = 0
++                 LEFT JOIN build_definitions d
++                   ON d.build_id = b.id AND d.organization_id = b.organization_id
+                  WHERE b.organization_id = @o AND b.project_id = @p AND b.idempotency_key = @k"
+             existing.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+             existing.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
+@@ -932,16 +1069,27 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             use reader = existing.ExecuteReader()
+ 
+             if reader.Read() then
+-                let result =
+-                    { BuildId = BuildId(reader.GetGuid 0)
+-                      Number = reader.GetInt32 1
+-                      NodeId = NodeId(reader.GetGuid 2)
+-                      AttemptId = AttemptId(reader.GetGuid 3)
+-                      WasExisting = true }
++                let sameDefinition =
++                    not (reader.IsDBNull 4)
++                    && not (reader.IsDBNull 5)
++                    && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
++                    && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
+ 
+-                reader.Close()
+-                tx.Commit()
+-                Ok result
++                if not sameDefinition then
++                    reader.Close()
++                    tx.Rollback()
++                    Error "idempotency key is already bound to a different pipeline or placement policy"
++                else
++                    let result =
++                        { BuildId = BuildId(reader.GetGuid 0)
++                          Number = reader.GetInt32 1
++                          NodeId = NodeId(reader.GetGuid 2)
++                          AttemptId = AttemptId(reader.GetGuid 3)
++                          WasExisting = true }
++
++                    reader.Close()
++                    tx.Commit()
++                    Ok result
+             else
+                 reader.Close()
+ 
+@@ -968,31 +1116,25 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+                 insert.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
+                 let number = insert.ExecuteScalar() :?> int
+ 
+-                // one node per declared stage; the first attempt of the first
+-                // node is created eagerly so the scheduler has something to offer
+-                let nodeIds =
+-                    input.StageNames
+-                    |> List.mapi (fun i name ->
+-                        let nodeId = Guid.NewGuid()
++                // The persisted runner owns one whole Jenkinsfile.  Scheduling
++                // it once per parsed stage would duplicate cross-stage effects
++                // and break environment/post semantics, so a build has exactly
++                // one local execution node; stage detail remains in the source.
++                let firstNode = Guid.NewGuid()
++                use n = conn.CreateCommand()
++                n.Transaction <- tx
++                n.CommandText <-
++                    "INSERT INTO nodes
++                         (id, organization_id, build_id, name, ordinal, required_trust_pool,
++                          required_capabilities, status)
++                     VALUES (@id, @o, @b, 'pipeline', 0, @pool, @caps, 'queued')"
++                n.Parameters.AddWithValue("id", firstNode) |> ignore
++                n.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                n.Parameters.AddWithValue("b", buildId) |> ignore
++                n.Parameters.AddWithValue("pool", input.RequiredTrustPool) |> ignore
++                n.Parameters.AddWithValue("caps", List.toArray input.RequiredCapabilities) |> ignore
++                n.ExecuteNonQuery() |> ignore
+ 
+-                        use n = conn.CreateCommand()
+-                        n.Transaction <- tx
+-                        n.CommandText <-
+-                            "INSERT INTO nodes
+-                                 (id, organization_id, build_id, name, ordinal, required_trust_pool,
+-                                  required_capabilities, status)
+-                             VALUES (@id, @o, @b, @name, @ord, @pool, @caps, 'queued')"
+-                        n.Parameters.AddWithValue("id", nodeId) |> ignore
+-                        n.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+-                        n.Parameters.AddWithValue("b", buildId) |> ignore
+-                        n.Parameters.AddWithValue("name", name) |> ignore
+-                        n.Parameters.AddWithValue("ord", i) |> ignore
+-                        n.Parameters.AddWithValue("pool", input.RequiredTrustPool) |> ignore
+-                        n.Parameters.AddWithValue("caps", List.toArray input.RequiredCapabilities) |> ignore
+-                        n.ExecuteNonQuery() |> ignore
+-                        nodeId)
+-
+-                let firstNode = List.head nodeIds
+                 let attemptId = Guid.NewGuid()
+ 
+                 use a = conn.CreateCommand()
+@@ -1006,6 +1148,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+                 a.Parameters.AddWithValue("e", epoch) |> ignore
+                 a.ExecuteNonQuery() |> ignore
+ 
++                use definition = conn.CreateCommand()
++                definition.Transaction <- tx
++                definition.CommandText <-
++                    "INSERT INTO build_definitions
++                         (build_id, organization_id, source_bytes, source_digest, admission_fingerprint)
++                     VALUES (@b, @o, @source, @digest, @fingerprint)"
++                definition.Parameters.AddWithValue("b", buildId) |> ignore
++                definition.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                definition.Parameters.AddWithValue("source", input.PipelineSource) |> ignore
++                definition.Parameters.AddWithValue("digest", sourceDigest) |> ignore
++                definition.Parameters.AddWithValue("fingerprint", fingerprint) |> ignore
++                definition.ExecuteNonQuery() |> ignore
++
+                 use ev = conn.CreateCommand()
+                 ev.Transaction <- tx
+                 ev.CommandText <-
+@@ -1072,9 +1227,23 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         use cmd = conn.CreateCommand()
+         cmd.Transaction <- tx
+         cmd.CommandText <-
+-            "UPDATE attempts SET state = 'running'
+-              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+-                AND state = 'offered' AND lease_expires_at > clock_timestamp()"
++            "WITH accepted AS (
++                 UPDATE attempts
++                    SET state = 'running'
++                  WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
++                    AND state = 'offered' AND lease_expires_at > clock_timestamp()
++                 RETURNING node_id
++             ), running_node AS (
++                 UPDATE nodes n
++                    SET status = 'running'
++                   FROM accepted a
++                  WHERE n.organization_id = @o AND n.id = a.node_id
++                 RETURNING n.build_id
++             )
++             UPDATE builds b
++                SET status = 'running'
++               FROM running_node n
++              WHERE b.organization_id = @o AND b.id = n.build_id"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+         cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+@@ -1083,6 +1252,33 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         tx.Commit()
+         accepted
+ 
++    member _.RenewLease
++        (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, leaseSeconds: int)
++        : bool =
++        if leaseSeconds <= 0 then
++            false
++        else
++            use conn = openConn ()
++            use tx = beginTenantTransaction conn org
++            use cmd = conn.CreateCommand()
++            cmd.Transaction <- tx
++            cmd.CommandText <-
++                "UPDATE attempts
++                    SET lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
++                  WHERE organization_id = @o AND id = @a AND fence = @f
++                    AND lease_owner = @owner
++                    AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
++                    AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
++                    AND lease_expires_at > clock_timestamp()"
++            cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++            cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++            cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++            cmd.Parameters.AddWithValue("owner", owner) |> ignore
++            cmd.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
++            let renewed = cmd.ExecuteNonQuery() = 1
++            tx.Commit()
++            renewed
++
+     /// FG-022. Publish a terminal result. Admissible only from the exact current
+     /// fence, the exact lease owner, the current restore epoch, an unexpired
+     /// lease and an active state — all seven conditions from ADR 0007, in one
+@@ -1098,6 +1294,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         use tx = beginTenantTransaction conn org
+ 
+         try
++            let resultWire = BuildStatus.toWireString result
+             use cmd = conn.CreateCommand()
+             cmd.Transaction <- tx
+             cmd.CommandText <-
+@@ -1115,27 +1312,63 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+             cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+             cmd.Parameters.AddWithValue("owner", owner) |> ignore
+-            cmd.Parameters.AddWithValue("r", BuildStatus.toWireString result) |> ignore
++            cmd.Parameters.AddWithValue("r", resultWire) |> ignore
+ 
+             match cmd.ExecuteScalar() with
+             | null ->
+                 tx.Rollback()
+                 Error "publication refused: stale fence, wrong owner, expired lease, pre-restore epoch, or already terminal"
+             | nodeId ->
++                use rollup = conn.CreateCommand()
++                rollup.Transaction <- tx
++                rollup.CommandText <-
++                    "WITH finished_node AS (
++                         UPDATE nodes
++                            SET status = @r
++                          WHERE organization_id = @o AND id = @n
++                         RETURNING build_id
++                     )
++                     UPDATE builds b
++                        SET status = @r, cancellation_requested = false
++                       FROM finished_node n
++                      WHERE b.organization_id = @o AND b.id = n.build_id
++                     RETURNING b.id"
++                rollup.Parameters.AddWithValue("o", org.Value) |> ignore
++                rollup.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
++                rollup.Parameters.AddWithValue("r", resultWire) |> ignore
++
++                let buildId =
++                    match rollup.ExecuteScalar() with
++                    | :? Guid as value -> value
++                    | _ -> failwith "terminal attempt has no build lineage"
++
+                 use ev = conn.CreateCommand()
+                 ev.Transaction <- tx
+                 ev.CommandText <-
+                     "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+-                     SELECT @o, n.build_id, @a, 'attempt.terminal', @pl
+-                     FROM nodes n WHERE n.id = @n AND n.organization_id = @o"
++                     VALUES (@o, @b, @a, 'attempt.terminal', @pl)"
+                 ev.Parameters.AddWithValue("o", org.Value) |> ignore
++                ev.Parameters.AddWithValue("b", buildId) |> ignore
+                 ev.Parameters.AddWithValue("a", attempt.Value) |> ignore
+-                ev.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
+                 ev.Parameters.Add(
+                     NpgsqlParameter("pl", NpgsqlTypes.NpgsqlDbType.Jsonb,
+-                                    Value = $"{{\"result\":\"{BuildStatus.toWireString result}\"}}")) |> ignore
++                                    Value = $"{{\"result\":\"{resultWire}\"}}")) |> ignore
+                 ev.ExecuteNonQuery() |> ignore
+ 
++                use outbox = conn.CreateCommand()
++                outbox.Transaction <- tx
++                outbox.CommandText <-
++                    "INSERT INTO outbox (organization_id, topic, body)
++                     VALUES (@o, 'build.terminal', @body)"
++                outbox.Parameters.AddWithValue("o", org.Value) |> ignore
++                outbox.Parameters.Add(
++                    NpgsqlParameter(
++                        "body",
++                        NpgsqlTypes.NpgsqlDbType.Jsonb,
++                        Value = $"{{\"build\":\"{buildId}\",\"result\":\"{resultWire}\"}}"))
++                |> ignore
++                outbox.ExecuteNonQuery() |> ignore
++
+                 tx.Commit()
+                 Ok()
+         with ex ->
+@@ -1271,6 +1504,200 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             (try tx.Rollback() with _ -> ())
+             Error ex.Message
+ 
++    /// FG-224 local-controller claim.  Unlike the legacy scheduler projection,
++    /// this returns the immutable whole-pipeline bytes under the same lock and
++    /// refuses legacy multi-node builds that cannot honestly be mapped onto the
++    /// whole-pipeline runner.
++    member _.ClaimNextExecution
++        (org: OrganizationId, agentId: string, trustPool: string, capabilities: string list, leaseSeconds: int)
++        : Result<ExecutionClaim option, string> =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++
++        try
++            use lock = conn.CreateCommand()
++            lock.Transaction <- tx
++            lock.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o))"
++            lock.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
++            lock.ExecuteNonQuery() |> ignore
++
++            use pick = conn.CreateCommand()
++            pick.Transaction <- tx
++            pick.CommandText <-
++                "SELECT a.id, n.id, n.build_id, b.project_id, b.number,
++                        d.source_bytes, d.source_digest, n.ordinal,
++                        (SELECT count(*) FROM nodes all_nodes
++                          WHERE all_nodes.organization_id = b.organization_id
++                            AND all_nodes.build_id = b.id) AS node_count
++                   FROM attempts a
++                   JOIN nodes n
++                     ON n.id = a.node_id AND n.organization_id = a.organization_id
++                   JOIN builds b
++                     ON b.id = n.build_id AND b.organization_id = n.organization_id
++                   LEFT JOIN build_definitions d
++                     ON d.build_id = b.id AND d.organization_id = b.organization_id
++                  WHERE a.organization_id = @o
++                    AND a.state = 'queued'
++                    AND n.required_trust_pool = @pool
++                    AND n.required_capabilities <@ @caps
++                  ORDER BY a.created_at, a.id
++                  FOR UPDATE OF a SKIP LOCKED
++                  LIMIT 1"
++            pick.Parameters.AddWithValue("o", org.Value) |> ignore
++            pick.Parameters.AddWithValue("pool", trustPool) |> ignore
++            pick.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
++            use reader = pick.ExecuteReader()
++
++            if not (reader.Read()) then
++                reader.Close()
++                tx.Commit()
++                Ok None
++            else
++                let attemptId = reader.GetGuid 0
++                let nodeId = reader.GetGuid 1
++                let buildId = reader.GetGuid 2
++                let projectId = reader.GetGuid 3
++                let buildNumber = reader.GetInt32 4
++                let hasDefinition = not (reader.IsDBNull 5) && not (reader.IsDBNull 6)
++                let source = if hasDefinition then reader.GetFieldValue<byte array> 5 else Array.empty
++                let sourceDigest = if hasDefinition then reader.GetFieldValue<byte array> 6 else Array.empty
++                let nodeOrdinal = reader.GetInt32 7
++                let nodeCount = reader.GetInt64 8
++                reader.Close()
++
++                if not hasDefinition then
++                    tx.Rollback()
++                    Error "queued build has no immutable pipeline definition; migration or reconciliation is required"
++                elif nodeOrdinal <> 0 || nodeCount <> 1L then
++                    tx.Rollback()
++                    Error "queued build is not a single whole-pipeline execution; migration or reconciliation is required"
++                elif not (CryptographicOperations.FixedTimeEquals(payloadDigest source, sourceDigest)) then
++                    tx.Rollback()
++                    Error "stored pipeline source digest mismatch; refusing execution"
++                else
++                    use offer = conn.CreateCommand()
++                    offer.Transaction <- tx
++                    offer.CommandText <-
++                        "UPDATE attempts
++                            SET fence = fence + 1, state = 'offered', lease_owner = @agent,
++                                lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
++                          WHERE organization_id = @o AND id = @a
++                          RETURNING fence"
++                    offer.Parameters.AddWithValue("o", org.Value) |> ignore
++                    offer.Parameters.AddWithValue("a", attemptId) |> ignore
++                    offer.Parameters.AddWithValue("agent", agentId) |> ignore
++                    offer.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
++                    let fence = offer.ExecuteScalar() :?> int64
++                    tx.Commit()
++
++                    Ok
++                        (Some
++                            { OrganizationId = org
++                              ProjectId = ProjectId projectId
++                              BuildId = BuildId buildId
++                              BuildNumber = buildNumber
++                              NodeId = NodeId nodeId
++                              AttemptId = AttemptId attemptId
++                              Fence = Fence fence
++                              PipelineSource = source
++                              PipelineSha256 = digestHex sourceDigest })
++        with ex ->
++            (try tx.Rollback() with _ -> ())
++            Error ex.Message
++
++    member _.RequeueExpiredLocalAttempts(org: OrganizationId) : int =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "UPDATE attempts
++                SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL
++              WHERE organization_id = @o
++                AND lease_owner LIKE 'local:%'
++                AND lease_expires_at <= clock_timestamp()
++                AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        let count = cmd.ExecuteNonQuery()
++        tx.Commit()
++        count
++
++    member _.RequeueOwnedAttempt(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "UPDATE attempts
++                SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL
++              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
++                AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++        cmd.Parameters.AddWithValue("owner", owner) |> ignore
++        let changed = cmd.ExecuteNonQuery() = 1
++        tx.Commit()
++        changed
++
++    member _.RequireReconciliation(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use attemptCmd = conn.CreateCommand()
++        attemptCmd.Transaction <- tx
++        attemptCmd.CommandText <-
++            "UPDATE attempts
++                SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
++              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
++                AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
++              RETURNING node_id"
++        attemptCmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        attemptCmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        attemptCmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++        attemptCmd.Parameters.AddWithValue("owner", owner) |> ignore
++
++        match attemptCmd.ExecuteScalar() with
++        | null ->
++            tx.Rollback()
++            false
++        | nodeId ->
++            use rollup = conn.CreateCommand()
++            rollup.Transaction <- tx
++            rollup.CommandText <-
++                "WITH changed_node AS (
++                     UPDATE nodes
++                        SET status = 'reconciliation_required'
++                      WHERE organization_id = @o AND id = @n
++                     RETURNING build_id
++                 )
++                 UPDATE builds b
++                    SET status = 'reconciliation_required'
++                   FROM changed_node n
++                  WHERE b.organization_id = @o AND b.id = n.build_id"
++            rollup.Parameters.AddWithValue("o", org.Value) |> ignore
++            rollup.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
++            rollup.ExecuteNonQuery() |> ignore
++            tx.Commit()
++            true
++
++    member _.BuildCancellationRequested(org: OrganizationId, build: BuildId) : bool =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "SELECT cancellation_requested
++               FROM builds
++              WHERE organization_id = @o AND id = @b"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
++        let requested =
++            match cmd.ExecuteScalar() with
++            | :? bool as value -> value
++            | _ -> false
++        tx.Commit()
++        requested
++
+     /// FG-061 wait diagnostics. Distinguishes an EMPTY queue from a concrete
+     /// capability mismatch, and names the missing capabilities — Jenkins' own
+     /// "There are no nodes with the label X" is the behaviour worth matching
+@@ -1344,10 +1771,66 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         tx.Commit()
+         appended
+ 
++    /// The local supervisor, not the untrusted child, writes public log chunks.
++    /// Authority is re-checked in the INSERT so a stale supervisor cannot append
++    /// after its lease or fence has been replaced.
++    member _.AppendLogFenced
++        (org: OrganizationId,
++         build: BuildId,
++         attempt: AttemptId,
++         fence: Fence,
++         owner: string,
++         sequence: int,
++         body: string)
++        : bool =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
++             SELECT a.organization_id, n.build_id, a.id, @s, @body
++               FROM attempts a
++               JOIN nodes n
++                 ON n.organization_id = a.organization_id AND n.id = a.node_id
++              WHERE a.organization_id = @o AND a.id = @a AND n.build_id = @b
++                AND a.fence = @f AND a.lease_owner = @owner
++                AND a.lease_expires_at > clock_timestamp()
++                AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
++                AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
++             ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++        cmd.Parameters.AddWithValue("owner", owner) |> ignore
++        cmd.Parameters.AddWithValue("s", sequence) |> ignore
++        cmd.Parameters.AddWithValue("body", body) |> ignore
++        let appended = cmd.ExecuteNonQuery() = 1
++        tx.Commit()
++        appended
++
++    member _.NextLogSequence(org: OrganizationId, attempt: AttemptId) : int =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <-
++            "SELECT COALESCE(MAX(sequence), -1) + 1
++               FROM log_chunks
++              WHERE organization_id = @o AND attempt_id = @a"
++        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++        let value = cmd.ExecuteScalar() :?> int
++        tx.Commit()
++        value
++
+     /// FG-060a/FG-064. The build lineage and progressive read are one query.
+     /// Some [] therefore means a real build with no chunks at this offset,
+     /// while None means that org/project/build lineage does not exist.
+-    member _.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) : (int * string) list option =
++    member _.ReadLogPage
++        (org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int, limit: int)
++        : (int * string) list option =
+         use conn = openConn ()
+         use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
+@@ -1362,11 +1845,13 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+               WHERE b.organization_id = @o
+                 AND b.project_id = @p
+                 AND b.id = @b
+-              ORDER BY l.sequence"
++              ORDER BY l.sequence
++              LIMIT @limit"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+         cmd.Parameters.AddWithValue("s", fromSequence) |> ignore
++        cmd.Parameters.AddWithValue("limit", max 1 limit) |> ignore
+ 
+         use r = cmd.ExecuteReader()
+         let mutable lineageExists = false
+@@ -1383,6 +1868,9 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         tx.Commit()
+         result
+ 
++    member this.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) =
++        this.ReadLogPage(org, project, build, fromSequence, Int32.MaxValue)
++
+     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
+     /// timeout, say — must not look like an error: the caller's intent is already
+     /// satisfied. What genuinely is a conflict is asking to cancel a build that
+@@ -1405,7 +1893,15 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+ 
+         match existing with
+         | None -> NoSuchBuild
+-        | Some(status, _) when status = "succeeded" || status = "failed" || status = "aborted" ->
++        | Some(status, _) when
++            status = "success"
++            || status = "unstable"
++            || status = "failure"
++            || status = "aborted"
++            // Read compatibility for pre-FG-224 fixtures/rows.
++            || status = "succeeded"
++            || status = "failed"
++            ->
+             AlreadyTerminal status
+         | Some(_, true) -> AlreadyRequested
+         | Some _ ->
+diff --git a/src/Fogell.Store/migrations/0006_runnable_controller.sql b/src/Fogell.Store/migrations/0006_runnable_controller.sql
+new file mode 100644
+index 0000000..afe7577
+--- /dev/null
++++ b/src/Fogell.Store/migrations/0006_runnable_controller.sql
+@@ -0,0 +1,83 @@
++-- FG-224. Forced tenant RLS deliberately makes organizations invisible until
++-- a transaction selects one tenant.  A restartable worker still needs a way
++-- to discover which tenant scopes to visit, so this global registry contains
++-- UUID roots only: no slug and no tenant record.  The trigger is security
++-- definer so an RLS-bound runtime role can create an organization without
++-- receiving a general write capability on the global registry.
++CREATE TABLE organization_work_roots (
++    organization_id uuid PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE
++);
++
++INSERT INTO organization_work_roots (organization_id)
++SELECT id FROM organizations;
++
++CREATE FUNCTION fogell_register_organization_work_root()
++RETURNS trigger
++LANGUAGE plpgsql
++SECURITY DEFINER
++SET search_path = pg_catalog, pg_temp
++AS $$
++BEGIN
++    INSERT INTO public.organization_work_roots (organization_id)
++    VALUES (NEW.id)
++    ON CONFLICT DO NOTHING;
++    RETURN NEW;
++END;
++$$;
++
++REVOKE ALL ON FUNCTION fogell_register_organization_work_root() FROM PUBLIC;
++
++CREATE TRIGGER organizations_register_work_root
++AFTER INSERT ON organizations
++FOR EACH ROW
++EXECUTE FUNCTION fogell_register_organization_work_root();
++
++-- The accepted definition is controller truth, not request-lifetime
++-- memory.  Keeping it in a separate append-only relation lets pre-FG-224
++-- builds remain readable while every new admission is required by Store to
++-- create exactly one immutable definition in the same transaction.
++CREATE TABLE build_definitions (
++    build_id              uuid NOT NULL,
++    organization_id       uuid NOT NULL,
++    source_bytes          bytea NOT NULL,
++    source_digest         bytea NOT NULL CHECK (octet_length(source_digest) = 32),
++    admission_fingerprint bytea NOT NULL CHECK (octet_length(admission_fingerprint) = 32),
++    created_at            timestamptz NOT NULL DEFAULT clock_timestamp(),
++    PRIMARY KEY (build_id, organization_id),
++    FOREIGN KEY (build_id, organization_id)
++        REFERENCES builds (id, organization_id)
++);
++
++ALTER TABLE build_definitions ENABLE ROW LEVEL SECURITY;
++ALTER TABLE build_definitions FORCE ROW LEVEL SECURITY;
++
++CREATE POLICY build_definitions_tenant_isolation ON build_definitions
++    USING (organization_id = nullif(current_setting('fogell.organization_id', true), '')::uuid)
++    WITH CHECK (organization_id = nullif(current_setting('fogell.organization_id', true), '')::uuid);
++
++CREATE FUNCTION fogell_guard_build_definition()
++RETURNS trigger
++LANGUAGE plpgsql
++AS $$
++BEGIN
++    IF TG_OP = 'DELETE' THEN
++        RAISE EXCEPTION 'build definitions cannot be deleted';
++    ELSIF ROW(NEW.build_id, NEW.organization_id, NEW.source_bytes,
++              NEW.source_digest, NEW.admission_fingerprint, NEW.created_at)
++          IS DISTINCT FROM
++          ROW(OLD.build_id, OLD.organization_id, OLD.source_bytes,
++              OLD.source_digest, OLD.admission_fingerprint, OLD.created_at) THEN
++        RAISE EXCEPTION 'build definitions are immutable';
++    END IF;
++
++    RETURN NEW;
++END;
++$$;
++
++CREATE TRIGGER build_definitions_guard
++BEFORE UPDATE OR DELETE ON build_definitions
++FOR EACH ROW
++EXECUTE FUNCTION fogell_guard_build_definition();
++
++CREATE INDEX build_definitions_tenant_build
++    ON build_definitions (organization_id, build_id);
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index a69b918..efd8ad0 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -46,7 +46,9 @@ let private startServer () =
+     Router.map
+         { Store = store
+           Auth = auth
+-          DefaultTrustPool = "trusted-linux" }
++          TrustPool = "trusted-linux"
++          MaxPipelineBytes = 1024 * 1024
++          MaxLogChunks = 1000 }
+         app
+     |> ignore
+ 
+@@ -152,6 +154,38 @@ let endpoints =
+               Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
+           }
+ 
++          test "one idempotency key cannot substitute different Jenkinsfile bytes" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let firstCode, _ = send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some pipeline)
++              Expect.equal firstCode 201 "control admitted"
++              let changed = pipeline.Replace("echo 'hi'", "echo 'different'")
++              let conflictCode, conflict =
++                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
++              Expect.equal conflictCode 409 "substitution conflicts"
++              Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
++          }
++
++          test "request placement override and oversized source both fail before admission" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              use request = new HttpRequestMessage(HttpMethod.Post, url)
++              request.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
++              request.Headers.TryAddWithoutValidation("idempotency-key", "placement-denied") |> ignore
++              request.Headers.TryAddWithoutValidation("fogell-trust-pool", "privileged") |> ignore
++              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/x-jenkinsfile")
++              use response = client.Send request
++              let denied = response.Content.ReadAsStringAsync().Result
++              Expect.equal (int response.StatusCode) 400 "placement header denied"
++              Expect.stringContains denied "placement_override_forbidden" "stable placement code"
++
++              let oversized = String('x', 1024 * 1024 + 1)
++              let tooLargeCode, tooLarge =
++                  send HttpMethod.Post url (Some token) (Some "oversized") (Some oversized)
++              Expect.equal tooLargeCode 413 "raw byte limit enforced"
++              Expect.stringContains tooLarge "pipeline_too_large" "stable size code"
++          }
++
+           test "a missing idempotency key is refused with a named code" {
+               let org, project = freshProject ()
+               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+@@ -257,6 +291,16 @@ let endpoints =
+               Expect.stringContains missingBody "not_found" "unknown build is named"
+           }
+ 
++          test "a malformed log cursor is refused instead of silently reading from zero" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let _, body = send HttpMethod.Post url (Some token) (Some "bad-cursor-api") (Some pipeline)
++              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
++              let code, response = send HttpMethod.Get $"{url}/{buildId}/logs?from=banana" (Some token) None None
++              Expect.equal code 400 "invalid cursor"
++              Expect.stringContains response "invalid_log_cursor" "stable cursor code"
++          }
++
+           test "an unknown build is 404, not 500" {
+               let org, project = freshProject ()
+               let code, body =
+@@ -323,6 +367,7 @@ let endpoints =
+               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+               let _, body = send HttpMethod.Post url (Some token) (Some "can-1") (Some pipeline)
+               let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
++              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+ 
+               let code1, b1 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
+               Expect.equal code1 202 "accepted"
+@@ -332,16 +377,16 @@ let endpoints =
+               Expect.equal code2 202 "a retry is idempotent, not an error"
+               Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
+ 
+-              use conn = new Npgsql.NpgsqlConnection(connectionString)
+-              conn.Open()
+-              use terminal = conn.CreateCommand()
+-              terminal.CommandText <-
+-                  "UPDATE builds SET status = 'succeeded', cancellation_requested = false
+-                    WHERE organization_id = @o AND project_id = @p AND id = @b"
+-              terminal.Parameters.AddWithValue("o", org.Value) |> ignore
+-              terminal.Parameters.AddWithValue("p", project.Value) |> ignore
+-              terminal.Parameters.AddWithValue("b", Guid.Parse buildId) |> ignore
+-              Expect.equal (terminal.ExecuteNonQuery()) 1 "terminal control updates the exact build"
++              let fence =
++                  match store.OfferAttempt(org, AttemptId(Guid.Parse attemptId), "api-terminal", 60) with
++                  | Ok value -> value
++                  | Error error -> failtestf "offer failed: %s" error
++              Expect.isTrue
++                  (store.AcceptAttempt(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal"))
++                  "accepted"
++              match store.PublishTerminal(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal", Success) with
++              | Ok _ -> ()
++              | Error error -> failtestf "terminal roll-up failed: %s" error
+ 
+               let terminalCode, terminalBody =
+                   send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index a41b2a6..71aa8d9 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -35,7 +35,8 @@ let private tenantTables =
+       "outbox", "organization_id"
+       "log_chunks", "organization_id"
+       "effect_checkpoints", "organization_id"
+-      "retry_decisions", "organization_id" ]
++      "retry_decisions", "organization_id"
++      "build_definitions", "organization_id" ]
+ 
+ let private freshProject () =
+     let org = OrganizationId(Guid.NewGuid())
+@@ -44,9 +45,13 @@ let private freshProject () =
+     org, project
+ 
+ let private newBuild org project key stages =
++    let stageList = String.concat "," stages
++    let source = $"pipeline:{stageList}"
++
+     { OrganizationId = org
+       ProjectId = project
+       IdempotencyKey = key
++      PipelineSource = Text.Encoding.UTF8.GetBytes source
+       StageNames = stages
+       RequiredTrustPool = "trusted-linux"
+       RequiredCapabilities = [ "linux" ] }
+@@ -227,6 +232,21 @@ let migrations =
+                       (string value)
+                       "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920"
+                       "migration 0005 exact source checksum"
++          }
++
++          test "runnable controller migration 0006 is checksum-pinned" {
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0006'"
++
++              match cmd.ExecuteScalar() with
++              | null -> failtest "migration ledger has no 0006 row"
++              | value ->
++                  Expect.equal
++                      (string value)
++                      "26daeb1153b1a71b945bc897aee2ce1dba9994bc53aa1bdf206e416aa284a7aa"
++                      "migration 0006 exact source checksum"
+           } ]
+ 
+ let tenantIsolation =
+@@ -250,8 +270,10 @@ let tenantIsolation =
+                         GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
+                         GRANT SELECT, INSERT, UPDATE, DELETE ON
+                           organizations, projects, builds, nodes, attempts,
+-                          events, outbox, log_chunks, effect_checkpoints, retry_decisions
++                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
++                          build_definitions
+                         TO {roleName};
++                        GRANT SELECT ON organization_work_roots TO {roleName};
+                         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
+ 
+                   // Deliberately disable Npgsql's pool reset and force one physical
+@@ -262,6 +284,10 @@ let tenantIsolation =
+                       $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
+                   let runtimeStore = Store(runtimeConnectionString, connectionString)
+ 
++                  Expect.isTrue
++                      (runtimeStore.RuntimeCapabilities())
++                      "the runtime role has the exact controller database surface"
++
+                   do
+                       use identityConn = new Npgsql.NpgsqlConnection(runtimeConnectionString)
+                       identityConn.Open()
+@@ -308,6 +334,11 @@ let tenantIsolation =
+                   let orgA, admissionA = seed "tenant-a"
+                   let orgB, admissionB = seed "tenant-b"
+ 
++                  Expect.containsAll
++                      (runtimeStore.OrganizationIds())
++                      [ orgA; orgB ]
++                      "the UUID-only registry lets a restarted runtime discover tenant scopes"
++
+                   let count (conn: Npgsql.NpgsqlConnection) (tx: Npgsql.NpgsqlTransaction option) table predicate =
+                       use cmd = conn.CreateCommand()
+                       tx |> Option.iter (fun value -> cmd.Transaction <- value)
+@@ -320,6 +351,11 @@ let tenantIsolation =
+                   for table, _ in tenantTables do
+                       Expect.equal (count runtime None table "") 0L $"{table} exposes no rows without context"
+ 
++                  Expect.isGreaterThan
++                      (count runtime None "organization_work_roots" "")
++                      1L
++                      "only UUID work roots are deliberately global"
++
+                   use tenantTx = runtime.BeginTransaction()
+                   use setTenant = runtime.CreateCommand()
+                   setTenant.Transaction <- tenantTx
+@@ -421,7 +457,10 @@ let tenantIsolation =
+                          AND c.relrowsecurity
+                          AND c.relforcerowsecurity"
+                   rls.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
+-                  Expect.equal (rls.ExecuteScalar() :?> int64) 10L "every tenant table enables and forces RLS"
++                  Expect.equal
++                      (rls.ExecuteScalar() :?> int64)
++                      (int64 tenantTables.Length)
++                      "every tenant table enables and forces RLS"
+ 
+                   use policies = catalog.CreateCommand()
+                   policies.CommandText <-
+@@ -429,7 +468,10 @@ let tenantIsolation =
+                        WHERE tablename = ANY(@tables)
+                          AND policyname LIKE '%tenant_isolation'"
+                   policies.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
+-                  Expect.equal (policies.ExecuteScalar() :?> int64) 10L "every tenant table has an isolation policy"
++                  Expect.equal
++                      (policies.ExecuteScalar() :?> int64)
++                      (int64 tenantTables.Length)
++                      "every tenant table has an isolation policy"
+ 
+                   use lineage = catalog.CreateCommand()
+                   lineage.CommandText <-
+@@ -482,6 +524,83 @@ let admission =
+               Expect.equal (store.CountOutbox org) 1 "still one outbox row"
+           }
+ 
++          test "idempotency binds the exact source and placement fingerprint" {
++              let org, project = freshProject ()
++              let original = newBuild org project "definition-bound" [ "build" ]
++              let first = admitOk original
++              let replay = admitOk original
++              Expect.equal replay.BuildId first.BuildId "exact bytes replay"
++
++              let substituted =
++                  { original with
++                      PipelineSource = Text.Encoding.UTF8.GetBytes "pipeline:substituted" }
++
++              match store.AdmitBuild substituted with
++              | Error error -> Expect.stringContains error "different pipeline" "payload substitution named"
++              | Ok _ -> failtest "one idempotency key accepted different source bytes"
++
++              let moved = { original with RequiredTrustPool = "privileged" }
++              match store.AdmitBuild moved with
++              | Error error -> Expect.stringContains error "placement policy" "placement substitution named"
++              | Ok _ -> failtest "one idempotency key accepted a different placement policy"
++
++              Expect.equal (store.CountEvents(org, first.BuildId, "build.admitted")) 1 "one admission event"
++              Expect.equal (store.CountOutbox org) 1 "one admission outbox row"
++          }
++
++          test "16 mixed concurrent payloads converge on one immutable definition" {
++              let org, project = freshProject ()
++              let baseInput = newBuild org project "mixed-race" [ "build" ]
++              let sourceA = Text.Encoding.UTF8.GetBytes "pipeline:A"
++              let sourceB = Text.Encoding.UTF8.GetBytes "pipeline:B"
++
++              let results =
++                  [ 0..15 ]
++                  |> List.map (fun index ->
++                      async {
++                          let source = if index % 2 = 0 then sourceA else sourceB
++                          return Store(connectionString).AdmitBuild({ baseInput with PipelineSource = source })
++                      })
++                  |> Async.Parallel
++                  |> Async.RunSynchronously
++
++              let accepted = results |> Array.choose (function Ok value -> Some value | Error _ -> None)
++              let refused = results.Length - accepted.Length
++              Expect.equal accepted.Length 8 "all exact replays of the winning bytes succeed"
++              Expect.equal refused 8 "every conflicting payload is refused"
++              Expect.equal (accepted |> Array.map (fun value -> value.BuildId) |> Array.distinct |> Array.length) 1 "one build"
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use count = conn.CreateCommand()
++              count.CommandText <-
++                  "SELECT count(*)
++                     FROM build_definitions
++                    WHERE organization_id = @o"
++              count.Parameters.AddWithValue("o", org.Value) |> ignore
++              Expect.equal (count.ExecuteScalar() :?> int64) 1L "one durable definition"
++          }
++
++          test "a new admission is one whole-pipeline execution unit" {
++              let org, project = freshProject ()
++              let input = newBuild org project "whole-pipeline" [ "build"; "test"; "deploy" ]
++              let admitted = admitOk input
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use count = conn.CreateCommand()
++              count.CommandText <-
++                  "SELECT count(*), min(name)
++                     FROM nodes
++                    WHERE organization_id = @o AND build_id = @b"
++              count.Parameters.AddWithValue("o", org.Value) |> ignore
++              count.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
++              use reader = count.ExecuteReader()
++              Expect.isTrue (reader.Read()) "node aggregate exists"
++              Expect.equal (reader.GetInt64 0) 1L "the runner is scheduled exactly once"
++              Expect.equal (reader.GetString 1) "pipeline" "unit is named honestly"
++          }
++
+           test "16 concurrent submissions of one key produce exactly one build" {
+               let org, project = freshProject ()
+ 
+@@ -545,6 +664,85 @@ let fencing =
+                   | Error e -> failtestf "publication refused: %s" e
+           }
+ 
++          test "claim carries byte-exact source and terminal publication rolls up atomically" {
++              let org, project = freshProject ()
++              let input = newBuild org project "controller-vertical" [ "build" ]
++              let admitted = admitOk input
++
++              let claim =
++                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
++                  | Ok(Some value) -> value
++                  | Ok None -> failtest "new build was not claimable"
++                  | Error error -> failtestf "claim failed: %s" error
++
++              Expect.sequenceEqual claim.PipelineSource input.PipelineSource "exact source bytes survive admission"
++              Expect.equal claim.BuildId admitted.BuildId "claim belongs to admitted build"
++              Expect.isTrue (store.AcceptAttempt(org, claim.AttemptId, claim.Fence, "local:test")) "accepted"
++
++              match store.PublishTerminal(org, claim.AttemptId, claim.Fence, "local:test", Success) with
++              | Error error -> failtestf "terminal roll-up failed: %s" error
++              | Ok _ -> ()
++
++              Expect.equal
++                  (store.BuildSnapshot(org, project, admitted.BuildId))
++                  (Some("success", false))
++                  "public status is the same terminal truth"
++              Expect.equal (store.CountEvents(org, admitted.BuildId, "attempt.terminal")) 1 "one terminal event"
++              Expect.equal (store.CountOutbox org) 2 "admission plus terminal outbox"
++          }
++
++          test "claim names a legacy multi-node build instead of silently skipping it" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "legacy-shape" [ "build" ])
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <-
++                  "INSERT INTO nodes
++                       (id, organization_id, build_id, name, ordinal, required_trust_pool,
++                        required_capabilities, status)
++                   VALUES (@id, @o, @b, 'legacy-second-stage', 1, 'trusted-linux', ARRAY['linux'], 'queued')"
++              cmd.Parameters.AddWithValue("id", Guid.NewGuid()) |> ignore
++              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++              cmd.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
++              cmd.ExecuteNonQuery() |> ignore
++
++              match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
++              | Error error ->
++                  Expect.stringContains error "single whole-pipeline" "operator gets the reconciliation reason"
++              | Ok _ -> failtest "a legacy multi-node build must not be skipped or executed"
++          }
++
++          test "claim rehashes durable source before execution" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "corrupt-source" [ "build" ])
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++
++              try
++                  use corrupt = conn.CreateCommand()
++                  corrupt.CommandText <-
++                      "ALTER TABLE build_definitions DISABLE TRIGGER build_definitions_guard;
++                       UPDATE build_definitions
++                          SET source_digest = decode(repeat('00', 32), 'hex')
++                        WHERE organization_id = @o AND build_id = @b;
++                       ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
++                  corrupt.Parameters.AddWithValue("o", org.Value) |> ignore
++                  corrupt.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
++                  corrupt.ExecuteNonQuery() |> ignore
++
++                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
++                  | Error error -> Expect.stringContains error "digest mismatch" "corruption is named"
++                  | Ok _ -> failtest "corrupt source must never be offered for execution"
++              finally
++                  use repair = conn.CreateCommand()
++                  repair.CommandText <-
++                      "ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
++                  repair.ExecuteNonQuery() |> ignore
++          }
++
+           test "exactly one winner among 16 concurrent publishers" {
+               let org, project = freshProject ()
+               let a = admitOk (newBuild org project "race-pub" [ "b" ])
+diff --git a/tools/Fogell.Run.Host/Program.fs b/tools/Fogell.Run.Host/Program.fs
+index 3f42444..8503e8f 100644
+--- a/tools/Fogell.Run.Host/Program.fs
++++ b/tools/Fogell.Run.Host/Program.fs
+@@ -2,10 +2,18 @@ module Fogell.Run.Host.Program
+ 
+ open System
+ open System.IO
++open System.Runtime.InteropServices
++open System.Text
+ open Fogell.Domain
+ open Fogell.Differential
+ open Fogell.Journal
+ 
++[<DllImport("libc", SetLastError = true)>]
++extern int private prctl(int option, unativeint arg2, unativeint arg3, unativeint arg4, unativeint arg5)
++
++[<DllImport("libc")>]
++extern int private getppid()
++
+ /// FG-112. The restart lane's HOST: runs a real Jenkinsfile through the real
+ /// walker with the FG-025 journal wired in, as a separate killable process —
+ /// the acceptance criterion is a genuine SIGKILL, and a process cannot kill
+@@ -43,6 +51,42 @@ open Fogell.Journal
+ /// usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]
+ [<EntryPoint>]
+ let main argv =
++    match Environment.GetEnvironmentVariable "FOGELL_EXPECTED_PARENT_PID" with
++    | null
++    | "" -> ()
++    | raw when OperatingSystem.IsLinux() ->
++        match Int32.TryParse raw with
++        | true, expected when expected > 1 ->
++            // PR_SET_PDEATHSIG=1, SIGKILL=9.  Set the signal first, then close
++            // the fork-to-prctl race by proving the configured parent still
++            // owns us.  This is opt-in so the standalone restart harness keeps
++            // its established process contract.
++            if prctl(1, unativeint 9, unativeint 0, unativeint 0, unativeint 0) <> 0 || getppid() <> expected then
++                eprintfn "controller parent identity changed before supervision was established; refusing"
++                exit 2
++        | _ ->
++            eprintfn "FOGELL_EXPECTED_PARENT_PID must be a positive process id"
++            exit 2
++    | _ ->
++        eprintfn "controller parent-death supervision is supported only on Linux"
++        exit 2
++
++    let eventPath =
++        match Environment.GetEnvironmentVariable "FOGELL_EVENT_FILE" with
++        | null
++        | "" -> None
++        | value -> Some(Path.GetFullPath value)
++
++    let eventGate = obj()
++
++    let emitEvent (body: string) =
++        eventPath
++        |> Option.iter (fun path ->
++            lock eventGate (fun () ->
++                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
++                let bytes = Encoding.UTF8.GetBytes(if isNull body then "" else body)
++                File.AppendAllText(path, Convert.ToBase64String(bytes) + "\n")))
++
+     match Array.toList argv with
+     | jenkinsfile :: workspaceRoot :: jobName :: journalArg :: rest when List.length rest <= 1 ->
+         let approvalsArg = List.tryHead rest
+@@ -173,6 +217,15 @@ let main argv =
+             eprintfn $"journal path is inside the workspace ({realWorkspace}) — the fresh-attempt wipe would unlink it; keep it controller-side"
+             exit 2
+ 
++        match eventPath with
++        | Some path when
++            (resolve path).StartsWith(realWorkspace + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
++            || path.StartsWith(workspaceFull + string Path.DirectorySeparatorChar, StringComparison.Ordinal)
++            ->
++            eprintfn $"event file is inside the workspace ({realWorkspace}) — keep controller protocol state outside build control"
++            exit 2
++        | _ -> ()
++
+         // FG-046b: the approvals inbox is controller-side for the same reason and
+         // by the same two checks — an inbox inside the workspace would have the
+         // operator's answer deleted by the fresh-attempt wipe, and a resumed
+@@ -936,6 +989,7 @@ let main argv =
+                     // failed attempt's records on the next resume
+                     journal.Append(RetryAttemptStarted(stage, n))
+                     journal.Sync()
++                    emitEvent $"retry-attempt: {stage}#{n}"
+                     liveRetryStages.TryAdd(stage, 0uy) |> ignore
+               RetryAttemptsSoFar =
+                 fun stage -> Map.tryFind stage plan.RetryAttempts |> Option.defaultValue 1
+@@ -943,17 +997,21 @@ let main argv =
+                 fun stage i name ->
+                     journal.Append(StepStarted(stage, i, name))
+                     journal.Sync()
++                    emitEvent $"step-started: {stage}#{i} {name}"
+               // WalkerOrchestration calls this before OnStepFinished. That
+               // ordering keeps a durably skippable successful JUnit step from
+               // losing its separate unstable stage decoration after restart.
+               OnStepStageWarning =
+                 fun stage i status -> journal.Append(StepStageWarning(stage, i, status))
+               OnStepFinished =
+-                fun stage i status reason -> journal.AppendStepFinished(stage, i, status, reason)
++                fun stage i status reason ->
++                    journal.AppendStepFinished(stage, i, status, reason)
++                    emitEvent $"step-finished: {stage}#{i} {BuildStatus.toWireString status}"
+               OnStageCommitted =
+                 fun stage ->
+                     journal.Append(StageCommitted stage)
+                     journal.Sync()
++                    emitEvent $"stage-committed: {stage}"
+               PollInputAnswer = pollInputAnswer
+               OnInputClosed =
+                 fun stage i occ ->
+@@ -1009,7 +1067,9 @@ let main argv =
+             journal.Close()
+             clearOutstandingPrompts ()
+             printfn $"completed: {trace.Result}"
+-            for l in trace.Output do printfn "| %s" l
++            for l in trace.Output do
++                printfn "| %s" l
++                emitEvent l
+             if trace.Result = "success" then 0 else 1
+     | _ ->
+         eprintfn "usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]"
