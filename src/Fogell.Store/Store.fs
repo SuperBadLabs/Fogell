@@ -1947,6 +1947,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 if rejectBuild.ExecuteNonQuery() <> 1 then
                     failwith "invalid execution claim has no build to quarantine"
 
+                let refusalPayload = JsonSerializer.Serialize(dict [ "reason", reason ])
                 use refusal = conn.CreateCommand()
                 refusal.Transaction <- tx
                 refusal.CommandText <-
@@ -1959,9 +1960,26 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     NpgsqlParameter(
                         "payload",
                         NpgsqlTypes.NpgsqlDbType.Jsonb,
-                        Value = $"{{\"reason\":\"{reason}\"}}"))
+                        Value = refusalPayload))
                 |> ignore
                 refusal.ExecuteNonQuery() |> ignore
+
+                let outboxBody =
+                    JsonSerializer.Serialize(
+                        dict
+                            [ "build", buildId.ToString()
+                              "attempt", attemptId.ToString()
+                              "reason", reason ])
+                use outbox = conn.CreateCommand()
+                outbox.Transaction <- tx
+                outbox.CommandText <-
+                    "INSERT INTO outbox (organization_id, topic, body)
+                     VALUES (@o, 'build.reconciliation_required', @body)"
+                outbox.Parameters.AddWithValue("o", org.Value) |> ignore
+                outbox.Parameters.Add(
+                    NpgsqlParameter("body", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = outboxBody))
+                |> ignore
+                outbox.ExecuteNonQuery() |> ignore
 
             let readCandidate () =
                 use pick = conn.CreateCommand()
@@ -2114,7 +2132,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                         lease_expires_at = NULL
                    FROM expired e
                   WHERE a.organization_id = @o AND a.id = e.id
-                 RETURNING a.node_id, a.state
+                 RETURNING a.id AS attempt_id, a.node_id, a.state
              ), reconciled_nodes AS (
                  UPDATE nodes n
                     SET status = 'reconciliation_required'
@@ -2122,17 +2140,41 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                            FROM moved
                           WHERE state = 'reconciliation_required') m
                   WHERE n.organization_id = @o AND n.id = m.node_id
-                 RETURNING n.build_id
+                 RETURNING n.id AS node_id, n.build_id
              ), reconciled_builds AS (
                  UPDATE builds b
                     SET status = 'reconciliation_required'
                    FROM (SELECT DISTINCT build_id FROM reconciled_nodes) n
                   WHERE b.organization_id = @o AND b.id = n.build_id
-                 RETURNING b.id
+                 RETURNING b.id AS build_id
+             ), reconciliation_rows AS MATERIALIZED (
+                 SELECT m.attempt_id, n.build_id
+                   FROM moved m
+                   JOIN reconciled_nodes n ON n.node_id = m.node_id
+                   JOIN reconciled_builds b ON b.build_id = n.build_id
+                  WHERE m.state = 'reconciliation_required'
+             ), published_events AS (
+                 INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                 SELECT @o, r.build_id, r.attempt_id,
+                        'attempt.reconciliation_required',
+                        jsonb_build_object('reason', 'lease_expired')
+                   FROM reconciliation_rows r
+                 RETURNING build_id, attempt_id
+             ), published_outbox AS (
+                 INSERT INTO outbox (organization_id, topic, body)
+                 SELECT @o, 'build.reconciliation_required',
+                        jsonb_build_object(
+                            'build', e.build_id::text,
+                            'attempt', e.attempt_id::text,
+                            'reason', 'lease_expired')
+                   FROM published_events e
+                 RETURNING id
              )
              SELECT (SELECT count(*)::integer FROM moved),
                     (SELECT count(*)::integer FROM reconciled_nodes),
-                    (SELECT count(*)::integer FROM reconciled_builds)"
+                    (SELECT count(*)::integer FROM reconciled_builds),
+                    (SELECT count(*)::integer FROM published_events),
+                    (SELECT count(*)::integer FROM published_outbox)"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
         let count = if reader.Read() then reader.GetInt32 0 else 0

@@ -87,7 +87,11 @@ A graceful or ungraceful forced stop still moves started work to
 `reconciliation_required`: proving every process extinct does not prove whether
 an external effect or journal write completed. It never requeues a started
 execution automatically. An expired never-started offer may be queued again,
-while any expired started lease also enters reconciliation.
+while an expired `accepted`, `running`, `finalizing`, or `cancelling` lease
+enters reconciliation. Each ambiguous expiry atomically moves attempt, node,
+and build and publishes one `attempt.reconciliation_required` event plus one
+`build.reconciliation_required` outbox row with reason `lease_expired`. The safe
+pre-launch `offered` → `queued` transition emits neither record.
 
 ## Acceptance and recovery checks
 
@@ -110,8 +114,11 @@ reconciliation instead of inventing a build failure. A local-worker
 outbox row, and preserves the fence-specific event file. Inspect those records,
 the durable journal, retained event frames, and effect checkpoints before
 deciding recovery. Invalid queued definitions have their own reason event;
-lease-expiry and restore transitions remain distinguishable by their transition
-and restore-epoch records. Never repair any of them by editing immutable
+their attempt → node → build quarantine and exactly one reasoned reconciliation
+event/outbox pair commit atomically, so a notification never describes a state
+change that did not commit. Lease-expiry and restore transitions remain
+distinguishable by their reason and restore-epoch records. Never repair any of
+them by editing immutable
 `build_definitions` or force a terminal status directly.
 Both bypass the evidence the controller uses to refuse duplicate or substituted
 work.

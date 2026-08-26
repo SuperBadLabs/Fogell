@@ -1604,11 +1604,27 @@ let fencing =
               expire.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
               Expect.equal (expire.ExecuteNonQuery()) 1 "fixture expired the unstarted offer"
 
+              let reconciliationEventsBefore =
+                  store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required")
+              let outboxBefore = store.CountOutbox org
+
               Expect.equal (store.RequeueExpiredLocalAttempts org) 1 "the pre-launch offer was recovered"
               Expect.equal
                   (store.AttemptState(org, admitted.AttemptId))
                   (Some("queued", oldClaim.Fence.Value, None))
                   "recovery preserved the old fence until the next claim"
+              Expect.equal
+                  (store.RequeueExpiredLocalAttempts org)
+                  0
+                  "a repeated expiry scan has no transition left to publish"
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  reconciliationEventsBefore
+                  "safe offered recovery emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBefore
+                  "safe offered recovery emits no reconciliation outbox"
               expectError
                   "the expired owner cannot cross the execution-start boundary"
                   (store.BeginExecution(org, admitted.AttemptId, oldClaim.Fence, "local:expired-offer", 60))
@@ -1663,6 +1679,8 @@ let fencing =
                   makeExpired.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
                   Expect.equal (makeExpired.ExecuteNonQuery()) 1 $"fixture expired {state}"
 
+                  let outboxBefore = store.CountOutbox org
+
                   Expect.equal (store.RequeueExpiredLocalAttempts org) 1 $"expiry scan handled {state} once"
                   Expect.equal
                       (store.AttemptState(org, admitted.AttemptId))
@@ -1672,10 +1690,211 @@ let fencing =
                       (store.BuildSnapshot(org, project, admitted.BuildId))
                       (Some("reconciliation_required", false))
                       $"{state} ambiguity reached public build truth"
+
+                  use publication = conn.CreateCommand()
+                  publication.CommandText <-
+                      "SELECT count(DISTINCT e.id),
+                              min(e.payload->>'reason'),
+                              count(DISTINCT o.id),
+                              min(o.topic),
+                              min(o.body->>'reason'),
+                              min(o.body->>'build'),
+                              min(o.body->>'attempt')
+                         FROM events e
+                         LEFT JOIN outbox o
+                           ON o.organization_id = e.organization_id
+                          AND o.topic = 'build.reconciliation_required'
+                          AND o.body->>'build' = e.build_id::text
+                          AND o.body->>'attempt' = e.attempt_id::text
+                        WHERE e.organization_id = @o
+                          AND e.build_id = @b
+                          AND e.attempt_id = @a
+                          AND e.kind = 'attempt.reconciliation_required'"
+                  publication.Parameters.AddWithValue("o", org.Value) |> ignore
+                  publication.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+                  publication.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                  use publicationRow = publication.ExecuteReader()
+                  Expect.isTrue (publicationRow.Read()) $"{state} transition publication is observable"
+                  Expect.equal (publicationRow.GetInt64 0) 1L $"{state} emits one reconciliation event"
+                  Expect.equal (publicationRow.GetString 1) "lease_expired" $"{state} event names lease expiry"
+                  Expect.equal (publicationRow.GetInt64 2) 1L $"{state} emits one reconciliation outbox"
+                  Expect.equal
+                      (publicationRow.GetString 3)
+                      "build.reconciliation_required"
+                      $"{state} outbox names the transition"
+                  Expect.equal (publicationRow.GetString 4) "lease_expired" $"{state} outbox preserves the event reason"
+                  Expect.equal
+                      (publicationRow.GetString 5)
+                      (admitted.BuildId.Value.ToString())
+                      $"{state} outbox binds the build"
+                  Expect.equal
+                      (publicationRow.GetString 6)
+                      (admitted.AttemptId.Value.ToString())
+                      $"{state} outbox binds the attempt"
+                  publicationRow.Close()
+
+                  Expect.equal
+                      (store.RequeueExpiredLocalAttempts org)
+                      0
+                      $"a repeated expiry scan does not republish {state}"
+                  Expect.equal
+                      (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                      1
+                      $"a repeated expiry scan leaves one {state} event"
+                  Expect.equal
+                      (store.CountOutbox org)
+                      (outboxBefore + 1)
+                      $"a repeated expiry scan leaves one {state} outbox"
                   Expect.equal
                       (store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60))
                       (Ok None)
                       $"{state} was not offered to another worker"
+          }
+
+          test "one expiry scan publishes every ambiguous attempt across legacy nodes and retry history" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "expired-legacy-nodes" [ "build" ])
+              let firstOwner = "local:expired-legacy-first"
+
+              let firstClaim =
+                  match store.ClaimNextExecution(org, firstOwner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected first legacy-shape claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, firstClaim.AttemptId, firstClaim.Fence, firstOwner, 60))
+                  (Ok ExecutionStarted)
+                  "the admitted attempt crossed the launch boundary"
+
+              let secondNode = NodeId(Guid.NewGuid())
+              let secondAttempt = AttemptId(Guid.NewGuid())
+              let secondOwner = "local:expired-legacy-second"
+              let retryAttempt = AttemptId(Guid.NewGuid())
+              let retryOwner = "local:expired-legacy-retry"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use fixture = conn.CreateCommand()
+              fixture.CommandText <-
+                  "UPDATE attempts
+                      SET lease_expires_at = clock_timestamp() - interval '1 second'
+                    WHERE organization_id = @o AND id = @first_attempt;
+                   INSERT INTO nodes
+                          (id, organization_id, build_id, name, ordinal,
+                           required_trust_pool, required_capabilities, status)
+                   VALUES (@second_node, @o, @b, 'legacy-second-node', 1,
+                           'trusted-linux', ARRAY['linux'], 'running');
+                   INSERT INTO attempts
+                          (id, organization_id, node_id, ordinal, state, fence,
+                           restore_epoch, lease_owner, lease_expires_at)
+                   SELECT @second_attempt, @o, @second_node, 0, 'running', 1,
+                          restore_epoch, @second_owner,
+                          clock_timestamp() - interval '1 second'
+                     FROM controller_metadata
+                    WHERE singleton;
+                   -- A retry-history row sharing the admitted node proves the
+                   -- batch cardinality is per attempt, not per DISTINCT node.
+                   -- Simultaneously active retry rows are migration-tolerance
+                   -- input here, not a claim about normal scheduler behavior.
+                   INSERT INTO attempts
+                          (id, organization_id, node_id, ordinal, retry_of, state, fence,
+                           restore_epoch, lease_owner, lease_expires_at)
+                   SELECT @retry_attempt, @o, @first_node, 1, @first_attempt,
+                          'running', 2, restore_epoch, @retry_owner,
+                          clock_timestamp() - interval '1 second'
+                     FROM controller_metadata
+                    WHERE singleton"
+              fixture.Parameters.AddWithValue("o", org.Value) |> ignore
+              fixture.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              fixture.Parameters.AddWithValue("first_attempt", admitted.AttemptId.Value) |> ignore
+              fixture.Parameters.AddWithValue("second_node", secondNode.Value) |> ignore
+              fixture.Parameters.AddWithValue("second_attempt", secondAttempt.Value) |> ignore
+              fixture.Parameters.AddWithValue("second_owner", secondOwner) |> ignore
+              fixture.Parameters.AddWithValue("retry_attempt", retryAttempt.Value) |> ignore
+              fixture.Parameters.AddWithValue("retry_owner", retryOwner) |> ignore
+              fixture.Parameters.AddWithValue("first_node", admitted.NodeId.Value) |> ignore
+              Expect.equal
+                  (fixture.ExecuteNonQuery())
+                  4
+                  "fixture created three expired attempts across two distinct nodes"
+
+              let outboxBefore = store.CountOutbox org
+              Expect.equal (store.RequeueExpiredLocalAttempts org) 3 "one scan moved all three ambiguous attempts"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("reconciliation_required", firstClaim.Fence.Value, None))
+                  "the admitted attempt requires reconciliation"
+              Expect.equal
+                  (store.AttemptState(org, secondAttempt))
+                  (Some("reconciliation_required", 1L, None))
+                  "the legacy-node attempt requires reconciliation"
+              Expect.equal
+                  (store.AttemptState(org, retryAttempt))
+                  (Some("reconciliation_required", 2L, None))
+                  "the retry-history attempt requires reconciliation"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("reconciliation_required", false))
+                  "both node transitions roll up through the one build"
+
+              use publications = conn.CreateCommand()
+              publications.CommandText <-
+                  "SELECT e.attempt_id, e.payload->>'reason',
+                          o.topic, o.body->>'reason',
+                          o.body->>'build', o.body->>'attempt'
+                     FROM events e
+                     JOIN outbox o
+                       ON o.organization_id = e.organization_id
+                      AND o.topic = 'build.reconciliation_required'
+                      AND o.body->>'build' = e.build_id::text
+                      AND o.body->>'attempt' = e.attempt_id::text
+                    WHERE e.organization_id = @o
+                      AND e.build_id = @b
+                      AND e.attempt_id IN (@first_attempt, @second_attempt, @retry_attempt)
+                      AND e.kind = 'attempt.reconciliation_required'
+                    ORDER BY e.attempt_id"
+              publications.Parameters.AddWithValue("o", org.Value) |> ignore
+              publications.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              publications.Parameters.AddWithValue("first_attempt", admitted.AttemptId.Value) |> ignore
+              publications.Parameters.AddWithValue("second_attempt", secondAttempt.Value) |> ignore
+              publications.Parameters.AddWithValue("retry_attempt", retryAttempt.Value) |> ignore
+              use publicationRows = publications.ExecuteReader()
+              let observed = ResizeArray<Guid * string * string * string * string * string>()
+
+              while publicationRows.Read() do
+                  observed.Add(
+                      publicationRows.GetGuid 0,
+                      publicationRows.GetString 1,
+                      publicationRows.GetString 2,
+                      publicationRows.GetString 3,
+                      publicationRows.GetString 4,
+                      publicationRows.GetString 5)
+
+              publicationRows.Close()
+              Expect.equal observed.Count 3 "the one-build batch has exactly three event/outbox pairs"
+              Expect.equal
+                  (observed |> Seq.map (fun (attemptId, _, _, _, _, _) -> attemptId) |> Set.ofSeq)
+                  (Set.ofList [ admitted.AttemptId.Value; secondAttempt.Value; retryAttempt.Value ])
+                  "each moved attempt has its own publication pair"
+
+              for attemptId, eventReason, topic, outboxReason, outboxBuild, outboxAttempt in observed do
+                  Expect.equal eventReason "lease_expired" "each batch event names lease expiry"
+                  Expect.equal topic "build.reconciliation_required" "each batch outbox names reconciliation"
+                  Expect.equal outboxReason eventReason "each batch outbox preserves its event reason"
+                  Expect.equal outboxBuild (admitted.BuildId.Value.ToString()) "each batch outbox binds the shared build"
+                  Expect.equal outboxAttempt (attemptId.ToString()) "each batch outbox binds its own attempt"
+
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  3
+                  "three attempts across two distinct nodes produced three per-attempt events"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 3) "three moved attempts produced three outbox rows"
+              Expect.equal (store.RequeueExpiredLocalAttempts org) 0 "a second batch scan moves nothing"
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  3
+                  "a second batch scan emits no events"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 3) "a second batch scan emits no outbox rows"
           }
 
           test "stale owner and replacement-worker race cannot duplicate started work" {
@@ -1703,6 +1922,8 @@ let fencing =
               expire.Parameters.AddWithValue("o", org.Value) |> ignore
               expire.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
               Expect.equal (expire.ExecuteNonQuery()) 1 "fixture expired the started owner"
+
+              let outboxBefore = store.CountOutbox org
 
               use gate = new System.Threading.ManualResetEventSlim(false)
               let scans =
@@ -1746,6 +1967,46 @@ let fencing =
                   (store.BuildSnapshot(org, project, admitted.BuildId))
                   (Some("reconciliation_required", false))
                   "public truth names the ambiguity"
+
+              use publication = conn.CreateCommand()
+              publication.CommandText <-
+                  "SELECT count(DISTINCT e.id), min(e.payload->>'reason'),
+                          count(DISTINCT o.id), min(o.topic),
+                          min(o.body->>'reason'), min(o.body->>'build'),
+                          min(o.body->>'attempt')
+                     FROM events e
+                     LEFT JOIN outbox o
+                       ON o.organization_id = e.organization_id
+                      AND o.topic = 'build.reconciliation_required'
+                      AND o.body->>'build' = e.build_id::text
+                      AND o.body->>'attempt' = e.attempt_id::text
+                    WHERE e.organization_id = @o
+                      AND e.build_id = @b
+                      AND e.attempt_id = @a
+                      AND e.kind = 'attempt.reconciliation_required'"
+              publication.Parameters.AddWithValue("o", org.Value) |> ignore
+              publication.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              publication.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              use publicationRow = publication.ExecuteReader()
+              Expect.isTrue (publicationRow.Read()) "the concurrent transition publication is observable"
+              Expect.equal (publicationRow.GetInt64 0) 1L "eight scanners emit one lease-expiry event"
+              Expect.equal (publicationRow.GetString 1) "lease_expired" "the race event names lease expiry"
+              Expect.equal (publicationRow.GetInt64 2) 1L "eight scanners emit one reconciliation outbox"
+              Expect.equal
+                  (publicationRow.GetString 3)
+                  "build.reconciliation_required"
+                  "the race outbox names reconciliation"
+              Expect.equal (publicationRow.GetString 4) "lease_expired" "the race outbox preserves the event reason"
+              Expect.equal
+                  (publicationRow.GetString 5)
+                  (admitted.BuildId.Value.ToString())
+                  "the race outbox binds the build"
+              Expect.equal
+                  (publicationRow.GetString 6)
+                  (admitted.AttemptId.Value.ToString())
+                  "the race outbox binds the attempt"
+              publicationRow.Close()
+              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the scan race emits one outbox row total"
           }
 
           test "verified-extinction requeue rolls the whole lineage back to queued" {
@@ -1995,6 +2256,8 @@ let fencing =
                           enable.ExecuteNonQuery() |> ignore
                   | other -> failtestf "unknown poison fixture %s" other
 
+                  let outboxBefore = store.CountOutbox org
+
                   use gate = new System.Threading.ManualResetEventSlim(false)
                   let claimers =
                       [| 1..8 |]
@@ -2033,14 +2296,24 @@ let fencing =
                   use truth = conn.CreateCommand()
                   truth.CommandText <-
                       "SELECT n.status,
-                              count(e.id),
-                              min(e.payload->>'reason')
+                              count(DISTINCT e.id),
+                              min(e.payload->>'reason'),
+                              count(DISTINCT o.id),
+                              min(o.topic),
+                              min(o.body->>'reason'),
+                              min(o.body->>'build'),
+                              min(o.body->>'attempt')
                          FROM nodes n
                          LEFT JOIN events e
                            ON e.organization_id = n.organization_id
                           AND e.build_id = n.build_id
                           AND e.attempt_id = @a
                           AND e.kind = 'attempt.reconciliation_required'
+                         LEFT JOIN outbox o
+                           ON o.organization_id = n.organization_id
+                          AND o.topic = 'build.reconciliation_required'
+                          AND o.body->>'build' = n.build_id::text
+                          AND o.body->>'attempt' = @a::text
                         WHERE n.organization_id = @o AND n.id = @n
                         GROUP BY n.status"
                   truth.Parameters.AddWithValue("o", org.Value) |> ignore
@@ -2051,12 +2324,21 @@ let fencing =
                   Expect.equal (row.GetString 0) "reconciliation_required" $"{poison} node was quarantined"
                   Expect.equal (row.GetInt64 1) 1L $"{poison} emitted exactly one refusal event"
                   Expect.equal (row.GetString 2) expectedReason $"{poison} event names the durable reason"
+                  Expect.equal (row.GetInt64 3) 1L $"{poison} emitted exactly one reconciliation outbox row"
+                  Expect.equal (row.GetString 4) "build.reconciliation_required" $"{poison} outbox names the transition"
+                  Expect.equal (row.GetString 5) expectedReason $"{poison} outbox preserves the event reason"
+                  Expect.equal (row.GetString 6) (invalid.BuildId.Value.ToString()) $"{poison} outbox binds the build"
+                  Expect.equal (row.GetString 7) (invalid.AttemptId.Value.ToString()) $"{poison} outbox binds the attempt"
                   row.Close()
 
                   Expect.equal
                       (store.CountEvents(org, invalid.BuildId, "attempt.reconciliation_required"))
                       1
                       $"later claimers did not duplicate the {poison} refusal event"
+                  Expect.equal
+                      (store.CountOutbox org)
+                      (outboxBefore + 1)
+                      $"later claimers did not duplicate the {poison} refusal outbox"
           }
 
           test "a materialization failure is quarantined and cannot starve later execution" {

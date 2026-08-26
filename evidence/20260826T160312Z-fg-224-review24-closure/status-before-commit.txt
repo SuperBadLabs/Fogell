@@ -1,0 +1,6 @@
+M  docs/EXECUTION_BOARD.md
+M  docs/runbooks/controller-host.md
+M  docs/tickets/FG-224.md
+M  src/Fogell.Store/Store.fs
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/.20260826T160312Z-fg-224-review24-closure.partial.IC544O/
