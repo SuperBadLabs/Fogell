@@ -667,8 +667,9 @@ let main argv =
         // The durable host owns fresh-workspace preparation, so runWith's shared
         // preflight would otherwise be too late to preserve the old tree. Use the same
         // preflight here before a build identity, journal record, answer adoption or
-        // workspace wipe. Every execution path is still guarded again in runWith.
-        match FogellSide.preflightExecution script with
+        // workspace wipe. runPersisted applies the same durable guard again before
+        // entering runWith's generic execution preflight.
+        match FogellSide.preflightPersistedExecution script with
         | Error why ->
             eprintfn $"{why}"
             exit 2

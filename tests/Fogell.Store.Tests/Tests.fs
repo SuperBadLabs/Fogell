@@ -279,6 +279,21 @@ let migrations =
                       "migration 0009 exact source checksum"
           }
 
+          test "attempt restore epoch guard migration 0010 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0010'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0010 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "9e5c3641ba7a4b4f0c62f0fc91c4bbc0d4acebae7987c5bc70048a6a95927ecb"
+                      "migration 0010 exact source checksum"
+          }
+
           test "migration 0009 repairs preexisting roots as a NOBYPASSRLS schema owner" {
               let databaseName = $"fogell_root_upgrade_{Guid.NewGuid():N}"
               let roleName = $"fogell_migration_owner_{Guid.NewGuid():N}"
@@ -378,8 +393,8 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009" ]
-                          "only the forward repair migration is pending"
+                          [ "0009"; "0010" ]
+                          "only the forward repair and attempt guard migrations are pending"
 
                   use repaired = target.CreateCommand()
                   repaired.CommandText <-
@@ -610,7 +625,7 @@ let tenantIsolation =
               try
                   admin
                       $"GRANT USAGE ON SCHEMA public TO {roleName};
-                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
+                        GRANT SELECT ON controller_metadata TO {roleName};
                         GRANT SELECT ON
                           organizations, projects, builds, nodes, attempts,
                           events, outbox, log_chunks, effect_checkpoints, retry_decisions,
@@ -643,6 +658,12 @@ let tenantIsolation =
                       "sequence USAGE without SELECT is not the full sequence capability"
 
                   admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+
+                  Expect.isFalse
+                      (runtimeStore.RuntimeCapabilities())
+                      "locking the metadata row is a required runtime capability"
+
+                  admin $"GRANT UPDATE(singleton) ON controller_metadata TO {roleName}"
 
                   Expect.isTrue
                       (runtimeStore.RuntimeCapabilities())
@@ -910,6 +931,129 @@ let tenantIsolation =
               finally
                   Npgsql.NpgsqlConnection.ClearAllPools()
                   admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
+          }
+
+          test "a NOBYPASSRLS maintenance restore invalidates queued attempts without cycling" {
+              let roleName = $"fogell_restore_maintenance_{Guid.NewGuid():N}"
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "restricted-restore" [ "build" ])
+              let outboxBefore = store.CountOutbox org
+
+              let admin sql =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <- sql
+                  cmd.ExecuteNonQuery() |> ignore
+
+              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+
+              try
+                  admin
+                      $"GRANT USAGE ON SCHEMA public TO {roleName};
+                        GRANT SELECT, UPDATE (restore_epoch) ON controller_metadata TO {roleName};
+                        GRANT SELECT ON organization_work_roots TO {roleName};
+                        GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
+                        GRANT INSERT ON events, outbox TO {roleName};
+                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq TO {roleName}"
+
+                  let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+                  maintenanceBuilder.Options <- $"-c role={roleName}"
+                  let restrictedStore = Store(connectionString, maintenanceBuilder.ConnectionString)
+
+                  use identityConn = new Npgsql.NpgsqlConnection(maintenanceBuilder.ConnectionString)
+                  identityConn.Open()
+                  use identity = identityConn.CreateCommand()
+                  identity.CommandText <-
+                      "SELECT current_user, rolsuper, rolbypassrls
+                         FROM pg_roles WHERE rolname = current_user"
+                  use identityRow = identity.ExecuteReader()
+                  Expect.isTrue (identityRow.Read()) "maintenance identity exists"
+                  Expect.equal (identityRow.GetString 0) roleName "restore runs as the restricted maintenance role"
+                  Expect.isFalse (identityRow.GetBoolean 1) "maintenance role is not superuser"
+                  Expect.isFalse (identityRow.GetBoolean 2) "maintenance role cannot bypass forced RLS"
+                  identityRow.Close()
+                  identityConn.Close()
+
+                  let before = restrictedStore.CurrentRestoreEpoch()
+                  let after = restrictedStore.ActivateRestore()
+                  Expect.equal after.Value (before.Value + 1L) "restore epoch and invalidation commit together"
+
+                  Expect.equal
+                      (restrictedStore.AttemptState(org, admitted.AttemptId))
+                      (Some("reconciliation_required", 0L, None))
+                      "the old-epoch queued attempt is invalidated through tenant-scoped RLS"
+                  Expect.equal
+                      (restrictedStore.BuildSnapshot(org, project, admitted.BuildId))
+                      (Some("reconciliation_required", false))
+                      "the restore rolls public build truth forward with the attempt"
+                  Expect.equal
+                      (restrictedStore.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                      1
+                      "the restore emits one durable reason event"
+                  Expect.equal
+                      (restrictedStore.CountOutbox org)
+                      (outboxBefore + 1)
+                      "the restore emits one durable reconciliation outbox row"
+
+                  use truth = new Npgsql.NpgsqlConnection(connectionString)
+                  truth.Open()
+                  use reason = truth.CreateCommand()
+                  reason.CommandText <-
+                      "SELECT n.status, e.payload->>'reason', o.topic, o.body->>'reason',
+                              o.body->>'build', o.body->>'attempt'
+                         FROM nodes n
+                         JOIN events e
+                           ON e.organization_id = n.organization_id
+                          AND e.build_id = n.build_id
+                          AND e.attempt_id = @a
+                          AND e.kind = 'attempt.reconciliation_required'
+                         JOIN outbox o
+                           ON o.organization_id = e.organization_id
+                          AND o.topic = 'build.reconciliation_required'
+                          AND o.body->>'attempt' = e.attempt_id::text
+                        WHERE n.organization_id = @o AND n.id = @n"
+                  reason.Parameters.AddWithValue("o", org.Value) |> ignore
+                  reason.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
+                  reason.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                  use reasonRow = reason.ExecuteReader()
+                  Expect.isTrue (reasonRow.Read()) "restore node, event, and outbox truth is atomically observable"
+                  Expect.equal (reasonRow.GetString 0) "reconciliation_required" "restore rolls the node forward"
+                  Expect.equal (reasonRow.GetString 1) "restore_epoch_advanced" "event records the stable restore reason"
+                  Expect.equal (reasonRow.GetString 2) "build.reconciliation_required" "outbox names the transition"
+                  Expect.equal (reasonRow.GetString 3) "restore_epoch_advanced" "outbox records the same reason"
+                  Expect.equal (reasonRow.GetString 4) (admitted.BuildId.Value.ToString()) "outbox binds the build"
+                  Expect.equal (reasonRow.GetString 5) (admitted.AttemptId.Value.ToString()) "outbox binds the attempt"
+                  reasonRow.Close()
+
+                  restrictedStore.ActivateRestore() |> ignore
+                  Expect.equal
+                      (restrictedStore.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                      1
+                      "a later restore does not duplicate the attempt transition event"
+                  Expect.equal
+                      (restrictedStore.CountOutbox org)
+                      (outboxBefore + 1)
+                      "a later restore does not duplicate the attempt transition outbox row"
+
+                  for cycle in 1..2 do
+                      Expect.equal
+                          (restrictedStore.ClaimNextExecution(
+                              org,
+                              $"local:post-restore-{cycle}",
+                              "trusted-linux",
+                              [ "linux" ],
+                              60))
+                          (Ok None)
+                          "the invalidated attempt is never re-offered"
+
+                  Expect.equal
+                      (restrictedStore.RequeueExpiredLocalAttempts org)
+                      0
+                      "lease recovery cannot turn reconciliation back into queued work"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
           } ]
 
 let admission =
@@ -1011,6 +1155,229 @@ let admission =
               Expect.equal (reader.GetInt64 0) 1L "the runner is scheduled exactly once"
               Expect.equal (reader.GetString 1) "pipeline" "unit is named honestly"
           }
+
+          test "admission shares the restore epoch lock before creating an attempt" {
+              let org, project = freshProject ()
+              let marker = $"FG021_RESTORE_{Guid.NewGuid():N}"
+              let builder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              builder.ApplicationName <- marker
+
+              use blocker = new Npgsql.NpgsqlConnection(connectionString)
+              blocker.Open()
+              use blockerTx = blocker.BeginTransaction()
+              use lockEpoch = blocker.CreateCommand()
+              lockEpoch.Transaction <- blockerTx
+              lockEpoch.CommandText <-
+                  "SELECT restore_epoch FROM controller_metadata WHERE singleton FOR UPDATE"
+              lockEpoch.ExecuteScalar() |> ignore
+
+              let admission =
+                  Async.StartAsTask(async {
+                      return
+                          Store(builder.ConnectionString).AdmitBuild(
+                              newBuild org project "admission-restore-lock" [ "build" ])
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec blocked remaining =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1 FROM pg_stat_activity
+                           WHERE application_name = @marker
+                             AND state = 'active'
+                             AND wait_event_type = 'Lock'
+                             AND query LIKE '%controller_metadata%'
+                             AND query LIKE '%FOR SHARE%'
+                       )"
+                  waiting.Parameters.AddWithValue("marker", marker) |> ignore
+
+                  if waiting.ExecuteScalar() :?> bool then true
+                  elif remaining = 0 then false
+                  else
+                      Threading.Thread.Sleep 20
+                      blocked (remaining - 1)
+
+              let barrier = blocked 100
+
+              use bump = blocker.CreateCommand()
+              bump.Transaction <- blockerTx
+              bump.CommandText <-
+                  "UPDATE controller_metadata
+                      SET restore_epoch = restore_epoch + 1
+                    WHERE singleton"
+              Expect.equal (bump.ExecuteNonQuery()) 1 "restore epoch advanced behind its exclusive lock"
+
+              use invalidate = blocker.CreateCommand()
+              invalidate.Transaction <- blockerTx
+              invalidate.CommandText <-
+                  "UPDATE attempts
+                      SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
+                    WHERE restore_epoch < (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                      AND state IN ('queued', 'offered', 'accepted', 'running', 'finalizing', 'cancelling')"
+              invalidate.ExecuteNonQuery() |> ignore
+              blockerTx.Commit()
+
+              Expect.isTrue barrier "admission waited at the restore serialization point"
+              Expect.isTrue (admission.Wait(TimeSpan.FromSeconds 5.0)) "blocked admission completed"
+
+              let admitted =
+                  match admission.Result with
+                  | Ok value -> value
+                  | Error error -> failtestf "post-restore admission failed: %s" error
+
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("queued", 0L, None))
+                  "the post-restore attempt remains current queued work"
+
+              use epoch = observer.CreateCommand()
+              epoch.CommandText <-
+                  "SELECT a.restore_epoch = m.restore_epoch
+                     FROM attempts a
+                     CROSS JOIN controller_metadata m
+                    WHERE a.organization_id = @o AND a.id = @a AND m.singleton"
+              epoch.Parameters.AddWithValue("o", org.Value) |> ignore
+              epoch.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              Expect.isTrue
+                  (epoch.ExecuteScalar() :?> bool)
+                  "admission used the committed restore epoch instead of inserting stale authority"
+          }
+
+          test "the database rejects a stale restore epoch from every attempt creator" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "stale-direct-attempt" [ "build" ])
+              let rejectedId = Guid.NewGuid()
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use tx = conn.BeginTransaction()
+              use tenant = conn.CreateCommand()
+              tenant.Transaction <- tx
+              tenant.CommandText <- "SELECT set_config('fogell.organization_id', @org, true)"
+              tenant.Parameters.AddWithValue("org", org.Value.ToString()) |> ignore
+              tenant.ExecuteScalar() |> ignore
+
+              use current = conn.CreateCommand()
+              current.Transaction <- tx
+              current.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
+              let staleEpoch = (current.ExecuteScalar() :?> int64) - 1L
+
+              use insert = conn.CreateCommand()
+              insert.Transaction <- tx
+              insert.CommandText <-
+                  "INSERT INTO attempts
+                         (id, organization_id, node_id, ordinal, state, restore_epoch)
+                   VALUES (@a, @o, @n, 1, 'queued', @e)"
+              insert.Parameters.AddWithValue("a", rejectedId) |> ignore
+              insert.Parameters.AddWithValue("o", org.Value) |> ignore
+              insert.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
+              insert.Parameters.AddWithValue("e", staleEpoch) |> ignore
+
+              let staleRejected =
+                  try
+                      insert.ExecuteNonQuery() |> ignore
+                      false
+                  with :? Npgsql.PostgresException as error ->
+                      error.SqlState = "23514"
+                      && error.MessageText.Contains("does not match current controller restore_epoch")
+
+              Expect.isTrue staleRejected "the trigger rejects stale authority even outside Store"
+              tx.Rollback()
+
+              use absent = conn.CreateCommand()
+              absent.CommandText <- "SELECT count(*) FROM attempts WHERE id = @a"
+              absent.Parameters.AddWithValue("a", rejectedId) |> ignore
+              Expect.equal (absent.ExecuteScalar() :?> int64) 0L "the rejected stale attempt leaves no row"
+          }
+
+          test "an attempt insert that wins the epoch lock is invalidated by the following restore" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "insert-before-restore" [ "build" ])
+              let directAttempt = AttemptId(Guid.NewGuid())
+              let marker = $"FG021_INSERT_FIRST_{Guid.NewGuid():N}"
+
+              use writer = new Npgsql.NpgsqlConnection(connectionString)
+              writer.Open()
+              use writerTx = writer.BeginTransaction()
+              use tenant = writer.CreateCommand()
+              tenant.Transaction <- writerTx
+              tenant.CommandText <- "SELECT set_config('fogell.organization_id', @org, true)"
+              tenant.Parameters.AddWithValue("org", org.Value.ToString()) |> ignore
+              tenant.ExecuteScalar() |> ignore
+
+              use insert = writer.CreateCommand()
+              insert.Transaction <- writerTx
+              insert.CommandText <-
+                  "INSERT INTO attempts
+                         (id, organization_id, node_id, ordinal, state, restore_epoch)
+                   SELECT @a, @o, @n, 1, 'queued', restore_epoch
+                     FROM controller_metadata WHERE singleton"
+              insert.Parameters.AddWithValue("a", directAttempt.Value) |> ignore
+              insert.Parameters.AddWithValue("o", org.Value) |> ignore
+              insert.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
+              Expect.equal (insert.ExecuteNonQuery()) 1 "direct insertion holds the trigger's epoch share lock"
+
+              let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              maintenanceBuilder.ApplicationName <- marker
+              let restore =
+                  Async.StartAsTask(async {
+                      return Store(connectionString, maintenanceBuilder.ConnectionString).ActivateRestore()
+                  })
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec blocked remaining =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1 FROM pg_stat_activity
+                            WHERE application_name = @marker
+                              AND state = 'active'
+                              AND wait_event_type = 'Lock'
+                              AND query LIKE 'UPDATE controller_metadata%'
+                       )"
+                  waiting.Parameters.AddWithValue("marker", marker) |> ignore
+
+                  if waiting.ExecuteScalar() :?> bool then true
+                  elif remaining = 0 then false
+                  else
+                      Threading.Thread.Sleep 20
+                      blocked (remaining - 1)
+
+              let restoreWaited = blocked 100
+              writerTx.Commit()
+
+              Expect.isTrue restoreWaited "restore waits for the insert-side epoch share lock"
+              Expect.isTrue (restore.Wait(TimeSpan.FromSeconds 5.0)) "restore completes after admission commits"
+              restore.Result |> ignore
+
+              Expect.equal
+                  (store.AttemptState(org, directAttempt))
+                  (Some("reconciliation_required", 0L, None))
+                  "the committed old-epoch attempt is invalidated by the serialized restore"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("reconciliation_required", false))
+                  "the serialized restore also rolls public build truth forward"
+
+              use event = observer.CreateCommand()
+              event.CommandText <-
+                  "SELECT count(*), min(payload->>'reason')
+                     FROM events
+                    WHERE organization_id = @o AND attempt_id = @a
+                      AND kind = 'attempt.reconciliation_required'"
+              event.Parameters.AddWithValue("o", org.Value) |> ignore
+              event.Parameters.AddWithValue("a", directAttempt.Value) |> ignore
+              use eventRow = event.ExecuteReader()
+              Expect.isTrue (eventRow.Read()) "direct attempt has reconciliation truth"
+              Expect.equal (eventRow.GetInt64 0) 1L "the direct attempt emits one transition event"
+              Expect.equal (eventRow.GetString 1) "restore_epoch_advanced" "the transition names the restore reason"
+          }
+
 
           test "16 concurrent submissions of one key produce exactly one build" {
               let org, project = freshProject ()

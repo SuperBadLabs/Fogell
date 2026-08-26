@@ -1,0 +1,1174 @@
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 7114d11..29d4e41 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -11,7 +11,7 @@ maintenance identity. Grant only the runtime surface:
+ 
+ ```sql
+ GRANT USAGE ON SCHEMA public TO fogell_runtime;
+-GRANT SELECT ON controller_metadata TO fogell_runtime;
++GRANT SELECT, UPDATE(singleton) ON controller_metadata TO fogell_runtime;
+ GRANT SELECT ON organization_work_roots TO fogell_runtime;
+ GRANT SELECT, INSERT, UPDATE, DELETE ON
+   organizations, projects, builds, nodes, attempts, events, outbox, log_chunks,
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 9f771a1..5dc7f5a 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -23,9 +23,15 @@ Concurrent replays of one idempotency key converge on that immutable definition;
+ source or placement substitution is refused.
+ 
+ Before durable admission, the HTTP boundary runs the same deterministic
+-execution preflight as `Fogell.Run.Host`. A pipeline that parses but exceeds
++persisted-execution preflight as `Fogell.Run.Host`. In addition to the generic
++execution boundary, it rejects duplicate flattened stage names and stage names
++containing journal record delimiters before allocating a build number or binding
++an idempotency key. A pipeline that parses but exceeds
+ Fogell's execution capability returns a stable 422 refusal without allocating a
+-build number or binding the caller's idempotency key.
++build number or binding the caller's idempotency key. An exact replay of a legacy
++admission is resolved from its immutable source and placement fingerprint before
++the current release's stricter preflight, preserving the original 200 response;
++changed bytes still return 409 and a fresh unsafe source still returns 422.
+ 
+ The local worker discovers organization UUID roots after restart, claims one
+ whole-pipeline execution unit, materializes the exact durable source, and starts
+@@ -92,6 +98,16 @@ schema owner. It temporarily lowers FORCE RLS only inside the migration
+ transaction, inserts every missing UUID idempotently, and restores ENABLE plus
+ FORCE before commit; the checksum-pinned historical migration remains unchanged.
+ 
++Fleet restore now keeps forced RLS enabled while iterating the global UUID root
++registry with a transaction-local tenant context. The epoch bump, attempt → node
++→ build reconciliation roll-up, and one reasoned event/outbox pair per moved
++attempt commit atomically, including under a real NOBYPASSRLS maintenance role.
++Fresh attempt creation shares the epoch lock in Store, while forward-only
++migration 0010 enforces the same rule for every direct SQL creator: an attempt
++whose restore epoch is stale is rejected by PostgreSQL before insertion. Both
++sides of the insert/restore race are deterministic—an insert that commits first
++is reconciled by restore; an insert that waits is born in the new epoch.
++
+ ## Acceptance
+ 
+ `scripts/prove-runnable-controller.sh` uses a fresh PostgreSQL database and a real
+@@ -113,14 +129,14 @@ PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 82/82 passed;
+-- Controller API: 28/28 passed;
++- Store: 87/87 passed;
++- Controller API: 30/30 passed;
+ - Differential: 265/265 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 884 main-suite tests and every blocking
++locked repository gate also passes all 891 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/backup-restore-drill.sh b/scripts/backup-restore-drill.sh
+index 91a410c..3c6499e 100755
+--- a/scripts/backup-restore-drill.sh
++++ b/scripts/backup-restore-drill.sh
+@@ -192,6 +192,7 @@ for migration in "${migrations[@]}"; do
+ done
+ 
+ psql_db "$source_db" >/dev/null <<'SQL'
++UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
+ INSERT INTO organizations (id, slug)
+ VALUES ('10000000-0000-0000-0000-000000000001', 'fg085a-org');
+ INSERT INTO projects (id, organization_id, slug)
+diff --git a/scripts/migration-rollback-drill.sh b/scripts/migration-rollback-drill.sh
+index 816a145..8bd1e55 100755
+--- a/scripts/migration-rollback-drill.sh
++++ b/scripts/migration-rollback-drill.sh
+@@ -175,9 +175,10 @@ UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
+ INSERT INTO organizations (id, slug) VALUES ('10000000-0000-0000-0000-000000000081', 'fg081-org');
+ INSERT INTO projects (id, organization_id, slug)
+ VALUES ('20000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081', 'fg081-project');
+-INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, created_at)
++INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, next_log_sequence, created_at)
+ VALUES ('30000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
+-        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, '2026-08-25T01:00:00Z');
++        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, 82,
++        '2026-08-25T01:00:00Z');
+ INSERT INTO nodes (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
+ VALUES ('40000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
+         '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux','docker'], 'running');
+@@ -195,9 +196,10 @@ VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-0000000
+         '50000000-0000-0000-0000-000000000083', 'fg081.fixture', '{"unicode":"π","flags":[true,false]}'::jsonb, '2026-08-25T01:04:00Z');
+ INSERT INTO outbox (organization_id, topic, body, published_at, created_at)
+ VALUES ('10000000-0000-0000-0000-000000000081', 'fg081.fixture', '{"ordinal":81}'::jsonb, NULL, '2026-08-25T01:05:00Z');
+-INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body, created_at)
++INSERT INTO log_chunks
++  (organization_id, build_id, attempt_id, sequence, build_sequence, body, created_at)
+ VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-000000000081',
+-        '50000000-0000-0000-0000-000000000083', 81, 'quoted '' value | unicode π', '2026-08-25T01:06:00Z');
++        '50000000-0000-0000-0000-000000000083', 81, 81, 'quoted '' value | unicode π', '2026-08-25T01:06:00Z');
+ INSERT INTO effect_checkpoints
+   (organization_id, attempt_id, effect_key, fence, authority_owner, restore_epoch, payload_digest, state, prepared_at)
+ VALUES ('10000000-0000-0000-0000-000000000081', '50000000-0000-0000-0000-000000000083',
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+index 76d04f5..be2a635 100755
+--- a/scripts/prove-runnable-controller.sh
++++ b/scripts/prove-runnable-controller.sh
+@@ -102,7 +102,7 @@ grep -Fq 'runtime database capability is incomplete' "$scratch/capability.stderr
+ 
+ admin "$database" \
+   -c "GRANT USAGE ON SCHEMA public TO $role" \
+-  -c "GRANT SELECT ON controller_metadata TO $role" \
++  -c "GRANT SELECT, UPDATE(singleton) ON controller_metadata TO $role" \
+   -c "GRANT SELECT, INSERT, UPDATE, DELETE ON organizations, projects, builds, nodes, attempts, events, outbox, log_chunks, effect_checkpoints, retry_decisions, build_definitions TO $role" \
+   -c "GRANT SELECT ON organization_work_roots TO $role" \
+   -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $role" >/dev/null
+diff --git a/src/Fogell.Controller.Api/Router.fs b/src/Fogell.Controller.Api/Router.fs
+index 0bb0b16..cf63576 100644
+--- a/src/Fogell.Controller.Api/Router.fs
++++ b/src/Fogell.Controller.Api/Router.fs
+@@ -140,46 +140,64 @@ module Router =
+                                                 (Fogell.Admission.AdmissionError.render source e)
+                                                 (Some(string e.Position))
+                                     | Result.Ok pipeline ->
+-                                        // Parse success is deliberately broader than the execution
+-                                        // capability. The durable controller must ask the same
+-                                        // fail-closed preflight as Run.Host before binding either a
+-                                        // build number or the caller's idempotency key.
+-                                        match Fogell.Differential.FogellSide.preflightExecution source with
+-                                        | Result.Error why ->
++                                        let stages =
++                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
++                                            |> List.map (fun stage -> stage.Name)
++
++                                        let input =
++                                            { OrganizationId = OrganizationId org
++                                              ProjectId = ProjectId project
++                                              IdempotencyKey = key
++                                              PipelineSource = sourceBytes
++                                              StageNames = stages
++                                              RequiredTrustPool = state.TrustPool
++                                              RequiredCapabilities = [ "linux" ] }
++
++                                        let respond (admission: Fogell.Store.Admission) =
++                                            let payload: AdmissionResponse =
++                                                { BuildId = string admission.BuildId.Value
++                                                  NodeId = string admission.NodeId.Value
++                                                  AttemptId = string admission.AttemptId.Value
++                                                  Number = admission.Number
++                                                  WasExisting = admission.WasExisting }
++
++                                            json ctx (if admission.WasExisting then 200 else 201) payload
++
++                                        // A release may tighten persisted execution preflight after a
++                                        // build was durably admitted. Preserve the immutable response
++                                        // for an exact legacy replay before applying today's rules.
++                                        // A miss creates nothing and takes no authority: AdmitBuild
++                                        // remains the race arbiter after fresh-source preflight.
++                                        match state.Store.TryReplayAdmission input with
++                                        | Result.Error e when
++                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
++                                            ->
++                                            return! fail ctx 409 "idempotency_conflict" e None
++                                        | Result.Error _ ->
+                                             return!
+-                                                fail ctx 422 "execution_unsupported" why None
+-                                        | Result.Ok _ ->
+-                                            let stages =
+-                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+-                                                |> List.map (fun s -> s.Name)
+-
+-                                            let input =
+-                                                { OrganizationId = OrganizationId org
+-                                                  ProjectId = ProjectId project
+-                                                  IdempotencyKey = key
+-                                                  PipelineSource = sourceBytes
+-                                                  StageNames = stages
+-                                                  RequiredTrustPool = state.TrustPool
+-                                                  RequiredCapabilities = [ "linux" ] }
+-
+-                                            match state.Store.AdmitBuild input with
+-                                            | Result.Error e when
+-                                                e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+-                                                ->
+-                                                return! fail ctx 409 "idempotency_conflict" e None
+-                                            | Result.Error _ ->
++                                                fail ctx 503 "admission_unavailable"
++                                                    "build admission is temporarily unavailable" None
++                                        | Result.Ok(Some admission) -> return! respond admission
++                                        | Result.Ok None ->
++                                            // Parse success is deliberately broader than execution
++                                            // capability. Only a fresh key must satisfy the same
++                                            // fail-closed persisted preflight as Run.Host before
++                                            // binding a build number or idempotency key.
++                                            match Fogell.Differential.FogellSide.preflightPersistedExecution source with
++                                            | Result.Error why ->
+                                                 return!
+-                                                    fail ctx 503 "admission_unavailable"
+-                                                        "build admission is temporarily unavailable" None
+-                                            | Result.Ok a ->
+-                                                let payload: AdmissionResponse =
+-                                                    { BuildId = string a.BuildId.Value
+-                                                      NodeId = string a.NodeId.Value
+-                                                      AttemptId = string a.AttemptId.Value
+-                                                      Number = a.Number
+-                                                      WasExisting = a.WasExisting }
+-
+-                                                return! json ctx (if a.WasExisting then 200 else 201) payload
++                                                    fail ctx 422 "execution_unsupported" why None
++                                            | Result.Ok _ ->
++                                                match state.Store.AdmitBuild input with
++                                                | Result.Error e when
++                                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
++                                                    ->
++                                                    return! fail ctx 409 "idempotency_conflict" e None
++                                                | Result.Error _ ->
++                                                    return!
++                                                        fail ctx 503 "admission_unavailable"
++                                                            "build admission is temporarily unavailable" None
++                                                | Result.Ok admission -> return! respond admission
+         }
+         :> Threading.Tasks.Task
+ 
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index b95b98e..ecbdab9 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -321,11 +321,9 @@ module FogellSide =
+     /// Declarative tools selection against the agent, installs/translates it, and wraps
+     /// the relevant body in the tool's environment. Fogell does none of those things yet.
+     ///
+-    /// This preflight is public because the persisted host prepares its workspace before
+-    /// calling [runPersisted]. The host calls this same function before that preparation;
+-    /// every actual execution entry (run, runScm, runMany, runPersisted) then converges on
+-    /// [runWith], which calls it again before WalkerCtx creation or workspace mutation.
+-    /// One rule therefore guards both the outer durable host and the deepest shared walker.
++    /// This generic preflight guards every execution entry before WalkerCtx creation or
++    /// workspace mutation. Persisted execution adds journal-key constraints through
++    /// [preflightPersistedExecution] below.
+     let preflightExecution (script: string) : Result<Pipeline, string> =
+         match Fogell.Pipeline.Parser.Parser.parse script with
+         | Result.Error e ->
+@@ -419,6 +417,47 @@ module FogellSide =
+                                 + String.concat ", " unsupportedCollections
+                             )
+ 
++    /// FG-103 persisted journals key steps by (stage name, step index), so their
++    /// admissible name space is narrower than generic, non-durable execution. Keep
++    /// these constraints in one preflight shared by controller admission, Run.Host's
++    /// pre-mutation guard, and runPersisted's deepest guard.
++    let preflightPersistedExecution (script: string) : Result<Pipeline, string> =
++        preflightExecution script
++        |> Result.bind (fun pipeline ->
++            let stages = Pipeline.flattenStages pipeline.Stages
++
++            let dupes =
++                stages
++                |> List.countBy (fun stage -> stage.Name)
++                |> List.filter (fun (_, count) -> count > 1)
++                |> List.map fst
++
++            if not (List.isEmpty dupes) then
++                Result.Error(
++                    "persisted runs require globally unique stage names; duplicated: "
++                    + String.concat ", " dupes
++                )
++            else
++                // The journal's wire format delimits with tabs and newlines; a
++                // stage name carrying any record delimiter would tear the record
++                // and truncate every later read. Refuse the name, do not escape it.
++                let unsafe =
++                    stages
++                    |> List.filter (fun stage ->
++                        stage.Name.Contains '\t'
++                        || stage.Name.Contains '\n'
++                        || stage.Name.Contains '\r')
++                    |> List.map (fun stage ->
++                        stage.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
++
++                if List.isEmpty unsafe then
++                    Result.Ok pipeline
++                else
++                    Result.Error(
++                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
++                        + String.concat ", " unsafe
++                    ))
++
+     /// FG-129. A bad input and an unavailable Fogell capability were both
+     /// `Result.Error` before this boundary. Only the former is evidence that the
+     /// reference engine also refused before execution; the latter must remain
+@@ -1344,45 +1383,10 @@ module FogellSide =
+         (script: string)
+         =
+         try
+-            // The journal key is (stage name, step index) — a flat map. Two
+-            // stages sharing a name (top-level, nested, or parallel branches)
+-            // would collide, and a collision records a never-run step as
+-            // durably done. REFUSED by name up front (FG-103), not keyed
+-            // around: unique names are the corpus norm and the stated limit.
+-            match Fogell.Pipeline.Parser.Parser.parse script with
+-            | Result.Error _ -> () // the run itself reports parse errors
+-            | Ok p ->
+-                let dupes =
+-                    p.Stages
+-                    |> Pipeline.flattenStages
+-                    |> List.countBy (fun st -> st.Name)
+-                    |> List.filter (fun (_, n) -> n > 1)
+-                    |> List.map fst
+-
+-                if not (List.isEmpty dupes) then
+-                    failwith (
+-                        "persisted runs require globally unique stage names; duplicated: "
+-                        + String.concat ", " dupes
+-                    )
+-
+-                // the journal's wire format delimits with tabs and newlines; a
+-                // stage name carrying either would TEAR the record and truncate
+-                // every later read — refused by name, not escaped around
+-                let unsafe =
+-                    p.Stages
+-                    |> Pipeline.flattenStages
+-                    |> List.filter (fun st ->
+-                        st.Name.Contains '\t' || st.Name.Contains '\n' || st.Name.Contains '\r')
+-                    |> List.map (fun st ->
+-                        st.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
+-
+-                if not (List.isEmpty unsafe) then
+-                    failwith (
+-                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
+-                        + String.concat ", " unsafe
+-                    )
+-
+-            runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
++            match preflightPersistedExecution script with
++            | Result.Error why -> Result.Error why
++            | Result.Ok _ ->
++                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
+         with
+         | :? OutputPublicationException -> reraise ()
+         | ex -> Result.Error ex.Message
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 6e2fb79..fade597 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -639,6 +639,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             cmd.CommandText <-
+                 "SELECT
+                      has_table_privilege(current_user, 'public.controller_metadata', 'SELECT')
++                     AND has_column_privilege(
++                         current_user, 'public.controller_metadata', 'singleton', 'UPDATE')
+                      AND has_table_privilege(current_user, 'public.organization_work_roots', 'SELECT')
+                      AND NOT EXISTS (
+                          SELECT 1
+@@ -1170,6 +1172,76 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         tx.Commit()
+         checkpoints
+ 
++    /// Read-only idempotency probe for admission compatibility across stricter
++    /// execution preflights. An exact durable result may be replayed without
++    /// asking the current release to admit the source again. A miss is only a
++    /// hint: the caller must still use AdmitBuild after preflight, because its
++    /// transaction and unique constraint remain the create/race arbiter.
++    member _.TryReplayAdmission(input: NewBuild) : Result<Admission option, string> =
++        if String.IsNullOrWhiteSpace input.IdempotencyKey then
++            Error "idempotency key is required"
++        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
++            Error "pipeline source is required"
++        elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
++            Error "a trust pool is required"
++        else
++            use conn = openConn ()
++            use tx = beginTenantTransaction conn input.OrganizationId
++
++            try
++                let sourceDigest = payloadDigest input.PipelineSource
++                let fingerprint =
++                    admissionFingerprint input.PipelineSource input.RequiredTrustPool input.RequiredCapabilities
++
++                use existing = conn.CreateCommand()
++                existing.Transaction <- tx
++                existing.CommandText <-
++                    "SELECT b.id, b.number, n.id, a.id,
++                            d.source_digest, d.admission_fingerprint
++                     FROM builds b
++                     JOIN nodes n
++                       ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
++                     JOIN attempts a
++                       ON a.node_id = n.id AND a.organization_id = n.organization_id AND a.ordinal = 0
++                     LEFT JOIN build_definitions d
++                       ON d.build_id = b.id AND d.organization_id = b.organization_id
++                     WHERE b.organization_id = @o AND b.project_id = @p AND b.idempotency_key = @k"
++                existing.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
++                existing.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
++                existing.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
++
++                use reader = existing.ExecuteReader()
++
++                if not (reader.Read()) then
++                    reader.Close()
++                    tx.Commit()
++                    Ok None
++                else
++                    let sameDefinition =
++                        not (reader.IsDBNull 4)
++                        && not (reader.IsDBNull 5)
++                        && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
++                        && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
++
++                    if not sameDefinition then
++                        reader.Close()
++                        tx.Rollback()
++                        Error "idempotency key is already bound to a different pipeline or placement policy"
++                    else
++                        let admission =
++                            { BuildId = BuildId(reader.GetGuid 0)
++                              Number = reader.GetInt32 1
++                              NodeId = NodeId(reader.GetGuid 2)
++                              AttemptId = AttemptId(reader.GetGuid 3)
++                              WasExisting = true }
++
++                        reader.Close()
++                        tx.Commit()
++                        Ok(Some admission)
++            with ex ->
++                (try tx.Rollback() with _ -> ())
++                Error ex.Message
++
+     /// FG-021. Build, first node, first attempt, a durable event and an outbox
+     /// message commit **together**. There is no window in which a build exists
+     /// without its event, or an event without its outbox row.
+@@ -1271,11 +1343,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             else
+                 reader.Close()
+ 
++                // Restore takes the conflicting singleton lock before it
++                // invalidates old-epoch attempts. Hold the shared side through
++                // creation so restore either invalidates this committed attempt,
++                // or admission waits and is born directly into the new epoch.
+                 let buildId = Guid.NewGuid()
+                 let epoch =
+                     use e = conn.CreateCommand()
+                     e.Transaction <- tx
+-                    e.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
++                    e.CommandText <-
++                        "SELECT restore_epoch
++                           FROM controller_metadata
++                          WHERE singleton
++                          FOR SHARE"
+                     e.ExecuteScalar() :?> int64
+ 
+                 use insert = conn.CreateCommand()
+@@ -1578,25 +1658,97 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         use conn = openMaintenanceConn ()
+         use tx = conn.BeginTransaction()
+ 
+-        use bump = conn.CreateCommand()
+-        bump.Transaction <- tx
+-        bump.CommandText <-
+-            "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1
+-              WHERE singleton RETURNING restore_epoch"
+-        let epoch = bump.ExecuteScalar() :?> int64
++        try
++            use bump = conn.CreateCommand()
++            bump.Transaction <- tx
++            bump.CommandText <-
++                "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1
++                  WHERE singleton RETURNING restore_epoch"
++            let epoch = bump.ExecuteScalar() :?> int64
+ 
+-        use invalidate = conn.CreateCommand()
+-        invalidate.Transaction <- tx
+-        invalidate.CommandText <-
+-            "UPDATE attempts
+-                SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
+-              WHERE restore_epoch < @e
+-                AND state IN ('queued', 'offered', 'accepted', 'running', 'finalizing', 'cancelling')"
+-        invalidate.Parameters.AddWithValue("e", epoch) |> ignore
+-        invalidate.ExecuteNonQuery() |> ignore
++            // organization_work_roots is the deliberately global UUID registry
++            // used by restarted workers. Iterate that authority while setting the
++            // same transaction-local tenant context as runtime operations: forced
++            // RLS stays enabled, and the epoch bump plus every invalidation remain
++            // one atomic transaction even for a NOBYPASSRLS maintenance role.
++            use roots = conn.CreateCommand()
++            roots.Transaction <- tx
++            roots.CommandText <- "SELECT organization_id FROM organization_work_roots ORDER BY organization_id"
++            use rootReader = roots.ExecuteReader()
++            let organizations = [ while rootReader.Read() do yield OrganizationId(rootReader.GetGuid 0) ]
++            rootReader.Close()
+ 
+-        tx.Commit()
+-        RestoreEpoch epoch
++            for org in organizations do
++                setTenantContext conn tx org
++                use invalidate = conn.CreateCommand()
++                invalidate.Transaction <- tx
++                invalidate.CommandText <-
++                    "WITH moved AS (
++                         UPDATE attempts a
++                            SET state = 'reconciliation_required',
++                                lease_owner = NULL,
++                                lease_expires_at = NULL
++                           FROM nodes n
++                          WHERE a.organization_id = @o
++                            AND a.restore_epoch < @e
++                            AND a.state IN ('queued', 'offered', 'accepted', 'running',
++                                            'finalizing', 'cancelling')
++                            AND n.organization_id = a.organization_id
++                            AND n.id = a.node_id
++                         RETURNING a.id AS attempt_id, a.node_id, n.build_id
++                     ), reconciled_nodes AS (
++                         UPDATE nodes n
++                            SET status = 'reconciliation_required'
++                          FROM (SELECT DISTINCT node_id FROM moved) m
++                          WHERE n.organization_id = @o AND n.id = m.node_id
++                         RETURNING n.id, n.build_id
++                     ), reconciled_builds AS (
++                         UPDATE builds b
++                            SET status = 'reconciliation_required'
++                           FROM (SELECT DISTINCT build_id FROM reconciled_nodes) m
++                          WHERE b.organization_id = @o AND b.id = m.build_id
++                         RETURNING b.id
++                     ), emitted_events AS (
++                         INSERT INTO events
++                                (organization_id, build_id, attempt_id, kind, payload)
++                         SELECT @o, build_id, attempt_id,
++                                'attempt.reconciliation_required',
++                                jsonb_build_object('reason', 'restore_epoch_advanced')
++                           FROM moved
++                           CROSS JOIN (SELECT count(*) FROM reconciled_builds) rollup
++                         RETURNING 1
++                     ), emitted_outbox AS (
++                         INSERT INTO outbox (organization_id, topic, body)
++                         SELECT @o, 'build.reconciliation_required',
++                                jsonb_build_object(
++                                    'build', build_id::text,
++                                    'attempt', attempt_id::text,
++                                    'reason', 'restore_epoch_advanced')
++                           FROM moved
++                           CROSS JOIN (SELECT count(*) FROM reconciled_builds) rollup
++                         RETURNING 1
++                     )
++                     SELECT (SELECT count(*) FROM moved),
++                            (SELECT count(*) FROM reconciled_nodes),
++                            (SELECT count(*) FROM reconciled_builds),
++                            (SELECT count(*) FROM emitted_events),
++                            (SELECT count(*) FROM emitted_outbox)"
++                invalidate.Parameters.AddWithValue("o", org.Value) |> ignore
++                invalidate.Parameters.AddWithValue("e", epoch) |> ignore
++                use invalidated = invalidate.ExecuteReader()
++                invalidated.Read() |> ignore
++                let moved = invalidated.GetInt64 0
++
++                if invalidated.GetInt64 3 <> moved || invalidated.GetInt64 4 <> moved then
++                    failwith "restore reconciliation truth was not emitted exactly once per invalidated attempt"
++
++                invalidated.Close()
++
++            tx.Commit()
++            RestoreEpoch epoch
++        with _ ->
++            (try tx.Rollback() with _ -> ())
++            reraise ()
+ 
+     member _.AttemptState(org: OrganizationId, attempt: AttemptId) : (string * int64 * string option) option =
+         use conn = openConn ()
+diff --git a/src/Fogell.Store/migrations/0010_attempt_restore_epoch_guard.sql b/src/Fogell.Store/migrations/0010_attempt_restore_epoch_guard.sql
+new file mode 100644
+index 0000000..0649923
+--- /dev/null
++++ b/src/Fogell.Store/migrations/0010_attempt_restore_epoch_guard.sql
+@@ -0,0 +1,35 @@
++-- FG-224. Make the restore/admission serialization a database invariant.
++-- Every attempt creator, including maintenance SQL outside Store, must take the
++-- shared side of the singleton epoch lock and stamp the exact current value.
++-- Restore updates that singleton before invalidating attempts, so an insert
++-- either commits first and is invalidated, or waits and is born current.
++CREATE FUNCTION fogell_guard_attempt_restore_epoch()
++RETURNS trigger
++LANGUAGE plpgsql
++SET search_path = pg_catalog, pg_temp
++AS $$
++DECLARE
++    current_epoch bigint;
++BEGIN
++    SELECT restore_epoch
++      INTO current_epoch
++      FROM public.controller_metadata
++     WHERE singleton
++     FOR SHARE;
++
++    IF NEW.restore_epoch IS DISTINCT FROM current_epoch THEN
++        RAISE EXCEPTION
++            'attempt restore_epoch % does not match current controller restore_epoch %',
++            NEW.restore_epoch,
++            current_epoch
++            USING ERRCODE = '23514';
++    END IF;
++
++    RETURN NEW;
++END;
++$$;
++
++CREATE TRIGGER attempts_restore_epoch_guard
++BEFORE INSERT ON attempts
++FOR EACH ROW
++EXECUTE FUNCTION fogell_guard_attempt_restore_epoch();
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index 2f6cf03..ed1721c 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -360,6 +360,118 @@ let endpoints =
+               Expect.equal (buildCount ()) 1 "replay creates no second build"
+           }
+ 
++          test "persisted journal-key preflight refuses before build and idempotency admission" {
++              let cases =
++                  [ "duplicate flattened stage name",
++                    "journal-duplicate",
++                    "pipeline { agent any stages { stage('same') { steps { echo 'first' } } stage('outer') { parallel { stage('same') { steps { echo 'second' } } } } } }",
++                    "persisted runs require globally unique stage names; duplicated: same"
++                    "tab in stage name",
++                    "journal-tab",
++                    "pipeline { agent any stages { stage('bad\\tname') { steps { echo 'hi' } } } }",
++                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\tname"
++                    "newline in stage name",
++                    "journal-newline",
++                    "pipeline { agent any stages { stage('bad\\nname') { steps { echo 'hi' } } } }",
++                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\nname"
++                    "carriage return in stage name",
++                    "journal-carriage-return",
++                    "pipeline { agent any stages { stage('bad\\rname') { steps { echo 'hi' } } } }",
++                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\rname" ]
++
++              for label, key, source, expectedReason in cases do
++                  let org, project = freshProject ()
++                  let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++
++                  let buildCount () =
++                      use connection = new Npgsql.NpgsqlConnection(connectionString)
++                      connection.Open()
++                      use command = connection.CreateCommand()
++                      command.CommandText <-
++                          "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
++                      command.Parameters.AddWithValue("organization", org.Value) |> ignore
++                      command.Parameters.AddWithValue("project", project.Value) |> ignore
++                      Convert.ToInt32(command.ExecuteScalar())
++
++                  for attempt in 1..2 do
++                      let code, body = send HttpMethod.Post url (Some token) (Some key) (Some source)
++                      Expect.equal code 422 $"{label}: attempt {attempt} is not durably admitted"
++                      use payload = JsonDocument.Parse body
++                      Expect.equal
++                          (payload.RootElement.GetProperty("code").GetString())
++                          "execution_unsupported"
++                          $"{label}: attempt {attempt} has the stable API code"
++                      Expect.equal
++                          (payload.RootElement.GetProperty("message").GetString())
++                          expectedReason
++                          $"{label}: attempt {attempt} preserves the canonical persisted preflight reason"
++                      Expect.equal (buildCount ()) 0 $"{label}: attempt {attempt} creates no build"
++
++                  let supportedCode, supportedBody =
++                      send HttpMethod.Post url (Some token) (Some key) (Some pipeline)
++                  Expect.equal supportedCode 201 $"{label}: the rejected key remains available"
++                  Expect.stringContains supportedBody "\"was_existing\":false" $"{label}: valid source is fresh"
++                  Expect.equal (buildCount ()) 1 $"{label}: only valid source creates a build"
++          }
++
++          test "legacy journal-unsafe admission replays before fresh-source preflight" {
++              let unsafeSource =
++                  "pipeline { agent any stages { stage('legacy\\tstage') { steps { echo 'hi' } } } }"
++
++              let legacyOrg, legacyProject = freshProject ()
++              let legacyKey = "legacy-unsafe-replay"
++              let legacyInput: NewBuild =
++                  { OrganizationId = legacyOrg
++                    ProjectId = legacyProject
++                    IdempotencyKey = legacyKey
++                    PipelineSource = Encoding.UTF8.GetBytes unsafeSource
++                    StageNames = [ "legacy\tstage" ]
++                    RequiredTrustPool = "trusted-linux"
++                    RequiredCapabilities = [ "linux" ] }
++
++              let seeded =
++                  match store.AdmitBuild legacyInput with
++                  | Ok admission -> admission
++                  | Error why -> failtestf "legacy direct seed failed: %s" why
++
++              let countBuilds (org: OrganizationId) (project: ProjectId) =
++                  use connection = new Npgsql.NpgsqlConnection(connectionString)
++                  connection.Open()
++                  use command = connection.CreateCommand()
++                  command.CommandText <-
++                      "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
++                  command.Parameters.AddWithValue("organization", org.Value) |> ignore
++                  command.Parameters.AddWithValue("project", project.Value) |> ignore
++                  Convert.ToInt32(command.ExecuteScalar())
++
++              let legacyUrl =
++                  $"{baseUrl}/api/v1/organizations/{legacyOrg.Value}/projects/{legacyProject.Value}/builds"
++              let replayCode, replayBody =
++                  send HttpMethod.Post legacyUrl (Some token) (Some legacyKey) (Some unsafeSource)
++              Expect.equal replayCode 200 "an exact legacy replay keeps its original admission contract"
++              Expect.stringContains replayBody (string seeded.BuildId.Value) "the original build is returned"
++              Expect.stringContains replayBody "\"was_existing\":true" "the response is an idempotent replay"
++              Expect.equal (countBuilds legacyOrg legacyProject) 1 "exact replay creates no build"
++              Expect.equal (store.CountEvents(legacyOrg, seeded.BuildId, "build.admitted")) 1 "no replay event"
++              Expect.equal (store.CountOutbox legacyOrg) 1 "no replay outbox message"
++
++              let changedCode, changedBody =
++                  send HttpMethod.Post legacyUrl (Some token) (Some legacyKey)
++                      (Some(unsafeSource.Replace("echo 'hi'", "echo 'changed'")))
++              Expect.equal changedCode 409 "the legacy key cannot substitute different bytes"
++              Expect.stringContains changedBody "idempotency_conflict" "conflict keeps its stable API code"
++              Expect.equal (countBuilds legacyOrg legacyProject) 1 "conflict creates no build"
++
++              let freshOrg, freshProject = freshProject ()
++              let freshUrl =
++                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProject.Value}/builds"
++              let freshCode, freshBody =
++                  send HttpMethod.Post freshUrl (Some token) (Some "fresh-unsafe") (Some unsafeSource)
++              Expect.equal freshCode 422 "the compatibility probe does not admit fresh unsafe source"
++              Expect.stringContains freshBody "execution_unsupported" "fresh refusal keeps its stable API code"
++              Expect.equal (countBuilds freshOrg freshProject) 0 "fresh unsafe source creates no build"
++          }
++
+           test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+               let org, project = freshProject ()
+               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index a9de830..8a4349d 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -279,6 +279,21 @@ let migrations =
+                       "migration 0009 exact source checksum"
+           }
+ 
++          test "attempt restore epoch guard migration 0010 is checksum-pinned" {
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0010'"
++
++              match cmd.ExecuteScalar() with
++              | null -> failtest "migration ledger has no 0010 row"
++              | value ->
++                  Expect.equal
++                      (string value)
++                      "9e5c3641ba7a4b4f0c62f0fc91c4bbc0d4acebae7987c5bc70048a6a95927ecb"
++                      "migration 0010 exact source checksum"
++          }
++
+           test "migration 0009 repairs preexisting roots as a NOBYPASSRLS schema owner" {
+               let databaseName = $"fogell_root_upgrade_{Guid.NewGuid():N}"
+               let roleName = $"fogell_migration_owner_{Guid.NewGuid():N}"
+@@ -378,8 +393,8 @@ let migrations =
+                           (applied
+                            |> List.filter (fun item -> not item.AlreadyPresent)
+                            |> List.map (fun item -> item.Version))
+-                          [ "0009" ]
+-                          "only the forward repair migration is pending"
++                          [ "0009"; "0010" ]
++                          "only the forward repair and attempt guard migrations are pending"
+ 
+                   use repaired = target.CreateCommand()
+                   repaired.CommandText <-
+@@ -610,7 +625,7 @@ let tenantIsolation =
+               try
+                   admin
+                       $"GRANT USAGE ON SCHEMA public TO {roleName};
+-                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
++                        GRANT SELECT ON controller_metadata TO {roleName};
+                         GRANT SELECT ON
+                           organizations, projects, builds, nodes, attempts,
+                           events, outbox, log_chunks, effect_checkpoints, retry_decisions,
+@@ -644,6 +659,12 @@ let tenantIsolation =
+ 
+                   admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+ 
++                  Expect.isFalse
++                      (runtimeStore.RuntimeCapabilities())
++                      "locking the metadata row is a required runtime capability"
++
++                  admin $"GRANT UPDATE(singleton) ON controller_metadata TO {roleName}"
++
+                   Expect.isTrue
+                       (runtimeStore.RuntimeCapabilities())
+                       "the runtime role has the exact controller surface without a maintenance-only sequence"
+@@ -910,6 +931,129 @@ let tenantIsolation =
+               finally
+                   Npgsql.NpgsqlConnection.ClearAllPools()
+                   admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
++          }
++
++          test "a NOBYPASSRLS maintenance restore invalidates queued attempts without cycling" {
++              let roleName = $"fogell_restore_maintenance_{Guid.NewGuid():N}"
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "restricted-restore" [ "build" ])
++              let outboxBefore = store.CountOutbox org
++
++              let admin sql =
++                  use conn = new Npgsql.NpgsqlConnection(connectionString)
++                  conn.Open()
++                  use cmd = conn.CreateCommand()
++                  cmd.CommandText <- sql
++                  cmd.ExecuteNonQuery() |> ignore
++
++              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
++
++              try
++                  admin
++                      $"GRANT USAGE ON SCHEMA public TO {roleName};
++                        GRANT SELECT, UPDATE (restore_epoch) ON controller_metadata TO {roleName};
++                        GRANT SELECT ON organization_work_roots TO {roleName};
++                        GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
++                        GRANT INSERT ON events, outbox TO {roleName};
++                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq TO {roleName}"
++
++                  let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++                  maintenanceBuilder.Options <- $"-c role={roleName}"
++                  let restrictedStore = Store(connectionString, maintenanceBuilder.ConnectionString)
++
++                  use identityConn = new Npgsql.NpgsqlConnection(maintenanceBuilder.ConnectionString)
++                  identityConn.Open()
++                  use identity = identityConn.CreateCommand()
++                  identity.CommandText <-
++                      "SELECT current_user, rolsuper, rolbypassrls
++                         FROM pg_roles WHERE rolname = current_user"
++                  use identityRow = identity.ExecuteReader()
++                  Expect.isTrue (identityRow.Read()) "maintenance identity exists"
++                  Expect.equal (identityRow.GetString 0) roleName "restore runs as the restricted maintenance role"
++                  Expect.isFalse (identityRow.GetBoolean 1) "maintenance role is not superuser"
++                  Expect.isFalse (identityRow.GetBoolean 2) "maintenance role cannot bypass forced RLS"
++                  identityRow.Close()
++                  identityConn.Close()
++
++                  let before = restrictedStore.CurrentRestoreEpoch()
++                  let after = restrictedStore.ActivateRestore()
++                  Expect.equal after.Value (before.Value + 1L) "restore epoch and invalidation commit together"
++
++                  Expect.equal
++                      (restrictedStore.AttemptState(org, admitted.AttemptId))
++                      (Some("reconciliation_required", 0L, None))
++                      "the old-epoch queued attempt is invalidated through tenant-scoped RLS"
++                  Expect.equal
++                      (restrictedStore.BuildSnapshot(org, project, admitted.BuildId))
++                      (Some("reconciliation_required", false))
++                      "the restore rolls public build truth forward with the attempt"
++                  Expect.equal
++                      (restrictedStore.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                      1
++                      "the restore emits one durable reason event"
++                  Expect.equal
++                      (restrictedStore.CountOutbox org)
++                      (outboxBefore + 1)
++                      "the restore emits one durable reconciliation outbox row"
++
++                  use truth = new Npgsql.NpgsqlConnection(connectionString)
++                  truth.Open()
++                  use reason = truth.CreateCommand()
++                  reason.CommandText <-
++                      "SELECT n.status, e.payload->>'reason', o.topic, o.body->>'reason',
++                              o.body->>'build', o.body->>'attempt'
++                         FROM nodes n
++                         JOIN events e
++                           ON e.organization_id = n.organization_id
++                          AND e.build_id = n.build_id
++                          AND e.attempt_id = @a
++                          AND e.kind = 'attempt.reconciliation_required'
++                         JOIN outbox o
++                           ON o.organization_id = e.organization_id
++                          AND o.topic = 'build.reconciliation_required'
++                          AND o.body->>'attempt' = e.attempt_id::text
++                        WHERE n.organization_id = @o AND n.id = @n"
++                  reason.Parameters.AddWithValue("o", org.Value) |> ignore
++                  reason.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
++                  reason.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
++                  use reasonRow = reason.ExecuteReader()
++                  Expect.isTrue (reasonRow.Read()) "restore node, event, and outbox truth is atomically observable"
++                  Expect.equal (reasonRow.GetString 0) "reconciliation_required" "restore rolls the node forward"
++                  Expect.equal (reasonRow.GetString 1) "restore_epoch_advanced" "event records the stable restore reason"
++                  Expect.equal (reasonRow.GetString 2) "build.reconciliation_required" "outbox names the transition"
++                  Expect.equal (reasonRow.GetString 3) "restore_epoch_advanced" "outbox records the same reason"
++                  Expect.equal (reasonRow.GetString 4) (admitted.BuildId.Value.ToString()) "outbox binds the build"
++                  Expect.equal (reasonRow.GetString 5) (admitted.AttemptId.Value.ToString()) "outbox binds the attempt"
++                  reasonRow.Close()
++
++                  restrictedStore.ActivateRestore() |> ignore
++                  Expect.equal
++                      (restrictedStore.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                      1
++                      "a later restore does not duplicate the attempt transition event"
++                  Expect.equal
++                      (restrictedStore.CountOutbox org)
++                      (outboxBefore + 1)
++                      "a later restore does not duplicate the attempt transition outbox row"
++
++                  for cycle in 1..2 do
++                      Expect.equal
++                          (restrictedStore.ClaimNextExecution(
++                              org,
++                              $"local:post-restore-{cycle}",
++                              "trusted-linux",
++                              [ "linux" ],
++                              60))
++                          (Ok None)
++                          "the invalidated attempt is never re-offered"
++
++                  Expect.equal
++                      (restrictedStore.RequeueExpiredLocalAttempts org)
++                      0
++                      "lease recovery cannot turn reconciliation back into queued work"
++              finally
++                  Npgsql.NpgsqlConnection.ClearAllPools()
++                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
+           } ]
+ 
+ let admission =
+@@ -1012,6 +1156,229 @@ let admission =
+               Expect.equal (reader.GetString 1) "pipeline" "unit is named honestly"
+           }
+ 
++          test "admission shares the restore epoch lock before creating an attempt" {
++              let org, project = freshProject ()
++              let marker = $"FG021_RESTORE_{Guid.NewGuid():N}"
++              let builder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++              builder.ApplicationName <- marker
++
++              use blocker = new Npgsql.NpgsqlConnection(connectionString)
++              blocker.Open()
++              use blockerTx = blocker.BeginTransaction()
++              use lockEpoch = blocker.CreateCommand()
++              lockEpoch.Transaction <- blockerTx
++              lockEpoch.CommandText <-
++                  "SELECT restore_epoch FROM controller_metadata WHERE singleton FOR UPDATE"
++              lockEpoch.ExecuteScalar() |> ignore
++
++              let admission =
++                  Async.StartAsTask(async {
++                      return
++                          Store(builder.ConnectionString).AdmitBuild(
++                              newBuild org project "admission-restore-lock" [ "build" ])
++                  })
++
++              use observer = new Npgsql.NpgsqlConnection(connectionString)
++              observer.Open()
++
++              let rec blocked remaining =
++                  use waiting = observer.CreateCommand()
++                  waiting.CommandText <-
++                      "SELECT EXISTS (
++                           SELECT 1 FROM pg_stat_activity
++                           WHERE application_name = @marker
++                             AND state = 'active'
++                             AND wait_event_type = 'Lock'
++                             AND query LIKE '%controller_metadata%'
++                             AND query LIKE '%FOR SHARE%'
++                       )"
++                  waiting.Parameters.AddWithValue("marker", marker) |> ignore
++
++                  if waiting.ExecuteScalar() :?> bool then true
++                  elif remaining = 0 then false
++                  else
++                      Threading.Thread.Sleep 20
++                      blocked (remaining - 1)
++
++              let barrier = blocked 100
++
++              use bump = blocker.CreateCommand()
++              bump.Transaction <- blockerTx
++              bump.CommandText <-
++                  "UPDATE controller_metadata
++                      SET restore_epoch = restore_epoch + 1
++                    WHERE singleton"
++              Expect.equal (bump.ExecuteNonQuery()) 1 "restore epoch advanced behind its exclusive lock"
++
++              use invalidate = blocker.CreateCommand()
++              invalidate.Transaction <- blockerTx
++              invalidate.CommandText <-
++                  "UPDATE attempts
++                      SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
++                    WHERE restore_epoch < (SELECT restore_epoch FROM controller_metadata WHERE singleton)
++                      AND state IN ('queued', 'offered', 'accepted', 'running', 'finalizing', 'cancelling')"
++              invalidate.ExecuteNonQuery() |> ignore
++              blockerTx.Commit()
++
++              Expect.isTrue barrier "admission waited at the restore serialization point"
++              Expect.isTrue (admission.Wait(TimeSpan.FromSeconds 5.0)) "blocked admission completed"
++
++              let admitted =
++                  match admission.Result with
++                  | Ok value -> value
++                  | Error error -> failtestf "post-restore admission failed: %s" error
++
++              Expect.equal
++                  (store.AttemptState(org, admitted.AttemptId))
++                  (Some("queued", 0L, None))
++                  "the post-restore attempt remains current queued work"
++
++              use epoch = observer.CreateCommand()
++              epoch.CommandText <-
++                  "SELECT a.restore_epoch = m.restore_epoch
++                     FROM attempts a
++                     CROSS JOIN controller_metadata m
++                    WHERE a.organization_id = @o AND a.id = @a AND m.singleton"
++              epoch.Parameters.AddWithValue("o", org.Value) |> ignore
++              epoch.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
++              Expect.isTrue
++                  (epoch.ExecuteScalar() :?> bool)
++                  "admission used the committed restore epoch instead of inserting stale authority"
++          }
++
++          test "the database rejects a stale restore epoch from every attempt creator" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "stale-direct-attempt" [ "build" ])
++              let rejectedId = Guid.NewGuid()
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use tx = conn.BeginTransaction()
++              use tenant = conn.CreateCommand()
++              tenant.Transaction <- tx
++              tenant.CommandText <- "SELECT set_config('fogell.organization_id', @org, true)"
++              tenant.Parameters.AddWithValue("org", org.Value.ToString()) |> ignore
++              tenant.ExecuteScalar() |> ignore
++
++              use current = conn.CreateCommand()
++              current.Transaction <- tx
++              current.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
++              let staleEpoch = (current.ExecuteScalar() :?> int64) - 1L
++
++              use insert = conn.CreateCommand()
++              insert.Transaction <- tx
++              insert.CommandText <-
++                  "INSERT INTO attempts
++                         (id, organization_id, node_id, ordinal, state, restore_epoch)
++                   VALUES (@a, @o, @n, 1, 'queued', @e)"
++              insert.Parameters.AddWithValue("a", rejectedId) |> ignore
++              insert.Parameters.AddWithValue("o", org.Value) |> ignore
++              insert.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
++              insert.Parameters.AddWithValue("e", staleEpoch) |> ignore
++
++              let staleRejected =
++                  try
++                      insert.ExecuteNonQuery() |> ignore
++                      false
++                  with :? Npgsql.PostgresException as error ->
++                      error.SqlState = "23514"
++                      && error.MessageText.Contains("does not match current controller restore_epoch")
++
++              Expect.isTrue staleRejected "the trigger rejects stale authority even outside Store"
++              tx.Rollback()
++
++              use absent = conn.CreateCommand()
++              absent.CommandText <- "SELECT count(*) FROM attempts WHERE id = @a"
++              absent.Parameters.AddWithValue("a", rejectedId) |> ignore
++              Expect.equal (absent.ExecuteScalar() :?> int64) 0L "the rejected stale attempt leaves no row"
++          }
++
++          test "an attempt insert that wins the epoch lock is invalidated by the following restore" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "insert-before-restore" [ "build" ])
++              let directAttempt = AttemptId(Guid.NewGuid())
++              let marker = $"FG021_INSERT_FIRST_{Guid.NewGuid():N}"
++
++              use writer = new Npgsql.NpgsqlConnection(connectionString)
++              writer.Open()
++              use writerTx = writer.BeginTransaction()
++              use tenant = writer.CreateCommand()
++              tenant.Transaction <- writerTx
++              tenant.CommandText <- "SELECT set_config('fogell.organization_id', @org, true)"
++              tenant.Parameters.AddWithValue("org", org.Value.ToString()) |> ignore
++              tenant.ExecuteScalar() |> ignore
++
++              use insert = writer.CreateCommand()
++              insert.Transaction <- writerTx
++              insert.CommandText <-
++                  "INSERT INTO attempts
++                         (id, organization_id, node_id, ordinal, state, restore_epoch)
++                   SELECT @a, @o, @n, 1, 'queued', restore_epoch
++                     FROM controller_metadata WHERE singleton"
++              insert.Parameters.AddWithValue("a", directAttempt.Value) |> ignore
++              insert.Parameters.AddWithValue("o", org.Value) |> ignore
++              insert.Parameters.AddWithValue("n", admitted.NodeId.Value) |> ignore
++              Expect.equal (insert.ExecuteNonQuery()) 1 "direct insertion holds the trigger's epoch share lock"
++
++              let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++              maintenanceBuilder.ApplicationName <- marker
++              let restore =
++                  Async.StartAsTask(async {
++                      return Store(connectionString, maintenanceBuilder.ConnectionString).ActivateRestore()
++                  })
++
++              use observer = new Npgsql.NpgsqlConnection(connectionString)
++              observer.Open()
++
++              let rec blocked remaining =
++                  use waiting = observer.CreateCommand()
++                  waiting.CommandText <-
++                      "SELECT EXISTS (
++                           SELECT 1 FROM pg_stat_activity
++                            WHERE application_name = @marker
++                              AND state = 'active'
++                              AND wait_event_type = 'Lock'
++                              AND query LIKE 'UPDATE controller_metadata%'
++                       )"
++                  waiting.Parameters.AddWithValue("marker", marker) |> ignore
++
++                  if waiting.ExecuteScalar() :?> bool then true
++                  elif remaining = 0 then false
++                  else
++                      Threading.Thread.Sleep 20
++                      blocked (remaining - 1)
++
++              let restoreWaited = blocked 100
++              writerTx.Commit()
++
++              Expect.isTrue restoreWaited "restore waits for the insert-side epoch share lock"
++              Expect.isTrue (restore.Wait(TimeSpan.FromSeconds 5.0)) "restore completes after admission commits"
++              restore.Result |> ignore
++
++              Expect.equal
++                  (store.AttemptState(org, directAttempt))
++                  (Some("reconciliation_required", 0L, None))
++                  "the committed old-epoch attempt is invalidated by the serialized restore"
++              Expect.equal
++                  (store.BuildSnapshot(org, project, admitted.BuildId))
++                  (Some("reconciliation_required", false))
++                  "the serialized restore also rolls public build truth forward"
++
++              use event = observer.CreateCommand()
++              event.CommandText <-
++                  "SELECT count(*), min(payload->>'reason')
++                     FROM events
++                    WHERE organization_id = @o AND attempt_id = @a
++                      AND kind = 'attempt.reconciliation_required'"
++              event.Parameters.AddWithValue("o", org.Value) |> ignore
++              event.Parameters.AddWithValue("a", directAttempt.Value) |> ignore
++              use eventRow = event.ExecuteReader()
++              Expect.isTrue (eventRow.Read()) "direct attempt has reconciliation truth"
++              Expect.equal (eventRow.GetInt64 0) 1L "the direct attempt emits one transition event"
++              Expect.equal (eventRow.GetString 1) "restore_epoch_advanced" "the transition names the restore reason"
++          }
++
++
+           test "16 concurrent submissions of one key produce exactly one build" {
+               let org, project = freshProject ()
+ 
+diff --git a/tools/Fogell.Run.Host/Program.fs b/tools/Fogell.Run.Host/Program.fs
+index 7fbd3b8..62f995e 100644
+--- a/tools/Fogell.Run.Host/Program.fs
++++ b/tools/Fogell.Run.Host/Program.fs
+@@ -667,8 +667,9 @@ let main argv =
+         // The durable host owns fresh-workspace preparation, so runWith's shared
+         // preflight would otherwise be too late to preserve the old tree. Use the same
+         // preflight here before a build identity, journal record, answer adoption or
+-        // workspace wipe. Every execution path is still guarded again in runWith.
+-        match FogellSide.preflightExecution script with
++        // workspace wipe. runPersisted applies the same durable guard again before
++        // entering runWith's generic execution preflight.
++        match FogellSide.preflightPersistedExecution script with
+         | Error why ->
+             eprintfn $"{why}"
+             exit 2

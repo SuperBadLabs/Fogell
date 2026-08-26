@@ -192,6 +192,7 @@ for migration in "${migrations[@]}"; do
 done
 
 psql_db "$source_db" >/dev/null <<'SQL'
+UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
 INSERT INTO organizations (id, slug)
 VALUES ('10000000-0000-0000-0000-000000000001', 'fg085a-org');
 INSERT INTO projects (id, organization_id, slug)

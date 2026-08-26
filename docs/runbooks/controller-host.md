@@ -11,7 +11,7 @@ maintenance identity. Grant only the runtime surface:
 
 ```sql
 GRANT USAGE ON SCHEMA public TO fogell_runtime;
-GRANT SELECT ON controller_metadata TO fogell_runtime;
+GRANT SELECT, UPDATE(singleton) ON controller_metadata TO fogell_runtime;
 GRANT SELECT ON organization_work_roots TO fogell_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   organizations, projects, builds, nodes, attempts, events, outbox, log_chunks,

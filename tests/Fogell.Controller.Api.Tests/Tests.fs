@@ -360,6 +360,118 @@ let endpoints =
               Expect.equal (buildCount ()) 1 "replay creates no second build"
           }
 
+          test "persisted journal-key preflight refuses before build and idempotency admission" {
+              let cases =
+                  [ "duplicate flattened stage name",
+                    "journal-duplicate",
+                    "pipeline { agent any stages { stage('same') { steps { echo 'first' } } stage('outer') { parallel { stage('same') { steps { echo 'second' } } } } } }",
+                    "persisted runs require globally unique stage names; duplicated: same"
+                    "tab in stage name",
+                    "journal-tab",
+                    "pipeline { agent any stages { stage('bad\\tname') { steps { echo 'hi' } } } }",
+                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\tname"
+                    "newline in stage name",
+                    "journal-newline",
+                    "pipeline { agent any stages { stage('bad\\nname') { steps { echo 'hi' } } } }",
+                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\nname"
+                    "carriage return in stage name",
+                    "journal-carriage-return",
+                    "pipeline { agent any stages { stage('bad\\rname') { steps { echo 'hi' } } } }",
+                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\rname" ]
+
+              for label, key, source, expectedReason in cases do
+                  let org, project = freshProject ()
+                  let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+
+                  let buildCount () =
+                      use connection = new Npgsql.NpgsqlConnection(connectionString)
+                      connection.Open()
+                      use command = connection.CreateCommand()
+                      command.CommandText <-
+                          "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
+                      command.Parameters.AddWithValue("organization", org.Value) |> ignore
+                      command.Parameters.AddWithValue("project", project.Value) |> ignore
+                      Convert.ToInt32(command.ExecuteScalar())
+
+                  for attempt in 1..2 do
+                      let code, body = send HttpMethod.Post url (Some token) (Some key) (Some source)
+                      Expect.equal code 422 $"{label}: attempt {attempt} is not durably admitted"
+                      use payload = JsonDocument.Parse body
+                      Expect.equal
+                          (payload.RootElement.GetProperty("code").GetString())
+                          "execution_unsupported"
+                          $"{label}: attempt {attempt} has the stable API code"
+                      Expect.equal
+                          (payload.RootElement.GetProperty("message").GetString())
+                          expectedReason
+                          $"{label}: attempt {attempt} preserves the canonical persisted preflight reason"
+                      Expect.equal (buildCount ()) 0 $"{label}: attempt {attempt} creates no build"
+
+                  let supportedCode, supportedBody =
+                      send HttpMethod.Post url (Some token) (Some key) (Some pipeline)
+                  Expect.equal supportedCode 201 $"{label}: the rejected key remains available"
+                  Expect.stringContains supportedBody "\"was_existing\":false" $"{label}: valid source is fresh"
+                  Expect.equal (buildCount ()) 1 $"{label}: only valid source creates a build"
+          }
+
+          test "legacy journal-unsafe admission replays before fresh-source preflight" {
+              let unsafeSource =
+                  "pipeline { agent any stages { stage('legacy\\tstage') { steps { echo 'hi' } } } }"
+
+              let legacyOrg, legacyProject = freshProject ()
+              let legacyKey = "legacy-unsafe-replay"
+              let legacyInput: NewBuild =
+                  { OrganizationId = legacyOrg
+                    ProjectId = legacyProject
+                    IdempotencyKey = legacyKey
+                    PipelineSource = Encoding.UTF8.GetBytes unsafeSource
+                    StageNames = [ "legacy\tstage" ]
+                    RequiredTrustPool = "trusted-linux"
+                    RequiredCapabilities = [ "linux" ] }
+
+              let seeded =
+                  match store.AdmitBuild legacyInput with
+                  | Ok admission -> admission
+                  | Error why -> failtestf "legacy direct seed failed: %s" why
+
+              let countBuilds (org: OrganizationId) (project: ProjectId) =
+                  use connection = new Npgsql.NpgsqlConnection(connectionString)
+                  connection.Open()
+                  use command = connection.CreateCommand()
+                  command.CommandText <-
+                      "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
+                  command.Parameters.AddWithValue("organization", org.Value) |> ignore
+                  command.Parameters.AddWithValue("project", project.Value) |> ignore
+                  Convert.ToInt32(command.ExecuteScalar())
+
+              let legacyUrl =
+                  $"{baseUrl}/api/v1/organizations/{legacyOrg.Value}/projects/{legacyProject.Value}/builds"
+              let replayCode, replayBody =
+                  send HttpMethod.Post legacyUrl (Some token) (Some legacyKey) (Some unsafeSource)
+              Expect.equal replayCode 200 "an exact legacy replay keeps its original admission contract"
+              Expect.stringContains replayBody (string seeded.BuildId.Value) "the original build is returned"
+              Expect.stringContains replayBody "\"was_existing\":true" "the response is an idempotent replay"
+              Expect.equal (countBuilds legacyOrg legacyProject) 1 "exact replay creates no build"
+              Expect.equal (store.CountEvents(legacyOrg, seeded.BuildId, "build.admitted")) 1 "no replay event"
+              Expect.equal (store.CountOutbox legacyOrg) 1 "no replay outbox message"
+
+              let changedCode, changedBody =
+                  send HttpMethod.Post legacyUrl (Some token) (Some legacyKey)
+                      (Some(unsafeSource.Replace("echo 'hi'", "echo 'changed'")))
+              Expect.equal changedCode 409 "the legacy key cannot substitute different bytes"
+              Expect.stringContains changedBody "idempotency_conflict" "conflict keeps its stable API code"
+              Expect.equal (countBuilds legacyOrg legacyProject) 1 "conflict creates no build"
+
+              let freshOrg, freshProject = freshProject ()
+              let freshUrl =
+                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProject.Value}/builds"
+              let freshCode, freshBody =
+                  send HttpMethod.Post freshUrl (Some token) (Some "fresh-unsafe") (Some unsafeSource)
+              Expect.equal freshCode 422 "the compatibility probe does not admit fresh unsafe source"
+              Expect.stringContains freshBody "execution_unsupported" "fresh refusal keeps its stable API code"
+              Expect.equal (countBuilds freshOrg freshProject) 0 "fresh unsafe source creates no build"
+          }
+
           test "one idempotency key cannot substitute different Jenkinsfile bytes" {
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"

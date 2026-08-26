@@ -321,11 +321,9 @@ module FogellSide =
     /// Declarative tools selection against the agent, installs/translates it, and wraps
     /// the relevant body in the tool's environment. Fogell does none of those things yet.
     ///
-    /// This preflight is public because the persisted host prepares its workspace before
-    /// calling [runPersisted]. The host calls this same function before that preparation;
-    /// every actual execution entry (run, runScm, runMany, runPersisted) then converges on
-    /// [runWith], which calls it again before WalkerCtx creation or workspace mutation.
-    /// One rule therefore guards both the outer durable host and the deepest shared walker.
+    /// This generic preflight guards every execution entry before WalkerCtx creation or
+    /// workspace mutation. Persisted execution adds journal-key constraints through
+    /// [preflightPersistedExecution] below.
     let preflightExecution (script: string) : Result<Pipeline, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e ->
@@ -418,6 +416,47 @@ module FogellSide =
                                 + "until their step semantics are implemented; occurrences: "
                                 + String.concat ", " unsupportedCollections
                             )
+
+    /// FG-103 persisted journals key steps by (stage name, step index), so their
+    /// admissible name space is narrower than generic, non-durable execution. Keep
+    /// these constraints in one preflight shared by controller admission, Run.Host's
+    /// pre-mutation guard, and runPersisted's deepest guard.
+    let preflightPersistedExecution (script: string) : Result<Pipeline, string> =
+        preflightExecution script
+        |> Result.bind (fun pipeline ->
+            let stages = Pipeline.flattenStages pipeline.Stages
+
+            let dupes =
+                stages
+                |> List.countBy (fun stage -> stage.Name)
+                |> List.filter (fun (_, count) -> count > 1)
+                |> List.map fst
+
+            if not (List.isEmpty dupes) then
+                Result.Error(
+                    "persisted runs require globally unique stage names; duplicated: "
+                    + String.concat ", " dupes
+                )
+            else
+                // The journal's wire format delimits with tabs and newlines; a
+                // stage name carrying any record delimiter would tear the record
+                // and truncate every later read. Refuse the name, do not escape it.
+                let unsafe =
+                    stages
+                    |> List.filter (fun stage ->
+                        stage.Name.Contains '\t'
+                        || stage.Name.Contains '\n'
+                        || stage.Name.Contains '\r')
+                    |> List.map (fun stage ->
+                        stage.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
+
+                if List.isEmpty unsafe then
+                    Result.Ok pipeline
+                else
+                    Result.Error(
+                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
+                        + String.concat ", " unsafe
+                    ))
 
     /// FG-129. A bad input and an unavailable Fogell capability were both
     /// `Result.Error` before this boundary. Only the former is evidence that the
@@ -1344,45 +1383,10 @@ module FogellSide =
         (script: string)
         =
         try
-            // The journal key is (stage name, step index) — a flat map. Two
-            // stages sharing a name (top-level, nested, or parallel branches)
-            // would collide, and a collision records a never-run step as
-            // durably done. REFUSED by name up front (FG-103), not keyed
-            // around: unique names are the corpus norm and the stated limit.
-            match Fogell.Pipeline.Parser.Parser.parse script with
-            | Result.Error _ -> () // the run itself reports parse errors
-            | Ok p ->
-                let dupes =
-                    p.Stages
-                    |> Pipeline.flattenStages
-                    |> List.countBy (fun st -> st.Name)
-                    |> List.filter (fun (_, n) -> n > 1)
-                    |> List.map fst
-
-                if not (List.isEmpty dupes) then
-                    failwith (
-                        "persisted runs require globally unique stage names; duplicated: "
-                        + String.concat ", " dupes
-                    )
-
-                // the journal's wire format delimits with tabs and newlines; a
-                // stage name carrying either would TEAR the record and truncate
-                // every later read — refused by name, not escaped around
-                let unsafe =
-                    p.Stages
-                    |> Pipeline.flattenStages
-                    |> List.filter (fun st ->
-                        st.Name.Contains '\t' || st.Name.Contains '\n' || st.Name.Contains '\r')
-                    |> List.map (fun st ->
-                        st.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
-
-                if not (List.isEmpty unsafe) then
-                    failwith (
-                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
-                        + String.concat ", " unsafe
-                    )
-
-            runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
+            match preflightPersistedExecution script with
+            | Result.Error why -> Result.Error why
+            | Result.Ok _ ->
+                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
         with
         | :? OutputPublicationException -> reraise ()
         | ex -> Result.Error ex.Message

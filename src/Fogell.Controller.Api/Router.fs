@@ -140,46 +140,64 @@ module Router =
                                                 (Fogell.Admission.AdmissionError.render source e)
                                                 (Some(string e.Position))
                                     | Result.Ok pipeline ->
-                                        // Parse success is deliberately broader than the execution
-                                        // capability. The durable controller must ask the same
-                                        // fail-closed preflight as Run.Host before binding either a
-                                        // build number or the caller's idempotency key.
-                                        match Fogell.Differential.FogellSide.preflightExecution source with
-                                        | Result.Error why ->
+                                        let stages =
+                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+                                            |> List.map (fun stage -> stage.Name)
+
+                                        let input =
+                                            { OrganizationId = OrganizationId org
+                                              ProjectId = ProjectId project
+                                              IdempotencyKey = key
+                                              PipelineSource = sourceBytes
+                                              StageNames = stages
+                                              RequiredTrustPool = state.TrustPool
+                                              RequiredCapabilities = [ "linux" ] }
+
+                                        let respond (admission: Fogell.Store.Admission) =
+                                            let payload: AdmissionResponse =
+                                                { BuildId = string admission.BuildId.Value
+                                                  NodeId = string admission.NodeId.Value
+                                                  AttemptId = string admission.AttemptId.Value
+                                                  Number = admission.Number
+                                                  WasExisting = admission.WasExisting }
+
+                                            json ctx (if admission.WasExisting then 200 else 201) payload
+
+                                        // A release may tighten persisted execution preflight after a
+                                        // build was durably admitted. Preserve the immutable response
+                                        // for an exact legacy replay before applying today's rules.
+                                        // A miss creates nothing and takes no authority: AdmitBuild
+                                        // remains the race arbiter after fresh-source preflight.
+                                        match state.Store.TryReplayAdmission input with
+                                        | Result.Error e when
+                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                            ->
+                                            return! fail ctx 409 "idempotency_conflict" e None
+                                        | Result.Error _ ->
                                             return!
-                                                fail ctx 422 "execution_unsupported" why None
-                                        | Result.Ok _ ->
-                                            let stages =
-                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
-                                                |> List.map (fun s -> s.Name)
-
-                                            let input =
-                                                { OrganizationId = OrganizationId org
-                                                  ProjectId = ProjectId project
-                                                  IdempotencyKey = key
-                                                  PipelineSource = sourceBytes
-                                                  StageNames = stages
-                                                  RequiredTrustPool = state.TrustPool
-                                                  RequiredCapabilities = [ "linux" ] }
-
-                                            match state.Store.AdmitBuild input with
-                                            | Result.Error e when
-                                                e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
-                                                ->
-                                                return! fail ctx 409 "idempotency_conflict" e None
-                                            | Result.Error _ ->
+                                                fail ctx 503 "admission_unavailable"
+                                                    "build admission is temporarily unavailable" None
+                                        | Result.Ok(Some admission) -> return! respond admission
+                                        | Result.Ok None ->
+                                            // Parse success is deliberately broader than execution
+                                            // capability. Only a fresh key must satisfy the same
+                                            // fail-closed persisted preflight as Run.Host before
+                                            // binding a build number or idempotency key.
+                                            match Fogell.Differential.FogellSide.preflightPersistedExecution source with
+                                            | Result.Error why ->
                                                 return!
-                                                    fail ctx 503 "admission_unavailable"
-                                                        "build admission is temporarily unavailable" None
-                                            | Result.Ok a ->
-                                                let payload: AdmissionResponse =
-                                                    { BuildId = string a.BuildId.Value
-                                                      NodeId = string a.NodeId.Value
-                                                      AttemptId = string a.AttemptId.Value
-                                                      Number = a.Number
-                                                      WasExisting = a.WasExisting }
-
-                                                return! json ctx (if a.WasExisting then 200 else 201) payload
+                                                    fail ctx 422 "execution_unsupported" why None
+                                            | Result.Ok _ ->
+                                                match state.Store.AdmitBuild input with
+                                                | Result.Error e when
+                                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                                    ->
+                                                    return! fail ctx 409 "idempotency_conflict" e None
+                                                | Result.Error _ ->
+                                                    return!
+                                                        fail ctx 503 "admission_unavailable"
+                                                            "build admission is temporarily unavailable" None
+                                                | Result.Ok admission -> return! respond admission
         }
         :> Threading.Tasks.Task
 

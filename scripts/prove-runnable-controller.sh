@@ -102,7 +102,7 @@ grep -Fq 'runtime database capability is incomplete' "$scratch/capability.stderr
 
 admin "$database" \
   -c "GRANT USAGE ON SCHEMA public TO $role" \
-  -c "GRANT SELECT ON controller_metadata TO $role" \
+  -c "GRANT SELECT, UPDATE(singleton) ON controller_metadata TO $role" \
   -c "GRANT SELECT, INSERT, UPDATE, DELETE ON organizations, projects, builds, nodes, attempts, events, outbox, log_chunks, effect_checkpoints, retry_decisions, build_definitions TO $role" \
   -c "GRANT SELECT ON organization_work_roots TO $role" \
   -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $role" >/dev/null

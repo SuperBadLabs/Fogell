@@ -639,6 +639,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             cmd.CommandText <-
                 "SELECT
                      has_table_privilege(current_user, 'public.controller_metadata', 'SELECT')
+                     AND has_column_privilege(
+                         current_user, 'public.controller_metadata', 'singleton', 'UPDATE')
                      AND has_table_privilege(current_user, 'public.organization_work_roots', 'SELECT')
                      AND NOT EXISTS (
                          SELECT 1
@@ -1170,6 +1172,76 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         checkpoints
 
+    /// Read-only idempotency probe for admission compatibility across stricter
+    /// execution preflights. An exact durable result may be replayed without
+    /// asking the current release to admit the source again. A miss is only a
+    /// hint: the caller must still use AdmitBuild after preflight, because its
+    /// transaction and unique constraint remain the create/race arbiter.
+    member _.TryReplayAdmission(input: NewBuild) : Result<Admission option, string> =
+        if String.IsNullOrWhiteSpace input.IdempotencyKey then
+            Error "idempotency key is required"
+        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
+            Error "pipeline source is required"
+        elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
+            Error "a trust pool is required"
+        else
+            use conn = openConn ()
+            use tx = beginTenantTransaction conn input.OrganizationId
+
+            try
+                let sourceDigest = payloadDigest input.PipelineSource
+                let fingerprint =
+                    admissionFingerprint input.PipelineSource input.RequiredTrustPool input.RequiredCapabilities
+
+                use existing = conn.CreateCommand()
+                existing.Transaction <- tx
+                existing.CommandText <-
+                    "SELECT b.id, b.number, n.id, a.id,
+                            d.source_digest, d.admission_fingerprint
+                     FROM builds b
+                     JOIN nodes n
+                       ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
+                     JOIN attempts a
+                       ON a.node_id = n.id AND a.organization_id = n.organization_id AND a.ordinal = 0
+                     LEFT JOIN build_definitions d
+                       ON d.build_id = b.id AND d.organization_id = b.organization_id
+                     WHERE b.organization_id = @o AND b.project_id = @p AND b.idempotency_key = @k"
+                existing.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+                existing.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
+                existing.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
+
+                use reader = existing.ExecuteReader()
+
+                if not (reader.Read()) then
+                    reader.Close()
+                    tx.Commit()
+                    Ok None
+                else
+                    let sameDefinition =
+                        not (reader.IsDBNull 4)
+                        && not (reader.IsDBNull 5)
+                        && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
+                        && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
+
+                    if not sameDefinition then
+                        reader.Close()
+                        tx.Rollback()
+                        Error "idempotency key is already bound to a different pipeline or placement policy"
+                    else
+                        let admission =
+                            { BuildId = BuildId(reader.GetGuid 0)
+                              Number = reader.GetInt32 1
+                              NodeId = NodeId(reader.GetGuid 2)
+                              AttemptId = AttemptId(reader.GetGuid 3)
+                              WasExisting = true }
+
+                        reader.Close()
+                        tx.Commit()
+                        Ok(Some admission)
+            with ex ->
+                (try tx.Rollback() with _ -> ())
+                Error ex.Message
+
     /// FG-021. Build, first node, first attempt, a durable event and an outbox
     /// message commit **together**. There is no window in which a build exists
     /// without its event, or an event without its outbox row.
@@ -1271,11 +1343,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             else
                 reader.Close()
 
+                // Restore takes the conflicting singleton lock before it
+                // invalidates old-epoch attempts. Hold the shared side through
+                // creation so restore either invalidates this committed attempt,
+                // or admission waits and is born directly into the new epoch.
                 let buildId = Guid.NewGuid()
                 let epoch =
                     use e = conn.CreateCommand()
                     e.Transaction <- tx
-                    e.CommandText <- "SELECT restore_epoch FROM controller_metadata WHERE singleton"
+                    e.CommandText <-
+                        "SELECT restore_epoch
+                           FROM controller_metadata
+                          WHERE singleton
+                          FOR SHARE"
                     e.ExecuteScalar() :?> int64
 
                 use insert = conn.CreateCommand()
@@ -1578,25 +1658,97 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         use conn = openMaintenanceConn ()
         use tx = conn.BeginTransaction()
 
-        use bump = conn.CreateCommand()
-        bump.Transaction <- tx
-        bump.CommandText <-
-            "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1
-              WHERE singleton RETURNING restore_epoch"
-        let epoch = bump.ExecuteScalar() :?> int64
+        try
+            use bump = conn.CreateCommand()
+            bump.Transaction <- tx
+            bump.CommandText <-
+                "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1
+                  WHERE singleton RETURNING restore_epoch"
+            let epoch = bump.ExecuteScalar() :?> int64
 
-        use invalidate = conn.CreateCommand()
-        invalidate.Transaction <- tx
-        invalidate.CommandText <-
-            "UPDATE attempts
-                SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
-              WHERE restore_epoch < @e
-                AND state IN ('queued', 'offered', 'accepted', 'running', 'finalizing', 'cancelling')"
-        invalidate.Parameters.AddWithValue("e", epoch) |> ignore
-        invalidate.ExecuteNonQuery() |> ignore
+            // organization_work_roots is the deliberately global UUID registry
+            // used by restarted workers. Iterate that authority while setting the
+            // same transaction-local tenant context as runtime operations: forced
+            // RLS stays enabled, and the epoch bump plus every invalidation remain
+            // one atomic transaction even for a NOBYPASSRLS maintenance role.
+            use roots = conn.CreateCommand()
+            roots.Transaction <- tx
+            roots.CommandText <- "SELECT organization_id FROM organization_work_roots ORDER BY organization_id"
+            use rootReader = roots.ExecuteReader()
+            let organizations = [ while rootReader.Read() do yield OrganizationId(rootReader.GetGuid 0) ]
+            rootReader.Close()
 
-        tx.Commit()
-        RestoreEpoch epoch
+            for org in organizations do
+                setTenantContext conn tx org
+                use invalidate = conn.CreateCommand()
+                invalidate.Transaction <- tx
+                invalidate.CommandText <-
+                    "WITH moved AS (
+                         UPDATE attempts a
+                            SET state = 'reconciliation_required',
+                                lease_owner = NULL,
+                                lease_expires_at = NULL
+                           FROM nodes n
+                          WHERE a.organization_id = @o
+                            AND a.restore_epoch < @e
+                            AND a.state IN ('queued', 'offered', 'accepted', 'running',
+                                            'finalizing', 'cancelling')
+                            AND n.organization_id = a.organization_id
+                            AND n.id = a.node_id
+                         RETURNING a.id AS attempt_id, a.node_id, n.build_id
+                     ), reconciled_nodes AS (
+                         UPDATE nodes n
+                            SET status = 'reconciliation_required'
+                          FROM (SELECT DISTINCT node_id FROM moved) m
+                          WHERE n.organization_id = @o AND n.id = m.node_id
+                         RETURNING n.id, n.build_id
+                     ), reconciled_builds AS (
+                         UPDATE builds b
+                            SET status = 'reconciliation_required'
+                           FROM (SELECT DISTINCT build_id FROM reconciled_nodes) m
+                          WHERE b.organization_id = @o AND b.id = m.build_id
+                         RETURNING b.id
+                     ), emitted_events AS (
+                         INSERT INTO events
+                                (organization_id, build_id, attempt_id, kind, payload)
+                         SELECT @o, build_id, attempt_id,
+                                'attempt.reconciliation_required',
+                                jsonb_build_object('reason', 'restore_epoch_advanced')
+                           FROM moved
+                           CROSS JOIN (SELECT count(*) FROM reconciled_builds) rollup
+                         RETURNING 1
+                     ), emitted_outbox AS (
+                         INSERT INTO outbox (organization_id, topic, body)
+                         SELECT @o, 'build.reconciliation_required',
+                                jsonb_build_object(
+                                    'build', build_id::text,
+                                    'attempt', attempt_id::text,
+                                    'reason', 'restore_epoch_advanced')
+                           FROM moved
+                           CROSS JOIN (SELECT count(*) FROM reconciled_builds) rollup
+                         RETURNING 1
+                     )
+                     SELECT (SELECT count(*) FROM moved),
+                            (SELECT count(*) FROM reconciled_nodes),
+                            (SELECT count(*) FROM reconciled_builds),
+                            (SELECT count(*) FROM emitted_events),
+                            (SELECT count(*) FROM emitted_outbox)"
+                invalidate.Parameters.AddWithValue("o", org.Value) |> ignore
+                invalidate.Parameters.AddWithValue("e", epoch) |> ignore
+                use invalidated = invalidate.ExecuteReader()
+                invalidated.Read() |> ignore
+                let moved = invalidated.GetInt64 0
+
+                if invalidated.GetInt64 3 <> moved || invalidated.GetInt64 4 <> moved then
+                    failwith "restore reconciliation truth was not emitted exactly once per invalidated attempt"
+
+                invalidated.Close()
+
+            tx.Commit()
+            RestoreEpoch epoch
+        with _ ->
+            (try tx.Rollback() with _ -> ())
+            reraise ()
 
     member _.AttemptState(org: OrganizationId, attempt: AttemptId) : (string * int64 * string option) option =
         use conn = openConn ()

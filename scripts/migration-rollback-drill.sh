@@ -175,9 +175,10 @@ UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
 INSERT INTO organizations (id, slug) VALUES ('10000000-0000-0000-0000-000000000081', 'fg081-org');
 INSERT INTO projects (id, organization_id, slug)
 VALUES ('20000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081', 'fg081-project');
-INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, created_at)
+INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, next_log_sequence, created_at)
 VALUES ('30000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
-        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, '2026-08-25T01:00:00Z');
+        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, 82,
+        '2026-08-25T01:00:00Z');
 INSERT INTO nodes (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
 VALUES ('40000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
         '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux','docker'], 'running');
@@ -195,9 +196,10 @@ VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-0000000
         '50000000-0000-0000-0000-000000000083', 'fg081.fixture', '{"unicode":"π","flags":[true,false]}'::jsonb, '2026-08-25T01:04:00Z');
 INSERT INTO outbox (organization_id, topic, body, published_at, created_at)
 VALUES ('10000000-0000-0000-0000-000000000081', 'fg081.fixture', '{"ordinal":81}'::jsonb, NULL, '2026-08-25T01:05:00Z');
-INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body, created_at)
+INSERT INTO log_chunks
+  (organization_id, build_id, attempt_id, sequence, build_sequence, body, created_at)
 VALUES ('10000000-0000-0000-0000-000000000081', '30000000-0000-0000-0000-000000000081',
-        '50000000-0000-0000-0000-000000000083', 81, 'quoted '' value | unicode π', '2026-08-25T01:06:00Z');
+        '50000000-0000-0000-0000-000000000083', 81, 81, 'quoted '' value | unicode π', '2026-08-25T01:06:00Z');
 INSERT INTO effect_checkpoints
   (organization_id, attempt_id, effect_key, fence, authority_owner, restore_epoch, payload_digest, state, prepared_at)
 VALUES ('10000000-0000-0000-0000-000000000081', '50000000-0000-0000-0000-000000000083',
