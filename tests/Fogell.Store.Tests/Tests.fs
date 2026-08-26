@@ -264,6 +264,159 @@ let migrations =
                       "migration 0008 exact source checksum"
           }
 
+          test "organization root repair migration 0009 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0009'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0009 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "ceae309c185b96abe221bbfba8dddb7783de80f8b3c393543253886f89397bf7"
+                      "migration 0009 exact source checksum"
+          }
+
+          test "migration 0009 repairs preexisting roots as a NOBYPASSRLS schema owner" {
+              let databaseName = $"fogell_root_upgrade_{Guid.NewGuid():N}"
+              let roleName = $"fogell_migration_owner_{Guid.NewGuid():N}"
+              let organization = Guid.NewGuid()
+              let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              adminBuilder.Database <- "postgres"
+              let targetBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              targetBuilder.Database <- databaseName
+              let ownerConnectionString = $"{targetBuilder.ConnectionString};Options=-c role={roleName}"
+
+              use admin = new Npgsql.NpgsqlConnection(adminBuilder.ConnectionString)
+              admin.Open()
+              use createRole = admin.CreateCommand()
+              createRole.CommandText <-
+                  $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+              createRole.ExecuteNonQuery() |> ignore
+              use createDatabase = admin.CreateCommand()
+              createDatabase.CommandText <- $"CREATE DATABASE {databaseName} OWNER {roleName}"
+              createDatabase.ExecuteNonQuery() |> ignore
+
+              try
+                  use target = new Npgsql.NpgsqlConnection(ownerConnectionString)
+                  target.Open()
+
+                  use identity = target.CreateCommand()
+                  identity.CommandText <-
+                      "SELECT current_user, rolsuper, rolbypassrls
+                         FROM pg_roles WHERE rolname = current_user"
+                  use identityRow = identity.ExecuteReader()
+                  Expect.isTrue (identityRow.Read()) "migration owner identity exists"
+                  Expect.equal (identityRow.GetString 0) roleName "migration executes as the schema owner"
+                  Expect.isFalse (identityRow.GetBoolean 1) "migration owner is not superuser"
+                  Expect.isFalse (identityRow.GetBoolean 2) "migration owner cannot bypass RLS"
+                  identityRow.Close()
+
+                  let migrationSet = Migrations.all ()
+
+                  let apply (_, sql: string) =
+                      use command = target.CreateCommand()
+                      command.CommandText <- sql
+                      command.ExecuteNonQuery() |> ignore
+
+                  migrationSet
+                  |> List.filter (fun (version, _) -> version <= "0004")
+                  |> List.iter apply
+
+                  use seed = target.CreateCommand()
+                  seed.CommandText <-
+                      "INSERT INTO organizations (id, slug)
+                       VALUES (@organization, 'pre-forced-rls')"
+                  seed.Parameters.AddWithValue("organization", organization) |> ignore
+                  seed.ExecuteNonQuery() |> ignore
+
+                  let legacyMigrations =
+                      migrationSet
+                      |> List.filter (fun (version, _) -> version <= "0008")
+
+                  legacyMigrations
+                  |> List.filter (fun (version, _) -> version >= "0005")
+                  |> List.iter apply
+
+                  use ledger = target.CreateCommand()
+                  ledger.CommandText <-
+                      "CREATE TABLE schema_migrations (
+                           version text PRIMARY KEY,
+                           checksum text NOT NULL,
+                           applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
+                       )"
+                  ledger.ExecuteNonQuery() |> ignore
+
+                  let checksum (sql: string) =
+                      use hash = SHA256.Create()
+                      hash.ComputeHash(Text.Encoding.UTF8.GetBytes sql)
+                      |> Convert.ToHexString
+                      |> fun value -> value.ToLowerInvariant()
+
+                  for version, sql in legacyMigrations do
+                      use record = target.CreateCommand()
+                      record.CommandText <-
+                          "INSERT INTO schema_migrations (version, checksum) VALUES (@version, @checksum)"
+                      record.Parameters.AddWithValue("version", version) |> ignore
+                      record.Parameters.AddWithValue("checksum", checksum sql) |> ignore
+                      record.ExecuteNonQuery() |> ignore
+
+                  use hidden = target.CreateCommand()
+                  hidden.CommandText <- "SELECT count(*) FROM organizations"
+                  Expect.equal (hidden.ExecuteScalar() :?> int64) 0L "FORCE RLS hides unscoped organizations from their owner"
+
+                  use missing = target.CreateCommand()
+                  missing.CommandText <- "SELECT count(*) FROM organization_work_roots"
+                  Expect.equal (missing.ExecuteScalar() :?> int64) 0L "legacy migration 0006 missed the preexisting organization"
+
+                  match Migrations.run ownerConnectionString with
+                  | Error error -> failtestf "restricted-owner upgrade failed: %s" error
+                  | Ok applied ->
+                      Expect.equal
+                          (applied
+                           |> List.filter (fun item -> not item.AlreadyPresent)
+                           |> List.map (fun item -> item.Version))
+                          [ "0009" ]
+                          "only the forward repair migration is pending"
+
+                  use repaired = target.CreateCommand()
+                  repaired.CommandText <-
+                      "SELECT count(*) FROM organization_work_roots WHERE organization_id = @organization"
+                  repaired.Parameters.AddWithValue("organization", organization) |> ignore
+                  Expect.equal (repaired.ExecuteScalar() :?> int64) 1L "the missed legacy root is repaired exactly once"
+
+                  use protection = target.CreateCommand()
+                  protection.CommandText <-
+                      "SELECT relrowsecurity, relforcerowsecurity
+                         FROM pg_class WHERE oid = 'organizations'::regclass"
+                  use protectionRow = protection.ExecuteReader()
+                  Expect.isTrue (protectionRow.Read()) "organizations protection metadata exists"
+                  Expect.isTrue (protectionRow.GetBoolean 0) "tenant RLS is enabled again before commit"
+                  Expect.isTrue (protectionRow.GetBoolean 1) "tenant RLS is forced again before commit"
+                  protectionRow.Close()
+
+                  use stillHidden = target.CreateCommand()
+                  stillHidden.CommandText <- "SELECT count(*) FROM organizations"
+                  Expect.equal (stillHidden.ExecuteScalar() :?> int64) 0L "the owner is fail-closed again after repair"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  use terminate = admin.CreateCommand()
+                  terminate.CommandText <-
+                      "SELECT pg_terminate_backend(pid)
+                         FROM pg_stat_activity
+                        WHERE datname = @database AND pid <> pg_backend_pid()"
+                  terminate.Parameters.AddWithValue("database", databaseName) |> ignore
+                  terminate.ExecuteNonQuery() |> ignore
+                  use dropDatabase = admin.CreateCommand()
+                  dropDatabase.CommandText <- $"DROP DATABASE {databaseName}"
+                  dropDatabase.ExecuteNonQuery() |> ignore
+                  use dropRole = admin.CreateCommand()
+                  dropRole.CommandText <- $"DROP ROLE {roleName}"
+                  dropRole.ExecuteNonQuery() |> ignore
+          }
+
           test "migration 0008 upgrades populated sparse and colliding legacy logs" {
               let databaseName = $"fogell_log_upgrade_{Guid.NewGuid():N}"
               let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
